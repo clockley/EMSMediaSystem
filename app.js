@@ -246,6 +246,10 @@ function playMedia(e) {
         return;
     }
 
+    if (document.getElementById("mdFile").value == "") {
+        return;
+    }
+
     if (e.target.innerText == "▶️") {
         e.target.innerText = "⏹️";
         currentMediaFile = document.getElementById("mdFile").files;
@@ -456,6 +460,7 @@ async function createMediaWindow(path) {
         });
     }
     mediaWindow.on('closed', () => {
+        mediaWindow = null;
         document.getElementById("mediaWindowPlayButton").innerText = "▶️";
     });
     mediaWindow.loadFile("media.html");
