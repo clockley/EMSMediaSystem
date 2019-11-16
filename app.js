@@ -275,7 +275,7 @@ function setSBFormMediaPlayer() {
     document.getElementById("dyneForm").innerHTML =
         `
         <form>
-            <input type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
+            <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
             <label for=""mdScrCtrl>Show in second screen</label>
 
 
