@@ -1,0 +1,73 @@
+.index-grid-container {
+    display              : grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows   : auto auto auto auto auto auto;
+    grid-template-areas  :
+        "main main sideBar1"
+        "main main  sideBar1"
+        "footerBar footerBar footerBar";
+}
+
+main {
+    grid-area: main;
+}
+
+footer {
+    grid-area: footerBar;
+}
+
+.sideBar1 {
+    grid-area: sideBar1;
+}
+
+#playlist {
+    overflow-y: scroll;
+    max-height: 25vh;
+    display   : block;
+    min-height: 5vh;
+}
+
+
+
+.plEntry {
+    margin : 0%;
+    padding: 0%;
+    display: block;
+}
+
+[draggable] {
+    -moz-user-select   : none;
+    -khtml-user-select : none;
+    -webkit-user-select: none;
+    user-select        : none;
+    /* Required to make elements draggable in old WebKit */
+    -khtml-user-drag : element;
+    -webkit-user-drag: element;
+}
+
+video {
+    width     : 100vw;
+    height    : 100vh;
+    padding   : 0%;
+    margin    : 0%;
+    object-fit: scale-down;
+}
+
+#mediaBody {
+    width     : 100vw;
+    height    : 100vh;
+    margin    : 0%;
+    padding   : 0%;
+    overflow: hidden;
+    background-color: black;
+}
+
+.setTimerButton {
+    height: 32px;
+    width : 32px;
+}
+
+#mediaWindowPlayButton {
+    height: 32px;
+    width : 32px;
+}

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>EJax Media System</title>
+  <!-- https://electronjs.org/docs/tutorial/security#csp-meta-tag -->
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self';" />
+  <link rel="stylesheet" type="text/css" href="main.css">
+  <script type="text/javascript" src="app.js"></script>
+</head>
+
+<body class="grid-container">
+  <main>
+    <form>
+      <input type="radio" id="WklyRBtnFrmID" name="plystTyp" value="Weekly Playlist">
+      <label for="Weekly Playlist">Weekly Playlist</label>
+
+      <input type="radio" id="SpclRBtnFrmID" name="plystTyp" value="Special Events">
+      <label for="Special Events">Special Events</label>
+
+      <input type="radio" id="AlrmsRBtnFrmID" name="plystTyp" value="Alarms">
+      <label for="Alarms">Alarms</label>
+
+      <input type="radio" id="MdPlyrRBtnFrmID" name="plystTyp" value="Media Player">
+      <label for="Media Player">Media Player</label>
+
+      <div id="dyneForm">
+      </div>
+    </form>
+  </main>
+  <div class="sideBar1">
+    <ul id="playlist" class="sideBar1"></ul><br>
+  </div>
+  <footer>
+    <audio id="audio" controls="controls">
+      <source id="audioSource" src="">
+      </source>
+    </audio>
+    <div id="plystCtrl">
+        <input name="plystLpctrlbtn" type="checkbox" id="plystLpctrlPlst">
+        <label for="plystLpctrl">Loop Playlist</label>
+        <input name="plystLpctrlbtn" type="checkbox" id="plystLpctrlLpFl">
+        <label for="plystLpctrl">Loop File</label>
+      </div>
+  </footer>
+
+</body>
+
+</html>
