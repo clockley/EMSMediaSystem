@@ -100,7 +100,7 @@ function setSBFormSpcl() {
         <option value="Wedding">Wedding</option>
     </select>
     `;
-    getPlaylistByEvent("Communion");
+    getPlaylistByEvent(document.getElementById("spcleventslst").value);
     document.getElementById("spcleventslst").addEventListener("change", (event) => {
         resetPlayer();
         getPlaylistByEvent(event.target.value);
