@@ -447,8 +447,8 @@ async function createMediaWindow(path) {
         mediaWindow = new BrowserWindow({
             x: externalDisplay.bounds.x + 50,
             y: externalDisplay.bounds.y + 50,
-            width: 1024,
-            height: 576,
+            width: externalDisplay.width,
+            height: externalDisplay.height,
             fullscreen: true,
             webPreferences: {
                 nodeIntegration: true
@@ -457,8 +457,8 @@ async function createMediaWindow(path) {
         });
     } else {
         mediaWindow = new BrowserWindow({
-            width: 1024,
-            height: 576,
+            width: displays[0].width,
+            height: displays[0].height,
             fullscreen: true,
             webPreferences: {
                 nodeIntegration: true
