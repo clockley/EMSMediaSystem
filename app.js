@@ -381,7 +381,12 @@ function ISO8601_week_no(dt) {
     return 1 + Math.ceil((firstThursday - tdt) / 604800000);
 }
 
+function initPlayer() {
+    setSBFormWkly();
+}
+
 window.addEventListener("load", (event) => {
+    initPlayer();
     installEvents();
 });
 
