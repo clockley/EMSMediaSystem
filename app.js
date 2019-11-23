@@ -128,7 +128,13 @@ function timerCallback(timerID) {
         var audioElement = new Audio(this.result);
         audioElement.play();
         audioElement.addEventListener("ended", function (e) {
-            document.getElementById("as" + timerID).innerText = "▶️";
+            if (document.getElementById("as1") != null) {
+                document.getElementById("as" + timerID).innerText = "▶️";
+            } else {
+                document.getElementById("AlrmsRBtnFrmID").addEventListener("click", function () {
+                    document.getElementById("as" + timerID).innerText = "▶️";
+                }, { once: true });
+            }
         });
         registerAudioObj(timerID, audioElement);
     }
@@ -413,11 +419,6 @@ function getPlaylistByEvent(evnt) {
     getPlaylistByWeek(evnt);
 }
 
-function isObject(obj) {
-    var type = typeof obj;
-    return type === 'function' || type === 'object' && !!obj;
-}
-
 let mediaWindow = null;
 
 async function createMediaWindow(path) {
@@ -434,7 +435,7 @@ async function createMediaWindow(path) {
             break;
         }
     }
-    await sleep(document.getElementById("mdDelay").value*1000);
+    await sleep(document.getElementById("mdDelay").value * 1000);
 
     if (externalDisplay && document.getElementById("mdScrCtlr").checked) {
         mediaWindow = new BrowserWindow({
@@ -461,7 +462,13 @@ async function createMediaWindow(path) {
     }
     mediaWindow.on('closed', () => {
         mediaWindow = null;
-        document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+        if (document.getElementById("mediaWindowPlayButton") != null) {
+            document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+        } else {
+            document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
+                document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+            }, { once: true });
+        }
     });
     mediaWindow.loadFile("media.html");
 }
