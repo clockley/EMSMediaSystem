@@ -281,14 +281,18 @@ function setSBFormMediaPlayer() {
     document.getElementById("dyneForm").innerHTML =
         `
         <form>
-            <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
-            <label for=""mdScrCtrl>Show in second screen</label>
+            <input type="file" name="mdFile" id="mdFile">
 
+             <br>
 
             <input type="number" min="0" max="60" step="1" value="0" name="mdTimeout" id="mdDelay">
             <label for="mdTimeout">Delay</label>
+
+            <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
+            <label for=""mdScrCtrl>Second Monitor</label>
         
-            <input type="file" name="mdFile" id="mdFile">
+            <br>
+
             <button id="mediaWindowPlayButton" type="button">▶️</button>
         </form>
     `;
