@@ -39,8 +39,10 @@ class Timer {
     }
     stopAudio() {
         this.resetTimer();
-        this.audioElement.pause();
-        this.audioElement.currentTime = 0;
+        if (this.audioElement != null) {
+            this.audioElement.pause();
+            this.audioElement.currentTime = 0;
+        }
     }
 };
 
