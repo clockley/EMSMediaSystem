@@ -14,6 +14,7 @@ addBypassChecker((bypassChecker) => {
 let win
 
 function createWindow() {
+  require('electron').Menu.setApplicationMenu(null); //workaround for linux bugs
   // Create the browser window.
   win = new BrowserWindow({
     width: 800,
@@ -22,6 +23,8 @@ function createWindow() {
       nodeIntegration: true
     }
   })
+
+  win.setMenuBarVisibility(false)
 
   // and load the index.html of the app.
   win.loadFile('index.html')

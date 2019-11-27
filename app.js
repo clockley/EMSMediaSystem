@@ -481,5 +481,7 @@ async function createMediaWindow(path) {
             }, { once: true });
         }
     });
+    mediaWindow.setMenuBarVisibility(false);
+
     mediaWindow.loadFile("media.html");
 }
