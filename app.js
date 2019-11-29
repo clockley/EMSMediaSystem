@@ -51,7 +51,7 @@ function sleep(ms) {
 }
 
 function getMediaFilesFolder() {
-    return require('path').dirname(require('electron').remote.app.getPath('exe')) + process && process.type === 'renderer' ? "/../../../" : "/../";
+    return require('path').dirname(require('electron').remote.app.getPath('exe')) + process && process.type === 'renderer' ? "/../../../." : "/../.";
 }
 
 function clearPlaylist() {
