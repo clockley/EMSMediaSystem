@@ -455,6 +455,7 @@ async function createMediaWindow(path) {
             width: externalDisplay.width,
             height: externalDisplay.height,
             fullscreen: true,
+            autoHideMenuBar: true,
             webPreferences: {
                 nodeIntegration: true
             },
@@ -465,6 +466,7 @@ async function createMediaWindow(path) {
             width: displays[0].width,
             height: displays[0].height,
             fullscreen: true,
+            autoHideMenuBar: true,
             webPreferences: {
                 nodeIntegration: true
             },
@@ -481,7 +483,6 @@ async function createMediaWindow(path) {
             }, { once: true });
         }
     });
-    mediaWindow.setMenuBarVisibility(false);
 
     mediaWindow.loadFile("media.html");
 }
