@@ -7,8 +7,8 @@ var timers = [];
 var alarmFileMetadata = [];
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
-    console.log(message); // Returns: {'SAVED': 'File Saved'}
-    document.getElementById('mediaCntDn').innerHTML = message;
+    if (document.getElementById('mediaCntDn') != null)
+        document.getElementById('mediaCntDn').innerHTML = message;
 });
 
 class AlarmInputState {
