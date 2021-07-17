@@ -1,6 +1,7 @@
 "use strict";
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const { addBypassChecker } = require('electron-compile');
+
 
 addBypassChecker((bypassChecker) => {
   return bypassChecker.push(function (x) {
@@ -14,6 +15,9 @@ addBypassChecker((bypassChecker) => {
 let win
 
 function createWindow() {
+  ipcMain.on('timeRemaining-message', (event, arg) => {
+    win.webContents.send('timeRemaining-message', arg)
+  })
   // Create the browser window.
   win = new BrowserWindow({
     width: 800,

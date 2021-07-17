@@ -1,9 +1,15 @@
 //Project Alchemy
 //Copyright 2019 - Ephesus Apprentice Alchemist
+const { ipcRenderer } = require('electron')
 
 var nextFile = null;
 var timers = [];
 var alarmFileMetadata = [];
+
+ipcRenderer.on('timeRemaining-message', function (evt, message) {
+    console.log(message); // Returns: {'SAVED': 'File Saved'}
+    document.getElementById('mediaCntDn').innerHTML = message;
+});
 
 class AlarmInputState {
     constructor(fileInputValue, timeInputValue) {
@@ -297,6 +303,9 @@ function setSBFormMediaPlayer() {
 
             <button id="mediaWindowPlayButton" type="button">▶️</button>
         </form>
+        <br>
+        <br>
+        <center><span style="color:red;font-size: larger;" id="mediaCntDn">00:00<span></center>
     `;
 
     if (mediaWindow == null) {
