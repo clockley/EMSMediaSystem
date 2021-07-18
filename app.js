@@ -5,7 +5,7 @@ const { ipcRenderer } = require('electron')
 var nextFile = null;
 var timers = [];
 var alarmFileMetadata = [];
-var timeRemaining = ""
+var timeRemaining = "00:00"
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
     if (document.getElementById('mediaCntDn') != null) {
