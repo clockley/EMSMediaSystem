@@ -13,10 +13,21 @@ addBypassChecker((bypassChecker) => {
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
 let win
+var toHHMMSS = (secs) => {
+  var sec_num = parseInt(secs, 10)
+  var hours   = Math.floor(sec_num / 3600)
+  var minutes = Math.floor(sec_num / 60) % 60
+  var seconds = sec_num % 60
+
+  return [hours,minutes,seconds]
+      .map(v => v < 10 ? "0" + v : v)
+      .filter((v,i) => v !== "00" || i > 0)
+      .join(":")
+}
 
 function createWindow() {
   ipcMain.on('timeRemaining-message', (event, arg) => {
-    win.webContents.send('timeRemaining-message', arg)
+    win.webContents.send('timeRemaining-message', toHHMMSS(arg))
   })
   // Create the browser window.
   win = new BrowserWindow({
