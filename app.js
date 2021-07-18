@@ -500,6 +500,7 @@ async function createMediaWindow(path) {
         } else {
             document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
                 document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+                document.getElementById("mediaCntDn").innerText = "00:00:000";
             }, { once: true });
         }
     });
