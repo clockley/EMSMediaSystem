@@ -318,6 +318,7 @@ function setSBFormMediaPlayer() {
 
     if (mediaWindow == null) {
         document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+        document.getElementById("mediaCntDn").innerText = "00:00:000";
     } else {
         document.getElementById('mediaCntDn').innerHTML = timeRemaining;
         timeRemaining = "00:00"
