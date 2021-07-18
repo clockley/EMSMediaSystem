@@ -3,18 +3,6 @@ const { ipcRenderer } = require('electron')
 
 var mediaFile = electron.remote.getCurrentWindow().webContents.browserWindowOptions.mediaFile;
 
-var toHHMMSS = (secs) => {
-    var sec_num = parseInt(secs, 10)
-    var hours   = Math.floor(sec_num / 3600)
-    var minutes = Math.floor(sec_num / 60) % 60
-    var seconds = sec_num % 60
-
-    return [hours,minutes,seconds]
-        .map(v => v < 10 ? "0" + v : v)
-        .filter((v,i) => v !== "00" || i > 0)
-        .join(":")
-}
-
 function rafAsync() {
     return new Promise(resolve => {
         requestAnimationFrame(resolve); //faster than set time out
@@ -31,8 +19,8 @@ function checkElement(selector) {
 
 function sendRemainingTime(video) {
     setInterval(function(){ 
-        ipcRenderer.send('timeRemaining-message', toHHMMSS(video.duration - video.currentTime))
-    }, 500);
+        ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime)
+    }, 100);
 }
 
 function loadMedia() {

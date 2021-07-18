@@ -71,6 +71,8 @@ function resetMediaSrc() {
 function resetPlayer() {
     document.getElementById("audio").style.visibility = document.getElementById("plystCtrl").style.visibility = "visible";
     document.getElementById("audio").style.display = document.getElementById("plystCtrl").style.display = "";
+    if (document.getElementById('mediaCntDn') != null)
+        document.getElementById('mediaCntDn').innerHTML = "00:00";
     clearPlaylist();
     resetMediaSrc();
 }
@@ -269,6 +271,8 @@ function playMedia(e) {
         currentMediaFile = document.getElementById("mdFile").files;
         createMediaWindow();
     } else if (e.target.innerText = "⏹️") {
+        if (document.getElementById('mediaCntDn') != null)
+            document.getElementById('mediaCntDn').innerHTML = "00:00";
         e.target.innerText = "▶️";
         try {
             mediaWindow.close();
