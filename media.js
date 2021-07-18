@@ -20,7 +20,7 @@ function checkElement(selector) {
 function sendRemainingTime(video) {
     setInterval(function(){ 
         ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime)
-    }, 100);
+    }, 250);
 }
 
 function loadMedia() {
