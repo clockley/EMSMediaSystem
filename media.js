@@ -2,6 +2,7 @@ const electron = require("electron");
 const { ipcRenderer } = require('electron')
 
 var mediaFile = electron.remote.getCurrentWindow().webContents.browserWindowOptions.mediaFile;
+var cntDnInt = null;
 
 function rafAsync() {
     return new Promise(resolve => {
@@ -18,7 +19,7 @@ function checkElement(selector) {
 }
 
 function sendRemainingTime(video) {
-    setInterval(function(){ 
+    cntDnInt = setInterval(function(){ 
         ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime)
     }, 10);
 }
@@ -35,7 +36,25 @@ function loadMedia() {
     document.body.appendChild(video);
     checkElement('bigPlayer');
     sendRemainingTime(video);
+
+    video.addEventListener('pause', (event) => {
+        clearInterval(cntDnInt);
+    })
+
+    video.addEventListener('play', (event) => {
+        cntDnInt = setInterval(function(){ 
+            ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime)
+        }, 10);
+    })
+
+    video.addEventListener('seeked', (event) => {
+        cntDnInt = setInterval(function(){ 
+            ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime)
+        }, 10);
+    })
+
     video.addEventListener('seeking', (event) => {
+        clearInterval(cntDnInt);
         ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime);
     })
     video.play();
