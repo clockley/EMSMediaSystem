@@ -5,10 +5,14 @@ const { ipcRenderer } = require('electron')
 var nextFile = null;
 var timers = [];
 var alarmFileMetadata = [];
+var timeRemaining = ""
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
-    if (document.getElementById('mediaCntDn') != null)
+    if (document.getElementById('mediaCntDn') != null) {
         document.getElementById('mediaCntDn').innerHTML = message;
+    } else {
+        timeRemaining = message;
+    }
 });
 
 class AlarmInputState {
@@ -315,6 +319,8 @@ function setSBFormMediaPlayer() {
     if (mediaWindow == null) {
         document.getElementById("mediaWindowPlayButton").innerText = "▶️";
     } else {
+        document.getElementById('mediaCntDn').innerHTML = timeRemaining;
+        timeRemaining = "00:00"
         document.getElementById("mediaWindowPlayButton").innerText = "⏹️";
         document.getElementById("mdFile").files = currentMediaFile;
     }
