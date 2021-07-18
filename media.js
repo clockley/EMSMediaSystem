@@ -20,7 +20,7 @@ function checkElement(selector) {
 function sendRemainingTime(video) {
     setInterval(function(){ 
         ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime)
-    }, 500);
+    }, 10);
 }
 
 function loadMedia() {
@@ -29,6 +29,7 @@ function loadMedia() {
     video.src = mediaFile;
     video.setAttribute("controls", "controls");
     video.addEventListener("ended", function () {
+        ipcRenderer.send('timeRemaining-message', 0);
         electron.remote.getCurrentWindow().close();
     });
     document.body.appendChild(video);
