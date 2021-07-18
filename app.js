@@ -5,7 +5,7 @@ const { ipcRenderer } = require('electron')
 var nextFile = null;
 var timers = [];
 var alarmFileMetadata = [];
-var timeRemaining = "00:00"
+var timeRemaining = "00:00:000"
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
     if (document.getElementById('mediaCntDn') != null) {
@@ -313,7 +313,7 @@ function setSBFormMediaPlayer() {
         </form>
         <br>
         <br>
-        <center><span style="color:red;font-size: larger;" id="mediaCntDn">00:00<span></center>
+        <center><span style="color:red;font-size: larger;" id="mediaCntDn">00:00:000<span></center>
     `;
 
     if (mediaWindow == null) {
@@ -496,6 +496,7 @@ async function createMediaWindow(path) {
         mediaWindow = null;
         if (document.getElementById("mediaWindowPlayButton") != null) {
             document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+            document.getElementById("mediaCntDn").innerText = "00:00:000";
         } else {
             document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
                 document.getElementById("mediaWindowPlayButton").innerText = "▶️";

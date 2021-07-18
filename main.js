@@ -14,22 +14,22 @@ addBypassChecker((bypassChecker) => {
 // be closed automatically when the JavaScript object is garbage collected.
 let win
 var toHHMMSS = (secs) => {
-  var sec_num = parseInt(secs, 10)
-  var hours   = Math.floor(sec_num / 3600)
-  var minutes = Math.floor(sec_num / 60) % 60
-  var seconds = sec_num % 60
+  var pad = function(num, size) { return ('000' + num).slice(size * -1); },
+  time = parseFloat(secs).toFixed(3),
+  hours = Math.floor(time / 60 / 60),
+  minutes = Math.floor(time / 60) % 60,
+  seconds = Math.floor(time - minutes * 60),
+  milliseconds = time.slice(-3);
 
-  return [hours,minutes,seconds]
-      .map(v => v < 10 ? "0" + v : v)
-      .filter((v,i) => v !== "00" || i > 0)
-      .join(":")
+  return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2) + ':' + pad(milliseconds, 3);
 }
 
 function createWindow() {
   ipcMain.on('timeRemaining-message', (event, arg) => {
     win.webContents.send('timeRemaining-message', toHHMMSS(arg))
   })
-  // Create the browser window.
+
+// Create the browser window.
   win = new BrowserWindow({
     width: 800,
     height: 450,
