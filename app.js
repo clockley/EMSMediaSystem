@@ -321,7 +321,7 @@ function setSBFormMediaPlayer() {
         document.getElementById("mediaCntDn").innerText = "00:00:000";
     } else {
         document.getElementById('mediaCntDn').innerHTML = timeRemaining;
-        timeRemaining = "00:00"
+        timeRemaining = "00:00:000";
         document.getElementById("mediaWindowPlayButton").innerText = "⏹️";
         document.getElementById("mdFile").files = currentMediaFile;
     }
@@ -497,11 +497,11 @@ async function createMediaWindow(path) {
         mediaWindow = null;
         if (document.getElementById("mediaWindowPlayButton") != null) {
             document.getElementById("mediaWindowPlayButton").innerText = "▶️";
-            document.getElementById("mediaCntDn").innerText = "00:00:000";
+            ipcRenderer.send('timeRemaining-message', 0);
         } else {
+            ipcRenderer.send('timeRemaining-message', 0);
             document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
                 document.getElementById("mediaWindowPlayButton").innerText = "▶️";
-                document.getElementById("mediaCntDn").innerText = "00:00:000";
             }, { once: true });
         }
     });
