@@ -30,7 +30,6 @@ function loadMedia() {
     video.src = mediaFile;
     video.setAttribute("controls", "controls");
     video.addEventListener("ended", function () {
-        ipcRenderer.send('timeRemaining-message', 0);
         electron.remote.getCurrentWindow().close();
     });
     document.body.appendChild(video);
