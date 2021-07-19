@@ -499,8 +499,8 @@ async function createMediaWindow(path) {
             document.getElementById("mediaWindowPlayButton").innerText = "▶️";
             ipcRenderer.send('timeRemaining-message', 0);
         } else {
-            ipcRenderer.send('timeRemaining-message', 0);
             document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
+                ipcRenderer.send('timeRemaining-message', 0);
                 document.getElementById("mediaWindowPlayButton").innerText = "▶️";
             }, { once: true });
         }
