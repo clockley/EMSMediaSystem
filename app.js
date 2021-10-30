@@ -308,9 +308,10 @@ function playMedia(e) {
         }
         mediaPlayDelay = setTimeout(createMediaWindow, document.getElementById("mdDelay").value*1000);
     } else if (e.target.innerText = "⏹️") {
+        document.getElementById("custom-seekbar").children[0].style.width=0;
         clearTimeout(mediaPlayDelay);
         if (document.getElementById('mediaCntDn') != null)
-            document.getElementById('mediaCntDn').innerHTML = "00:00";
+            document.getElementById('mediaCntDn').innerHTML = "00:00:000";
         e.target.innerText = "▶️";
         try {
             mediaWindow.close();
@@ -577,6 +578,7 @@ async function createMediaWindow(path) {
         console.log(message)
     });
     mediaWindow.on('closed', () => {
+        document.getElementById("custom-seekbar").children[0].style.width=0;
         document.getElementById("mediaCntDn").innerText = "00:00:000";
         mediaWindow = null;
         if (document.getElementById('mediaCntUpDn') != null) {
