@@ -340,7 +340,9 @@ function setSeekBar(evt) {
     if (percentage < 0) {
         return;
     }
-    mediaWindow.send('timeGoto-message', percentage);
+    if (mediaWindow != null) {
+        mediaWindow.send('timeGoto-message', percentage);
+    }
     //console.log(document.getElementById("custom-seekbar").children[0].style.width);
     console.log(percentage);
 }
