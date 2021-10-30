@@ -1,8 +1,14 @@
 const electron = require("electron");
-const { ipcRenderer } = require('electron')
+const { ipcRenderer } = require('electron');
 
+var video = document.createElement('video');
 var mediaFile = electron.remote.getCurrentWindow().webContents.browserWindowOptions.mediaFile;
 var cntDnInt = null;
+
+ipcRenderer.on('timeGoto-message', function (evt, message) {
+    video.currentTime=video.duration*message;
+    console.log(message)
+});
 
 function rafAsync() {
     return new Promise(resolve => {
@@ -19,13 +25,12 @@ function checkElement(selector) {
 }
 
 function sendRemainingTime(video) {
-    cntDnInt = setInterval(function(){ 
-        ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime)
+    cntDnInt = setInterval(function() { 
+        ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
     }, 10);
 }
 
 function loadMedia() {
-    var video = document.createElement('video');
     video.setAttribute("id", "bigPlayer");
     video.src = mediaFile;
     video.setAttribute("controls", "controls");
@@ -42,19 +47,19 @@ function loadMedia() {
 
     video.addEventListener('play', (event) => {
         cntDnInt = setInterval(function(){ 
-            ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime)
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
         }, 10);
     })
 
     video.addEventListener('seeked', (event) => {
         cntDnInt = setInterval(function(){ 
-            ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime)
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
         }, 10);
     })
 
     video.addEventListener('seeking', (event) => {
         clearInterval(cntDnInt);
-        ipcRenderer.send('timeRemaining-message', video.duration - video.currentTime);
+        ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime]);
     })
     video.play();
 }

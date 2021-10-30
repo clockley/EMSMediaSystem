@@ -1,18 +1,38 @@
 //Project Alchemy
 //Copyright 2019 - Ephesus Apprentice Alchemist
-const { ipcRenderer } = require('electron')
+const { app, BrowserWindow, ipcMain, ipcRenderer } = require('electron');
 
 var nextFile = null;
 var timers = [];
 var alarmFileMetadata = [];
-var timeRemaining = "00:00:000"
+var timeRemaining = "00:00:000";
+var duration = 0;
+
+var toHHMMSS = (secs) => {
+    if (isNaN(secs)) {
+      return "00:00";
+    }
+    var pad = function(num, size) { return ('000' + num).slice(size * -1); },
+    time = parseFloat(secs).toFixed(3),
+    hours = Math.floor(time / 60 / 60),
+    minutes = Math.floor(time / 60) % 60,
+    seconds = Math.floor(time - minutes * 60);
+
+    return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2);
+}
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
+    if (mediaWindow == null) {
+        return;
+    }
     if (document.getElementById('mediaCntDn') != null) {
-        document.getElementById('mediaCntDn').innerHTML = message;
+        document.getElementById('mediaCntDn').innerHTML = message[0];
+        document.getElementById("custom-seekbar").children[0].style.width = message[1];
+        document.getElementById('mediaCntUpDn').innerHTML = toHHMMSS(message[3]) + "/" + toHHMMSS(message[2]);
     } else {
         timeRemaining = message;
     }
+    duration = message[2];
 });
 
 class AlarmInputState {
@@ -75,13 +95,18 @@ function resetMediaSrc() {
 function resetPlayer() {
     document.getElementById("audio").style.visibility = document.getElementById("plystCtrl").style.visibility = "visible";
     document.getElementById("audio").style.display = document.getElementById("plystCtrl").style.display = "";
-    if (document.getElementById('mediaCntDn') != null)
+    if (document.getElementById('mediaCntDn') != null) {
         document.getElementById('mediaCntDn').innerHTML = "00:00";
+    }
+    if (document.getElementById('mediaCntUpDn') != null) {
+        document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
+    }
     clearPlaylist();
     resetMediaSrc();
 }
 
 function setSBFormWkly() {
+    saveMediaFile();
     resetPlayer();
     document.getElementById("dyneForm").innerHTML =
         `
@@ -106,6 +131,7 @@ function setSBFormWkly() {
 }
 
 function setSBFormSpcl() {
+    saveMediaFile();
     resetPlayer();
     document.getElementById("dyneForm").innerHTML =
         `
@@ -230,6 +256,7 @@ function addAlarm(e) {
 }
 
 function setSBFormAlrms() {
+    saveMediaFile();
     resetPlayer();
     document.getElementById("audio").style.visibility = "hidden";
     document.getElementById("plystCtrl").style.visibility = "hidden";
@@ -281,6 +308,9 @@ function playMedia(e) {
         try {
             mediaWindow.close();
             mediaWindow = null;
+            if (document.getElementById('mediaCntUpDn') != null) {
+                document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
+            }
         } catch (err) {
             ;
         }
@@ -289,9 +319,26 @@ function playMedia(e) {
 
 }
 
+function setSeekBar(evt) {
+    var rect = document.querySelector("#custom-seekbar").getBoundingClientRect();
+    var offset = { 
+        top: rect.top + window.scrollY, 
+        left: rect.left + window.scrollX, 
+    };
+    var left = (evt.pageX - offset.left);
+    //var totalWidth = document.getElementById("custom-seekbar").children[0].getBoundingClientRect().width;
+    var totalWidth = 400; //FIXME
+    var percentage = ( left / totalWidth );
+    if (percentage < 0) {
+        return;
+    }
+    mediaWindow.send('timeGoto-message', percentage);
+    //console.log(document.getElementById("custom-seekbar").children[0].style.width);
+    console.log(percentage);
+}
+
 function setSBFormMediaPlayer() {
     resetPlayer();
-
     document.getElementById("audio").style.display = "none";
     document.getElementById("plystCtrl").style.display = "none";
     document.getElementById("dyneForm").innerHTML =
@@ -314,19 +361,43 @@ function setSBFormMediaPlayer() {
         <br>
         <br>
         <center><span style="color:red;font-size: larger;" id="mediaCntDn">00:00:000<span></center>
+        <br>
+        <div id="custom-seekbar"><span draggable="true"></span></div>
+        <div><span id="mediaCntUpDn">00:00/00:00</span></div>
     `;
+    restoreMediaFile();
+    document.getElementById("custom-seekbar").onclick = setSeekBar;
+    document.getElementById("custom-seekbar").ondrag = setSeekBar;
 
     if (mediaWindow == null) {
         document.getElementById("mediaWindowPlayButton").innerText = "▶️";
         document.getElementById("mediaCntDn").innerText = "00:00:000";
+        if (document.getElementById('mediaCntUpDn') != null) {
+            document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
+        }
     } else {
         document.getElementById('mediaCntDn').innerHTML = timeRemaining;
         timeRemaining = "00:00:000";
         document.getElementById("mediaWindowPlayButton").innerText = "⏹️";
         document.getElementById("mdFile").files = currentMediaFile;
+        if (document.getElementById('mediaCntUpDn') != null) {
+            document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
+        }
     }
 
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
+}
+
+function saveMediaFile() {
+    if (document.getElementById("mdFile") != null && document.getElementById("mdFile") != 'undefined') {
+        saveMediaFile.fileInpt = document.getElementById("mdFile").files;
+    }
+}
+
+function restoreMediaFile() {
+    if (saveMediaFile.fileInpt != null && document.getElementById("mdFile") != null) {
+        document.getElementById("mdFile").files = saveMediaFile.fileInpt;
+    }
 }
 
 function installSidebarFormEvents() {
@@ -493,8 +564,15 @@ async function createMediaWindow(path) {
             mediaFile: document.getElementById("mdFile").files[0].path
         });
     }
+    mediaWindow.on('timeGoto-message', function (evt, message) {
+        //video.currentTime = message;
+        console.log(message)
+    });
     mediaWindow.on('closed', () => {
         mediaWindow = null;
+        if (document.getElementById('mediaCntUpDn') != null) {
+            document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
+        }
         if (document.getElementById("mediaWindowPlayButton") != null) {
             document.getElementById("mediaWindowPlayButton").innerText = "▶️";
             ipcRenderer.send('timeRemaining-message', 0);
