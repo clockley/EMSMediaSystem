@@ -344,7 +344,7 @@ function setSBFormMediaPlayer() {
     document.getElementById("dyneForm").innerHTML =
         `
         <form>
-            <input type="file" name="mdFile" id="mdFile">
+            <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
 
              <br>
 
