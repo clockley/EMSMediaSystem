@@ -350,7 +350,9 @@ function setSBFormMediaPlayer() {
 
             <input type="number" min="0" max="60" step="1" value="0" name="mdTimeout" id="mdDelay">
             <label for="mdTimeout">Delay</label>
-
+  
+            <input name="malrm1" id="malrm1" type="time">
+            <label for="malrm1"> Run At </label>
             <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
             <label for=""mdScrCtrl>Second Monitor</label>
         
@@ -537,6 +539,16 @@ async function createMediaWindow(path) {
             break;
         }
     }
+
+    if (document.getElementById("malrm1").value != "") {
+        var deadlinestr = "";
+        var deadlinestrarr = String(new Date()).split(" ");
+        deadlinestrarr[4] = document.getElementById("malrm1").value;
+        for (i = 0; i < deadlinestrarr.length; ++i) {deadlinestr+=(deadlinestrarr[i]+" ")}
+        deadline=new Date(deadlinestr);
+        document.getElementById("mdDelay").value = ((deadline.getTime() - new Date().getTime())/1000);
+    }
+
     await sleep(document.getElementById("mdDelay").value * 1000);
 
     if (externalDisplay && document.getElementById("mdScrCtlr").checked) {
