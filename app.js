@@ -7,10 +7,11 @@ var timers = [];
 var alarmFileMetadata = [];
 var timeRemaining = "00:00:000";
 var duration = 0;
+var mediaPlayDelay = null;
 
 var toHHMMSS = (secs) => {
     if (isNaN(secs)) {
-      return "00:00";
+      return "00:00:000";
     }
     var pad = function(num, size) { return ('000' + num).slice(size * -1); },
     time = parseFloat(secs).toFixed(3),
@@ -75,10 +76,6 @@ class Timer {
         }
     }
 };
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 function getMediaFilesFolder() {
     return require('path').dirname(require('electron').remote.app.getPath('exe')) + process && process.type === 'renderer' ? "/../../../." : "/../.";
@@ -300,8 +297,18 @@ function playMedia(e) {
     if (e.target.innerText == "▶️") {
         e.target.innerText = "⏹️";
         currentMediaFile = document.getElementById("mdFile").files;
-        createMediaWindow();
+
+        if (document.getElementById("malrm1").value != "") {
+            var deadlinestr = "";
+            var deadlinestrarr = String(new Date()).split(" ");
+            deadlinestrarr[4] = document.getElementById("malrm1").value;
+            for (i = 0; i < deadlinestrarr.length; ++i) {deadlinestr+=(deadlinestrarr[i]+" ")}
+            deadline=new Date(deadlinestr);
+            document.getElementById("mdDelay").value = ((deadline.getTime() - new Date().getTime())/1000);
+        }
+        mediaPlayDelay = setTimeout(createMediaWindow, document.getElementById("mdDelay").value*1000);
     } else if (e.target.innerText = "⏹️") {
+        clearTimeout(mediaPlayDelay);
         if (document.getElementById('mediaCntDn') != null)
             document.getElementById('mediaCntDn').innerHTML = "00:00";
         e.target.innerText = "▶️";
@@ -540,17 +547,6 @@ async function createMediaWindow(path) {
         }
     }
 
-    if (document.getElementById("malrm1").value != "") {
-        var deadlinestr = "";
-        var deadlinestrarr = String(new Date()).split(" ");
-        deadlinestrarr[4] = document.getElementById("malrm1").value;
-        for (i = 0; i < deadlinestrarr.length; ++i) {deadlinestr+=(deadlinestrarr[i]+" ")}
-        deadline=new Date(deadlinestr);
-        document.getElementById("mdDelay").value = ((deadline.getTime() - new Date().getTime())/1000);
-    }
-
-    await sleep(document.getElementById("mdDelay").value * 1000);
-
     if (externalDisplay && document.getElementById("mdScrCtlr").checked) {
         mediaWindow = new BrowserWindow({
             x: externalDisplay.bounds.x + 50,
@@ -581,6 +577,7 @@ async function createMediaWindow(path) {
         console.log(message)
     });
     mediaWindow.on('closed', () => {
+        document.getElementById("mediaCntDn").innerText = "00:00:000";
         mediaWindow = null;
         if (document.getElementById('mediaCntUpDn') != null) {
             document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
@@ -594,6 +591,7 @@ async function createMediaWindow(path) {
                 document.getElementById("mediaWindowPlayButton").innerText = "▶️";
             }, { once: true });
         }
+        timeRemaining = "00:00:000"
     });
 
     mediaWindow.loadFile("media.html");
