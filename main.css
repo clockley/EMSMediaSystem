@@ -71,3 +71,23 @@ footer {
     height: 32px;
     width : 32px;
 }
+
+#custom-seekbar
+{  
+  cursor: pointer;
+  height: 10px;
+  margin-bottom: 10px;
+  outline: thin solid orange;
+  overflow: hidden;
+  position: relative;
+  width: 400px;
+}
+#custom-seekbar span
+{
+  background-color: orange;
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 10px;
+  width: 0px;
+}

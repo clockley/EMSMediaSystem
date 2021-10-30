@@ -5,7 +5,6 @@ const { addBypassChecker } = require('electron-compile');
 
 addBypassChecker((bypassChecker) => {
   return bypassChecker.push(function (x) {
-    console.log("Outside path");
     x.indexOf(app.getAppPath()) === -1;
   });
 });
@@ -14,6 +13,9 @@ addBypassChecker((bypassChecker) => {
 // be closed automatically when the JavaScript object is garbage collected.
 let win
 var toHHMMSS = (secs) => {
+  if (isNaN(secs)) {
+    return "00:00:000";
+  }
   var pad = function(num, size) { return ('000' + num).slice(size * -1); },
   time = parseFloat(secs).toFixed(3),
   hours = Math.floor(time / 60 / 60),
@@ -26,8 +28,13 @@ var toHHMMSS = (secs) => {
 
 function createWindow() {
   ipcMain.on('timeRemaining-message', (event, arg) => {
-    win.webContents.send('timeRemaining-message', toHHMMSS(arg))
+    win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), (arg[1] / arg[0])*100+"%", arg[0], arg[1]])
   })
+
+  ipcMain.on('timeGoto-message', function (evt, message) {
+    //win.webContents.send('timeGoto-message', message)
+     console.log("DUDU");
+  });
 
 // Create the browser window.
   win = new BrowserWindow({
