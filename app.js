@@ -349,6 +349,14 @@ function setSeekBar(evt) {
 
 function setSBFormMediaPlayer() {
     resetPlayer();
+    if (mediaWindow == null) {
+        if (document.getElementById("custom-seekbar") != null) {
+            document.getElementById("custom-seekbar").children[0].style.width=0;
+        }
+        if (document.getElementById("mediaCntDn")!= null) {
+            document.getElementById("mediaCntDn").innerText = "00:00:000";
+        }
+    }
     document.getElementById("audio").style.display = "none";
     document.getElementById("plystCtrl").style.display = "none";
     document.getElementById("dyneForm").innerHTML =
@@ -580,8 +588,10 @@ async function createMediaWindow(path) {
         console.log(message)
     });
     mediaWindow.on('closed', () => {
-        document.getElementById("custom-seekbar").children[0].style.width=0;
-        document.getElementById("mediaCntDn").innerText = "00:00:000";
+        if (document.getElementById("custom-seekbar") != null) {
+            document.getElementById("custom-seekbar").children[0].style.width=0;
+            document.getElementById("mediaCntDn").innerText = "00:00:000";
+        }
         mediaWindow = null;
         if (document.getElementById('mediaCntUpDn') != null) {
             document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
