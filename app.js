@@ -560,6 +560,7 @@ async function createMediaWindow(path) {
 
     if (externalDisplay && document.getElementById("mdScrCtlr").checked) {
         mediaWindow = new BrowserWindow({
+            backgroundColor: '#000000',
             x: externalDisplay.bounds.x + 50,
             y: externalDisplay.bounds.y + 50,
             width: externalDisplay.width,
@@ -573,6 +574,7 @@ async function createMediaWindow(path) {
         });
     } else {
         mediaWindow = new BrowserWindow({
+            backgroundColor: '#000000',
             width: displays[0].width,
             height: displays[0].height,
             fullscreen: true,
