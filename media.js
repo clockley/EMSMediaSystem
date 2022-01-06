@@ -3,6 +3,7 @@ const { ipcRenderer } = require('electron');
 
 var video = document.createElement('video');
 var mediaFile = electron.remote.getCurrentWindow().webContents.browserWindowOptions.mediaFile;
+var loop = electron.remote.getCurrentWindow().webContents.browserWindowOptions.loop;
 var cntDnInt = null;
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
@@ -34,6 +35,7 @@ function loadMedia() {
     video.setAttribute("id", "bigPlayer");
     video.src = mediaFile;
     video.setAttribute("controls", "controls");
+    video.setAttribute("loop", "true");
     video.addEventListener("ended", function () {
         electron.remote.getCurrentWindow().close();
     });
