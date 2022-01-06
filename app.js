@@ -373,7 +373,8 @@ function setSBFormMediaPlayer() {
             <label for="malrm1"> Run At </label>
             <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
             <label for=""mdScrCtrl>Second Monitor</label>
-        
+            <input type="checkbox" name="mdLCtrl" id="mdLCtrl">
+            <label for=""mdLCtrl>Loop</label>
             <br>
 
             <button id="mediaWindowPlayButton" type="button">▶️</button>
@@ -570,7 +571,8 @@ async function createMediaWindow(path) {
             webPreferences: {
                 nodeIntegration: true
             },
-            mediaFile: document.getElementById("mdFile").files[0].path
+            mediaFile: document.getElementById("mdFile").files[0].path,
+            loop: document.getElementById("mdLCtrl").checked
         });
     } else {
         mediaWindow = new BrowserWindow({
@@ -582,7 +584,8 @@ async function createMediaWindow(path) {
             webPreferences: {
                 nodeIntegration: true
             },
-            mediaFile: document.getElementById("mdFile").files[0].path
+            mediaFile: document.getElementById("mdFile").files[0].path,
+            loop: document.getElementById("mdLCtrl").checked
         });
     }
     mediaWindow.on('timeGoto-message', function (evt, message) {
