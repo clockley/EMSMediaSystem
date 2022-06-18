@@ -1,8 +1,10 @@
 const electron = require("electron");
 const { ipcRenderer } = require('electron');
+const hls = require("hls.js");
 
 var video = document.createElement('video');
 var mediaFile = electron.remote.getCurrentWindow().webContents.browserWindowOptions.mediaFile;
+var liveStreamMode = electron.remote.getCurrentWindow().webContents.browserWindowOptions.liveStreamMode;
 var cntDnInt = null;
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
@@ -31,36 +33,45 @@ function sendRemainingTime(video) {
 }
 
 function loadMedia() {
+    var h = new hls();
     video.setAttribute("id", "bigPlayer");
     video.src = mediaFile;
+    if (mediaFile.includes("m3u8") || mediaFile.includes("mpd")) {
+        h.loadSource(mediaFile);
+    }
     video.setAttribute("controls", "controls");
     video.addEventListener("ended", function () {
         electron.remote.getCurrentWindow().close();
     });
+    if (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("videoplayback")) {
+        h.attachMedia(video);
+    }
     document.body.appendChild(video);
     checkElement('bigPlayer');
-    sendRemainingTime(video);
+    if (!liveStreamMode) {
+        sendRemainingTime(video);
 
-    video.addEventListener('pause', (event) => {
-        clearInterval(cntDnInt);
-    })
+        video.addEventListener('pause', (event) => {
+            clearInterval(cntDnInt);
+        })
 
-    video.addEventListener('play', (event) => {
-        cntDnInt = setInterval(function(){ 
-            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
-        }, 10);
-    })
+        video.addEventListener('play', (event) => {
+            cntDnInt = setInterval(function(){ 
+                ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
+            }, 10);
+        })
 
-    video.addEventListener('seeked', (event) => {
-        cntDnInt = setInterval(function(){ 
-            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
-        }, 10);
-    })
+        video.addEventListener('seeked', (event) => {
+            cntDnInt = setInterval(function(){ 
+                ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
+            }, 10);
+        })
 
-    video.addEventListener('seeking', (event) => {
-        clearInterval(cntDnInt);
-        ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime]);
-    })
+        video.addEventListener('seeking', (event) => {
+            clearInterval(cntDnInt);
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime]);
+        })
+    }
     video.play();
 }
 

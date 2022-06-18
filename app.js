@@ -298,7 +298,7 @@ function playMedia(e) {
         e.target.innerText = "⏹️";
         currentMediaFile = document.getElementById("mdFile").files;
 
-        if (document.getElementById("malrm1").value != "") {
+        if (document.getElementById("malrm1") != null && document.getElementById("malrm1").value != "") {
             var deadlinestr = "";
             var deadlinestrarr = String(new Date()).split(" ");
             deadlinestrarr[4] = document.getElementById("malrm1").value;
@@ -306,12 +306,18 @@ function playMedia(e) {
             deadline=new Date(deadlinestr);
             document.getElementById("mdDelay").value = ((deadline.getTime() - new Date().getTime())/1000);
         }
-        mediaPlayDelay = setTimeout(createMediaWindow, document.getElementById("mdDelay").value*1000);
+        if (document.getElementById("mdDelay") != null) {
+            mediaPlayDelay = setTimeout(createMediaWindow, document.getElementById("mdDelay").value*1000);
+        } else {
+            createMediaWindow();
+        }
     } else if (e.target.innerText = "⏹️") {
-        document.getElementById("custom-seekbar").children[0].style.width=0;
-        clearTimeout(mediaPlayDelay);
-        if (document.getElementById('mediaCntDn') != null)
-            document.getElementById('mediaCntDn').innerHTML = "00:00:000";
+        if (document.getElementById("custom-seekbar") != null) {
+            document.getElementById("custom-seekbar").children[0].style.width=0;
+            clearTimeout(mediaPlayDelay);
+            if (document.getElementById('mediaCntDn') != null)
+                document.getElementById('mediaCntDn').innerHTML = "00:00:000";
+        }
         e.target.innerText = "▶️";
         try {
             mediaWindow.close();
@@ -345,6 +351,45 @@ function setSeekBar(evt) {
     }
     //console.log(document.getElementById("custom-seekbar").children[0].style.width);
     console.log(percentage);
+}
+
+function setSBFormYouTubeMediaPlayer() {
+    resetPlayer();
+    if (mediaWindow == null) {
+        if (document.getElementById("custom-seekbar") != null) {
+            document.getElementById("custom-seekbar").children[0].style.width=0;
+        }
+        if (document.getElementById("mediaCntDn")!= null) {
+            document.getElementById("mediaCntDn").innerText = "00:00:000";
+        }
+    }
+    document.getElementById("audio").style.display = "none";
+    document.getElementById("plystCtrl").style.display = "none";
+    document.getElementById("dyneForm").innerHTML =
+        `
+        <form>
+            <input type="url" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
+
+            <br>
+
+            <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
+            <label for=""mdScrCtrl>Second Monitor</label>
+        
+            <br>
+
+            <button id="mediaWindowPlayButton" type="button">▶️</button>
+        </form>
+        <br>
+    `;
+    restoreMediaFile();
+
+    if (mediaWindow == null) {
+        document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+    } else {
+        document.getElementById("mediaWindowPlayButton").innerText = "⏹️";
+    }
+
+    document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
 }
 
 function setSBFormMediaPlayer() {
@@ -410,13 +455,24 @@ function setSBFormMediaPlayer() {
 
 function saveMediaFile() {
     if (document.getElementById("mdFile") != null && document.getElementById("mdFile") != 'undefined') {
+        if (document.getElementById("mdFile").files != null && document.getElementById("mdFile").files.length == 0) {
+            return;
+        } else if (document.getElementById("mdFile").value == "") {
+            return;
+        }
         saveMediaFile.fileInpt = document.getElementById("mdFile").files;
+        saveMediaFile.urlInpt = document.getElementById("mdFile").value;
     }
 }
 
 function restoreMediaFile() {
     if (saveMediaFile.fileInpt != null && document.getElementById("mdFile") != null) {
-        document.getElementById("mdFile").files = saveMediaFile.fileInpt;
+        if (document.getElementById("YtPlyrRBtnFrmID").checked) {
+            console.log("GR");
+            document.getElementById("mdFile").value = saveMediaFile.urlInpt;
+        }else {
+            document.getElementById("mdFile").files = saveMediaFile.fileInpt;
+        }
     }
 }
 
@@ -425,6 +481,7 @@ function installSidebarFormEvents() {
     document.getElementById("SpclRBtnFrmID").onclick = setSBFormSpcl;
     document.getElementById("AlrmsRBtnFrmID").onclick = setSBFormAlrms;
     document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
+    document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
 }
 
 function endOfPlaylist() {
@@ -570,7 +627,8 @@ async function createMediaWindow(path) {
             webPreferences: {
                 nodeIntegration: true
             },
-            mediaFile: document.getElementById("mdFile").files[0].path
+            mediaFile: document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path,
+            liveStreamMode: document.getElementById("YtPlyrRBtnFrmID").checked == true,
         });
     } else {
         mediaWindow = new BrowserWindow({
@@ -582,7 +640,8 @@ async function createMediaWindow(path) {
             webPreferences: {
                 nodeIntegration: true
             },
-            mediaFile: document.getElementById("mdFile").files[0].path
+            mediaFile: document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path,
+            liveStreamMode: document.getElementById("YtPlyrRBtnFrmID").checked == true,
         });
     }
     mediaWindow.on('timeGoto-message', function (evt, message) {
