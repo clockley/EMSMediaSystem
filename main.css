@@ -91,3 +91,8 @@ footer {
   height: 10px;
   width: 0px;
 }
+
+video
+{
+    pointer-events: none;
+}
