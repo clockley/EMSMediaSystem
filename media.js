@@ -72,6 +72,7 @@ function loadMedia() {
             ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime]);
         })
     }
+    video.controls = false;
     video.play();
 }
 
