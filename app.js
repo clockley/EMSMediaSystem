@@ -579,7 +579,7 @@ function playFile(path) {
 
 function getPlaylistByWeek(wnum) {
     const remote = {
-        rmtm: require('electron').remote,
+        rmtm: require('@electron/remote'),
         fs: require('fs')
     }
 
@@ -601,7 +601,7 @@ function getPlaylistByEvent(evnt) {
 let mediaWindow = null;
 
 async function createMediaWindow(path) {
-    const electron = require('electron').remote;
+    const electron = require('@electron/remote');
     const app = electron.app;
     const { BrowserWindow } = electron;
 
@@ -615,6 +615,9 @@ async function createMediaWindow(path) {
         }
     }
 
+    var mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+    var ytMode = true;
+
     if (externalDisplay && document.getElementById("mdScrCtlr").checked) {
         mediaWindow = new BrowserWindow({
             backgroundColor: '#000000',
@@ -625,11 +628,14 @@ async function createMediaWindow(path) {
             fullscreen: true,
             autoHideMenuBar: true,
             webPreferences: {
-                nodeIntegration: true
+                nodeIntegration: true,
+                contextIsolation: false,
+                nativeWindowOpen: false,
+                additionalArguments: [mediaFile]
             },
-            mediaFile: document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path,
-            liveStreamMode: document.getElementById("YtPlyrRBtnFrmID").checked == true,
         });
+        //require("@electron/remote").require("@electron/remote/main").enable(mediaWindow.webContents);
+        console.log(mediaWindow.webContents);
     } else {
         mediaWindow = new BrowserWindow({
             backgroundColor: '#000000',
@@ -638,12 +644,17 @@ async function createMediaWindow(path) {
             fullscreen: true,
             autoHideMenuBar: true,
             webPreferences: {
-                nodeIntegration: true
-            },
-            mediaFile: document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path,
-            liveStreamMode: document.getElementById("YtPlyrRBtnFrmID").checked == true,
+                nodeIntegration: true,
+                contextIsolation: false,
+                nativeWindowOpen: false,
+                additionalArguments: [mediaFile]
+            }
         });
+        //require("@electron/remote").require("@electron/remote/main").enable(mediaWindow.webContents);
+        
+        console.log(mediaWindow.webContents);
     }
+
     mediaWindow.on('timeGoto-message', function (evt, message) {
         //video.currentTime = message;
         console.log(message)

@@ -1,10 +1,10 @@
-const electron = require("electron");
+const electron = require('@electron/remote');
 const { ipcRenderer } = require('electron');
 const hls = require("hls.js");
 
 var video = document.createElement('video');
-var mediaFile = electron.remote.getCurrentWindow().webContents.browserWindowOptions.mediaFile;
-var liveStreamMode = electron.remote.getCurrentWindow().webContents.browserWindowOptions.liveStreamMode;
+var mediaFile = window.process.argv.slice(-1)[0];
+var liveStreamMode = (mediaFile[0].includes("m3u8") || mediaFile[0].includes("mpd") || mediaFile[0].includes("videoplayback")) == true ? true : false;
 var cntDnInt = null;
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {

@@ -1,13 +1,8 @@
 "use strict";
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { addBypassChecker } = require('electron-compile');
+require('@electron/remote/main').initialize();
 
-
-addBypassChecker((bypassChecker) => {
-  return bypassChecker.push(function (x) {
-    x.indexOf(app.getAppPath()) === -1;
-  });
-});
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -42,9 +37,12 @@ function createWindow() {
     height: 450,
     autoHideMenuBar: true,
     webPreferences: {
-      nodeIntegration: true
+      nodeIntegration: true,
+      contextIsolation: false
     }
   })
+
+  require("@electron/remote/main").enable(win.webContents);
 
   // and load the index.html of the app.
   win.loadFile('index.html')
