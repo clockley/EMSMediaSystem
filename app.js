@@ -634,8 +634,6 @@ async function createMediaWindow(path) {
                 additionalArguments: [mediaFile]
             },
         });
-        //require("@electron/remote").require("@electron/remote/main").enable(mediaWindow.webContents);
-        console.log(mediaWindow.webContents);
     } else {
         mediaWindow = new BrowserWindow({
             backgroundColor: '#000000',
@@ -650,9 +648,6 @@ async function createMediaWindow(path) {
                 additionalArguments: [mediaFile]
             }
         });
-        //require("@electron/remote").require("@electron/remote/main").enable(mediaWindow.webContents);
-        
-        console.log(mediaWindow.webContents);
     }
 
     mediaWindow.on('timeGoto-message', function (evt, message) {
