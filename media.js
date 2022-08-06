@@ -6,10 +6,10 @@ var video = document.createElement('video');
 var mediaFile = window.process.argv.slice(-1)[0];
 var liveStreamMode = (mediaFile[0].includes("m3u8") || mediaFile[0].includes("mpd") || mediaFile[0].includes("videoplayback")) == true ? true : false;
 var cntDnInt = null;
+var endTime = window.process.argv.slice(-2)[0];
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
     video.currentTime=video.duration*message;
-    console.log(message)
 });
 
 function rafAsync() {
@@ -31,7 +31,7 @@ function sendRemainingTime(video) {
         ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
     }, 10);
 }
-
+var xxx = 0;
 function loadMedia() {
     var h = new hls();
     video.setAttribute("id", "bigPlayer");
@@ -41,7 +41,7 @@ function loadMedia() {
     }
     video.setAttribute("controls", "controls");
     video.addEventListener("ended", function () {
-        electron.remote.getCurrentWindow().close();
+        close();
     });
     if (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("videoplayback")) {
         h.attachMedia(video);
@@ -71,8 +71,21 @@ function loadMedia() {
             clearInterval(cntDnInt);
             ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime]);
         })
+        video.addEventListener('loadeddata', (event) => {
+            if (endTime != 0) {
+                clearInterval(cntDnInt);
+                if (endTime != 0||endTime != null) {
+                    var endTme = new Date();
+                    endTme.setHours(window.process.argv.slice(-2)[0].split(":")[0]);
+                    endTme.setMinutes(window.process.argv.slice(-2)[0].split(":")[1]);
+                    var curTime=new Date();
+                    video.currentTime = ((video.duration-6)-(Math.abs((curTime)-endTme)/1000));
+                }
+            }
+        })
     }
     video.controls = false;
+    video.load();
     video.play();
 }
 

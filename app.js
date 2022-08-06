@@ -78,7 +78,7 @@ class Timer {
 };
 
 function getMediaFilesFolder() {
-    return require('path').dirname(require('electron').remote.app.getPath('exe')) + process && process.type === 'renderer' ? "/../../../." : "/../.";
+    return require('path').dirname(require('@electron/remote').app.getPath('exe')) + process && process.type === 'renderer' ? "/../../../." : "/../.";
 }
 
 function clearPlaylist() {
@@ -286,6 +286,7 @@ function setSBFormAlrms() {
 }
 
 function playMedia(e) {
+    //new Date().setHours(document.getElementById("cntTmeVidStrt").value.split(":")[0], document.getElementById("cntTmeVidStrt").value.split(":")[1], 00)
     if (!e) {
         return;
     }
@@ -349,7 +350,6 @@ function setSeekBar(evt) {
     if (mediaWindow != null) {
         mediaWindow.send('timeGoto-message', percentage);
     }
-    //console.log(document.getElementById("custom-seekbar").children[0].style.width);
     console.log(percentage);
 }
 
@@ -381,6 +381,45 @@ function setSBFormYouTubeMediaPlayer() {
         </form>
         <br>
     `;
+    restoreMediaFile();
+
+    if (mediaWindow == null) {
+        document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+    } else {
+        document.getElementById("mediaWindowPlayButton").innerText = "⏹️";
+    }
+
+    document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
+}
+
+function setSBFormTimeoutMediaPlayer() {
+    resetPlayer();
+    if (mediaWindow == null) {
+        if (document.getElementById("custom-seekbar") != null) {
+            document.getElementById("custom-seekbar").children[0].style.width=0;
+        }
+        if (document.getElementById("mediaCntDn")!= null) {
+            document.getElementById("mediaCntDn").innerText = "00:00:000";
+        }
+    }
+    document.getElementById("audio").style.display = "none";
+    document.getElementById("plystCtrl").style.display = "none";
+    document.getElementById("dyneForm").innerHTML =
+        `
+        <form>
+            <input type="url" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
+
+            <input checked type="time" name="cntTmeVidStrt" id="cntTmeVidStrt" value="11:00">
+            <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
+            <label for=""mdScrCtrl>Second Monitor</label>
+        
+            <br>
+
+            <button id="mediaWindowPlayButton" type="button">▶️</button>
+        </form>
+        <br>
+    `;
+    document.getElementById("mdFile").value=require('path').join(require('os').homedir(), 'Desktop')+"/cntDwnWthStartTime.mp4"
     restoreMediaFile();
 
     if (mediaWindow == null) {
@@ -482,6 +521,7 @@ function installSidebarFormEvents() {
     document.getElementById("AlrmsRBtnFrmID").onclick = setSBFormAlrms;
     document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
+    document.getElementById("TmOut").onclick = setSBFormTimeoutMediaPlayer;
 }
 
 function endOfPlaylist() {
@@ -615,8 +655,15 @@ async function createMediaWindow(path) {
         }
     }
 
-    var mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
-    var ytMode = true;
+    if (!document.getElementById("mdFile").value.includes("fake")) {
+        mediaFile = document.getElementById("mdFile").value;
+    } else {
+        var mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+    }
+    var endTime = '0';
+    if (document.getElementById("cntTmeVidStrt")) {
+        endTime = document.getElementById("cntTmeVidStrt").value;
+    }
 
     if (externalDisplay && document.getElementById("mdScrCtlr").checked) {
         mediaWindow = new BrowserWindow({
@@ -627,11 +674,12 @@ async function createMediaWindow(path) {
             height: externalDisplay.height,
             fullscreen: true,
             autoHideMenuBar: true,
+            frame: false,
             webPreferences: {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: [mediaFile]
+                additionalArguments: [endTime, mediaFile]
             },
         });
     } else {
@@ -645,14 +693,13 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: [mediaFile]
+                additionalArguments: [endTime, mediaFile]
             }
         });
     }
 
     mediaWindow.on('timeGoto-message', function (evt, message) {
         //video.currentTime = message;
-        console.log(message)
     });
     mediaWindow.on('closed', () => {
         if (document.getElementById("custom-seekbar") != null) {
