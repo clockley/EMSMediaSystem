@@ -1,6 +1,5 @@
 "use strict";
 const { app, BrowserWindow, ipcMain } = require('electron');
-const { addBypassChecker } = require('electron-compile');
 require('@electron/remote/main').initialize();
 
 
