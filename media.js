@@ -3,10 +3,9 @@ const { ipcRenderer } = require('electron');
 const hls = require("hls.js");
 
 var video = document.createElement('video');
-var mediaFile = window.process.argv.slice(-2)[0];
-var liveStreamMode = (mediaFile[0].includes("m3u8") || mediaFile[0].includes("mpd") || mediaFile[0].includes("videoplayback")) == true ? true : false;
+var mediaFile;
 var cntDnInt = null;
-var endTime = window.process.argv.slice(-2)[0];
+var endTime;
 
 for (var i = 0; i < window.process.argv.length; ++i) {
     if (window.process.argv[i].includes('--endtime-ems=')) {
@@ -19,6 +18,7 @@ for (var i = 0; i < window.process.argv.length; ++i) {
         mediaFile=window.process.argv[i].split('=')[1]
     }
 }
+var liveStreamMode = (mediaFile[0].includes("m3u8") || mediaFile[0].includes("mpd") || mediaFile[0].includes("videoplayback")) == true ? true : false;
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
     video.currentTime=video.duration*message;
@@ -88,8 +88,8 @@ function loadMedia() {
                 clearInterval(cntDnInt);
                 if (endTime != 0||endTime != null) {
                     var endTme = new Date();
-                    endTme.setHours(window.process.argv.slice(-2)[0].split(":")[0]);
-                    endTme.setMinutes(window.process.argv.slice(-2)[0].split(":")[1]);
+                    endTme.setHours(endTime.split(":")[0]);
+                    endTme.setMinutes(endTime.split(":")[1]);
                     var curTime=new Date();
                     video.currentTime = ((video.duration-6)-(Math.abs((curTime)-endTme)/1000));
                 }
