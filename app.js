@@ -679,7 +679,7 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: [endTime, mediaFile]
+                additionalArguments: ['--endtime-ems='+endTime, '--mediafile-ems='+mediaFile]
             },
         });
     } else {
@@ -693,7 +693,7 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: [endTime, mediaFile]
+                additionalArguments: ['--endtime-ems='+endTime, '--mediafile-ems='+mediaFile]
             }
         });
     }

@@ -3,10 +3,22 @@ const { ipcRenderer } = require('electron');
 const hls = require("hls.js");
 
 var video = document.createElement('video');
-var mediaFile = window.process.argv.slice(-1)[0];
+var mediaFile = window.process.argv.slice(-2)[0];
 var liveStreamMode = (mediaFile[0].includes("m3u8") || mediaFile[0].includes("mpd") || mediaFile[0].includes("videoplayback")) == true ? true : false;
 var cntDnInt = null;
 var endTime = window.process.argv.slice(-2)[0];
+
+for (var i = 0; i < window.process.argv.length; ++i) {
+    if (window.process.argv[i].includes('--endtime-ems=')) {
+        endTime=window.process.argv[i].split('=')[1]
+    }
+}
+
+for (var i = 0; i < window.process.argv.length; ++i) {
+    if (window.process.argv[i].includes('--mediafile-ems=')) {
+        mediaFile=window.process.argv[i].split('=')[1]
+    }
+}
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
     video.currentTime=video.duration*message;
