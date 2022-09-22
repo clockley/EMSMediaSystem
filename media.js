@@ -39,7 +39,7 @@ function sendRemainingTime(video) {
         ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
     }, 10);
 }
-var xxx = 0;
+
 function loadMedia() {
     var h = null;
     video.setAttribute("id", "bigPlayer");
@@ -95,7 +95,6 @@ function loadMedia() {
         })
     }
     video.controls = false;
-    video.load();
     video.play();
 }
 
