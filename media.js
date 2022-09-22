@@ -98,19 +98,7 @@ function loadMedia() {
     video.play();
 }
 
-function installEvents() {
-    document.addEventListener("keydown", event => {
-        switch (event.key) {
-            case "Escape":
-                if (electron.remote.getCurrentWindow().isFullScreen()) {
-                    electron.remote.getCurrentWindow().setFullScreen(false);
-                }
-                break;
-        }
-    });
-}
 document.addEventListener('DOMContentLoaded', function () {
-    installEvents();
     loadMedia();
 }
 );
