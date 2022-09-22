@@ -11,13 +11,11 @@ for (var i = 0; i < window.process.argv.length; ++i) {
     if (window.process.argv[i].includes('--endtime-ems=')) {
         endTime=window.process.argv[i].split('=')[1]
     }
-}
-
-for (var i = 0; i < window.process.argv.length; ++i) {
     if (window.process.argv[i].includes('--mediafile-ems=')) {
         mediaFile=window.process.argv[i].split('=')[1]
     }
 }
+
 var liveStreamMode = (mediaFile[0].includes("m3u8") || mediaFile[0].includes("mpd") || mediaFile[0].includes("videoplayback")) == true ? true : false;
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
