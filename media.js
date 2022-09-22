@@ -1,4 +1,3 @@
-const electron = require('@electron/remote');
 const { ipcRenderer } = require('electron');
 var video = document.createElement('video');
 var mediaFile;
