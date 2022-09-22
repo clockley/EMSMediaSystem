@@ -1,7 +1,5 @@
 const electron = require('@electron/remote');
 const { ipcRenderer } = require('electron');
-const hls = require("hls.js");
-
 var video = document.createElement('video');
 var mediaFile;
 var cntDnInt = null;
@@ -43,10 +41,12 @@ function sendRemainingTime(video) {
 }
 var xxx = 0;
 function loadMedia() {
-    var h = new hls();
+    var h = null;
     video.setAttribute("id", "bigPlayer");
     video.src = mediaFile;
     if (mediaFile.includes("m3u8") || mediaFile.includes("mpd")) {
+        const hls = require("hls.js");
+        h = new hls();
         h.loadSource(mediaFile);
     }
     video.setAttribute("controls", "controls");
