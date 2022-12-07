@@ -698,29 +698,31 @@ async function createMediaWindow(path) {
         });
     }
 
-    mediaWindow.on('timeGoto-message', function (evt, message) {
-        //video.currentTime = message;
-    });
-    mediaWindow.on('closed', () => {
-        if (document.getElementById("custom-seekbar") != null) {
-            document.getElementById("custom-seekbar").children[0].style.width=0;
-            document.getElementById("mediaCntDn").innerText = "00:00:000";
-        }
-        mediaWindow = null;
-        if (document.getElementById('mediaCntUpDn') != null) {
-            document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
-        }
-        if (document.getElementById("mediaWindowPlayButton") != null) {
-            document.getElementById("mediaWindowPlayButton").innerText = "▶️";
-            ipcRenderer.send('timeRemaining-message', 0);
-        } else {
-            document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
-                ipcRenderer.send('timeRemaining-message', 0);
+    if (mediaWindow != null) {
+        mediaWindow.on('timeGoto-message', function (evt, message) {
+            //video.currentTime = message;
+        });
+        mediaWindow.on('closed', () => {
+            if (document.getElementById("custom-seekbar") != null) {
+                document.getElementById("custom-seekbar").children[0].style.width=0;
+                document.getElementById("mediaCntDn").innerText = "00:00:000";
+            }
+            mediaWindow = null;
+            if (document.getElementById('mediaCntUpDn') != null) {
+                document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
+            }
+            if (document.getElementById("mediaWindowPlayButton") != null) {
                 document.getElementById("mediaWindowPlayButton").innerText = "▶️";
-            }, { once: true });
-        }
-        timeRemaining = "00:00:000"
-    });
+                ipcRenderer.send('timeRemaining-message', 0);
+            } else {
+                document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
+                    ipcRenderer.send('timeRemaining-message', 0);
+                    document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+                }, { once: true });
+            }
+            timeRemaining = "00:00:000"
+        });
+    }
 
     mediaWindow.loadFile("media.html");
 }
