@@ -383,6 +383,10 @@ function setSBFormYouTubeMediaPlayer() {
     `;
     restoreMediaFile();
 
+    if (document.getElementById("mdFile").value.includes(":\\fakepath\\")) {
+        document.getElementById("mdFile").value='';
+    }
+
     if (mediaWindow == null) {
         document.getElementById("mediaWindowPlayButton").innerText = "▶️";
     } else {
