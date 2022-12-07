@@ -470,6 +470,7 @@ function setSBFormMediaPlayer() {
         <div><span id="mediaCntUpDn">00:00/00:00</span></div>
     `;
     restoreMediaFile();
+    document.getElementById("mdFile").addEventListener("change", saveMediaFile)
     document.getElementById("custom-seekbar").onclick = setSeekBar;
     document.getElementById("custom-seekbar").ondrag = setSeekBar;
 
