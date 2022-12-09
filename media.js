@@ -5,15 +5,15 @@ var cntDnInt = null;
 var endTime;
 
 for (var i = 0; i < window.process.argv.length; ++i) {
-    if (window.process.argv[i].includes('--endtime-ems=')) {
-        endTime=window.process.argv[i].split('=')[1]
+    if (window.process.argv[i].includes('--endtime-ems<')) {
+        endTime=window.process.argv[i].split('<')[1]
     }
-    if (window.process.argv[i].includes('--mediafile-ems=')) {
-        mediaFile=window.process.argv[i].split('=')[1]
+    if (window.process.argv[i].includes('--mediafile-ems<')) {
+        mediaFile=window.process.argv[i].split('<')[1]
     }
 }
-
-var liveStreamMode = (mediaFile[0].includes("m3u8") || mediaFile[0].includes("mpd") || mediaFile[0].includes("videoplayback")) == true ? true : false;
+console.log(mediaFile)
+var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
     video.currentTime=video.duration*message;
@@ -39,11 +39,14 @@ function sendRemainingTime(video) {
     }, 10);
 }
 
-function loadMedia() {
+async function loadMedia() {
     var h = null;
     video.setAttribute("id", "bigPlayer");
     video.src = mediaFile;
-    if (mediaFile.includes("m3u8") || mediaFile.includes("mpd")) {
+    if (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com")) {
+        const youtubedl = require('youtube-dl-exec')
+        await youtubedl(mediaFile, {getUrl: true, addHeader: ['referer:youtube.com','user-agent:googlebot']}).then(r => {video.src=r})
+        mediaFile=video.src
         const hls = require("hls.js");
         h = new hls();
         h.loadSource(mediaFile);
