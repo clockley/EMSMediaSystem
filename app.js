@@ -335,6 +335,10 @@ function playMedia(e) {
 }
 
 function setSeekBar(evt) {
+    if (document.getElementById("mediaWindowPlayButton").innerText == '⏹️'
+        && document.getElementById('mediaCntUpDn').innerHTML == '00:00/00:00') {
+        return
+    }
     var rect = document.querySelector("#custom-seekbar").getBoundingClientRect();
     var offset = { 
         top: rect.top + window.scrollY, 
