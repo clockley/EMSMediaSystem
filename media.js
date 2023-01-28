@@ -5,11 +5,11 @@ var cntDnInt = null;
 var endTime;
 
 for (var i = 0; i < window.process.argv.length; ++i) {
-    if (window.process.argv[i].includes('--endtime-ems<')) {
-        endTime=window.process.argv[i].split('<')[1]
+    if (window.process.argv[i].includes('--endtime-ems=')) {
+        endTime=window.process.argv[i].split('=')[1]
     }
-    if (window.process.argv[i].includes('--mediafile-ems<')) {
-        mediaFile=window.process.argv[i].split('<')[1]
+    if (window.process.argv[i].includes('--mediafile-ems=')) {
+        mediaFile=window.process.argv[i].split('=')[1]
     }
 }
 console.log(mediaFile)
