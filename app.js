@@ -688,7 +688,7 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--endtime-ems<'+endTime, '--mediafile-ems<'+mediaFile]
+                additionalArguments: ['--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(mediaFile)]
             },
         });
     } else {
@@ -702,7 +702,7 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--endtime-ems<'+endTime, '--mediafile-ems<'+mediaFile]
+                additionalArguments: ['--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(mediaFile)]
             }
         });
     }
