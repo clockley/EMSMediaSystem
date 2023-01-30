@@ -17,6 +17,7 @@ for (var i = 0; i < window.process.argv.length; ++i) {
         loopFile=true;
     }
 }
+mediaFile=decodeURIComponent(mediaFile);
 console.log(mediaFile)
 var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 

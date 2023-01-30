@@ -690,7 +690,7 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(mediaFile), '--media-loop='.concat(document.getElementById("mdLpCtlr").checked)]
+                additionalArguments: ['--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr")!=undefined?'--media-loop='.concat(document.getElementById("mdLpCtlr").checked):""]
             },
         });
     } else {
@@ -704,7 +704,7 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(mediaFile), '--media-loop='.concat(document.getElementById("mdLpCtlr").checked)]
+                additionalArguments: ['--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr")!=undefined?'--media-loop='.concat(document.getElementById("mdLpCtlr").checked):""]
             }
         });
     }
