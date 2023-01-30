@@ -465,10 +465,12 @@ function setSBFormMediaPlayer() {
             <label for="malrm1"> Run At </label>
             <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
             <label for=""mdScrCtrl>Second Monitor</label>
-        
+            <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
+            <label for=""mdLpCtlr>Loop</label>
             <br>
 
             <button id="mediaWindowPlayButton" type="button">▶️</button>
+
         </form>
         <br>
         <br>
@@ -688,7 +690,7 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(mediaFile)]
+                additionalArguments: ['--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(mediaFile), '--media-loop='.concat(document.getElementById("mdLpCtlr").checked)]
             },
         });
     } else {
@@ -702,7 +704,7 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(mediaFile)]
+                additionalArguments: ['--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(mediaFile), '--media-loop='.concat(document.getElementById("mdLpCtlr").checked)]
             }
         });
     }

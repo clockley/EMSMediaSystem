@@ -4,6 +4,7 @@ var img = document.createElement('img');
 var mediaFile;
 var cntDnInt = null;
 var endTime;
+var loopFile = false;
 
 for (var i = 0; i < window.process.argv.length; ++i) {
     if (window.process.argv[i].includes('--endtime-ems=')) {
@@ -11,6 +12,9 @@ for (var i = 0; i < window.process.argv.length; ++i) {
     }
     if (window.process.argv[i].includes('--mediafile-ems=')) {
         mediaFile=window.process.argv[i].split('=')[1]
+    }
+    if (window.process.argv[i].includes('--media-loop=true')) {
+        loopFile=true;
     }
 }
 console.log(mediaFile)
@@ -79,6 +83,9 @@ async function loadMedia() {
         h.loadSource(mediaFile);
     }
     video.setAttribute("controls", "controls");
+    if (loopFile) {
+        video.setAttribute("loop", true);
+    }
     video.addEventListener("ended", function () {
         close();
     });
