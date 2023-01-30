@@ -63,6 +63,7 @@ async function loadMedia() {
 
     if (isImg) {
         img.src=mediaFile;
+        img.setAttribute("id", "bigPlayer");
         document.body.appendChild(img);
         return;
     }
