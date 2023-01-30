@@ -1,5 +1,6 @@
 const { ipcRenderer } = require('electron');
 var video = document.createElement('video');
+var img = document.createElement('img');
 var mediaFile;
 var cntDnInt = null;
 var endTime;
@@ -18,6 +19,10 @@ var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") ||
 ipcRenderer.on('timeGoto-message', function (evt, message) {
     video.currentTime=video.duration*message;
 });
+
+function getFileExt(fname) {
+    return fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2);
+}
 
 function rafAsync() {
     return new Promise(resolve => {
@@ -41,6 +46,27 @@ function sendRemainingTime(video) {
 
 async function loadMedia() {
     var h = null;
+    var isImg = false;
+
+    switch (getFileExt(mediaFile)) {
+        case "bmp":
+        case "gif":
+        case "jpg":
+        case "jpeg":
+        case "png":
+        case "webp":
+            isImg = true;
+            break;
+        default:
+            isImg = false;
+    }
+
+    if (isImg) {
+        img.src=mediaFile;
+        document.body.appendChild(img);
+        return;
+    }
+
     video.setAttribute("id", "bigPlayer");
     video.src = mediaFile;
     if (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com")) {
