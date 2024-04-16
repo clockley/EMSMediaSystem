@@ -58,45 +58,6 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     duration = message[2];
 });
 
-/*
-ipcRenderer.on('timeRemaining-message', function (evt, message) {
-    if (mediaWindow == null) {
-        return;
-    }
-
-    const now = performance.now();
-    const sendTime = message[4];
-    const ipcDelay = Math.max(0, (now - sendTime) / 1000);
-    const remoteVideoTime = message[3];
-
-    if (document.getElementById('mediaCntDn') != null) {
-        if (video.currentTime < 1) {
-            video.currentTime = remoteVideoTime;
-            // During the first 10 seconds, do not make any large jumps; let the video stabilize
-                    // Calculate the difference in current video time and the remote video time
-                const timeDifference = video.currentTime - remoteVideoTime;
-            console.log(`Local currentTime: ${video.currentTime}, Remote time: ${remoteVideoTime}, Time difference: ${timeDifference}, IPC Time: ${now}`);
-            return;
-        }
-
-        // Calculate the difference in current video time and the remote video time
-        //const timeDifference = video.currentTime - remoteVideoTime;
-        
-
-        // Log for diagnostics
-        //console.log(`Local currentTime: ${video.currentTime}, Remote time: ${remoteVideoTime}, Time difference: ${timeDifference}`);
-
-        // Update DOM elements
-        document.getElementById('mediaCntDn').innerHTML = message[0];
-        document.getElementById("custom-seekbar").children[0].style.width = message[1];
-        document.getElementById('mediaCntUpDn').innerHTML = toHHMMSS(message[3]) + "/" + toHHMMSS(message[2]);
-    } else {
-        timeRemaining = message;
-    }
-    duration = message[2];
-});
-*/
-
 class AlarmInputState {
     constructor(fileInputValue, timeInputValue) {
         this.fileInputValue = fileInputValue;
@@ -346,6 +307,12 @@ function setSBFormAlrms() {
     }
 }
 
+function pauseMedia(e) {
+    if (mediaWindow != null) {
+        mediaWindow.send('pauseCtl', 0);
+    }
+}
+
 function playMedia(e) {
     //new Date().setHours(document.getElementById("cntTmeVidStrt").value.split(":")[0], document.getElementById("cntTmeVidStrt").value.split(":")[1], 00)
     if (!e) {
@@ -533,7 +500,7 @@ function setSBFormMediaPlayer() {
             <br>
 
             <button id="mediaWindowPlayButton" type="button">▶️</button>
-
+            <button id="mediaWindowPauseButton" type="button">⏸️</button>
         </form>
         <br>
         <br>
@@ -565,6 +532,7 @@ function setSBFormMediaPlayer() {
     }
 
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
+    document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseMedia);
 }
 
 function saveMediaFile() {
