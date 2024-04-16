@@ -11,7 +11,7 @@
   "license": "GPL-3.0-or-later",
   "devDependencies": {
     "electron": "^22.0.0",
-    "electron-packager": "^17.1.1"
+    "electron-packager": "^17.1.2"
   },
   "dependencies": {
     "@electron/remote": "^2.0.8",
