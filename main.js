@@ -23,13 +23,18 @@ var toHHMMSS = (secs) => {
 function createWindow() {
   ipcMain.on('timeRemaining-message', (event, arg) => {
     if (win != null) {
-      win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), (arg[1] / arg[0])*100+"%", arg[0], arg[1]])
+      win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), (arg[1] / arg[0])*100+"%", arg[0], arg[1], arg[2]])
     }
   })
 
   ipcMain.on('timeGoto-message', function (evt, message) {
     //win.webContents.send('timeGoto-message', message)
      console.log("DUDU");
+  });
+
+  ipcMain.on('playback-state-change', (event, playbackState) => {
+    // Assuming 'otherWin' is the BrowserWindow instance without sound
+    win.webContents.send('update-playback-state', playbackState);
   });
 
 // Create the browser window.

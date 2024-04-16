@@ -8,6 +8,7 @@ var alarmFileMetadata = [];
 var timeRemaining = "00:00:000";
 var duration = 0;
 var mediaPlayDelay = null;
+var video
 
 var toHHMMSS = (secs) => {
     if (isNaN(secs)) {
@@ -22,11 +23,32 @@ var toHHMMSS = (secs) => {
     return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2);
 }
 
+let lastUpdateTime = performance.now(); 
+
+ipcRenderer.on('update-playback-state', (event, playbackState) => {
+    // Handle play/pause state
+    if (playbackState.playing && video.paused) {
+        video.play();
+    } else if (!playbackState.playing && !video.paused) {
+        video.pause();
+    }
+});
+
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
     if (mediaWindow == null) {
         return;
     }
+
+    const now = performance.now(); // Get the current timestamp
+    const sendTime = message[4];   // Timestamp when the message was sent (presumably in the same time base)
+
     if (document.getElementById('mediaCntDn') != null) {
+        if (now - lastUpdateTime > 1000) {
+            const ipcDelay = new Date - sendTime;
+            video.currentTime = message[3] - (ipcDelay / 1000);
+            lastUpdateTime = now+ipcDelay;
+        }
+
         document.getElementById('mediaCntDn').innerHTML = message[0];
         document.getElementById("custom-seekbar").children[0].style.width = message[1];
         document.getElementById('mediaCntUpDn').innerHTML = toHHMMSS(message[3]) + "/" + toHHMMSS(message[2]);
@@ -35,6 +57,45 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     }
     duration = message[2];
 });
+
+/*
+ipcRenderer.on('timeRemaining-message', function (evt, message) {
+    if (mediaWindow == null) {
+        return;
+    }
+
+    const now = performance.now();
+    const sendTime = message[4];
+    const ipcDelay = Math.max(0, (now - sendTime) / 1000);
+    const remoteVideoTime = message[3];
+
+    if (document.getElementById('mediaCntDn') != null) {
+        if (video.currentTime < 1) {
+            video.currentTime = remoteVideoTime;
+            // During the first 10 seconds, do not make any large jumps; let the video stabilize
+                    // Calculate the difference in current video time and the remote video time
+                const timeDifference = video.currentTime - remoteVideoTime;
+            console.log(`Local currentTime: ${video.currentTime}, Remote time: ${remoteVideoTime}, Time difference: ${timeDifference}, IPC Time: ${now}`);
+            return;
+        }
+
+        // Calculate the difference in current video time and the remote video time
+        //const timeDifference = video.currentTime - remoteVideoTime;
+        
+
+        // Log for diagnostics
+        //console.log(`Local currentTime: ${video.currentTime}, Remote time: ${remoteVideoTime}, Time difference: ${timeDifference}`);
+
+        // Update DOM elements
+        document.getElementById('mediaCntDn').innerHTML = message[0];
+        document.getElementById("custom-seekbar").children[0].style.width = message[1];
+        document.getElementById('mediaCntUpDn').innerHTML = toHHMMSS(message[3]) + "/" + toHHMMSS(message[2]);
+    } else {
+        timeRemaining = message;
+    }
+    duration = message[2];
+});
+*/
 
 class AlarmInputState {
     constructor(fileInputValue, timeInputValue) {
@@ -353,6 +414,8 @@ function setSeekBar(evt) {
     }
     if (mediaWindow != null) {
         mediaWindow.send('timeGoto-message', percentage);
+        video.currentTime=video.duration*percentage;
+        lastUpdateTime = performance.now(); //push sync time back on seek
     }
     console.log(percentage);
 }
@@ -478,6 +541,7 @@ function setSBFormMediaPlayer() {
         <br>
         <div id="custom-seekbar"><span draggable="true"></span></div>
         <div><span id="mediaCntUpDn">00:00/00:00</span></div>
+        <video muted id="preview" width="384" height="216"></video>
     `;
     restoreMediaFile();
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
@@ -517,7 +581,7 @@ function saveMediaFile() {
 
 function restoreMediaFile() {
     if (saveMediaFile.fileInpt != null && document.getElementById("mdFile") != null) {
-        if (document.getElementById("YtPlyrRBtnFrmID").checked) {
+        if (document.getElementById("YtPlyrRBtnFrmID") != null && document.getElementById("YtPlyrRBtnFrmID").checked) {
             console.log("GR");
             document.getElementById("mdFile").value = saveMediaFile.urlInpt;
         }else {
@@ -669,7 +733,13 @@ async function createMediaWindow(path) {
     if (!document.getElementById("mdFile").value.includes("fake")) {
         mediaFile = document.getElementById("mdFile").value;
     } else {
-        var mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+    }
+    var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
+
+    if (liveStreamMode == false) {
+        video = document.getElementById("preview");
+        video.setAttribute("src", mediaFile);
     }
     var endTime = '0';
     if (document.getElementById("cntTmeVidStrt")) {
@@ -714,6 +784,9 @@ async function createMediaWindow(path) {
             //video.currentTime = message;
         });
         mediaWindow.on('closed', () => {
+            if (video != null) {
+                video.src=null;
+            }
             if (document.getElementById("custom-seekbar") != null) {
                 document.getElementById("custom-seekbar").children[0].style.width=0;
                 document.getElementById("mediaCntDn").innerText = "00:00:000";

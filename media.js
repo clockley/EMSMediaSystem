@@ -43,11 +43,15 @@ function checkElement(selector) {
     }
 }
 
+let lastSendTime = performance.now();  // Track last time message was sent
 function sendRemainingTime(video) {
-    cntDnInt = setInterval(function() { 
-        ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
-    }, 10);
+    const send = () => {
+        ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, new Date()]);
+        requestAnimationFrame(send);
+    };
+    requestAnimationFrame(send);
 }
+
 
 async function loadMedia() {
     var h = null;
@@ -82,6 +86,23 @@ async function loadMedia() {
         const hls = require("hls.js");
         h = new hls();
         h.loadSource(mediaFile);
+    } else {
+        video.addEventListener('play', () => {
+            const playbackState = {
+              currentTime: video.currentTime,
+              playing: !video.paused,
+            };
+            ipcRenderer.send('playback-state-change', playbackState);
+        });
+
+        video.addEventListener('pause', () => {
+            const playbackState = {
+              currentTime: video.currentTime,
+              playing: !video.paused,
+            };
+            ipcRenderer.send('playback-state-change', playbackState);
+        }
+        );
     }
     video.setAttribute("controls", "controls");
     if (loopFile) {
@@ -104,19 +125,19 @@ async function loadMedia() {
 
         video.addEventListener('play', (event) => {
             cntDnInt = setInterval(function(){ 
-                ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
+                ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, new Date()])
             }, 10);
         })
 
         video.addEventListener('seeked', (event) => {
             cntDnInt = setInterval(function(){ 
-                ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime])
+                ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, new Date()])
             }, 10);
         })
 
         video.addEventListener('seeking', (event) => {
             clearInterval(cntDnInt);
-            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime]);
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, new Date()]);
         })
         video.addEventListener('loadeddata', (event) => {
             if (endTime != 0) {
@@ -126,7 +147,7 @@ async function loadMedia() {
                     endTme.setHours(endTime.split(":")[0]);
                     endTme.setMinutes(endTime.split(":")[1]);
                     var curTime=new Date();
-                    video.currentTime = ((video.duration-6)-(Math.abs((curTime)-endTme)/1000));
+                    video.currentTime = video.duration - ((curTime - endTme) / 1000);
                 }
             }
         })
