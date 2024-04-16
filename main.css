@@ -80,6 +80,11 @@ footer {
     width : 32px;
 }
 
+#mediaWindowPauseButton {
+    height: 32px;
+    width : 32px;
+}
+
 #custom-seekbar
 {  
   cursor: pointer;

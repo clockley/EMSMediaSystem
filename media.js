@@ -25,6 +25,14 @@ ipcRenderer.on('timeGoto-message', function (evt, message) {
     video.currentTime=video.duration*message;
 });
 
+ipcRenderer.on('pauseCtl', function (evt, message) {
+    if (video.paused) {
+        video.play();
+    } else if (!video.paused) {
+        video.pause();
+    }
+});
+
 function getFileExt(fname) {
     return fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2);
 }
