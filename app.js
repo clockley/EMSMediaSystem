@@ -36,7 +36,7 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
         video.pause();
     }
 });
-
+/*
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
     if (mediaWindow == null) {
         return;
@@ -59,7 +59,62 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
         timeRemaining = message;
     }
     duration = message[2];
+});*/
+
+ipcRenderer.on('timeRemaining-message', function (evt, message) {
+    if (mediaWindow == null) {
+        return;
+    }
+
+    const now = performance.now(); // Get the current timestamp
+    const sendTime = message[4];   // Timestamp when the message was sent
+    const ipcDelay = new Date() - sendTime;  // Calculate the delay
+    const targetTime = message[3] - (ipcDelay / 1000); // Adjusted target time considering the IPC delay
+
+    if (document.getElementById('mediaCntDn') != null) {
+        // Update synchronization every 5 seconds
+        if (now - lastUpdateTime > 5000) {
+            hybridSync(targetTime);
+            lastUpdateTime = now;
+        }
+
+        document.getElementById('mediaCntDn').innerHTML = message[0];
+        document.getElementById("custom-seekbar").children[0].style.width = message[1];
+        document.getElementById('mediaCntUpDn').innerHTML = toHHMMSS(message[3]) + "/" + toHHMMSS(message[2]);
+    } else {
+        timeRemaining = message;
+    }
+    duration = message[2];
 });
+
+function adjustPlaybackRate(targetTime) {
+    const currentTime = video.currentTime;
+    const timeDifference = targetTime - currentTime;
+    const rateAdjustmentFactor = 0.01;  // Smaller values for finer control
+    let playbackRate = 1.0 + (timeDifference * rateAdjustmentFactor);
+    playbackRate = Math.max(0.5, Math.min(2.0, playbackRate));  // Clamp between 0.5x and 2x normal speed
+
+    video.playbackRate = playbackRate;
+    setTimeout(() => {
+        video.playbackRate = 1.0;  // Reset rate after 5 seconds
+    }, 5000);
+}
+
+function hybridSync(targetTime) {
+    const currentTime = video.currentTime;
+    const timeDifference = targetTime - currentTime;
+    const adjustmentThreshold = 0.5;  // Threshold for direct jumps (in seconds)
+    const step = 0.2;  // Step for direct currentTime adjustment
+
+    if (Math.abs(timeDifference) > adjustmentThreshold) {
+        // Apply a direct, larger adjustment less frequently
+        video.currentTime += (timeDifference > 0) ? step : -step;
+    } else {
+        // Use rate adjustment for finer control within the threshold
+        adjustPlaybackRate(targetTime);
+    }
+}
+
 
 class AlarmInputState {
     constructor(fileInputValue, timeInputValue) {
