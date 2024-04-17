@@ -533,6 +533,10 @@ function setSBFormMediaPlayer() {
 
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
     document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseMedia);
+    if (mediaFile != null) {
+        video = document.getElementById("preview");
+        video.setAttribute("src", mediaFile);
+    }
 }
 
 function saveMediaFile() {
