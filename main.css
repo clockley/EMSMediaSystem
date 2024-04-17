@@ -104,7 +104,8 @@ footer {
   width: 0px;
 }
 
-video
-{
-    pointer-events: none;
+
+video::-webkit-media-controls-volume-slider,
+video::-webkit-media-controls-mute-button {
+    display: none !important;
 }

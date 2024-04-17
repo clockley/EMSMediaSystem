@@ -522,6 +522,19 @@ function setSBFormTimeoutMediaPlayer() {
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
 }
 
+async function togglePictureInPicture() {
+    const video = document.getElementById('preview');
+    try {
+        if (video !== document.pictureInPictureElement) {
+            await video.requestPictureInPicture();
+        } else {
+            await document.exitPictureInPicture();
+        }
+    } catch (error) {
+        console.error('Picture-in-Picture failed', error);
+    }
+}
+
 function setSBFormMediaPlayer() {
     resetPlayer();
     if (mediaWindow == null) {
@@ -554,6 +567,10 @@ function setSBFormMediaPlayer() {
 
             <button id="mediaWindowPlayButton" type="button">▶️</button>
             <button id="mediaWindowPauseButton" type="button">⏸️</button>
+            <br>
+            <br>
+            <button id="pipButton" type="button">↗️↘️ 🖼 PiP</button>
+
         </form>
         <br>
         <br>
@@ -567,6 +584,7 @@ function setSBFormMediaPlayer() {
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
     document.getElementById("custom-seekbar").onclick = setSeekBar;
     document.getElementById("custom-seekbar").ondrag = setSeekBar;
+    document.getElementById('pipButton').addEventListener('click', togglePictureInPicture);
 
     if (mediaWindow == null) {
         document.getElementById("mediaWindowPlayButton").innerText = "▶️";
@@ -768,6 +786,7 @@ async function createMediaWindow(path) {
         video = document.createElement('video');
         video.muted = true;
         video.setAttribute("src", mediaFile);
+        video.setAttribute("controls", "true");
         video.id="preview";
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         document.getElementById("preview").addEventListener('pause', () => {
