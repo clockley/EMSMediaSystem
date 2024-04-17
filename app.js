@@ -543,7 +543,7 @@ function setSBFormMediaPlayer() {
         <br>
         <center><span style="color:red;font-size: larger;" id="mediaCntDn">00:00:000<span></center>
         <br>
-        <div id="custom-seekbar"><span draggable="true"></span></div>
+        <div id="custom-seekbar"><span draggable="false"></span></div>
         <div><span id="mediaCntUpDn">00:00/00:00</span></div>
         <video muted id="preview" width="384" height="216"></video>
     `;
