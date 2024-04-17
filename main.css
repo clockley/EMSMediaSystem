@@ -53,11 +53,9 @@ footer {
     object-fit: contain;
 }
 
-#smallPlayer {
-    width     : 25vw;
-    height    : 25vh;
-    padding   : 0%;
-    margin    : 0%;
+#preview {
+    width     : 384px;
+    height    : 216px;
     object-fit: contain;
 }
 

@@ -8,7 +8,8 @@ var alarmFileMetadata = [];
 var timeRemaining = "00:00:000";
 var duration = 0;
 var mediaPlayDelay = null;
-var video
+var video = null;
+var masterPauseState = false;
 
 var toHHMMSS = (secs) => {
     if (isNaN(secs)) {
@@ -28,8 +29,10 @@ let lastUpdateTime = performance.now();
 ipcRenderer.on('update-playback-state', (event, playbackState) => {
     // Handle play/pause state
     if (playbackState.playing && video.paused) {
+        masterPauseState = false;
         video.play();
     } else if (!playbackState.playing && !video.paused) {
+        masterPauseState = true;
         video.pause();
     }
 });
@@ -533,9 +536,12 @@ function setSBFormMediaPlayer() {
 
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
     document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseMedia);
-    if (mediaFile != null) {
-        video = document.getElementById("preview");
-        video.setAttribute("src", mediaFile);
+    if (document.getElementById("mdFile") != null) {
+        if (document.getElementById("preview").parentNode != null) {
+            document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
+            if (!masterPauseState)
+                video.play();
+        }
     }
 }
 
@@ -710,8 +716,11 @@ async function createMediaWindow(path) {
     var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
     if (liveStreamMode == false) {
-        video = document.getElementById("preview");
+        video = document.createElement('video');
+        video.muted = true;
         video.setAttribute("src", mediaFile);
+        video.id="preview";
+        document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
     }
     var endTime = '0';
     if (document.getElementById("cntTmeVidStrt")) {
