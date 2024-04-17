@@ -34,6 +34,7 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
     } else if (!playbackState.playing && !video.paused) {
         masterPauseState = true;
         video.pause();
+        video.currentTime=playbackState.currentTime; //sync on pause
     }
 });
 
@@ -421,7 +422,6 @@ function setSeekBar(evt) {
         video.currentTime=video.duration*percentage;
         lastUpdateTime = performance.now(); //push sync time back on seek
     }
-    console.log(percentage);
 }
 
 function setSBFormYouTubeMediaPlayer() {
@@ -594,7 +594,6 @@ function saveMediaFile() {
 function restoreMediaFile() {
     if (saveMediaFile.fileInpt != null && document.getElementById("mdFile") != null) {
         if (document.getElementById("YtPlyrRBtnFrmID") != null && document.getElementById("YtPlyrRBtnFrmID").checked) {
-            console.log("GR");
             document.getElementById("mdFile").value = saveMediaFile.urlInpt;
         }else {
             document.getElementById("mdFile").files = saveMediaFile.fileInpt;
