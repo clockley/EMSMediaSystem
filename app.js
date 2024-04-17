@@ -40,10 +40,10 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     }
 
     const now = performance.now(); // Get the current timestamp
-    const sendTime = message[4];   // Timestamp when the message was sent (presumably in the same time base)
+    const sendTime = message[4];
 
     if (document.getElementById('mediaCntDn') != null) {
-        if (now - lastUpdateTime > 1000) {
+        if (now - lastUpdateTime > 5000) {
             const ipcDelay = new Date - sendTime;
             video.currentTime = message[3] - (ipcDelay / 1000);
             lastUpdateTime = now+ipcDelay;
