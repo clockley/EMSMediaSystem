@@ -36,30 +36,6 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
         video.pause();
     }
 });
-/*
-ipcRenderer.on('timeRemaining-message', function (evt, message) {
-    if (mediaWindow == null) {
-        return;
-    }
-
-    const now = performance.now(); // Get the current timestamp
-    const sendTime = message[4];
-
-    if (document.getElementById('mediaCntDn') != null) {
-        if (now - lastUpdateTime > 5000) {
-            const ipcDelay = new Date - sendTime;
-            video.currentTime = message[3] - (ipcDelay / 1000);
-            lastUpdateTime = now+ipcDelay;
-        }
-
-        document.getElementById('mediaCntDn').innerHTML = message[0];
-        document.getElementById("custom-seekbar").children[0].style.width = message[1];
-        document.getElementById('mediaCntUpDn').innerHTML = toHHMMSS(message[3]) + "/" + toHHMMSS(message[2]);
-    } else {
-        timeRemaining = message;
-    }
-    duration = message[2];
-});*/
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
     if (mediaWindow == null) {
@@ -103,18 +79,21 @@ function adjustPlaybackRate(targetTime) {
 function hybridSync(targetTime) {
     const currentTime = video.currentTime;
     const timeDifference = targetTime - currentTime;
-    const adjustmentThreshold = 0.5;  // Threshold for direct jumps (in seconds)
+    const largeAdjustmentThreshold = 1.0;  // Threshold for immediate jumps (in seconds)
+    const smallAdjustmentThreshold = 0.5;  // Threshold for smaller adjustments
     const step = 0.2;  // Step for direct currentTime adjustment
 
-    if (Math.abs(timeDifference) > adjustmentThreshold) {
-        // Apply a direct, larger adjustment less frequently
+    if (Math.abs(timeDifference) > largeAdjustmentThreshold) {
+        // Apply an immediate correction if the sync error is large
+        video.currentTime = targetTime;
+    } else if (Math.abs(timeDifference) > smallAdjustmentThreshold) {
+        // Apply a smaller, gradual adjustment if the sync error is moderate
         video.currentTime += (timeDifference > 0) ? step : -step;
     } else {
-        // Use rate adjustment for finer control within the threshold
+        // Use rate adjustment for finer control within the small threshold
         adjustPlaybackRate(targetTime);
     }
 }
-
 
 class AlarmInputState {
     constructor(fileInputValue, timeInputValue) {
