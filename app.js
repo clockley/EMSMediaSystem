@@ -50,7 +50,7 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
 
     if (document.getElementById('mediaCntDn') != null) {
         // Update synchronization every 5 seconds
-        if (now - lastUpdateTime > 5000) {
+        if (now - lastUpdateTime > 2500) {
             hybridSync(targetTime);
             lastUpdateTime = now;
         }
@@ -74,7 +74,7 @@ function adjustPlaybackRate(targetTime) {
     video.playbackRate = playbackRate;
     setTimeout(() => {
         video.playbackRate = 1.0;  // Reset rate after 5 seconds
-    }, 5000);
+    }, 2500);
 }
 
 function hybridSync(targetTime) {
