@@ -33,6 +33,12 @@ ipcRenderer.on('pauseCtl', function (evt, message) {
     }
 });
 
+ipcRenderer.on('playCtl', function (evt, message) {
+    if (video.paused) {
+        video.play();
+    }
+});
+
 function getFileExt(fname) {
     return fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2);
 }

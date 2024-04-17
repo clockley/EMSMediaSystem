@@ -351,6 +351,22 @@ function pauseMedia(e) {
     }
 }
 
+function unPauseMedia(e) {
+    if (mediaWindow != null) {
+        mediaWindow.send('playCtl', 0);
+    }
+}
+
+function pauseButton(e) {
+    if (video != null) {
+        if (!video.paused) {
+            video.pause();
+        } else {
+            video.play();
+        }
+    }
+}
+
 function playMedia(e) {
     //new Date().setHours(document.getElementById("cntTmeVidStrt").value.split(":")[0], document.getElementById("cntTmeVidStrt").value.split(":")[1], 00)
     if (!e) {
@@ -445,7 +461,7 @@ function setSBFormYouTubeMediaPlayer() {
 
             <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
             <label for=""mdScrCtrl>Second Monitor</label>
-        
+
             <br>
 
             <button id="mediaWindowPlayButton" type="button">▶️</button>
@@ -543,7 +559,7 @@ function setSBFormMediaPlayer() {
         <br>
         <center><span style="color:red;font-size: larger;" id="mediaCntDn">00:00:000<span></center>
         <br>
-        <div id="custom-seekbar"><span draggable="false"></span></div>
+        <div id="custom-seekbar"><span draggable="true"></span></div>
         <div><span id="mediaCntUpDn">00:00/00:00</span></div>
         <video muted id="preview" width="384" height="216"></video>
     `;
@@ -569,7 +585,7 @@ function setSBFormMediaPlayer() {
     }
 
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
-    document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseMedia);
+    document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseButton);
     if (document.getElementById("mdFile") != null) {
         if (document.getElementById("preview").parentNode != null) {
             document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
@@ -754,6 +770,12 @@ async function createMediaWindow(path) {
         video.setAttribute("src", mediaFile);
         video.id="preview";
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
+        document.getElementById("preview").addEventListener('pause', () => {
+            pauseMedia();
+        });
+        document.getElementById("preview").addEventListener('play', () => {
+            unPauseMedia();
+        });
     }
     var endTime = '0';
     if (document.getElementById("cntTmeVidStrt")) {
