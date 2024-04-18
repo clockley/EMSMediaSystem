@@ -123,6 +123,7 @@ async function loadMedia() {
         video.setAttribute("loop", true);
     }
     video.addEventListener("ended", function () {
+        console.log("TEST");
         close();
     });
     if (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("videoplayback")) {
@@ -134,6 +135,9 @@ async function loadMedia() {
         sendRemainingTime(video);
 
         video.addEventListener('pause', (event) => {
+            if (video.duration-video.currentTime < 0.1) {
+                video.currentTime = video.duration;
+            }
             clearInterval(cntDnInt);
         })
 

@@ -10,6 +10,7 @@ var duration = 0;
 var mediaPlayDelay = null;
 var video = null;
 var masterPauseState = false;
+var videoEnded = false;
 
 var toHHMMSS = (secs) => {
     if (isNaN(secs)) {
@@ -38,20 +39,42 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
     }
 });
 
+// Initialize an array to hold the last 30 seconds of IPC delays
+let ipcDelays = [];
+const maxDelayEntries = 30;  // to hold last 30-second values
+
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
     if (mediaWindow == null) {
         return;
     }
 
-    const now = performance.now(); // Get the current timestamp
-    const sendTime = message[4];   // Timestamp when the message was sent
-    const ipcDelay = new Date() - sendTime;  // Calculate the delay
-    const targetTime = message[3] - (ipcDelay / 1000); // Adjusted target time considering the IPC delay
+    const now = performance.now();
+    const sendTime = message[4];
+    const ipcDelay = new Date() - sendTime;
+
+    // Update the rolling average of IPC delays
+    ipcDelays.push(ipcDelay);
+    if (ipcDelays.length > maxDelayEntries) {
+        ipcDelays.shift();  // Remove the oldest entry to maintain the size
+    }
+
+    const averageIpcDelay = ipcDelays.reduce((acc, val) => acc + val, 0) / ipcDelays.length;
+    const timeToEnd = message[2] - message[3];
+    let adjustedIpcDelay = ipcDelay;
+
+    // If the time remaining is less than or equal to 10 times the average IPC delay, ignore the IPC delay
+    if (timeToEnd <= 10 * averageIpcDelay) {
+        adjustedIpcDelay = 0;
+    }
+
+    const targetTime = message[3] - (adjustedIpcDelay / 1000); // Adjust target time considering the potentially modified IPC delay
 
     if (document.getElementById('mediaCntDn') != null) {
-        // Update synchronization every 5 seconds
-        if (now - lastUpdateTime > 2500) {
-            hybridSync(targetTime);
+        const intervalReductionFactor = Math.max(0.5, Math.min(1, timeToEnd / 10));
+        const syncInterval = 2500 * intervalReductionFactor;
+
+        if (now - lastUpdateTime > syncInterval) {
+            hybridSync(targetTime, timeToEnd);
             lastUpdateTime = now;
         }
 
@@ -63,36 +86,27 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     duration = message[2];
 });
 
-function adjustPlaybackRate(targetTime) {
+function adjustPlaybackRate(targetTime, timeToEnd) {
     const currentTime = video.currentTime;
     const timeDifference = targetTime - currentTime;
-    const rateAdjustmentFactor = 0.01;  // Smaller values for finer control
+    const rateAdjustmentFactor = 0.005;  // More gradual adjustment
     let playbackRate = 1.0 + (timeDifference * rateAdjustmentFactor);
-    playbackRate = Math.max(0.5, Math.min(2.0, playbackRate));  // Clamp between 0.5x and 2x normal speed
+    playbackRate = Math.max(0.8, Math.min(1.2, playbackRate));  // Smaller range to reduce drastic changes
 
     video.playbackRate = playbackRate;
-    setTimeout(() => {
-        video.playbackRate = 1.0;  // Reset rate after 5 seconds
-    }, 2500);
+    if (timeToEnd > 2 && Math.abs(timeDifference) < 0.1) {  // Reset rate more conditionally
+        setTimeout(() => {
+            video.playbackRate = 1.0;
+        }, 1000 * timeToEnd);  // Longer delay to allow smoother transition
+    }
 }
 
-function hybridSync(targetTime) {
+function hybridSync(targetTime, timeToEnd) {
     const currentTime = video.currentTime;
     const timeDifference = targetTime - currentTime;
-    const largeAdjustmentThreshold = 1.0;  // Threshold for immediate jumps (in seconds)
-    const smallAdjustmentThreshold = 0.5;  // Threshold for smaller adjustments
-    const step = 0.2;  // Step for direct currentTime adjustment
 
-    if (Math.abs(timeDifference) > largeAdjustmentThreshold) {
-        // Apply an immediate correction if the sync error is large
-        video.currentTime = targetTime;
-    } else if (Math.abs(timeDifference) > smallAdjustmentThreshold) {
-        // Apply a smaller, gradual adjustment if the sync error is moderate
-        video.currentTime += (timeDifference > 0) ? step : -step;
-    } else {
-        // Use rate adjustment for finer control within the small threshold
-        adjustPlaybackRate(targetTime);
-    }
+    // Prioritize rate adjustment over direct jumps
+    adjustPlaybackRate(targetTime, timeToEnd);
 }
 
 class AlarmInputState {
@@ -393,6 +407,7 @@ function playMedia(e) {
     }
 
     if (e.target.innerText == "▶️") {
+        videoEnded = false;
         e.target.innerText = "⏹️";
         currentMediaFile = document.getElementById("mdFile").files;
 
@@ -779,6 +794,10 @@ async function createMediaWindow(path) {
             if (e.target.isConnected) {
                 mediaWindow.send('timeGoto-message', video.currentTime);
             }
+        });
+
+        video.addEventListener('ended', (e) => {
+            videoEnded = true;
         });
     }
     var endTime = '0';
