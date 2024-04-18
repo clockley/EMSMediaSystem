@@ -77,9 +77,10 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
             hybridSync(targetTime, timeToEnd);
             lastUpdateTime = now;
         }
-
+        if (document.getElementById('mediaCntUpDn') != null) {
+            document.getElementById('mediaCntUpDn').innerHTML = toHHMMSS(message[3]) + "/" + toHHMMSS(message[2]);
+        }
         document.getElementById('mediaCntDn').innerHTML = message[0];
-        document.getElementById('mediaCntUpDn').innerHTML = toHHMMSS(message[3]) + "/" + toHHMMSS(message[2]);
     } else {
         timeRemaining = message;
     }
@@ -557,10 +558,8 @@ function setSBFormMediaPlayer() {
         </form>
         <br>
         <br>
-        <center><span style="color:red;font-size: larger;" id="mediaCntDn">00:00:000<span></center>
-        <br>
-        <div><span id="mediaCntUpDn">00:00/00:00</span></div>
-        <video id="preview"></video>
+        <center><video id="preview"></video></center>
+        <center><span style="color:red;font-size: xx-large;font-weight: bold;font-family: sans-serif;" id="mediaCntDn">00:00:000<span></center>
     `;
     restoreMediaFile();
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)

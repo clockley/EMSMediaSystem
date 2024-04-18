@@ -7,6 +7,9 @@
         "main main  sideBar1"
         "footerBar footerBar footerBar";
 }
+body {
+    background-color: #F0F0F0;
+}
 
 main {
     grid-area: main;
@@ -54,9 +57,10 @@ footer {
 }
 
 #preview {
-    width     : 512px;
-    height    : 288px;
+    width     : 640px;
+    height    : 360px;
     object-fit: contain;
+    border: 2px solid #2C2C2C;
 }
 
 #mediaBody {
@@ -108,4 +112,9 @@ footer {
 video::-webkit-media-controls-volume-slider,
 video::-webkit-media-controls-mute-button {
     display: none !important;
+}
+
+#preview video::-webkit-media-controls-panel {
+    display: flex !important;
+    opacity: 1 !important;
 }

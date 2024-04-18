@@ -42,8 +42,8 @@ function createWindow() {
 
 // Create the browser window.
   win = new BrowserWindow({
-    width: 788,
-    height: 588,
+    width: 1068,
+    height: 660,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
@@ -52,6 +52,11 @@ function createWindow() {
   })
 
   require("@electron/remote/main").enable(win.webContents);
+
+   win.on('resize', () => {
+    let [ width, height ] = win.getSize();
+    console.log(`Window resized to width: ${width}, height: ${height}`);
+  });
 
   // and load the index.html of the app.
   win.loadFile('index.html');
