@@ -555,7 +555,7 @@ function setSBFormMediaPlayer() {
     document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseButton);
     if (document.getElementById("mdFile") != null) {
         if (document.getElementById("preview").parentNode != null) {
-            if (!masterPauseState && video != null)
+            if (!masterPauseState && video != null && !video.paused)
                 video.play();
             document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         }
@@ -739,6 +739,9 @@ async function createMediaWindow(path) {
         video.id="preview";
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         document.getElementById("preview").addEventListener('pause', (event) => {
+            if (event.target.clientHeight == 0) {
+                event.target.play(); //continue to play even if detached
+            }
             if (event.target.parentNode != null) {
                 pauseMedia();
             }
@@ -748,13 +751,18 @@ async function createMediaWindow(path) {
         });
 
         video.addEventListener("timeupdate", function() {
-            lastUpdateTime = performance.now();
             try {
                 if (mediaWindow && !mediaWindow.isDestroyed() && video.seeking) {
                     mediaWindow.send('timeGoto-message', video.currentTime);
                 }
             } catch (error) {
                 console.error("Error during seeking:", error);
+            }
+        });
+
+        video.addEventListener('seeking', (e) => {
+            if (e.target.isConnected) {
+                mediaWindow.send('timeGoto-message', video.currentTime);
             }
         });
     }
