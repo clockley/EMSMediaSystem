@@ -56,7 +56,6 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
         }
 
         document.getElementById('mediaCntDn').innerHTML = message[0];
-        document.getElementById("custom-seekbar").children[0].style.width = message[1];
         document.getElementById('mediaCntUpDn').innerHTML = toHHMMSS(message[3]) + "/" + toHHMMSS(message[2]);
     } else {
         timeRemaining = message;
@@ -190,6 +189,7 @@ function setSBFormWkly() {
 function setSBFormSpcl() {
     saveMediaFile();
     resetPlayer();
+
     document.getElementById("dyneForm").innerHTML =
         `
     <select id="spcleventslst">
@@ -315,6 +315,7 @@ function addAlarm(e) {
 function setSBFormAlrms() {
     saveMediaFile();
     resetPlayer();
+
     document.getElementById("audio").style.visibility = "hidden";
     document.getElementById("plystCtrl").style.visibility = "hidden";
     document.getElementById("dyneForm").innerHTML =
@@ -395,12 +396,10 @@ function playMedia(e) {
             createMediaWindow();
         }
     } else if (e.target.innerText = "⏹️") {
-        if (document.getElementById("custom-seekbar") != null) {
-            document.getElementById("custom-seekbar").children[0].style.width=0;
-            clearTimeout(mediaPlayDelay);
-            if (document.getElementById('mediaCntDn') != null)
-                document.getElementById('mediaCntDn').innerHTML = "00:00:000";
-        }
+        clearTimeout(mediaPlayDelay);
+        if (document.getElementById('mediaCntDn') != null)
+            document.getElementById('mediaCntDn').innerHTML = "00:00:000";
+
         e.target.innerText = "▶️";
         try {
             mediaWindow.close();
@@ -416,40 +415,14 @@ function playMedia(e) {
 
 }
 
-function setSeekBar(evt) {
-    if (document.getElementById("mediaWindowPlayButton").innerText == '⏹️'
-        && document.getElementById('mediaCntUpDn').innerHTML == '00:00/00:00') {
-        return
-    }
-    var rect = document.querySelector("#custom-seekbar").getBoundingClientRect();
-    var offset = { 
-        top: rect.top + window.scrollY, 
-        left: rect.left + window.scrollX, 
-    };
-    var left = (evt.pageX - offset.left);
-    //var totalWidth = document.getElementById("custom-seekbar").children[0].getBoundingClientRect().width;
-    var totalWidth = 400; //FIXME
-    var percentage = ( left / totalWidth );
-    if (percentage < 0) {
-        return;
-    }
-    if (mediaWindow != null) {
-        mediaWindow.send('timeGoto-message', percentage);
-        video.currentTime=video.duration*percentage;
-        lastUpdateTime = performance.now(); //push sync time back on seek
-    }
-}
-
 function setSBFormYouTubeMediaPlayer() {
     resetPlayer();
     if (mediaWindow == null) {
-        if (document.getElementById("custom-seekbar") != null) {
-            document.getElementById("custom-seekbar").children[0].style.width=0;
-        }
         if (document.getElementById("mediaCntDn")!= null) {
             document.getElementById("mediaCntDn").innerText = "00:00:000";
         }
     }
+
     document.getElementById("audio").style.display = "none";
     document.getElementById("plystCtrl").style.display = "none";
     document.getElementById("dyneForm").innerHTML =
@@ -486,13 +459,11 @@ function setSBFormYouTubeMediaPlayer() {
 function setSBFormTimeoutMediaPlayer() {
     resetPlayer();
     if (mediaWindow == null) {
-        if (document.getElementById("custom-seekbar") != null) {
-            document.getElementById("custom-seekbar").children[0].style.width=0;
-        }
         if (document.getElementById("mediaCntDn")!= null) {
             document.getElementById("mediaCntDn").innerText = "00:00:000";
         }
     }
+
     document.getElementById("audio").style.display = "none";
     document.getElementById("plystCtrl").style.display = "none";
     document.getElementById("dyneForm").innerHTML =
@@ -522,25 +493,9 @@ function setSBFormTimeoutMediaPlayer() {
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
 }
 
-async function togglePictureInPicture() {
-    const video = document.getElementById('preview');
-    try {
-        if (video !== document.pictureInPictureElement) {
-            await video.requestPictureInPicture();
-        } else {
-            await document.exitPictureInPicture();
-        }
-    } catch (error) {
-        console.error('Picture-in-Picture failed', error);
-    }
-}
-
 function setSBFormMediaPlayer() {
     resetPlayer();
     if (mediaWindow == null) {
-        if (document.getElementById("custom-seekbar") != null) {
-            document.getElementById("custom-seekbar").children[0].style.width=0;
-        }
         if (document.getElementById("mediaCntDn")!= null) {
             document.getElementById("mediaCntDn").innerText = "00:00:000";
         }
@@ -568,23 +523,17 @@ function setSBFormMediaPlayer() {
             <button id="mediaWindowPlayButton" type="button">▶️</button>
             <button id="mediaWindowPauseButton" type="button">⏸️</button>
             <br>
-            <br>
-            <button id="pipButton" type="button">↗️↘️ 🖼 PiP</button>
 
         </form>
         <br>
         <br>
         <center><span style="color:red;font-size: larger;" id="mediaCntDn">00:00:000<span></center>
         <br>
-        <div id="custom-seekbar"><span draggable="true"></span></div>
         <div><span id="mediaCntUpDn">00:00/00:00</span></div>
-        <video muted id="preview" width="384" height="216"></video>
+        <video id="preview"></video>
     `;
     restoreMediaFile();
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
-    document.getElementById("custom-seekbar").onclick = setSeekBar;
-    document.getElementById("custom-seekbar").ondrag = setSeekBar;
-    document.getElementById('pipButton').addEventListener('click', togglePictureInPicture);
 
     if (mediaWindow == null) {
         document.getElementById("mediaWindowPlayButton").innerText = "▶️";
@@ -606,9 +555,9 @@ function setSBFormMediaPlayer() {
     document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseButton);
     if (document.getElementById("mdFile") != null) {
         if (document.getElementById("preview").parentNode != null) {
-            document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
-            if (!masterPauseState)
+            if (!masterPauseState && video != null)
                 video.play();
+            document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         }
     }
 }
@@ -789,11 +738,24 @@ async function createMediaWindow(path) {
         video.setAttribute("controls", "true");
         video.id="preview";
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
-        document.getElementById("preview").addEventListener('pause', () => {
-            pauseMedia();
+        document.getElementById("preview").addEventListener('pause', (event) => {
+            if (event.target.parentNode != null) {
+                pauseMedia();
+            }
         });
         document.getElementById("preview").addEventListener('play', () => {
             unPauseMedia();
+        });
+
+        video.addEventListener("timeupdate", function() {
+            lastUpdateTime = performance.now();
+            try {
+                if (mediaWindow && !mediaWindow.isDestroyed() && video.seeking) {
+                    mediaWindow.send('timeGoto-message', video.currentTime);
+                }
+            } catch (error) {
+                console.error("Error during seeking:", error);
+            }
         });
     }
     var endTime = '0';
@@ -842,8 +804,7 @@ async function createMediaWindow(path) {
             if (video != null) {
                 video.src=null;
             }
-            if (document.getElementById("custom-seekbar") != null) {
-                document.getElementById("custom-seekbar").children[0].style.width=0;
+            if (document.getElementById("mediaCntDn") != null) {
                 document.getElementById("mediaCntDn").innerText = "00:00:000";
             }
             mediaWindow = null;

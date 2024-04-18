@@ -22,7 +22,7 @@ console.log(mediaFile)
 var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
-    video.currentTime=video.duration*message;
+    video.currentTime=message;
 });
 
 ipcRenderer.on('pauseCtl', function (evt, message) {
