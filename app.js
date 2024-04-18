@@ -799,6 +799,7 @@ async function createMediaWindow(path) {
 
         video.addEventListener('ended', (e) => {
             videoEnded = true;
+            exitPictureInPicture();
         });
     }
     var endTime = '0';
