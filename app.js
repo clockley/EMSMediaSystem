@@ -767,6 +767,7 @@ async function createMediaWindow(path) {
         video.setAttribute("src", mediaFile);
         video.setAttribute("controls", "true");
         video.id="preview";
+        video.controlsList = "noplaybackrate";
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         document.getElementById("preview").addEventListener('pause', (event) => {
             if (event.target.clientHeight == 0) {
