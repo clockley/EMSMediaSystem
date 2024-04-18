@@ -368,6 +368,20 @@ function pauseButton(e) {
     }
 }
 
+function exitPictureInPicture() {
+    if (document.pictureInPictureElement) {
+        document.exitPictureInPicture()
+            .then(() => {
+                console.log("Exited Picture-in-Picture mode.");
+            })
+            .catch(error => {
+                console.error("Error exiting Picture-in-Picture mode:", error);
+            });
+    } else {
+        console.log("No video is currently in Picture-in-Picture mode.");
+    }
+}
+
 function playMedia(e) {
     //new Date().setHours(document.getElementById("cntTmeVidStrt").value.split(":")[0], document.getElementById("cntTmeVidStrt").value.split(":")[1], 00)
     if (!e) {
@@ -397,6 +411,7 @@ function playMedia(e) {
         }
     } else if (e.target.innerText = "⏹️") {
         clearTimeout(mediaPlayDelay);
+        exitPictureInPicture();
         if (document.getElementById('mediaCntDn') != null)
             document.getElementById('mediaCntDn').innerHTML = "00:00:000";
 
