@@ -766,6 +766,7 @@ async function createMediaWindow(path) {
         video.muted = true;
         video.setAttribute("src", mediaFile);
         video.setAttribute("controls", "true");
+        video.setAttribute("disablePictureInPicture", "true");
         video.id="preview";
         video.controlsList = "noplaybackrate";
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
