@@ -5,7 +5,8 @@ require('@electron/remote/main').initialize();
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
-let win
+let win;
+
 var toHHMMSS = (secs) => {
   if (isNaN(secs)) {
     return "00:00:000";
@@ -19,6 +20,8 @@ var toHHMMSS = (secs) => {
 
   return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2) + ':' + pad(milliseconds, 3);
 }
+
+
 
 function createWindow() {
   ipcMain.on('timeRemaining-message', (event, arg) => {
@@ -39,8 +42,8 @@ function createWindow() {
 
 // Create the browser window.
   win = new BrowserWindow({
-    width: 896,
-    height: 504,
+    width: 788,
+    height: 588,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
@@ -51,7 +54,7 @@ function createWindow() {
   require("@electron/remote/main").enable(win.webContents);
 
   // and load the index.html of the app.
-  win.loadFile('index.html')
+  win.loadFile('index.html');
 
   // Open the DevTools.
   //  win.webContents.openDevTools()
