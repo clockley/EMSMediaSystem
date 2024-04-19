@@ -10,7 +10,7 @@ var dontSyncRemote = false;
 var mediaPlayDelay = null;
 var video = null;
 var masterPauseState = false;
-var videoEnded = false;
+var activeLiveStream = false;
 var targetTime;
 var startTime = 0;
 var prePathname = '';
@@ -32,6 +32,9 @@ let lastUpdateTime = performance.now();
 
 ipcRenderer.on('update-playback-state', (event, playbackState) => {
     // Handle play/pause state
+    if (!video) {
+        return;
+    }
     if (playbackState.playing && video.paused) {
         masterPauseState = false;
         if (video) {
@@ -446,6 +449,7 @@ function playMedia(e) {
 
         e.target.innerText = "▶️";
         try {
+            activeLiveStream = false;
             mediaWindow.close();
             mediaWindow = null;
             if (document.getElementById('mediaCntUpDn') != null) {
@@ -611,9 +615,12 @@ function setSBFormMediaPlayer() {
             }
             dontSyncRemote = true;
             if (video != null) {
-                if (mediaWindow != null && mediaFile != null &&
-                    (mediaFile.includes("m3u8") || mediaFile.includes("mpd") ||
-                    !mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback"))) {
+                if (!document.getElementById("mdFile").value.includes("fake")) {
+                    mediaFile = document.getElementById("mdFile").value;
+                } else {
+                    mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+                }
+                if (mediaWindow != null && mediaFile != null && isLiveStream(mediaFile)) {
                     video.currentTime = targetTime;
                     video.play()
                 }
@@ -624,6 +631,9 @@ function setSBFormMediaPlayer() {
 }
 
 function saveMediaFile() {
+    if (!document.getElementById("mdFile")) {
+        return;
+    }
     if (document.getElementById("mdFile") != null && document.getElementById("mdFile") != 'undefined') {
         if (document.getElementById("mdFile").files != null && document.getElementById("mdFile").files.length == 0) {
             return;
@@ -634,7 +644,14 @@ function saveMediaFile() {
         saveMediaFile.urlInpt = document.getElementById("mdFile").value;
     }
 
-    if (document.getElementById("mdFile") != null) {
+    if (!document.getElementById("mdFile").value.includes("fake")) {
+        mediaFile = document.getElementById("mdFile").value;
+    } else {
+        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+    }
+
+    if ((document.getElementById("mdFile") != null && (mediaWindow == null && document.getElementById("mdFile") != null &&
+        !(isLiveStream(mediaFile)))) || (mediaWindow !=null && document.getElementById("mdFile") != null && isLiveStream(mediaFile))) {
         if (video == null) {
             video = document.createElement('video');
         }
@@ -791,6 +808,11 @@ function getPlaylistByEvent(evnt) {
 
 let mediaWindow = null;
 
+function isLiveStream(mediaFile) {
+    return mediaFile.includes("m3u8") || mediaFile.includes("mpd") ||
+                    mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback");
+}
+
 async function createMediaWindow(path) {
     const electron = require('@electron/remote');
     const app = electron.app;
@@ -817,7 +839,7 @@ async function createMediaWindow(path) {
             break;
         }
     }
-
+    activeLiveStream = liveStreamMode;
     if (liveStreamMode == false) {
         video = document.createElement('video');
         video.muted = true;
@@ -837,6 +859,9 @@ async function createMediaWindow(path) {
         }
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         document.getElementById("preview").addEventListener('pause', (event) => {
+            if (activeLiveStream) {
+                return;
+            }
             if (video.currentTime - video.duration == 0) {
                 return;
             }
@@ -859,16 +884,6 @@ async function createMediaWindow(path) {
                 //event.target.play(); //continue to play even if detached
             }
             unPauseMedia();
-        });
-
-        video.addEventListener("timeupdate", function() {
-            try {
-                if (mediaWindow && !mediaWindow.isDestroyed() && video.seeking) {
-                    mediaWindow.send('timeGoto-message', video.currentTime);
-                }
-            } catch (error) {
-                console.error("Error during seeking:", error);
-            }
         });
 
         video.addEventListener('seeked', (e) => {
@@ -895,6 +910,7 @@ async function createMediaWindow(path) {
 
         video.addEventListener('ended', (e) => {
             videoEnded = true;
+            saveMediaFile();
             exitPictureInPicture();
         });
     }
