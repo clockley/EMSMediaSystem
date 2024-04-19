@@ -559,7 +559,7 @@ function setSBFormMediaPlayer() {
             <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
             <label for=""mdScrCtrl>Second Monitor</label>
             <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
-            <label for=""mdLpCtlr>Loop</label>
+            <label for=""mdLpCtlr>🔁</label>
 
             <label for="volumeControl">Volume:</label>
             <input type="range" id="volumeControl" min="0" max="1" step="0.01" value="1"
@@ -794,6 +794,9 @@ async function createMediaWindow(path) {
         video.setAttribute("disablePictureInPicture", "true");
         video.id="preview";
         video.controlsList = "noplaybackrate";
+        if (document.getElementById("mdLpCtlr") != null) {
+            video.loop = document.getElementById("mdLpCtlr").checked;
+        }
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         document.getElementById("preview").addEventListener('pause', (event) => {
             if (!event.target.isConnected) {
