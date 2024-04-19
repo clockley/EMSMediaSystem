@@ -817,6 +817,11 @@ async function createMediaWindow(path) {
         if (document.getElementById("mdLpCtlr") != null) {
             video.loop = document.getElementById("mdLpCtlr").checked;
         }
+        if (document.getElementById("preview") != null) {
+            //https://stackoverflow.com/questions/3258587/how-to-properly-unload-destroy-a-video-element
+            document.getElementById("preview").src = '';
+            document.getElementById("preview").load();
+        }
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         document.getElementById("preview").addEventListener('pause', (event) => {
             if (video.currentTime - video.duration == 0) {
@@ -854,6 +859,9 @@ async function createMediaWindow(path) {
         });
 
         video.addEventListener('seeked', (e) => {
+            if (mediaWindow == null) {
+                return;
+            }
             if (dontSyncRemote) {
                 dontSyncRemote = false;
                 return;
@@ -867,7 +875,7 @@ async function createMediaWindow(path) {
             if (dontSyncRemote) {
                 return;
             }
-            if (e.target.isConnected) {
+            if (e.target.isConnected && mediaWindow != null) {
                 mediaWindow.send('timeGoto-message', e.target.currentTime);
             }
         });
