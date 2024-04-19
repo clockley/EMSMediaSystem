@@ -12,6 +12,7 @@ var video = null;
 var masterPauseState = false;
 var videoEnded = false;
 var targetTime;
+var startTime = 0;
 
 var toHHMMSS = (secs) => {
     if (isNaN(secs)) {
@@ -641,6 +642,7 @@ function saveMediaFile() {
         video.setAttribute("controls", "true");
         video.setAttribute("disablePictureInPicture", "true");
         video.id="preview";
+        video.currentTime = startTime;
         video.controlsList = "noplaybackrate";
         if (document.getElementById("mdLpCtlr") != null) {
             video.loop = document.getElementById("mdLpCtlr").checked;
@@ -789,6 +791,18 @@ async function createMediaWindow(path) {
     const app = electron.app;
     const { BrowserWindow } = electron;
 
+    if (!document.getElementById("mdFile").value.includes("fake")) {
+        mediaFile = document.getElementById("mdFile").value;
+    } else {
+        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+    }
+    var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
+
+    if (liveStreamMode == false && video != null) {
+        video.pause();
+        startTime = video.currentTime;
+    }
+
     var electronScreen = electron.screen;
     var displays = electronScreen.getAllDisplays();
     var externalDisplay = null;
@@ -799,13 +813,6 @@ async function createMediaWindow(path) {
         }
     }
 
-    if (!document.getElementById("mdFile").value.includes("fake")) {
-        mediaFile = document.getElementById("mdFile").value;
-    } else {
-        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
-    }
-    var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
-
     if (liveStreamMode == false) {
         video = document.createElement('video');
         video.muted = true;
@@ -813,6 +820,7 @@ async function createMediaWindow(path) {
         video.setAttribute("controls", "true");
         video.setAttribute("disablePictureInPicture", "true");
         video.id="preview";
+        video.currentTime = startTime;
         video.controlsList = "noplaybackrate";
         if (document.getElementById("mdLpCtlr") != null) {
             video.loop = document.getElementById("mdLpCtlr").checked;
@@ -908,7 +916,7 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--start-vol='.concat(strtVl),'--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr")!=undefined?'--media-loop='.concat(document.getElementById("mdLpCtlr").checked):"",]
+                additionalArguments: ['--start-time='.concat(startTime),'--start-vol='.concat(strtVl),'--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr")!=undefined?'--media-loop='.concat(document.getElementById("mdLpCtlr").checked):"",]
             },
         });
     } else {
@@ -922,7 +930,7 @@ async function createMediaWindow(path) {
                 nodeIntegration: true,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--start-vol='.concat(strtVl),'--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr")!=undefined?'--media-loop='.concat(document.getElementById("mdLpCtlr").checked):""]
+                additionalArguments: ['--start-time='.concat(startTime),'--start-vol='.concat(strtVl),'--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr")!=undefined?'--media-loop='.concat(document.getElementById("mdLpCtlr").checked):""]
             }
         });
     }
