@@ -196,6 +196,8 @@ async function loadMedia() {
 }
 
 document.addEventListener('DOMContentLoaded', function () {
+    console.log(new Date().getMilliseconds());
     loadMedia();
+    console.log(new Date().getMilliseconds());
 }
 );

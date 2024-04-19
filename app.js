@@ -13,6 +13,7 @@ var masterPauseState = false;
 var videoEnded = false;
 var targetTime;
 var startTime = 0;
+var prePathname = '';
 
 var toHHMMSS = (secs) => {
     if (isNaN(secs)) {
@@ -638,6 +639,10 @@ function saveMediaFile() {
             video = document.createElement('video');
         }
         video.muted = true;
+        if (prePathname != document.getElementById("mdFile").files[0].path) {
+            prePathname = document.getElementById("mdFile").files[0].path;
+            startTime = 0;
+        }
         video.setAttribute("src", document.getElementById("mdFile").files[0].path);
         video.setAttribute("controls", "true");
         video.setAttribute("disablePictureInPicture", "true");
