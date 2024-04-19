@@ -943,9 +943,6 @@ async function createMediaWindow(path) {
     }
 
     if (mediaWindow != null) {
-        mediaWindow.on('timeGoto-message', function (evt, message) {
-            //video.currentTime = message;
-        });
         mediaWindow.on('closed', () => {
             if (video != null) {
                 video.pause();

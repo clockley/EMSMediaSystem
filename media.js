@@ -155,12 +155,6 @@ async function loadMedia() {
             clearInterval(cntDnInt);
         })
 
-        video.addEventListener('play', (event) => {
-            cntDnInt = setInterval(function(){ 
-                ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, new Date()])
-            }, 10);
-        })
-
         video.addEventListener('seeked', (event) => {
             cntDnInt = setInterval(function(){ 
                 ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, new Date()])
