@@ -23,7 +23,6 @@ window.process.argv.forEach(arg => {
 });
 
 mediaFile=decodeURIComponent(mediaFile);
-console.log(mediaFile)
 var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
@@ -139,7 +138,6 @@ async function loadMedia() {
         video.setAttribute("loop", true);
     }
     video.addEventListener("ended", function () {
-        console.log("TEST");
         close();
     });
     if (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("videoplayback")) {
