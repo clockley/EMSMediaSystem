@@ -103,6 +103,7 @@ async function loadMedia() {
     }
 
     video.setAttribute("id", "bigPlayer");
+    video.setAttribute("autoplay", true);
     video.src = mediaFile;
     if (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com")) {
         const youtubedl = require('youtube-dl-exec')
@@ -196,8 +197,6 @@ async function loadMedia() {
 }
 
 document.addEventListener('DOMContentLoaded', function () {
-    console.log(new Date().getMilliseconds());
     loadMedia();
-    console.log(new Date().getMilliseconds());
 }
 );
