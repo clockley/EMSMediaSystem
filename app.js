@@ -919,6 +919,7 @@ async function createMediaWindow(path) {
             frame: false,
             webPreferences: {
                 nodeIntegration: true,
+                webSecurity: false,
                 contextIsolation: false,
                 nativeWindowOpen: false,
                 additionalArguments: ['--start-time='.concat(startTime),'--start-vol='.concat(strtVl),'--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr")!=undefined?'--media-loop='.concat(document.getElementById("mdLpCtlr").checked):"",]
@@ -933,6 +934,7 @@ async function createMediaWindow(path) {
             autoHideMenuBar: true,
             webPreferences: {
                 nodeIntegration: true,
+                webSecurity: false,
                 contextIsolation: false,
                 nativeWindowOpen: false,
                 additionalArguments: ['--start-time='.concat(startTime),'--start-vol='.concat(strtVl),'--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr")!=undefined?'--media-loop='.concat(document.getElementById("mdLpCtlr").checked):""]
