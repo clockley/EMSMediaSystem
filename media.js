@@ -8,23 +8,20 @@ var loopFile = false;
 var strtvl = 1;
 var strtTm = 0;
 
-for (var i = 0; i < window.process.argv.length; ++i) {
-    if (window.process.argv[i].includes('--endtime-ems=')) {
-        endTime=window.process.argv[i].split('=')[1]
+window.process.argv.forEach(arg => {
+    if (arg.startsWith('--endtime-ems=')) {
+        endTime = arg.split('=')[1];
+    } else if (arg.startsWith('--mediafile-ems=')) {
+        mediaFile = arg.split('=')[1];
+    } else if (arg.startsWith('--media-loop=')) {
+        loopFile = arg.substring(arg.indexOf('=') + 1) === 'true';
+    } else if (arg.startsWith('--start-vol=')) {
+        strtvl = arg.split('=')[1];
+    } else if (arg.startsWith('--start-time=')) {
+        strtTm = arg.split('=')[1];
     }
-    if (window.process.argv[i].includes('--mediafile-ems=')) {
-        mediaFile=window.process.argv[i].split('=')[1]
-    }
-    if (window.process.argv[i].includes('--media-loop=true')) {
-        loopFile=true;
-    }
-    if (window.process.argv[i].includes('--start-vol=')) {
-        strtvl = window.process.argv[i].split("=")[1];
-    }
-    if (window.process.argv[i].includes('--start-time=')) {
-        strtTm = window.process.argv[i].split("=")[1];
-    }
-}
+});
+
 mediaFile=decodeURIComponent(mediaFile);
 console.log(mediaFile)
 var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
