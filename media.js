@@ -6,6 +6,7 @@ var cntDnInt = null;
 var endTime;
 var loopFile = false;
 var strtvl = 1;
+var strtTm = 0;
 
 for (var i = 0; i < window.process.argv.length; ++i) {
     if (window.process.argv[i].includes('--endtime-ems=')) {
@@ -19,6 +20,9 @@ for (var i = 0; i < window.process.argv.length; ++i) {
     }
     if (window.process.argv[i].includes('--start-vol=')) {
         strtvl = window.process.argv[i].split("=")[1];
+    }
+    if (window.process.argv[i].includes('--start-time=')) {
+        strtTm = window.process.argv[i].split("=")[1];
     }
 }
 mediaFile=decodeURIComponent(mediaFile);
@@ -185,6 +189,12 @@ async function loadMedia() {
         })
     }
     video.controls = false;
+    video.currentTime = strtTm;
+    const playbackState = {
+        currentTime: video.currentTime,
+        playing: true,
+      };
+    ipcRenderer.send('playback-state-change', playbackState);
     video.play();
 }
 
