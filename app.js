@@ -819,7 +819,7 @@ async function createMediaWindow(path) {
         }
         if (document.getElementById("preview") != null) {
             //https://stackoverflow.com/questions/3258587/how-to-properly-unload-destroy-a-video-element
-            document.getElementById("preview").src = '';
+            document.getElementById("preview").removeAttribute('src');
             document.getElementById("preview").load();
         }
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
