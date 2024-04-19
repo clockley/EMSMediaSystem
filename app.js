@@ -799,6 +799,9 @@ async function createMediaWindow(path) {
         }
         document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         document.getElementById("preview").addEventListener('pause', (event) => {
+            if (video.currentTime - video.duration == 0) {
+                return;
+            }
             if (!event.target.isConnected) {
                 event.preventDefault();
                 event.target.play();
@@ -836,7 +839,7 @@ async function createMediaWindow(path) {
                 return;
             }
             if (e.target.isConnected) {
-                mediaWindow.send('timeGoto-message', video.currentTime);
+                mediaWindow.send('timeGoto-message', e.target.currentTime);
             }
         });
 
@@ -899,7 +902,6 @@ async function createMediaWindow(path) {
             if (video != null) {
                 video.pause();
                 video.currentTime=0;
-                video.src=null;
             }
             if (document.getElementById("mediaCntDn") != null) {
                 document.getElementById("mediaCntDn").innerText = "00:00:000";
