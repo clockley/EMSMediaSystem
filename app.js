@@ -609,8 +609,12 @@ function setSBFormMediaPlayer() {
             }
             dontSyncRemote = true;
             if (video != null) {
-                video.currentTime = targetTime;
-                video.play()
+                if (mediaWindow != null && mediaFile != null &&
+                    (mediaFile.includes("m3u8") || mediaFile.includes("mpd") ||
+                    !mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback"))) {
+                    video.currentTime = targetTime;
+                    video.play()
+                }
                 document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
             }
         }
@@ -626,6 +630,22 @@ function saveMediaFile() {
         }
         saveMediaFile.fileInpt = document.getElementById("mdFile").files;
         saveMediaFile.urlInpt = document.getElementById("mdFile").value;
+    }
+
+    if (document.getElementById("mdFile") != null) {
+        if (video == null) {
+            video = document.createElement('video');
+        }
+        video.muted = true;
+        video.setAttribute("src", document.getElementById("mdFile").files[0].path);
+        video.setAttribute("controls", "true");
+        video.setAttribute("disablePictureInPicture", "true");
+        video.id="preview";
+        video.controlsList = "noplaybackrate";
+        if (document.getElementById("mdLpCtlr") != null) {
+            video.loop = document.getElementById("mdLpCtlr").checked;
+        }
+        document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
     }
 }
 
@@ -844,7 +864,12 @@ async function createMediaWindow(path) {
         });
 
         video.addEventListener('seeking', (e) => {
-            //console.log(e.isTrusted)
+            if (dontSyncRemote) {
+                return;
+            }
+            if (e.target.isConnected) {
+                mediaWindow.send('timeGoto-message', e.target.currentTime);
+            }
         });
 
         video.addEventListener('ended', (e) => {

@@ -26,7 +26,8 @@ console.log(mediaFile)
 var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
-    video.currentTime=message;
+    if (!liveStreamMode)
+        video.currentTime=message;
 });
 
 ipcRenderer.on('pauseCtl', function (evt, message) {
@@ -38,9 +39,10 @@ ipcRenderer.on('pauseCtl', function (evt, message) {
 });
 
 ipcRenderer.on('playCtl', function (evt, message) {
-    if (video.paused) {
-        video.play();
-    }
+    if (!liveStreamMode)
+        if (video.paused) {
+            video.play();
+        }
 });
 
 ipcRenderer.on('vlcl', function (evt, message) {
