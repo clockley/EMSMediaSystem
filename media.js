@@ -67,10 +67,17 @@ function checkElement(selector) {
     }
 }
 
-let lastSendTime = performance.now();  // Track last time message was sent
 function sendRemainingTime(video) {
+    let lastTime = 0;  // Last time the message was sent
+    const interval = 1000 / 30;  // Set the interval for 30 updates per second
+
     const send = () => {
-        ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, new Date()]);
+        const currentTime = performance.now();
+        // Update only if at least 33.33 milliseconds have passed
+        if (currentTime - lastTime > interval) {
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, new Date()]);
+            lastTime = currentTime;
+        }
         requestAnimationFrame(send);
     };
     requestAnimationFrame(send);
