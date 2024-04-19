@@ -6,6 +6,7 @@ require('@electron/remote/main').initialize();
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
 let win;
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 var toHHMMSS = (secs) => {
   if (isNaN(secs)) {
@@ -47,7 +48,8 @@ function createWindow() {
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: false
+      contextIsolation: false,
+      userGesture: true
     }
   })
 
