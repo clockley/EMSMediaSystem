@@ -8,7 +8,7 @@
         "footerBar footerBar footerBar";
 }
 body {
-    background-color: #F0F0F0;
+    background-color: #fffdfd;
 }
 
 main {
@@ -61,6 +61,8 @@ footer {
     height    : 360px;
     object-fit: contain;
     border: 2px solid #2C2C2C;
+    border-radius: 5px;
+    overflow: hidden;
 }
 
 #mediaBody {
@@ -117,4 +119,34 @@ video::-webkit-media-controls-mute-button {
 #preview video::-webkit-media-controls-panel {
     display: flex !important;
     opacity: 1 !important;
+}
+
+/* Style for the volume slider */
+#volumeControl {
+    width: 150px; /* Adjust the width of the slider for better reachability */
+    height: 15px; /* Makes the slider track thicker */
+    -webkit-appearance: none; /* Overrides default styling */
+    appearance: none;
+    background-color: #ddd; /* Light grey track */
+    outline: none; /* Removes the outline to avoid style distractions */
+    opacity: 0.7; /* Slightly transparent */
+    transition: opacity 0.2s; /* Smooth transition for hover effects */
+}
+
+/* Style for the slider thumb */
+#volumeControl::-webkit-slider-thumb {
+    -webkit-appearance: none; /* Removes default system styling */
+    appearance: none;
+    width: 20px; /* Width of the thumb */
+    height: 20px; /* Height of the thumb, makes it easier to grab */
+    background-color: #333; /* Dark grey thumb */
+    cursor: pointer; /* Indicates that it's draggable */
+    border-radius: 50%; /* Circular thumb */
+    border: 2px solid #fff; /* White border for better visibility */
+}
+
+/* Hover effects to enhance user feedback */
+#volumeControl:hover,
+#volumeControl:focus {
+    opacity: 1.0; /* Full visibility when interacting */
 }

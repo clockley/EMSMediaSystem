@@ -5,6 +5,7 @@ var mediaFile;
 var cntDnInt = null;
 var endTime;
 var loopFile = false;
+var strtvl = 1;
 
 for (var i = 0; i < window.process.argv.length; ++i) {
     if (window.process.argv[i].includes('--endtime-ems=')) {
@@ -15,6 +16,9 @@ for (var i = 0; i < window.process.argv.length; ++i) {
     }
     if (window.process.argv[i].includes('--media-loop=true')) {
         loopFile=true;
+    }
+    if (window.process.argv[i].includes('--start-vol=')) {
+        strtvl = window.process.argv[i].split("=")[1];
     }
 }
 mediaFile=decodeURIComponent(mediaFile);
@@ -37,6 +41,10 @@ ipcRenderer.on('playCtl', function (evt, message) {
     if (video.paused) {
         video.play();
     }
+});
+
+ipcRenderer.on('vlcl', function (evt, message) {
+    video.volume = message;
 });
 
 function getFileExt(fname) {
@@ -107,6 +115,10 @@ async function loadMedia() {
               playing: !video.paused,
             };
             ipcRenderer.send('playback-state-change', playbackState);
+            if (strtvl != null) {
+                video.volume = strtvl;
+                strtvl = null;
+            }
         });
 
         video.addEventListener('pause', () => {
