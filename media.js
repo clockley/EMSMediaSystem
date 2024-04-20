@@ -53,18 +53,20 @@ function getFileExt(fname) {
     return fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2);
 }
 
-function rafAsync() {
-    return new Promise(resolve => {
-        requestAnimationFrame(resolve); //faster than set time out
+function whenElementAdded(selector, callback) {
+    const observer = new MutationObserver((mutations, obs) => {
+        if (document.querySelector(selector)) {
+            callback();
+            obs.disconnect(); // Stop observing after the element is found and handled
+        }
     });
-}
 
-function checkElement(selector) {
-    if (document.querySelector(selector) === null) {
-        return rafAsync().then(() => checkElement(selector));
-    } else {
-        return Promise.resolve(true);
-    }
+    observer.observe(document.body, {
+        childList: true,
+        subtree: false,
+        attributes: false,
+        characterData: false
+    });
 }
 
 function sendRemainingTime(video) {
@@ -150,11 +152,11 @@ async function loadMedia() {
     if (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("videoplayback")) {
         h.attachMedia(video);
     }
-    document.body.appendChild(video);
-    checkElement('bigPlayer');
+    video.controls = false;
+    video.currentTime = strtTm;
+    video.load();
     if (!liveStreamMode) {
         sendRemainingTime(video);
-
         video.addEventListener('pause', (event) => {
             if (video.duration-video.currentTime < 0.1) {
                 video.currentTime = video.duration;
@@ -175,14 +177,17 @@ async function loadMedia() {
             }
         })
     }
-    video.controls = false;
-    video.currentTime = strtTm;
-    const playbackState = {
-        currentTime: video.currentTime,
-        playing: true,
-      };
-    ipcRenderer.send('playback-state-change', playbackState);
-    video.play();
+    document.body.appendChild(video);
+    whenElementAdded('#bigPlayer', () => {
+        console.log('BigPlayer video element has been added to the DOM.');
+    
+        const playbackState = {
+            currentTime: video.currentTime,
+            playing: true,
+          };
+        ipcRenderer.send('playback-state-change', playbackState);
+        video.play();
+    });
 }
 
 document.addEventListener('DOMContentLoaded', function () {

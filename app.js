@@ -409,6 +409,9 @@ function playMedia(e) {
     }
 
     if (document.getElementById("mdFile").value == "") {
+        if (e.target.innerText = "⏹️") {
+            mediaWindow.close();
+        }
         return;
     }
 
