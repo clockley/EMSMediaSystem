@@ -79,7 +79,9 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
 
     targetTime = message[3] - (adjustedIpcDelay / 1000); // Adjust target time considering the potentially modified IPC delay
 
-    if (document.getElementById('mediaCntDn') != null) {
+    mediaCntDwn = null;
+
+    if ((mediaCntDwn = document.getElementById('mediaCntDn')) != null) {
         const intervalReductionFactor = Math.max(0.5, Math.min(1, timeToEnd / 10));
         const syncInterval = 2500 * intervalReductionFactor;
 
@@ -87,10 +89,7 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
             hybridSync(targetTime, timeToEnd);
             lastUpdateTime = now;
         }
-        if (document.getElementById('mediaCntUpDn') != null) {
-            document.getElementById('mediaCntUpDn').innerHTML = toHHMMSS(message[3]) + "/" + toHHMMSS(message[2]);
-        }
-        document.getElementById('mediaCntDn').innerHTML = message[0];
+        mediaCntDwn.innerHTML = message[0];
     } else {
         timeRemaining = message;
     }
@@ -178,9 +177,6 @@ function resetPlayer() {
     document.getElementById("audio").style.display = document.getElementById("plystCtrl").style.display = "";
     if (document.getElementById('mediaCntDn') != null) {
         document.getElementById('mediaCntDn').innerHTML = "00:00";
-    }
-    if (document.getElementById('mediaCntUpDn') != null) {
-        document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
     }
     clearPlaylist();
     resetMediaSrc();
@@ -399,20 +395,6 @@ function pauseButton(e) {
     }
 }
 
-function exitPictureInPicture() {
-    if (document.pictureInPictureElement) {
-        document.exitPictureInPicture()
-            .then(() => {
-                console.log("Exited Picture-in-Picture mode.");
-            })
-            .catch(error => {
-                console.error("Error exiting Picture-in-Picture mode:", error);
-            });
-    } else {
-        console.log("No video is currently in Picture-in-Picture mode.");
-    }
-}
-
 function playMedia(e) {
     //new Date().setHours(document.getElementById("cntTmeVidStrt").value.split(":")[0], document.getElementById("cntTmeVidStrt").value.split(":")[1], 00)
     if (!e) {
@@ -443,24 +425,20 @@ function playMedia(e) {
         }
     } else if (e.target.innerText = "⏹️") {
         clearTimeout(mediaPlayDelay);
-        exitPictureInPicture();
         if (document.getElementById('mediaCntDn') != null)
             document.getElementById('mediaCntDn').innerHTML = "00:00:000";
 
         e.target.innerText = "▶️";
         try {
             activeLiveStream = false;
+            saveMediaFile();
             mediaWindow.close();
             mediaWindow = null;
-            if (document.getElementById('mediaCntUpDn') != null) {
-                document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
-            }
         } catch (err) {
             ;
         }
 
     }
-
 }
 
 function setSBFormYouTubeMediaPlayer() {
@@ -589,17 +567,11 @@ function setSBFormMediaPlayer() {
     if (mediaWindow == null) {
         document.getElementById("mediaWindowPlayButton").innerText = "▶️";
         document.getElementById("mediaCntDn").innerText = "00:00:000";
-        if (document.getElementById('mediaCntUpDn') != null) {
-            document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
-        }
     } else {
         document.getElementById('mediaCntDn').innerHTML = timeRemaining;
         timeRemaining = "00:00:000";
         document.getElementById("mediaWindowPlayButton").innerText = "⏹️";
         document.getElementById("mdFile").files = currentMediaFile;
-        if (document.getElementById('mediaCntUpDn') != null) {
-            document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
-        }
     }
     document.getElementById('volumeControl').addEventListener('input', function() {
         vlCtl(this.value);
@@ -911,7 +883,6 @@ async function createMediaWindow(path) {
         video.addEventListener('ended', (e) => {
             videoEnded = true;
             saveMediaFile();
-            exitPictureInPicture();
         });
     }
     var endTime = '0';
@@ -968,9 +939,6 @@ async function createMediaWindow(path) {
                 document.getElementById("mediaCntDn").innerText = "00:00:000";
             }
             mediaWindow = null;
-            if (document.getElementById('mediaCntUpDn') != null) {
-                document.getElementById('mediaCntUpDn').innerHTML = "00:00/00:00";
-            }
             if (document.getElementById("mediaWindowPlayButton") != null) {
                 document.getElementById("mediaWindowPlayButton").innerText = "▶️";
                 ipcRenderer.send('timeRemaining-message', 0);
