@@ -6,7 +6,7 @@ var nextFile = null;
 var timers = [];
 var alarmFileMetadata = [];
 var timeRemaining = "00:00:000";
-var dontSyncRemote = false;
+var dontSyncRemote = true;
 var mediaPlayDelay = null;
 var video = null;
 var masterPauseState = false;
@@ -437,15 +437,16 @@ function playMedia(e) {
         } else {
             createMediaWindow();
         }
+        dontSyncRemote = false;
     } else if (e.target.innerText = "⏹️") {
-        console.log("CLOD");
+        dontSyncRemote = true;
         //activeLiveStream
         clearTimeout(mediaPlayDelay);
         if (document.getElementById('mediaCntDn') != null)
             document.getElementById('mediaCntDn').innerHTML = "00:00:000";
 
+        activeLiveStream = true;
         e.target.innerText = "▶️";
-        activeLiveStream = false;
         mediaWindow.close();
     }
 }
@@ -594,6 +595,7 @@ function setSBFormMediaPlayer() {
         if (document.getElementById("preview").parentNode != null) {
             if (!masterPauseState && video != null && !video.paused) {
                 video.currentTime = targetTime;
+                dontSyncRemote = false;
                 video.play();
             }
             if (video != null) {
@@ -604,6 +606,7 @@ function setSBFormMediaPlayer() {
                 }
                 if (mediaWindow != null && mediaFile != null && isLiveStream(mediaFile)) {
                     video.currentTime = targetTime;
+                    dontSyncRemote = false;
                     video.play()
                 }
                 document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
@@ -677,9 +680,9 @@ function installSidebarFormEvents() {
     document.querySelector('form').addEventListener('change', function(event) {
         if (event.target.type === 'radio') {
             if (event.target.value == 'Media Player') {
-                dontSyncRemote = false;
-            } else {
                 dontSyncRemote = true;
+            } else {
+                dontSyncRemote = false;
             }
         }
       });
@@ -819,8 +822,10 @@ async function createMediaWindow(path) {
     var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
     if (liveStreamMode == false && video != null) {
+        dontSyncRemote = true;
         video.pause();
         startTime = video.currentTime;
+        dontSyncRemote = false;
     }
 
     var electronScreen = electron.screen;
