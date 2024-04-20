@@ -58,7 +58,7 @@ const maxDelayEntries = 30; // Maximum number of entries for rolling average
 let lastTimeDifference = 0; // Last time difference for derivative calculation
 let kP = 0.005; // Proportional gain
 let kD = 0.003; // Derivative gain
-let deadband = 0.1; // Deadband threshold
+let synchronizationThreshold = 0.25; // Threshold to keep local video within 0.25 seconds of remote
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
     if (mediaWindow == null) {
@@ -77,21 +77,15 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     totalIpcDelay += ipcDelay;
 
     const averageIpcDelay = totalIpcDelay / ipcDelays.length;
-    let adjustedIpcDelay = ipcDelay;
-
-    // If the time remaining is less than or equal to 10 times the average IPC delay, ignore the IPC delay
-    if (message[2] - message[3] <= 10 * averageIpcDelay) {
-        adjustedIpcDelay = 0;
-    }
+    const adjustedIpcDelay = ipcDelay; // Always adjust using current IPC delay
 
     targetTime = message[3] - (adjustedIpcDelay / 1000); // Adjust target time considering the potentially modified IPC delay
 
     if ((mediaCntDwn = document.getElementById('mediaCntDn')) != null) {
-        const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) / 10));
-        const syncInterval = 2500 * intervalReductionFactor;
+        const syncInterval = 1000; // Check synchronization more frequently at every 1 second
 
         if (now - lastUpdateTime > syncInterval) {
-            hybridSync(targetTime, message[2] - message[3]);
+            hybridSync(targetTime);
             lastUpdateTime = now;
         }
         mediaCntDwn.innerHTML = message[0];
@@ -101,7 +95,7 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     duration = message[2];
 });
 
-function adjustPlaybackRate(targetTime, timeToEnd) {
+function adjustPlaybackRate(targetTime) {
     const currentTime = video.currentTime;
     const timeDifference = targetTime - currentTime;
     const derivative = timeDifference - lastTimeDifference;
@@ -112,15 +106,20 @@ function adjustPlaybackRate(targetTime, timeToEnd) {
 
     video.playbackRate = playbackRate;
 
-    // Check for stability to adjust control parameters
-    if (Math.abs(timeDifference) < deadband) {
-        video.playbackRate = 1.0; // Reset playback rate if within deadband
-        kP *= 0.9; // Reduce proportional gain to stabilize
-        kD *= 0.9; // Reduce derivative gain to stabilize
+    // Adjust control parameters dynamically based on synchronization accuracy
+    if (Math.abs(timeDifference) <= synchronizationThreshold) {
+        video.playbackRate = 1.0; // Reset playback rate if within the tight synchronization threshold
+        kP *= 0.95; // Gently reduce proportional gain to minimize oscillations
+        kD *= 0.95; // Reduce derivative gain
     } else {
-        kP *= 1.1; // Increase gain if out of deadband
-        kD *= 1.1; // Increase gain if out of deadband
+        kP *= 1.05; // Slightly increase gain if out of synchronization threshold to correct faster
+        kD *= 1.05;
     }
+}
+
+function hybridSync(targetTime) {
+    // Adjust using a smooth transition algorithm
+    adjustPlaybackRate(targetTime);
 }
 
 function hybridSync(targetTime, timeToEnd) {
@@ -879,7 +878,7 @@ async function createMediaWindow(path) {
                 return;
             }
             if (e.target.isConnected) {
-                mediaWindow.send('timeGoto-message', e.target.currentTime);
+                mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
             }
         });
 
@@ -888,7 +887,7 @@ async function createMediaWindow(path) {
                 return;
             }
             if (e.target.isConnected && mediaWindow != null) {
-                mediaWindow.send('timeGoto-message', e.target.currentTime);
+                mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
             }
         });
 

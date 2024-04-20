@@ -26,8 +26,14 @@ mediaFile=decodeURIComponent(mediaFile);
 var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
-    if (!liveStreamMode)
-        video.currentTime=message;
+    if (!liveStreamMode) {
+        const now = Date.now();
+        const travelTime = now - message.timestamp;
+
+        // Adjust currentTime based on travel time
+        const adjustedTime = message.currentTime + (travelTime / 1000); // Adjust if necessary based on your logic
+        video.currentTime = adjustedTime;
+    }
 });
 
 ipcRenderer.on('pauseCtl', function (evt, message) {
