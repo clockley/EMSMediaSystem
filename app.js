@@ -14,6 +14,8 @@ var activeLiveStream = false;
 var targetTime = 0;
 var startTime = 0;
 var prePathname = '';
+let weakSet = new WeakSet();
+let obj = {};
 
 var toHHMMSS = (secs) => {
     if (isNaN(secs)) {
@@ -190,6 +192,7 @@ function resetPlayer() {
 }
 
 function setSBFormWkly() {
+    dontSyncRemote=true;
     saveMediaFile();
     resetPlayer();
     document.getElementById("dyneForm").innerHTML =
@@ -215,6 +218,7 @@ function setSBFormWkly() {
 }
 
 function setSBFormSpcl() {
+    dontSyncRemote=true;
     saveMediaFile();
     resetPlayer();
 
@@ -341,6 +345,7 @@ function addAlarm(e) {
 }
 
 function setSBFormAlrms() {
+    dontSyncRemote=true;
     saveMediaFile();
     resetPlayer();
 
@@ -447,6 +452,7 @@ function playMedia(e) {
 }
 
 function setSBFormYouTubeMediaPlayer() {
+    dontSyncRemote=true;
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn")!= null) {
@@ -488,6 +494,7 @@ function setSBFormYouTubeMediaPlayer() {
 }
 
 function setSBFormTimeoutMediaPlayer() {
+    dontSyncRemote=true;
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn")!= null) {
