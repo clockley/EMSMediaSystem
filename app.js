@@ -56,7 +56,9 @@ let ipcDelays = [];
 let totalIpcDelay = 0; // Sum of all IPC delays for rolling average calculation
 const maxDelayEntries = 30; // Maximum number of entries for rolling average
 let lastTimeDifference = 0; // Last time difference for derivative calculation
+let integral = 0; // Integral sum for error accumulation
 let kP = 0.005; // Proportional gain
+let kI = 0.001; // Integral gain
 let kD = 0.003; // Derivative gain
 let synchronizationThreshold = 0.25; // Threshold to keep local video within 0.25 seconds of remote
 
@@ -65,7 +67,7 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
         return;
     }
 
-    const now = Date.now();
+    const now = performance.now();
     const sendTime = message[4];
     const ipcDelay = now - sendTime; // Compute the IPC delay
 
@@ -77,31 +79,38 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     totalIpcDelay += ipcDelay;
 
     const averageIpcDelay = totalIpcDelay / ipcDelays.length;
-    const adjustedIpcDelay = ipcDelay; // Always adjust using current IPC delay
 
-    targetTime = message[3] - (adjustedIpcDelay / 1000); // Adjust target time considering the potentially modified IPC delay
-
-    if ((mediaCntDwn = document.getElementById('mediaCntDn')) != null) {
-        const syncInterval = 1000; // Check synchronization more frequently at every 1 second
-
-        if (now - lastUpdateTime > syncInterval) {
-            hybridSync(targetTime);
-            lastUpdateTime = now;
-        }
-        mediaCntDwn.innerHTML = message[0];
-    } else {
-        timeRemaining = message;
+    // Measure DOM update time and add to IPC delay
+    let domUpdateTimeStart = now;
+    if (document.getElementById('mediaCntDn') != null) {
+        document.getElementById('mediaCntDn').innerHTML = message[0];
     }
-    duration = message[2];
+    let domUpdateTime = performance.now() - domUpdateTimeStart;
+
+    let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
+
+    targetTime = message[3] - (adjustedIpcDelay / 1000); // Adjust target time considering the modified IPC delay
+
+    const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) / 10));
+    const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
+
+    if (now - lastUpdateTime > syncInterval) {
+        hybridSync(targetTime);
+        lastUpdateTime = now;
+        if (!mediaWindow) {
+            dynamicPIDTuning(); // Only tune when video is playing
+        }
+    }
 });
 
 function adjustPlaybackRate(targetTime) {
     const currentTime = video.currentTime;
     const timeDifference = targetTime - currentTime;
     const derivative = timeDifference - lastTimeDifference;
+    integral += timeDifference; // Accumulate the error
     lastTimeDifference = timeDifference;
 
-    let playbackRate = video.playbackRate + kP * timeDifference + kD * derivative;
+    let playbackRate = video.playbackRate + (kP * timeDifference) + (kI * integral) + (kD * derivative);
     playbackRate = Math.max(0.8, Math.min(1.2, playbackRate)); // Clamping the playback rate
 
     video.playbackRate = playbackRate;
@@ -109,11 +118,6 @@ function adjustPlaybackRate(targetTime) {
     // Adjust control parameters dynamically based on synchronization accuracy
     if (Math.abs(timeDifference) <= synchronizationThreshold) {
         video.playbackRate = 1.0; // Reset playback rate if within the tight synchronization threshold
-        kP *= 0.95; // Gently reduce proportional gain to minimize oscillations
-        kD *= 0.95; // Reduce derivative gain
-    } else {
-        kP *= 1.05; // Slightly increase gain if out of synchronization threshold to correct faster
-        kD *= 1.05;
     }
 }
 
@@ -122,23 +126,49 @@ function hybridSync(targetTime) {
     adjustPlaybackRate(targetTime);
 }
 
-function hybridSync(targetTime, timeToEnd) {
-    // Adjust using a smooth transition algorithm
-    adjustPlaybackRate(targetTime, timeToEnd);
+function dynamicPIDTuning() {
+    let isOscillating = false;
+    let lastCrossing = performance.now();
+    let numberOfCrossings = 0;
+    let accumulatedPeriod = 0;
+
+    return function adjustPID(currentError) {
+        const now = performance.now();
+        // Check if the error sign has changed (zero-crossing point)
+        if (currentError * lastTimeDifference < 0) {
+            if (isOscillating) {
+                let period = now - lastCrossing;
+                accumulatedPeriod += period;
+                numberOfCrossings++;
+                lastCrossing = now;
+
+                // After a few cycles, calculate Tu and adjust Ku
+                if (numberOfCrossings >= 5) {
+                    let averagePeriod = accumulatedPeriod / numberOfCrossings;
+                    let Tu = averagePeriod;
+                    let Ku = kP; // Assuming current kP is inducing oscillation
+                    kP = 0.6 * Ku;
+                    kI = 2 * kP / Tu;
+                    kD = kP * Tu / 8;
+
+                    // Reset for next tuning phase
+                    isOscillating = false;
+                    numberOfCrossings = 0;
+                    accumulatedPeriod = 0;
+                }
+            }
+        }
+
+        // Increment kP to induce oscillation if not already oscillating
+        if (!isOscillating) {
+            kP += 0.01;
+            isOscillating = true;
+        }
+
+        lastTimeDifference = currentError;
+    };
 }
 
-class AlarmInputState {
-    constructor(fileInputValue, timeInputValue) {
-        this.fileInputValue = fileInputValue;
-        this.timeInputValue = timeInputValue;
-    }
-    getTimeInputValue() {
-        return this.timeInputValue;
-    }
-    getFileInputValue() {
-        return this.fileInputValue;
-    }
-}
 class Timer {
     constructor(timeout, callback, timerID) {
         this.timerID = timerID;
