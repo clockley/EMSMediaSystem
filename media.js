@@ -30,9 +30,10 @@ ipcRenderer.on('timeGoto-message', function (evt, message) {
         const now = Date.now();
         const travelTime = now - message.timestamp;
 
-        // Adjust currentTime based on travel time
-        const adjustedTime = message.currentTime + (travelTime / 1000); // Adjust if necessary based on your logic
-        video.currentTime = adjustedTime;
+        const adjustedTime = message.currentTime + (travelTime / 1000);
+        requestAnimationFrame(() => {
+            video.currentTime = adjustedTime;
+        });
     }
 });
 

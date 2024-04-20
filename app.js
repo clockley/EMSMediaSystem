@@ -78,7 +78,6 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     ipcDelays.push(ipcDelay);
     totalIpcDelay += ipcDelay;
 
-    const averageIpcDelay = totalIpcDelay / ipcDelays.length;
 
     // Measure DOM update time and add to IPC delay
     let domUpdateTimeStart = now;
@@ -95,10 +94,12 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
 
     if (now - lastUpdateTime > syncInterval) {
-        hybridSync(targetTime);
-        lastUpdateTime = now;
-        if (!mediaWindow) {
-            dynamicPIDTuning(); // Only tune when video is playing
+        if (video != null && !video.paused) {
+            hybridSync(targetTime);
+            lastUpdateTime = now;
+            if (!mediaWindow) {
+                dynamicPIDTuning(); // Only tune when video is playing
+            }
         }
     }
 });
