@@ -11,7 +11,7 @@ var mediaPlayDelay = null;
 var video = null;
 var masterPauseState = false;
 var activeLiveStream = false;
-var targetTime;
+var targetTime = 0;
 var startTime = 0;
 var prePathname = '';
 
@@ -28,7 +28,7 @@ var toHHMMSS = (secs) => {
     return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2);
 }
 
-let lastUpdateTime = performance.now(); 
+let lastUpdateTime = Date.now(); 
 
 ipcRenderer.on('update-playback-state', (event, playbackState) => {
     // Handle play/pause state
@@ -49,44 +49,47 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
     }
 });
 
-// Initialize an array to hold the last 30 seconds of IPC delays
+// Initialize necessary variables
 let ipcDelays = [];
-const maxDelayEntries = 30;  // to hold last 30-second values
+let totalIpcDelay = 0; // Sum of all IPC delays for rolling average calculation
+const maxDelayEntries = 30; // Maximum number of entries for rolling average
+let lastTimeDifference = 0; // Last time difference for derivative calculation
+let kP = 0.005; // Proportional gain
+let kD = 0.003; // Derivative gain
+let deadband = 0.1; // Deadband threshold
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
     if (mediaWindow == null) {
         return;
     }
 
-    const now = performance.now();
+    const now = Date.now();
     const sendTime = message[4];
-    const ipcDelay = new Date() - sendTime;
+    const ipcDelay = now - sendTime; // Compute the IPC delay
 
     // Update the rolling average of IPC delays
-    ipcDelays.push(ipcDelay);
-    if (ipcDelays.length > maxDelayEntries) {
-        ipcDelays.shift();  // Remove the oldest entry to maintain the size
+    if (ipcDelays.length >= maxDelayEntries) {
+        totalIpcDelay -= ipcDelays.shift(); // Subtract the oldest entry
     }
+    ipcDelays.push(ipcDelay);
+    totalIpcDelay += ipcDelay;
 
-    const averageIpcDelay = ipcDelays.reduce((acc, val) => acc + val, 0) / ipcDelays.length;
-    const timeToEnd = message[2] - message[3];
+    const averageIpcDelay = totalIpcDelay / ipcDelays.length;
     let adjustedIpcDelay = ipcDelay;
 
     // If the time remaining is less than or equal to 10 times the average IPC delay, ignore the IPC delay
-    if (timeToEnd <= 10 * averageIpcDelay) {
+    if (message[2] - message[3] <= 10 * averageIpcDelay) {
         adjustedIpcDelay = 0;
     }
 
     targetTime = message[3] - (adjustedIpcDelay / 1000); // Adjust target time considering the potentially modified IPC delay
 
-    var mediaCntDwn = null;
-
     if ((mediaCntDwn = document.getElementById('mediaCntDn')) != null) {
-        const intervalReductionFactor = Math.max(0.5, Math.min(1, timeToEnd / 10));
+        const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) / 10));
         const syncInterval = 2500 * intervalReductionFactor;
 
         if (now - lastUpdateTime > syncInterval) {
-            hybridSync(targetTime, timeToEnd);
+            hybridSync(targetTime, message[2] - message[3]);
             lastUpdateTime = now;
         }
         mediaCntDwn.innerHTML = message[0];
@@ -99,23 +102,27 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
 function adjustPlaybackRate(targetTime, timeToEnd) {
     const currentTime = video.currentTime;
     const timeDifference = targetTime - currentTime;
-    const rateAdjustmentFactor = 0.005;  // More gradual adjustment
-    let playbackRate = 1.0 + (timeDifference * rateAdjustmentFactor);
-    playbackRate = Math.max(0.8, Math.min(1.2, playbackRate));  // Smaller range to reduce drastic changes
+    const derivative = timeDifference - lastTimeDifference;
+    lastTimeDifference = timeDifference;
+
+    let playbackRate = video.playbackRate + kP * timeDifference + kD * derivative;
+    playbackRate = Math.max(0.8, Math.min(1.2, playbackRate)); // Clamping the playback rate
 
     video.playbackRate = playbackRate;
-    if (timeToEnd > 2 && Math.abs(timeDifference) < 0.1) {  // Reset rate more conditionally
-        setTimeout(() => {
-            video.playbackRate = 1.0;
-        }, 1000 * timeToEnd);  // Longer delay to allow smoother transition
+
+    // Check for stability to adjust control parameters
+    if (Math.abs(timeDifference) < deadband) {
+        video.playbackRate = 1.0; // Reset playback rate if within deadband
+        kP *= 0.9; // Reduce proportional gain to stabilize
+        kD *= 0.9; // Reduce derivative gain to stabilize
+    } else {
+        kP *= 1.1; // Increase gain if out of deadband
+        kD *= 1.1; // Increase gain if out of deadband
     }
 }
 
 function hybridSync(targetTime, timeToEnd) {
-    const currentTime = video.currentTime;
-    const timeDifference = targetTime - currentTime;
-
-    // Prioritize rate adjustment over direct jumps
+    // Adjust using a smooth transition algorithm
     adjustPlaybackRate(targetTime, timeToEnd);
 }
 
@@ -424,20 +431,15 @@ function playMedia(e) {
             createMediaWindow();
         }
     } else if (e.target.innerText = "⏹️") {
+        console.log("CLOD");
+        //activeLiveStream
         clearTimeout(mediaPlayDelay);
         if (document.getElementById('mediaCntDn') != null)
             document.getElementById('mediaCntDn').innerHTML = "00:00:000";
 
         e.target.innerText = "▶️";
-        try {
-            activeLiveStream = false;
-            saveMediaFile();
-            mediaWindow.close();
-            mediaWindow = null;
-        } catch (err) {
-            ;
-        }
-
+        activeLiveStream = false;
+        mediaWindow.close();
     }
 }
 
@@ -585,7 +587,6 @@ function setSBFormMediaPlayer() {
                 video.currentTime = targetTime;
                 video.play();
             }
-            dontSyncRemote = true;
             if (video != null) {
                 if (!document.getElementById("mdFile").value.includes("fake")) {
                     mediaFile = document.getElementById("mdFile").value;
