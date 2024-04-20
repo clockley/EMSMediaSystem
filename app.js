@@ -673,6 +673,16 @@ function installSidebarFormEvents() {
     document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
     document.getElementById("TmOut").onclick = setSBFormTimeoutMediaPlayer;
+
+    document.querySelector('form').addEventListener('change', function(event) {
+        if (event.target.type === 'radio') {
+            if (event.target.value == 'Media Player') {
+                dontSyncRemote = false;
+            } else {
+                dontSyncRemote = true;
+            }
+        }
+      });
 }
 
 function endOfPlaylist() {
