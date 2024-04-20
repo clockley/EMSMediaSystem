@@ -79,7 +79,7 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
 
     targetTime = message[3] - (adjustedIpcDelay / 1000); // Adjust target time considering the potentially modified IPC delay
 
-    mediaCntDwn = null;
+    var mediaCntDwn = null;
 
     if ((mediaCntDwn = document.getElementById('mediaCntDn')) != null) {
         const intervalReductionFactor = Math.max(0.5, Math.min(1, timeToEnd / 10));
@@ -606,33 +606,34 @@ function saveMediaFile() {
     if (!document.getElementById("mdFile")) {
         return;
     }
-    if (document.getElementById("mdFile") != null && document.getElementById("mdFile") != 'undefined') {
-        if (document.getElementById("mdFile").files != null && document.getElementById("mdFile").files.length == 0) {
+    var mdfileElement = document.getElementById("mdFile");
+    if (mdfileElement != null && mdfileElement != 'undefined') {
+        if (mdfileElement.files != null && mdfileElement.files.length == 0) {
             return;
-        } else if (document.getElementById("mdFile").value == "") {
+        } else if (mdfileElement.value == "") {
             return;
         }
-        saveMediaFile.fileInpt = document.getElementById("mdFile").files;
-        saveMediaFile.urlInpt = document.getElementById("mdFile").value;
+        saveMediaFile.fileInpt = mdfileElement.files;
+        saveMediaFile.urlInpt = mdfileElement.value;
     }
 
-    if (!document.getElementById("mdFile").value.includes("fake")) {
-        mediaFile = document.getElementById("mdFile").value;
+    if (!mdfileElement.value.includes("fake")) {
+        mediaFile = mdfileElement.value;
     } else {
-        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? mdfileElement.value : mdfileElement.files[0].path;
     }
 
-    if ((document.getElementById("mdFile") != null && (mediaWindow == null && document.getElementById("mdFile") != null &&
-        !(isLiveStream(mediaFile)))) || (mediaWindow !=null && document.getElementById("mdFile") != null && isLiveStream(mediaFile))) {
+    if ((mdfileElement != null && (mediaWindow == null && mdfileElement != null &&
+        !(isLiveStream(mediaFile)))) || (mediaWindow !=null && mdfileElement != null && isLiveStream(mediaFile))) {
         if (video == null) {
             video = document.createElement('video');
         }
         video.muted = true;
-        if (prePathname != document.getElementById("mdFile").files[0].path) {
-            prePathname = document.getElementById("mdFile").files[0].path;
+        if (prePathname != mdfileElement.files[0].path) {
+            prePathname = mdfileElement.files[0].path;
             startTime = 0;
         }
-        video.setAttribute("src", document.getElementById("mdFile").files[0].path);
+        video.setAttribute("src", mdfileElement.files[0].path);
         video.setAttribute("controls", "true");
         video.setAttribute("disablePictureInPicture", "true");
         video.id="preview";
