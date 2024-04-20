@@ -60,7 +60,7 @@ let integral = 0; // Integral sum for error accumulation
 let kP = 0.005; // Proportional gain
 let kI = 0.001; // Integral gain
 let kD = 0.003; // Derivative gain
-let synchronizationThreshold = 0.25; // Threshold to keep local video within 0.25 seconds of remote
+let synchronizationThreshold = 0.2; // Threshold to keep local video within 0.2 second of remote
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
     if (mediaWindow == null) {
