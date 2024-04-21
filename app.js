@@ -17,6 +17,11 @@ var prePathname = '';
 let weakSet = new WeakSet();
 let obj = {};
 var saveTarget = 0;
+//
+var opMode = -1
+const MEDIAPLAYER = 0;
+const MEDIAPLAYERYT = 1;
+const WEKLYSCHD = 2;
 
 var toHHMMSS = (secs) => {
     if (isNaN(secs)) {
@@ -52,10 +57,6 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
     }
 });
 
-// Initialize necessary variables
-let ipcDelays = [];
-let totalIpcDelay = 0; // Sum of all IPC delays for rolling average calculation
-const maxDelayEntries = 30; // Maximum number of entries for rolling average
 let lastTimeDifference = 0; // Last time difference for derivative calculation
 let integral = 0; // Integral sum for error accumulation
 let kP = 0.005; // Proportional gain
@@ -64,36 +65,25 @@ let kD = 0.003; // Derivative gain
 let synchronizationThreshold = 0.2; // Threshold to keep local video within 0.2 second of remote
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
-    if (mediaWindow == null) {
-        return;
-    }
-
     const now = performance.now();
     const sendTime = message[4];
     const ipcDelay = now - sendTime; // Compute the IPC delay
 
-    // Update the rolling average of IPC delays
-    if (ipcDelays.length >= maxDelayEntries) {
-        totalIpcDelay -= ipcDelays.shift(); // Subtract the oldest entry
-    }
-    ipcDelays.push(ipcDelay);
-    totalIpcDelay += ipcDelay;
-
-
     // Measure DOM update time and add to IPC delay
     let domUpdateTimeStart = now;
-    if (document.getElementById('mediaCntDn') != null) {
+
+    if (opMode == MEDIAPLAYER) {
         requestAnimationFrame(() => {
-            document.getElementById('mediaCntDn').innerHTML = message[0];
+            document.getElementById('mediaCntDn').textContent = message[0];
         });
     }
     let domUpdateTime = performance.now() - domUpdateTimeStart;
 
     let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
 
-    targetTime = message[3] - (adjustedIpcDelay / 1000); // Adjust target time considering the modified IPC delay
+    targetTime = message[3] - (adjustedIpcDelay *.001); // Adjust target time considering the modified IPC delay
     saveTarget=message[3];
-    const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) / 10));
+    const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) * .1));
     const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
 
     if (now - lastUpdateTime > syncInterval) {
@@ -458,7 +448,7 @@ function playMedia(e) {
         e.target.innerText = "⏹️";
         currentMediaFile = document.getElementById("mdFile").files;
 
-        if (document.getElementById("malrm1") != null && document.getElementById("malrm1").value != "") {
+        if (opMode == MEDIAPLAYER && document.getElementById("malrm1").value != "") {
             var deadlinestr = "";
             var deadlinestrarr = String(new Date()).split(" ");
             deadlinestrarr[4] = document.getElementById("malrm1").value;
@@ -476,7 +466,7 @@ function playMedia(e) {
         dontSyncRemote = true;
         //activeLiveStream
         clearTimeout(mediaPlayDelay);
-        if (document.getElementById('mediaCntDn') != null)
+        if (opMode == MEDIAPLAYER)
             document.getElementById('mediaCntDn').innerHTML = "00:00:000";
 
         activeLiveStream = true;
@@ -605,7 +595,7 @@ function setSBFormMediaPlayer() {
         <br>
         <br>
         <center><video id="preview"></video></center>
-        <center><span style="color:red;font-size: xx-large;font-weight: bold;font-family: sans-serif;" id="mediaCntDn">00:00:000<span></center>
+        <center><span style="transform: translateZ(0);color:red;font-size: xx-large;font-weight: bold;font-family: sans-serif;" id="mediaCntDn">00:00:000<span></center>
     `;
     restoreMediaFile();
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
@@ -715,6 +705,7 @@ function installSidebarFormEvents() {
         if (event.target.type === 'radio') {
             if (event.target.value == 'Media Player') {
                 dontSyncRemote = true;
+                opMode = MEDIAPLAYER;
             } else {
                 dontSyncRemote = false;
             }
