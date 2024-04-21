@@ -633,6 +633,10 @@ function setSBFormMediaPlayer() {
                     mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
                 }
                 if (mediaWindow != null && mediaFile != null && !isLiveStream(mediaFile)) {
+                    if (video == null) {
+                        video = document.getElementById("preview");
+                        saveMediaFile();
+                    }
                     video.currentTime = saveTarget;
                     if (!masterPauseState)
                         video.play()
