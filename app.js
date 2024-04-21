@@ -19,7 +19,7 @@ let obj = {};
 var saveTarget = 0;
 var installedVideoEventListener = false;
 var mediaCntDnEle = null;
-
+var CrVL = 1;
 var opMode = -1
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
@@ -600,6 +600,7 @@ function setSBFormMediaPlayer() {
         saveMediaFile();
     }
     restoreMediaFile();
+    document.getElementById('volumeControl').value = CrVL;
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
 
     if (mediaWindow == null) {
@@ -613,6 +614,7 @@ function setSBFormMediaPlayer() {
     }
     document.getElementById('volumeControl').addEventListener('input', function () {
         vlCtl(this.value);
+        CrVL = this.value;
     });
     dontSyncRemote = true;
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
