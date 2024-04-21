@@ -677,7 +677,7 @@ function saveMediaFile() {
         }
 
         video.muted = true;
-        if (prePathname != mdfileElement.files[0].path) {
+        if (mdfileElement != null && prePathname != mdfileElement.files[0].path) {
             prePathname = mdfileElement.files[0].path;
             startTime = 0;
         }
