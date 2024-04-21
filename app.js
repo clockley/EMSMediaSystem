@@ -637,9 +637,13 @@ function setSBFormMediaPlayer() {
                         video = document.getElementById("preview");
                         saveMediaFile();
                     }
-                    video.currentTime = saveTarget;
-                    if (!masterPauseState)
-                        video.play()
+                    if (video) {
+                        if (saveTarget != null) {
+                            video.currentTime = saveTarget;
+                            if (!masterPauseState)
+                                video.play();
+                        }
+                    }
                     dontSyncRemote = false;
                 }
                 document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
@@ -675,20 +679,23 @@ function saveMediaFile() {
         if (video == null) {
             video = document.getElementById('preview');
         }
-
-        video.muted = true;
-        if (mdfileElement != null && prePathname != mdfileElement.files[0].path) {
-            prePathname = mdfileElement.files[0].path;
-            startTime = 0;
-        }
-        video.setAttribute("src", mdfileElement.files[0].path);
-        video.setAttribute("controls", "true");
-        video.setAttribute("disablePictureInPicture", "true");
-        video.id = "preview";
-        video.currentTime = startTime;
-        video.controlsList = "noplaybackrate";
-        if (document.getElementById("mdLpCtlr") != null) {
-            video.loop = document.getElementById("mdLpCtlr").checked;
+        if (video) {
+            video.muted = true;
+            if (mdfileElement != null && mdfileElement.files && prePathname != mdfileElement.files[0].path) {
+                prePathname = mdfileElement.files[0].path;
+                startTime = 0;
+            }
+            if (mdfileElement.files) {
+                video.setAttribute("src", mdfileElement.files[0].path);
+                video.setAttribute("controls", "true");
+                video.setAttribute("disablePictureInPicture", "true");
+                video.id = "preview";
+                video.currentTime = startTime;
+                video.controlsList = "noplaybackrate";
+                if (document.getElementById("mdLpCtlr") != null) {
+                    video.loop = document.getElementById("mdLpCtlr").checked;
+                }
+            }
         }
     }
 }
