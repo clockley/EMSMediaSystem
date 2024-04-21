@@ -16,6 +16,7 @@ var startTime = 0;
 var prePathname = '';
 let weakSet = new WeakSet();
 let obj = {};
+var saveTarget = 0;
 
 var toHHMMSS = (secs) => {
     if (isNaN(secs)) {
@@ -82,23 +83,25 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     // Measure DOM update time and add to IPC delay
     let domUpdateTimeStart = now;
     if (document.getElementById('mediaCntDn') != null) {
-        document.getElementById('mediaCntDn').innerHTML = message[0];
+        requestAnimationFrame(() => {
+            document.getElementById('mediaCntDn').innerHTML = message[0];
+        });
     }
     let domUpdateTime = performance.now() - domUpdateTimeStart;
 
     let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
 
     targetTime = message[3] - (adjustedIpcDelay / 1000); // Adjust target time considering the modified IPC delay
-
+    saveTarget=message[3];
     const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) / 10));
     const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
 
     if (now - lastUpdateTime > syncInterval) {
-        if (video != null && !video.paused) {
+        if (video != null) {
             hybridSync(targetTime);
             lastUpdateTime = now;
-            if (!mediaWindow) {
-                dynamicPIDTuning(); // Only tune when video is playing
+            if (mediaWindow && !video.paused) {
+                dynamicPIDTuning();
             }
         }
     }
@@ -635,10 +638,10 @@ function setSBFormMediaPlayer() {
                 } else {
                     mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
                 }
-                if (mediaWindow != null && mediaFile != null && isLiveStream(mediaFile)) {
-                    video.currentTime = targetTime;
-                    dontSyncRemote = false;
+                if (mediaWindow != null && mediaFile != null && !isLiveStream(mediaFile)) {
+                    video.currentTime = saveTarget;
                     video.play()
+                    dontSyncRemote = false;
                 }
                 document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
             }
