@@ -25,18 +25,18 @@ const WEKLYSCHD = 2;
 
 var toHHMMSS = (secs) => {
     if (isNaN(secs)) {
-      return "00:00:000";
+        return "00:00:000";
     }
-    var pad = function(num, size) { return ('000' + num).slice(size * -1); },
-    time = parseFloat(secs).toFixed(3),
-    hours = Math.floor(time / 60 / 60),
-    minutes = Math.floor(time / 60) % 60,
-    seconds = Math.floor(time - minutes * 60);
+    var pad = function (num, size) { return ('000' + num).slice(size * -1); },
+        time = parseFloat(secs).toFixed(3),
+        hours = Math.floor(time / 60 / 60),
+        minutes = Math.floor(time / 60) % 60,
+        seconds = Math.floor(time - minutes * 60);
 
     return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2);
 }
 
-let lastUpdateTime = Date.now(); 
+let lastUpdateTime = Date.now();
 
 ipcRenderer.on('update-playback-state', (event, playbackState) => {
     // Handle play/pause state
@@ -52,7 +52,7 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
         masterPauseState = true;
         if (video) {
             video.pause();
-            video.currentTime=playbackState.currentTime; //sync on pause
+            video.currentTime = playbackState.currentTime; //sync on pause
         }
     }
 });
@@ -81,13 +81,13 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
 
     let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
 
-    targetTime = message[3] - (adjustedIpcDelay *.001); // Adjust target time considering the modified IPC delay
-    saveTarget=message[3];
+    targetTime = message[3] - (adjustedIpcDelay * .001); // Adjust target time considering the modified IPC delay
+    saveTarget = message[3];
     const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) * .1));
     const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
 
     if (now - lastUpdateTime > syncInterval) {
-        if (video != null) {
+        if (opMode == MEDIAPLAYER) {
             hybridSync(targetTime);
             lastUpdateTime = now;
             if (mediaWindow && !video.paused) {
@@ -215,7 +215,7 @@ function resetPlayer() {
 }
 
 function setSBFormWkly() {
-    dontSyncRemote=true;
+    dontSyncRemote = true;
     saveMediaFile();
     resetPlayer();
     document.getElementById("dyneForm").innerHTML =
@@ -241,7 +241,7 @@ function setSBFormWkly() {
 }
 
 function setSBFormSpcl() {
-    dontSyncRemote=true;
+    dontSyncRemote = true;
     saveMediaFile();
     resetPlayer();
 
@@ -368,7 +368,7 @@ function addAlarm(e) {
 }
 
 function setSBFormAlrms() {
-    dontSyncRemote=true;
+    dontSyncRemote = true;
     saveMediaFile();
     resetPlayer();
 
@@ -452,12 +452,12 @@ function playMedia(e) {
             var deadlinestr = "";
             var deadlinestrarr = String(new Date()).split(" ");
             deadlinestrarr[4] = document.getElementById("malrm1").value;
-            for (i = 0; i < deadlinestrarr.length; ++i) {deadlinestr+=(deadlinestrarr[i]+" ")}
-            deadline=new Date(deadlinestr);
-            document.getElementById("mdDelay").value = ((deadline.getTime() - new Date().getTime())/1000);
+            for (i = 0; i < deadlinestrarr.length; ++i) { deadlinestr += (deadlinestrarr[i] + " ") }
+            deadline = new Date(deadlinestr);
+            document.getElementById("mdDelay").value = ((deadline.getTime() - new Date().getTime()) / 1000);
         }
         if (document.getElementById("mdDelay") != null) {
-            mediaPlayDelay = setTimeout(createMediaWindow, document.getElementById("mdDelay").value*1000);
+            mediaPlayDelay = setTimeout(createMediaWindow, document.getElementById("mdDelay").value * 1000);
         } else {
             createMediaWindow();
         }
@@ -476,10 +476,10 @@ function playMedia(e) {
 }
 
 function setSBFormYouTubeMediaPlayer() {
-    dontSyncRemote=true;
+    dontSyncRemote = true;
     resetPlayer();
     if (mediaWindow == null) {
-        if (document.getElementById("mediaCntDn")!= null) {
+        if (document.getElementById("mediaCntDn") != null) {
             document.getElementById("mediaCntDn").innerText = "00:00:000";
         }
     }
@@ -505,7 +505,7 @@ function setSBFormYouTubeMediaPlayer() {
     restoreMediaFile();
 
     if (document.getElementById("mdFile").value.includes(":\\fakepath\\")) {
-        document.getElementById("mdFile").value='';
+        document.getElementById("mdFile").value = '';
     }
 
     if (mediaWindow == null) {
@@ -518,10 +518,10 @@ function setSBFormYouTubeMediaPlayer() {
 }
 
 function setSBFormTimeoutMediaPlayer() {
-    dontSyncRemote=true;
+    dontSyncRemote = true;
     resetPlayer();
     if (mediaWindow == null) {
-        if (document.getElementById("mediaCntDn")!= null) {
+        if (document.getElementById("mediaCntDn") != null) {
             document.getElementById("mediaCntDn").innerText = "00:00:000";
         }
     }
@@ -543,7 +543,7 @@ function setSBFormTimeoutMediaPlayer() {
         </form>
         <br>
     `;
-    document.getElementById("mdFile").value=require('path').join(require('os').homedir(), 'Desktop')+"/cntDwnWthStartTime.mp4"
+    document.getElementById("mdFile").value = require('path').join(require('os').homedir(), 'Desktop') + "/cntDwnWthStartTime.mp4"
     restoreMediaFile();
 
     if (mediaWindow == null) {
@@ -558,7 +558,7 @@ function setSBFormTimeoutMediaPlayer() {
 function setSBFormMediaPlayer() {
     resetPlayer();
     if (mediaWindow == null) {
-        if (document.getElementById("mediaCntDn")!= null) {
+        if (document.getElementById("mediaCntDn") != null) {
             document.getElementById("mediaCntDn").innerText = "00:00:000";
         }
     }
@@ -609,10 +609,10 @@ function setSBFormMediaPlayer() {
         document.getElementById("mediaWindowPlayButton").innerText = "⏹️";
         document.getElementById("mdFile").files = currentMediaFile;
     }
-    document.getElementById('volumeControl').addEventListener('input', function() {
+    document.getElementById('volumeControl').addEventListener('input', function () {
         vlCtl(this.value);
     });
-
+    dontSyncRemote = true;
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
     document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseButton);
     if (document.getElementById("mdFile") != null) {
@@ -650,6 +650,7 @@ function saveMediaFile() {
         } else if (mdfileElement.value == "") {
             return;
         }
+        dontSyncRemote=true;
         saveMediaFile.fileInpt = mdfileElement.files;
         saveMediaFile.urlInpt = mdfileElement.value;
     }
@@ -661,9 +662,9 @@ function saveMediaFile() {
     }
 
     if ((mdfileElement != null && (mediaWindow == null && mdfileElement != null &&
-        !(isLiveStream(mediaFile)))) || (mediaWindow !=null && mdfileElement != null && isLiveStream(mediaFile))) {
+        !(isLiveStream(mediaFile)))) || (mediaWindow != null && mdfileElement != null && isLiveStream(mediaFile))) {
         if (video == null) {
-            video = document.createElement('video');
+            video = document.getElementById('preview');
         }
         video.muted = true;
         if (prePathname != mdfileElement.files[0].path) {
@@ -673,13 +674,13 @@ function saveMediaFile() {
         video.setAttribute("src", mdfileElement.files[0].path);
         video.setAttribute("controls", "true");
         video.setAttribute("disablePictureInPicture", "true");
-        video.id="preview";
+        video.id = "preview";
         video.currentTime = startTime;
         video.controlsList = "noplaybackrate";
         if (document.getElementById("mdLpCtlr") != null) {
             video.loop = document.getElementById("mdLpCtlr").checked;
         }
-        document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
+        //document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
     }
 }
 
@@ -687,7 +688,7 @@ function restoreMediaFile() {
     if (saveMediaFile.fileInpt != null && document.getElementById("mdFile") != null) {
         if (document.getElementById("YtPlyrRBtnFrmID") != null && document.getElementById("YtPlyrRBtnFrmID").checked) {
             document.getElementById("mdFile").value = saveMediaFile.urlInpt;
-        }else {
+        } else {
             document.getElementById("mdFile").files = saveMediaFile.fileInpt;
         }
     }
@@ -701,16 +702,16 @@ function installSidebarFormEvents() {
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
     document.getElementById("TmOut").onclick = setSBFormTimeoutMediaPlayer;
 
-    document.querySelector('form').addEventListener('change', function(event) {
+    document.querySelector('form').addEventListener('change', function (event) {
         if (event.target.type === 'radio') {
             if (event.target.value == 'Media Player') {
                 dontSyncRemote = true;
                 opMode = MEDIAPLAYER;
             } else {
-                dontSyncRemote = false;
+                opMode = -1;
             }
         }
-      });
+    });
 }
 
 function endOfPlaylist() {
@@ -831,7 +832,7 @@ let mediaWindow = null;
 
 function isLiveStream(mediaFile) {
     return mediaFile.includes("m3u8") || mediaFile.includes("mpd") ||
-                    mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback");
+        mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback");
 }
 
 async function createMediaWindow(path) {
@@ -864,23 +865,17 @@ async function createMediaWindow(path) {
     }
     activeLiveStream = liveStreamMode;
     if (liveStreamMode == false) {
-        video = document.createElement('video');
         video.muted = true;
         video.setAttribute("src", mediaFile);
         video.setAttribute("controls", "true");
         video.setAttribute("disablePictureInPicture", "true");
-        video.id="preview";
+        video.id = "preview";
         video.currentTime = startTime;
         video.controlsList = "noplaybackrate";
         if (document.getElementById("mdLpCtlr") != null) {
             video.loop = document.getElementById("mdLpCtlr").checked;
         }
-        if (document.getElementById("preview") != null) {
-            //https://stackoverflow.com/questions/3258587/how-to-properly-unload-destroy-a-video-element
-            document.getElementById("preview").removeAttribute('src');
-            document.getElementById("preview").load();
-        }
-        document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
+        //document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         document.getElementById("preview").addEventListener('pause', (event) => {
             if (activeLiveStream) {
                 return;
@@ -960,7 +955,7 @@ async function createMediaWindow(path) {
                 webSecurity: false,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--start-time='.concat(startTime),'--start-vol='.concat(strtVl),'--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr")!=undefined?'--media-loop='.concat(document.getElementById("mdLpCtlr").checked):"",]
+                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",]
             },
         });
     } else {
@@ -975,7 +970,7 @@ async function createMediaWindow(path) {
                 webSecurity: false,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--start-time='.concat(startTime),'--start-vol='.concat(strtVl),'--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr")!=undefined?'--media-loop='.concat(document.getElementById("mdLpCtlr").checked):""]
+                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : ""]
             }
         });
     }
@@ -984,7 +979,7 @@ async function createMediaWindow(path) {
         mediaWindow.on('closed', () => {
             if (video != null) {
                 video.pause();
-                video.currentTime=0;
+                video.currentTime = 0;
             }
             if (document.getElementById("mediaCntDn") != null) {
                 document.getElementById("mediaCntDn").innerText = "00:00:000";
