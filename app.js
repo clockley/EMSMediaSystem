@@ -464,8 +464,10 @@ function playMedia(e) {
 
         activeLiveStream = true;
         e.target.innerText = "▶️";
-        if (mediaWindow)
+        if (mediaWindow) {
             mediaWindow.close();
+            saveMediaFile();
+        }
     }
 }
 
@@ -593,6 +595,10 @@ function setSBFormMediaPlayer() {
         <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: 48px;line-height: 1.2;" id="mediaCntDn">00:00:000<span>
         </div>
     `;
+    if (video == null) {
+        video = video = document.getElementById('preview');
+        saveMediaFile();
+    }
     restoreMediaFile();
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
 
@@ -658,10 +664,11 @@ function saveMediaFile() {
     }
 
     if ((mdfileElement != null && (mediaWindow == null && mdfileElement != null &&
-        !(isLiveStream(mediaFile)))) || (mediaWindow != null && mdfileElement != null && isLiveStream(mediaFile))) {
+        !(isLiveStream(mediaFile)))) || (mediaWindow != null && mdfileElement != null && isLiveStream(mediaFile)) || activeLiveStream && mediaWindow != null) {
         if (video == null) {
             video = document.getElementById('preview');
         }
+
         video.muted = true;
         if (prePathname != mdfileElement.files[0].path) {
             prePathname = mdfileElement.files[0].path;
@@ -863,6 +870,9 @@ async function createMediaWindow(path) {
     }
     activeLiveStream = liveStreamMode;
     if (liveStreamMode == false) {
+        if (video == null) {
+            video = document.getElementById("preview");
+        }
         video.muted = true;
         video.setAttribute("src", mediaFile);
         video.setAttribute("controls", "true");
