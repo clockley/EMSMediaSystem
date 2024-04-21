@@ -18,24 +18,12 @@ let weakSet = new WeakSet();
 let obj = {};
 var saveTarget = 0;
 var installedVideoEventListener = false;
+var mediaCntDnEle = null;
 
 var opMode = -1
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
-
-var toHHMMSS = (secs) => {
-    if (isNaN(secs)) {
-        return "00:00:000";
-    }
-    var pad = function (num, size) { return ('000' + num).slice(size * -1); },
-        time = parseFloat(secs).toFixed(3),
-        hours = Math.floor(time / 60 / 60),
-        minutes = Math.floor(time / 60) % 60,
-        seconds = Math.floor(time - minutes * 60);
-
-    return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2);
-}
 
 let lastUpdateTime = Date.now();
 
@@ -72,10 +60,11 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
 
     // Measure DOM update time and add to IPC delay
     let domUpdateTimeStart = now;
-
+    let timeStamp = message[0];
     if (opMode == MEDIAPLAYER) {
         requestAnimationFrame(() => {
-            document.getElementById('mediaCntDn').textContent = message[0];
+            mediaCntDnEle.textContent = timeStamp;
+            timeStamp = null;
         });
     }
     let domUpdateTime = performance.now() - domUpdateTimeStart;
@@ -96,6 +85,7 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
             }
         }
     }
+    message = null;
 });
 
 function adjustPlaybackRate(targetTime) {
@@ -597,7 +587,7 @@ function setSBFormMediaPlayer() {
         <br>
         <br>
         <center><video id="preview"></video></center>
-        <center><span style="transform: translateZ(0);color:red;font-size: xx-large;font-weight: bold;font-family: sans-serif;" id="mediaCntDn">00:00:000<span></center>
+        <center><span style="color:red;font-size: xx-large;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: 48px;line-height: 1.2;" id="mediaCntDn">00:00:000<span></center>
     `;
     restoreMediaFile();
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
@@ -682,7 +672,6 @@ function saveMediaFile() {
         if (document.getElementById("mdLpCtlr") != null) {
             video.loop = document.getElementById("mdLpCtlr").checked;
         }
-        //document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
     }
 }
 
@@ -709,7 +698,9 @@ function installSidebarFormEvents() {
             if (event.target.value == 'Media Player') {
                 dontSyncRemote = true;
                 opMode = MEDIAPLAYER;
+                mediaCntDnEle = document.getElementById('mediaCntDn');
             } else {
+                mediaCntDnEle = null;
                 opMode = -1;
             }
         }
@@ -877,7 +868,6 @@ async function createMediaWindow(path) {
         if (document.getElementById("mdLpCtlr") != null) {
             video.loop = document.getElementById("mdLpCtlr").checked;
         }
-        //document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
         document.getElementById("preview").addEventListener('pause', (event) => {
             if (activeLiveStream) {
                 return;
