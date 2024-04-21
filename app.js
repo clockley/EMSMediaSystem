@@ -17,7 +17,8 @@ var prePathname = '';
 let weakSet = new WeakSet();
 let obj = {};
 var saveTarget = 0;
-//
+var installedVideoEventListener = false;
+
 var opMode = -1
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
@@ -438,7 +439,8 @@ function playMedia(e) {
 
     if (document.getElementById("mdFile").value == "") {
         if (e.target.innerText = "⏹️") {
-            mediaWindow.close();
+            if (mediaWindow)
+                mediaWindow.close();
         }
         return;
     }
@@ -903,33 +905,35 @@ async function createMediaWindow(path) {
             }
             unPauseMedia();
         });
+        if (!installedVideoEventListener) {
+            video.addEventListener('seeked', (e) => {
+                if (mediaWindow == null) {
+                    return;
+                }
+                if (dontSyncRemote) {
+                    dontSyncRemote = false;
+                    return;
+                }
+                if (e.target.isConnected) {
+                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                }
+            });
 
-        video.addEventListener('seeked', (e) => {
-            if (mediaWindow == null) {
-                return;
-            }
-            if (dontSyncRemote) {
-                dontSyncRemote = false;
-                return;
-            }
-            if (e.target.isConnected) {
-                mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-            }
-        });
+            video.addEventListener('seeking', (e) => {
+                if (dontSyncRemote) {
+                    return;
+                }
+                if (e.target.isConnected && mediaWindow != null) {
+                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                }
+            });
 
-        video.addEventListener('seeking', (e) => {
-            if (dontSyncRemote) {
-                return;
-            }
-            if (e.target.isConnected && mediaWindow != null) {
-                mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-            }
-        });
-
-        video.addEventListener('ended', (e) => {
-            videoEnded = true;
-            saveMediaFile();
-        });
+            video.addEventListener('ended', (e) => {
+                videoEnded = true;
+                saveMediaFile();
+            });
+            installedVideoEventListener = true;
+        }
     }
     var endTime = '0';
     if (document.getElementById("cntTmeVidStrt")) {
