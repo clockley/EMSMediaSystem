@@ -30,7 +30,9 @@ footer {
     min-height: 5vh;
 }
 
-
+#cntdndiv {
+    text-align: center;
+}
 
 .plEntry {
     margin : 0%;
@@ -57,12 +59,13 @@ footer {
 }
 
 #preview {
-    width     : 640px;
-    height    : 360px;
+    width     : 60vw;
+    height    : 33.75vw;
     object-fit: contain;
     border: 2px solid #2C2C2C;
     border-radius: 5px;
     overflow: hidden;
+    max-height: 100vh;
 }
 
 #mediaBody {
