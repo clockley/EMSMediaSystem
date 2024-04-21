@@ -431,6 +431,7 @@ function playMedia(e) {
         if (e.target.innerText = "⏹️") {
             if (mediaWindow)
                 mediaWindow.close();
+            e.target.innerText = "▶️";
         }
         return;
     }
@@ -463,7 +464,8 @@ function playMedia(e) {
 
         activeLiveStream = true;
         e.target.innerText = "▶️";
-        mediaWindow.close();
+        if (mediaWindow)
+            mediaWindow.close();
     }
 }
 
@@ -587,7 +589,9 @@ function setSBFormMediaPlayer() {
         <br>
         <br>
         <center><video id="preview"></video></center>
-        <center><span style="color:red;font-size: xx-large;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: 48px;line-height: 1.2;" id="mediaCntDn">00:00:000<span></center>
+        <div id=cntdndiv>
+        <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: 48px;line-height: 1.2;" id="mediaCntDn">00:00:000<span>
+        </div>
     `;
     restoreMediaFile();
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
@@ -838,6 +842,7 @@ async function createMediaWindow(path) {
     } else {
         mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
     }
+
     var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
     if (liveStreamMode == false && video != null) {
@@ -868,33 +873,6 @@ async function createMediaWindow(path) {
         if (document.getElementById("mdLpCtlr") != null) {
             video.loop = document.getElementById("mdLpCtlr").checked;
         }
-        document.getElementById("preview").addEventListener('pause', (event) => {
-            if (activeLiveStream) {
-                return;
-            }
-            if (video.currentTime - video.duration == 0) {
-                return;
-            }
-            if (!event.target.isConnected) {
-                event.preventDefault();
-                event.target.play();
-            }
-            if (event.target.clientHeight == 0) {
-                event.preventDefault();
-                return;
-                //event.target.play(); //continue to play even if detached
-            }
-            if (event.target.parentNode != null) {
-                pauseMedia();
-            }
-        });
-        document.getElementById("preview").addEventListener('play', (event) => {
-            if (event.target.clientHeight == 0) {
-                event.preventDefault();
-                //event.target.play(); //continue to play even if detached
-            }
-            unPauseMedia();
-        });
         if (!installedVideoEventListener) {
             video.addEventListener('seeked', (e) => {
                 if (mediaWindow == null) {
@@ -922,6 +900,35 @@ async function createMediaWindow(path) {
                 videoEnded = true;
                 saveMediaFile();
             });
+
+            document.getElementById("preview").addEventListener('pause', (event) => {
+                if (activeLiveStream) {
+                    return;
+                }
+                if (video.currentTime - video.duration == 0) {
+                    return;
+                }
+                if (!event.target.isConnected) {
+                    event.preventDefault();
+                    event.target.play();
+                }
+                if (event.target.clientHeight == 0) {
+                    event.preventDefault();
+                    return;
+                    //event.target.play(); //continue to play even if detached
+                }
+                if (event.target.parentNode != null) {
+                    pauseMedia();
+                }
+            });
+            document.getElementById("preview").addEventListener('play', (event) => {
+                if (event.target.clientHeight == 0) {
+                    event.preventDefault();
+                    //event.target.play(); //continue to play even if detached
+                }
+                unPauseMedia();
+            });
+
             installedVideoEventListener = true;
         }
     }
