@@ -634,7 +634,8 @@ function setSBFormMediaPlayer() {
                 }
                 if (mediaWindow != null && mediaFile != null && !isLiveStream(mediaFile)) {
                     video.currentTime = saveTarget;
-                    video.play()
+                    if (!masterPauseState)
+                        video.play()
                     dontSyncRemote = false;
                 }
                 document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
@@ -931,6 +932,7 @@ async function createMediaWindow(path) {
                 }
                 if (event.target.parentNode != null) {
                     pauseMedia();
+                    masterPauseState = true;
                 }
             });
             document.getElementById("preview").addEventListener('play', (event) => {
