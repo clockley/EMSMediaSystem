@@ -16,7 +16,6 @@ var startTime = 0;
 var prePathname = '';
 let weakSet = new WeakSet();
 let obj = {};
-var saveTarget = 0;
 var installedVideoEventListener = false;
 var mediaCntDnEle = null;
 var CrVL = 1;
@@ -54,7 +53,7 @@ let kD = 0.003; // Derivative gain
 let synchronizationThreshold = 0.2; // Threshold to keep local video within 0.2 second of remote
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
-    const now = performance.now();
+    const now = Date.now();
     const sendTime = message[4];
     const ipcDelay = now - sendTime; // Compute the IPC delay
 
@@ -67,12 +66,11 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
             timeStamp = null;
         });
     }
-    let domUpdateTime = performance.now() - domUpdateTimeStart;
+    let domUpdateTime = Date.now() - domUpdateTimeStart;
 
     let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
 
     targetTime = message[3] - (adjustedIpcDelay * .001); // Adjust target time considering the modified IPC delay
-    saveTarget = message[3];
     const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) * .1));
     const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
 
@@ -113,12 +111,12 @@ function hybridSync(targetTime) {
 
 function dynamicPIDTuning() {
     let isOscillating = false;
-    let lastCrossing = performance.now();
+    let lastCrossing = Date.now();
     let numberOfCrossings = 0;
     let accumulatedPeriod = 0;
 
     return function adjustPID(currentError) {
-        const now = performance.now();
+        const now = Date.now();
         // Check if the error sign has changed (zero-crossing point)
         if (currentError * lastTimeDifference < 0) {
             if (isOscillating) {
@@ -638,8 +636,8 @@ function setSBFormMediaPlayer() {
                         saveMediaFile();
                     }
                     if (video) {
-                        if (saveTarget != null) {
-                            video.currentTime = saveTarget;
+                        if (targetTime != null) {
+                            video.currentTime = targetTime;
                             if (!masterPauseState)
                                 video.play();
                         }
