@@ -953,7 +953,7 @@ async function createMediaWindow(path) {
                     return;
                 }
                 if (e.target.isConnected) {
-                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: getHighPrecisionTimestamp() });
+                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                 }
             });
 
@@ -962,7 +962,7 @@ async function createMediaWindow(path) {
                     return;
                 }
                 if (e.target.isConnected && mediaWindow != null) {
-                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: getHighPrecisionTimestamp() });
+                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                 }
             });
 
@@ -999,6 +999,7 @@ async function createMediaWindow(path) {
                 }
                 unPauseMedia();
             });
+
 
             installedVideoEventListener = true;
         }
