@@ -663,7 +663,6 @@ function setSBFormMediaPlayer() {
     if (document.getElementById("mdFile") != null) {
         if (document.getElementById("preview").parentNode != null) {
             if (!masterPauseState && video != null && !video.paused) {
-                video.currentTime = targetTime;
                 dontSyncRemote = false;
                 video.play();
             }
@@ -680,7 +679,6 @@ function setSBFormMediaPlayer() {
                     }
                     if (video) {
                         if (targetTime != null) {
-                            video.currentTime = targetTime;
                             if (!masterPauseState)
                                 video.play();
                         }
@@ -769,7 +767,7 @@ function installSidebarFormEvents() {
             if (event.target.value == 'Media Player') {
                 dontSyncRemote = true;
                 if (video && !activeLiveStream && mediaWindow != null) {
-                    video.currentTime = targetTime;
+                    dontSyncRemote = false;
                 }
                 opMode = MEDIAPLAYER;
                 mediaCntDnEle = document.getElementById('mediaCntDn');
