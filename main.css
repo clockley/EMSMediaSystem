@@ -27,11 +27,26 @@ body.linux textarea {
     border: 1px solid #c7c7c7;
     padding: 8px 16px;
     font-size: 14px;
+    border-radius: 6px; /* rounded corners for buttons and inputs */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); /* subtle shadow for depth */
 }
 
 body.linux button:hover {
     background-color: #d3d7cf;
+    border-color: #b1b1b1; /* slightly darker border on hover */
 }
+
+body.linux button:active {
+    background-color: #babdb6; /* darker background when clicked */
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2); /* inner shadow for pressed effect */
+}
+
+body.linux input:focus, 
+body.linux textarea:focus {
+    border-color: #4a90d9; /* focus color similar to Adwaita blue */
+    outline: none;
+}
+
 .adwaita-slider {
     -webkit-appearance: none; /* Removes default browser styling */
     appearance: none;
@@ -42,6 +57,7 @@ body.linux button:hover {
     margin: 10px 20px; /* Adds margin to the left and right */
     position: relative;
     transition: background-color 0.3s; /* Smooth transition for background color */
+    background: #b3b3b3; /* base track color */
 }
 
 .adwaita-slider:hover {
@@ -50,13 +66,15 @@ body.linux button:hover {
 
 .adwaita-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 20px;
-    height: 20px;
-    background: #333; /* Default dark thumb for light theme */
+    border: none;
+    height: 16px;
+    width: 16px;
+    background: #4a90d9; /* Adwaita blue for the slider thumb */
     cursor: pointer;
     border-radius: 50%;
     margin-top: -9px; /* Centers the thumb over the track */
     transition: background-color 0.3s; /* Smooth transition for color changes */
+    box-shadow: 0 0 1px 1px rgba(0, 0, 0, 0.2); /* subtle shadow for the thumb */
 }
 
 .adwaita-slider::-webkit-slider-runnable-track {
@@ -80,6 +98,13 @@ body.linux button:hover {
     }
 }
 
+body.linux .slider:hover::-webkit-slider-thumb {
+    background: #729fcf; /* lighter blue on hover */
+}
+
+body.linux .slider:active::-webkit-slider-thumb {
+    background: #3465a4; /* darker blue when active */
+}
 
 body.windows {
     /* Windows-specific styles */
