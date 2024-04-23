@@ -121,7 +121,6 @@ function adjustPlaybackRate(targetTime) {
     // Immediate synchronization for very large discrepancies
     if (Math.abs(timeDifference) > 1 || timeDifference < -1) {
         // Directly jump to the target time if difference is more than 1 second
-        dontSyncRemote = true;
         video.currentTime = targetTime;
         playbackRate = 1.0; // Reset playback rate
         dynamicPIDTuning();
@@ -690,6 +689,8 @@ function setSBFormMediaPlayer() {
                 }
                 document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
             }
+        } else {
+            dontSyncRemote = false;
         }
     }
 }
@@ -767,6 +768,9 @@ function installSidebarFormEvents() {
         if (event.target.type === 'radio') {
             if (event.target.value == 'Media Player') {
                 dontSyncRemote = true;
+                if (video && !activeLiveStream && mediaWindow != null) {
+                    video.currentTime = targetTime;
+                }
                 opMode = MEDIAPLAYER;
                 mediaCntDnEle = document.getElementById('mediaCntDn');
             } else {
@@ -912,7 +916,6 @@ async function createMediaWindow(path) {
     var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
     if (liveStreamMode == false && video != null) {
-        dontSyncRemote = true;
         video.pause();
         startTime = video.currentTime;
     }
