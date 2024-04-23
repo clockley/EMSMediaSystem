@@ -10,6 +10,7 @@ var endTime;
 var loopFile = false;
 var strtvl = 1;
 var strtTm = 0;
+var isRemoteSeeking = false;
 
 window.process.argv.forEach(arg => {
     if (arg.startsWith('--endtime-ems=')) {
@@ -28,16 +29,28 @@ window.process.argv.forEach(arg => {
 mediaFile=decodeURIComponent(mediaFile);
 var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
-ipcRenderer.on('timeGoto-message', function (evt, message) {
-    if (!liveStreamMode) {
-        const now = Date.now();
-        const travelTime = now - message.timestamp;
+function getHighPrecisionTimestamp() {
+    const currentPerformance = performance.now();
+    const elapsed = currentPerformance - performanceStart;
+    const highPrecisionTimestamp = epochStart + elapsed;
+    const timestampInSeconds = highPrecisionTimestamp * 0.001;
 
-        const adjustedTime = message.currentTime + (travelTime / 1000);
-        requestAnimationFrame(() => {
-            video.currentTime = adjustedTime;
+    return timestampInSeconds;
+}
+
+ipcRenderer.on('timeGoto-message', function (evt, message) {
+    isRemoteSeeking = true;  // Set flag when remote seek starts
+    const now = getHighPrecisionTimestamp();
+    const travelTime = now - message.timestamp;
+    const adjustedTime = message.currentTime + travelTime;
+
+    requestAnimationFrame(() => {
+        video.currentTime = adjustedTime;
+        video.addEventListener('seeked', function onSeeked() {
+            video.removeEventListener('seeked', onSeeked);
+            isRemoteSeeking = false;  // Reset flag when local seek completes
         });
-    }
+    });
 });
 
 ipcRenderer.on('pauseCtl', function (evt, message) {
@@ -79,20 +92,13 @@ function whenElementAdded(selector, callback) {
     });
 }
 
-function getHighPrecisionTimestamp() {
-    const currentPerformance = performance.now();
-    const elapsed = currentPerformance - performanceStart;
-    const highPrecisionTimestamp = epochStart + elapsed;
-    const timestampInSeconds = highPrecisionTimestamp * 0.001;
-
-    return timestampInSeconds;
-}
-
+// Function to manage the sending of the current time
 function sendRemainingTime(video) {
     let lastTime = 0;  // Last time the message was sent
     const interval = 1000 / 30;  // Set the interval for 30 updates per second
 
     const send = () => {
+        if (isRemoteSeeking) return;  // Do not send updates if the remote is seeking
         const currentTime = performance.now();
         // Update only if at least 33.33 milliseconds have passed
         if (currentTime - lastTime > interval) {
