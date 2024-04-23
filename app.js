@@ -21,7 +21,8 @@ let obj = {};
 var installedVideoEventListener = false;
 var mediaCntDnEle = null;
 var CrVL = 1;
-var opMode = -1
+var opMode = -1;
+var osName = '';
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
@@ -65,7 +66,7 @@ let integral = 0; // Integral sum for error accumulation
 let kP = 0.005; // Proportional gain
 let kI = 0.001; // Integral gain
 let kD = 0.003; // Derivative gain
-let synchronizationThreshold = 0.2; // Threshold to keep local video within 0.2 second of remote
+let synchronizationThreshold = 0.05; // Threshold to keep local video within .05 second of remote
 
 function getHighPrecisionTimestamp() {
     const currentPerformance = performance.now();
@@ -615,16 +616,53 @@ function setSBFormMediaPlayer() {
     }
     document.getElementById("audio").style.display = "none";
     document.getElementById("plystCtrl").style.display = "none";
-    document.getElementById("dyneForm").innerHTML =
+    if (osName == "Linux") {
+        document.getElementById("dyneForm").innerHTML =
+            `
+            <form>
+                <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
+
+                <br>
+
+                <input type="number" min="0" max="60" step="1" value="0" name="mdTimeout" id="mdDelay">
+                <label for="mdTimeout">Delay</label>
+    
+                <input name="malrm1" id="malrm1" type="time">
+                <label for="malrm1"> Run At </label>
+                <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
+                <label for=""mdScrCtrl>Second Monitor</label>
+                <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
+                <label for=""mdLpCtlr>🔁</label>
+
+                <label for="volumeControl">🎧</label>
+                <input type="range" class="adwaita-slider" id="volumeControl" min="0" max="1" step="0.01" value="1"
+
+                <br>
+                <br>
+
+                <button id="mediaWindowPlayButton" type="button">▶️</button>
+                <button id="mediaWindowPauseButton" type="button">⏸️</button>
+                <br>
+
+            </form>
+            <br>
+            <br>
+            <center><video id="preview"></video></center>
+            <div id=cntdndiv>
+            <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: 48px;line-height: 1.2;" id="mediaCntDn">00:00:000<span>
+            </div>
+        `;
+    } else {
+        document.getElementById("dyneForm").innerHTML =
         `
         <form>
             <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
 
-             <br>
+            <br>
 
             <input type="number" min="0" max="60" step="1" value="0" name="mdTimeout" id="mdDelay">
             <label for="mdTimeout">Delay</label>
-  
+
             <input name="malrm1" id="malrm1" type="time">
             <label for="malrm1"> Run At </label>
             <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
@@ -632,8 +670,8 @@ function setSBFormMediaPlayer() {
             <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
             <label for=""mdLpCtlr>🔁</label>
 
-            <label for="volumeControl">Volume:</label>
-            <input type="range" id="volumeControl" min="0" max="1" step="0.01" value="1"
+            <label for="volumeControl">🎧</label>
+            <input type="range" class="WinStyle-slider" id="volumeControl" min="0" max="1" step="0.01" value="1"
 
             <br>
             <br>
@@ -650,6 +688,7 @@ function setSBFormMediaPlayer() {
         <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: 48px;line-height: 1.2;" id="mediaCntDn">00:00:000<span>
         </div>
     `;
+    }
     if (video == null) {
         video = video = document.getElementById('preview');
         saveMediaFile();
@@ -1089,3 +1128,32 @@ async function createMediaWindow(path) {
 
     mediaWindow.loadFile("media.html");
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log("Starships were meant to fly");
+    const platform = process.platform;
+    const bodyClass = document.body.classList;
+
+    switch(platform) {
+        case 'win32':
+            osName='Windows';
+            console.log("Loading Windows 10 styles");
+            bodyClass.add('WinStyle');
+            break;
+        case 'darwin':
+            console.log("Unsupported platform will not load any custom styles");
+            break;
+        case 'linux':
+            osName='Linux';
+            const slider = document.getElementById('adwaita-slider');
+            const updateSlider = (event) => {
+                const value = (event.target.value - event.target.min) / (event.target.max - event.target.min);
+                event.target.style.background = `linear-gradient(to right, #4a90d9 0%, #4a90d9 ${value * 100}%, #b3b3b3 ${value * 100}%, #b3b3b3 100%)`;
+            };
+            slider.addEventListener('input', updateSlider);
+            updateSlider({target: slider});
+            console.log("Loading Adwaita GTK3 styles");
+            bodyClass.add('linux');
+            break;
+    }
+});
