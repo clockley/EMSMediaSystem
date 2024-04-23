@@ -22,8 +22,6 @@ var toHHMMSS = (secs) => {
   return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2) + ':' + pad(milliseconds, 3);
 }
 
-
-
 function createWindow() {
   ipcMain.on('timeRemaining-message', (event, arg) => {
     if (win != null) {

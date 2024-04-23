@@ -1,3 +1,6 @@
+const performanceStart = performance.now();
+const epochStart = Date.now();
+
 const { ipcRenderer } = require('electron');
 var video = document.createElement('video');
 var img = document.createElement('img');
@@ -76,6 +79,15 @@ function whenElementAdded(selector, callback) {
     });
 }
 
+function getHighPrecisionTimestamp() {
+    const currentPerformance = performance.now();
+    const elapsed = currentPerformance - performanceStart;
+    const highPrecisionTimestamp = epochStart + elapsed;
+    const timestampInSeconds = highPrecisionTimestamp * 0.001;
+
+    return timestampInSeconds;
+}
+
 function sendRemainingTime(video) {
     let lastTime = 0;  // Last time the message was sent
     const interval = 1000 / 30;  // Set the interval for 30 updates per second
@@ -84,7 +96,7 @@ function sendRemainingTime(video) {
         const currentTime = performance.now();
         // Update only if at least 33.33 milliseconds have passed
         if (currentTime - lastTime > interval) {
-            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, new Date()]);
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, getHighPrecisionTimestamp()]);
             lastTime = currentTime;
         }
         requestAnimationFrame(send);
