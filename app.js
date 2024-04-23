@@ -26,6 +26,19 @@ const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
 
+class AlarmInputState {
+    constructor(fileInputValue, timeInputValue) {
+        this.fileInputValue = fileInputValue;
+        this.timeInputValue = timeInputValue;
+    }
+    getTimeInputValue() {
+        return this.timeInputValue;
+    }
+    getFileInputValue() {
+        return this.fileInputValue;
+    }
+}
+
 let lastUpdateTime = 0;
 
 ipcRenderer.on('update-playback-state', (event, playbackState) => {
@@ -333,6 +346,7 @@ function setTimer(e) {
     }
 
     var timerID = parseInt(e.target.attributes.getNamedItem("id").value.match(/\d/g).join``.trim());
+    console.log(timerID);
 
     if (document.getElementById("af" + timerID).files.length == 0 && e.target.innerText == "▶️") {
         return;
@@ -771,7 +785,9 @@ function installSidebarFormEvents() {
                 }
                 opMode = MEDIAPLAYER;
                 mediaCntDnEle = document.getElementById('mediaCntDn');
+                document.getElementById("playlist").style.display='none';
             } else {
+                document.getElementById("playlist").style.display='';
                 mediaCntDnEle = null;
                 opMode = -1;
             }
