@@ -7,8 +7,162 @@
         "main main  sideBar1"
         "footerBar footerBar footerBar";
 }
-body {
-    background-color: #fffdfd;
+
+body.windows {
+    /* Windows-specific styles */
+    font-family: "Segoe UI", sans-serif;
+}
+
+body.linux {
+    /* Linux-specific styles */
+    font-family: Cantarell, Arial, sans-serif;
+    color: #2e3436;
+    background-color: #edecec;
+}
+
+body.linux button,
+body.linux input,
+body.linux textarea {
+    background-color: #ffffff;
+    border: 1px solid #c7c7c7;
+    padding: 8px 16px;
+    font-size: 14px;
+}
+
+body.linux button:hover {
+    background-color: #d3d7cf;
+}
+.adwaita-slider {
+    -webkit-appearance: none; /* Removes default browser styling */
+    appearance: none;
+    width: calc(100% - 40px); /* Adjust width to allow thumb to reach ends */
+    height: 2px; /* Slider thickness */
+    background: #b3b3b3; /* Default track color for light mode */
+    outline: none; /* Removes the outline */
+    margin: 10px 20px; /* Adds margin to the left and right */
+    position: relative;
+    transition: background-color 0.3s; /* Smooth transition for background color */
+}
+
+.adwaita-slider:hover {
+    opacity: 1; /* Slider fully opaque on hover */
+}
+
+.adwaita-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    background: #333; /* Default dark thumb for light theme */
+    cursor: pointer;
+    border-radius: 50%;
+    margin-top: -9px; /* Centers the thumb over the track */
+    transition: background-color 0.3s; /* Smooth transition for color changes */
+}
+
+.adwaita-slider::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 2px;
+    cursor: pointer;
+}
+
+/* Media query for dark mode preferences */
+@media (prefers-color-scheme: dark) {
+    .adwaita-slider {
+        background: #555; /* Darker track color for dark mode */
+    }
+
+    .adwaita-slider::-webkit-slider-thumb {
+        background: #eee; /* Light thumb for dark theme */
+    }
+
+    .adwaita-slider:hover {
+        background-color: #666; /* Darker hover effect for dark mode */
+    }
+}
+
+
+body.windows {
+    /* Windows-specific styles */
+    font-family: "Segoe UI", Arial, sans-serif;
+    color: #333333;
+    background-color: #ffffff;
+}
+
+body.windows button,
+body.windows input,
+body.windows textarea {
+    background-color: #ffffff;
+    border: 1px solid #ccc;
+    padding: 6px 12px;
+    font-size: 14px;
+}
+
+body.windows button:hover {
+    background-color: #eaeaea;
+}
+
+.WinStyle-slider {
+    -webkit-appearance: none; /* Removes default browser styling */
+    appearance: none;
+    width: calc(100% - 40px); /* Adjust width to allow thumb to reach ends */
+    height: 2px; /* Slider thickness */
+    background: #ccc; /* Default track color for light mode */
+    outline: none; /* Removes the outline */
+    margin: 10px 20px; /* Adds margin to the left and right */
+    position: relative;
+    transition: background-color 0.3s; /* Smooth transition for background color */
+}
+
+.WinStyle-slider:hover {
+    opacity: 1; /* Slider fully opaque on hover */
+}
+
+.WinStyle-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    background: #0078D7; /* Windows 10 accent color */
+    cursor: pointer;
+    border-radius: 0; /* Windows sliders usually do not have rounded thumbs */
+    margin-top: -9px; /* Centers the thumb over the track */
+    transition: background-color 0.3s; /* Smooth transition for color changes */
+}
+
+.WinStyle-slider::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 2px;
+    cursor: pointer;
+}
+
+/* Media query for dark mode preferences */
+@media (prefers-color-scheme: dark) {
+    body.windows {
+        background-color: #2c2c2c;
+        color: #ffffff;
+    }
+
+    body.windows button,
+    body.windows input,
+    body.windows textarea {
+        background-color: #333;
+        border: 1px solid #444;
+    }
+
+    body.windows button:hover {
+        background-color: #3a3a3a;
+    }
+
+    .WinStyle-slider {
+        background: #666; /* Darker track color for dark mode */
+    }
+
+    .WinStyle-slider::-webkit-slider-thumb {
+        background: #ccc; /* Light thumb for dark theme */
+    }
+
+    .WinStyle-slider:hover {
+        background-color: #777; /* Darker hover effect for dark mode */
+    }
 }
 
 main {
@@ -92,28 +246,6 @@ footer {
     width : 32px;
 }
 
-#custom-seekbar
-{  
-  cursor: pointer;
-  height: 10px;
-  margin-bottom: 10px;
-  outline: thin solid orange;
-  overflow: hidden;
-  position: relative;
-  width: 400px;
-  transition: width 0.5s ease;
-}
-#custom-seekbar span
-{
-  background-color: orange;
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 10px;
-  width: 0px;
-}
-
-
 video::-webkit-media-controls-volume-slider,
 video::-webkit-media-controls-mute-button {
     display: none !important;
@@ -123,33 +255,8 @@ video::-webkit-media-controls-mute-button {
     display: flex !important;
     opacity: 1 !important;
 }
-
+/*
 /* Style for the volume slider */
 #volumeControl {
     width: 150px; /* Adjust the width of the slider for better reachability */
-    height: 15px; /* Makes the slider track thicker */
-    -webkit-appearance: none; /* Overrides default styling */
-    appearance: none;
-    background-color: #ddd; /* Light grey track */
-    outline: none; /* Removes the outline to avoid style distractions */
-    opacity: 0.7; /* Slightly transparent */
-    transition: opacity 0.2s; /* Smooth transition for hover effects */
-}
-
-/* Style for the slider thumb */
-#volumeControl::-webkit-slider-thumb {
-    -webkit-appearance: none; /* Removes default system styling */
-    appearance: none;
-    width: 20px; /* Width of the thumb */
-    height: 20px; /* Height of the thumb, makes it easier to grab */
-    background-color: #333; /* Dark grey thumb */
-    cursor: pointer; /* Indicates that it's draggable */
-    border-radius: 50%; /* Circular thumb */
-    border: 2px solid #fff; /* White border for better visibility */
-}
-
-/* Hover effects to enhance user feedback */
-#volumeControl:hover,
-#volumeControl:focus {
-    opacity: 1.0; /* Full visibility when interacting */
 }
