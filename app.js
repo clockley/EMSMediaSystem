@@ -73,7 +73,7 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     let timeStamp = message[0];
     if (opMode == MEDIAPLAYER) {
         requestAnimationFrame(() => {
-            mediaCntDnEle.textContent = timeStamp;
+            mediaCntDnEle.textContent = timeStamp; //don't check if element is null, we won't crash
             timeStamp = null;
         });
     }
@@ -88,10 +88,12 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
 
     if (now - lastUpdateTime > syncInterval || Math.abs(video.currentTime - targetTime) >= 2) {
         if (opMode == MEDIAPLAYER) {
-            hybridSync(targetTime);
-            lastUpdateTime = now;
-            if (mediaWindow && !video.paused) {
-                dynamicPIDTuning();
+            if (video != null && !video.seeking) {
+                hybridSync(targetTime);
+                lastUpdateTime = now;
+                if (mediaWindow && !video.paused) {
+                    dynamicPIDTuning();
+                }
             }
         }
     }
@@ -195,7 +197,6 @@ function dynamicPIDTuning() {
         }
 
         lastTimeDifference = currentError;
-        console.log(`Updated PID parameters: kP=${kP.toFixed(3)}, kI=${kI.toFixed(3)}, kD=${kD.toFixed(3)}`);
     };
 }
 
@@ -244,9 +245,6 @@ function resetMediaSrc() {
 function resetPlayer() {
     document.getElementById("audio").style.visibility = document.getElementById("plystCtrl").style.visibility = "visible";
     document.getElementById("audio").style.display = document.getElementById("plystCtrl").style.display = "";
-    if (document.getElementById('mediaCntDn') != null) {
-        document.getElementById('mediaCntDn').innerHTML = "00:00";
-    }
     clearPlaylist();
     resetMediaSrc();
 }
@@ -474,17 +472,17 @@ function playMedia(e) {
     }
 
     if (document.getElementById("mdFile").value == "") {
-        if (e.target.innerText = "⏹️") {
+        if (e.target.textContent = "⏹️") {
             if (mediaWindow)
                 mediaWindow.close();
-            e.target.innerText = "▶️";
+            e.target.textContent = "▶️";
         }
         return;
     }
 
-    if (e.target.innerText == "▶️") {
+    if (e.target.textContent == "▶️") {
         videoEnded = false;
-        e.target.innerText = "⏹️";
+        e.target.textContent = "⏹️";
         currentMediaFile = document.getElementById("mdFile").files;
 
         if (opMode == MEDIAPLAYER && document.getElementById("malrm1").value != "") {
@@ -501,15 +499,15 @@ function playMedia(e) {
             createMediaWindow();
         }
         dontSyncRemote = false;
-    } else if (e.target.innerText = "⏹️") {
+    } else if (e.target.textContent = "⏹️") {
         dontSyncRemote = true;
         //activeLiveStream
         clearTimeout(mediaPlayDelay);
         if (opMode == MEDIAPLAYER)
-            document.getElementById('mediaCntDn').innerHTML = "00:00:000";
+            document.getElementById('mediaCntDn').textContent = "00:00:000";
 
         activeLiveStream = true;
-        e.target.innerText = "▶️";
+        e.target.textContent = "▶️";
         if (mediaWindow) {
             mediaWindow.close();
             saveMediaFile();
@@ -518,11 +516,10 @@ function playMedia(e) {
 }
 
 function setSBFormYouTubeMediaPlayer() {
-    dontSyncRemote = true;
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn") != null) {
-            document.getElementById("mediaCntDn").innerText = "00:00:000";
+            document.getElementById("mediaCntDn").textContent = "00:00:000";
         }
     }
 
@@ -551,20 +548,19 @@ function setSBFormYouTubeMediaPlayer() {
     }
 
     if (mediaWindow == null) {
-        document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+        document.getElementById("mediaWindowPlayButton").textContent = "▶️";
     } else {
-        document.getElementById("mediaWindowPlayButton").innerText = "⏹️";
+        document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
     }
 
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
 }
 
 function setSBFormTimeoutMediaPlayer() {
-    dontSyncRemote = true;
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn") != null) {
-            document.getElementById("mediaCntDn").innerText = "00:00:000";
+            document.getElementById("mediaCntDn").textContent = "00:00:000";
         }
     }
 
@@ -589,9 +585,9 @@ function setSBFormTimeoutMediaPlayer() {
     restoreMediaFile();
 
     if (mediaWindow == null) {
-        document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+        document.getElementById("mediaWindowPlayButton").textContent = "▶️";
     } else {
-        document.getElementById("mediaWindowPlayButton").innerText = "⏹️";
+        document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
     }
 
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
@@ -601,7 +597,7 @@ function setSBFormMediaPlayer() {
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn") != null) {
-            document.getElementById("mediaCntDn").innerText = "00:00:000";
+            document.getElementById("mediaCntDn").textContent = "00:00:000";
         }
     }
     document.getElementById("audio").style.display = "none";
@@ -650,12 +646,12 @@ function setSBFormMediaPlayer() {
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
 
     if (mediaWindow == null) {
-        document.getElementById("mediaWindowPlayButton").innerText = "▶️";
-        document.getElementById("mediaCntDn").innerText = "00:00:000";
+        document.getElementById("mediaWindowPlayButton").textContent = "▶️";
+        document.getElementById("mediaCntDn").textContent = "00:00:000";
     } else {
-        document.getElementById('mediaCntDn').innerHTML = timeRemaining;
+        document.getElementById('mediaCntDn').textContent = timeRemaining;
         timeRemaining = "00:00:000";
-        document.getElementById("mediaWindowPlayButton").innerText = "⏹️";
+        document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
         document.getElementById("mdFile").files = currentMediaFile;
     }
     document.getElementById('volumeControl').addEventListener('input', function () {
@@ -743,6 +739,9 @@ function saveMediaFile() {
                 }
             }
         }
+    }
+    if (opMode == MEDIAPLAYER && mediaFile != null) {
+        dontSyncRemote = false;
     }
 }
 
@@ -953,7 +952,7 @@ async function createMediaWindow(path) {
                     return;
                 }
                 if (e.target.isConnected) {
-                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: getHighPrecisionTimestamp() });
                 }
             });
 
@@ -962,7 +961,7 @@ async function createMediaWindow(path) {
                     return;
                 }
                 if (e.target.isConnected && mediaWindow != null) {
-                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: getHighPrecisionTimestamp() });
                 }
             });
 
@@ -988,8 +987,6 @@ async function createMediaWindow(path) {
                     //event.target.play(); //continue to play even if detached
                 }
                 if (event.target.parentNode != null) {
-                    dontSyncRemote = true;
-                    video.currentTime = targetTime;
                     pauseMedia();
                     masterPauseState = true;
                 }
