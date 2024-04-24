@@ -6,11 +6,28 @@
     <title>EJax Media System</title>
     <!-- https://electronjs.org/docs/tutorial/security#csp-meta-tag -->
     <meta http-equiv="Content-Security-Policy" content="default-src * self blob: data: gap:; style-src * self 'unsafe-inline' blob: data: gap:; script-src * 'self' 'unsafe-eval' 'unsafe-inline' blob: data: gap:; object-src * 'self' blob: data: gap:; img-src * self 'unsafe-inline' blob: data: gap:; connect-src self * 'unsafe-inline' blob: data: gap:; frame-src * self blob: data: gap:;">
-    <link rel="stylesheet" type="text/css" href="main.css">
+    <style>
+        #bigPlayer, #mediaBody {
+            width: 100vw;
+            height: 100vh;
+            margin: 0;
+            padding: 0;
+        }
+
+        #bigPlayer {
+            object-fit: contain;
+        }
+
+        #mediaBody {
+            overflow: hidden;
+            background-color: black;
+        }
+    </style>
     <script type="text/javascript" src="media.js"></script>
 </head>
 
 <body id="mediaBody">
+    <video id="bigPlayer" autoplay></video>
 </body>
 
 </html>

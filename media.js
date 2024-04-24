@@ -2,7 +2,7 @@ const performanceStart = performance.now();
 const epochStart = Date.now();
 
 const { ipcRenderer } = require('electron');
-var video = document.createElement('video');
+var video = null;
 var img = null;
 var mediaFile;
 var cntDnInt = null;
@@ -74,22 +74,6 @@ function getFileExt(fname) {
     return fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2);
 }
 
-function whenElementAdded(selector, callback) {
-    const observer = new MutationObserver((mutations, obs) => {
-        if (document.querySelector(selector)) {
-            callback();
-            obs.disconnect(); // Stop observing after the element is found and handled
-        }
-    });
-
-    observer.observe(document.body, {
-        childList: true,
-        subtree: false,
-        attributes: false,
-        characterData: false
-    });
-}
-
 function getHighPrecisionTimestamp() {
     const currentPerformance = performance.now();
     const elapsed = currentPerformance - performanceStart;
@@ -116,10 +100,11 @@ function sendRemainingTime(video) {
 }
 
 
-async function loadMedia() {
+function loadMedia() {
     var h = null;
     var isImg = false;
 
+    console.time("imgTest");
     switch (getFileExt(mediaFile)) {
         case "bmp":
         case "gif":
@@ -133,20 +118,25 @@ async function loadMedia() {
             isImg = false;
     }
 
+    console.timeEnd("imgTest");
     if (isImg) {
         img = document.createElement('img');
         img.src=mediaFile;
         img.setAttribute("id", "bigPlayer");
         document.body.appendChild(img);
+        document.querySelector('video').style.display='none';
         return;
+    } else {
+        video = document.getElementById("bigPlayer");
     }
 
-    video.setAttribute("id", "bigPlayer");
-    video.setAttribute("autoplay", true);
-    video.src = mediaFile;
-    if (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com")) {
+    video.setAttribute("src", mediaFile);
+
+    hslMediaMode = mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com");
+
+    if (hslMediaMode) {
         const youtubedl = require('youtube-dl-exec')
-        await youtubedl(mediaFile, {getUrl: true, addHeader: ['referer:youtube.com','user-agent:googlebot']}).then(r => {video.src=r})
+        youtubedl(mediaFile, {getUrl: true, addHeader: ['referer:youtube.com','user-agent:googlebot']}).then(r => {video.src=r})
         mediaFile=video.src
         const hls = require("hls.js");
         h = new hls();
@@ -173,19 +163,20 @@ async function loadMedia() {
         }
         );
     }
-    video.setAttribute("controls", "controls");
+
     if (loopFile) {
         video.setAttribute("loop", true);
     }
     video.addEventListener("ended", function () {
         close();
     });
-    if (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("videoplayback")) {
+
+    if (hslMediaMode) {
         h.attachMedia(video);
     }
-    video.controls = false;
+
     video.currentTime = strtTm;
-    video.load();
+
     if (!liveStreamMode) {
         sendRemainingTime(video);
         video.addEventListener('pause', (event) => {
@@ -208,17 +199,6 @@ async function loadMedia() {
             }
         })
     }
-    document.body.appendChild(video);
-    whenElementAdded('#bigPlayer', () => {
-        console.log('BigPlayer video element has been added to the DOM.');
-    
-        const playbackState = {
-            currentTime: video.currentTime,
-            playing: true,
-          };
-        ipcRenderer.send('playback-state-change', playbackState);
-        video.play();
-    });
 }
 
 document.addEventListener('DOMContentLoaded', function () {

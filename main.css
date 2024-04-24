@@ -229,14 +229,6 @@ footer {
     -webkit-user-drag: element;
 }
 
-#bigPlayer {
-    width     : 100vw;
-    height    : 100vh;
-    padding   : 0%;
-    margin    : 0%;
-    object-fit: contain;
-}
-
 #preview {
     width     : 60vw;
     height    : 33.75vw;
@@ -245,15 +237,6 @@ footer {
     border-radius: 5px;
     overflow: hidden;
     max-height: 100vh;
-}
-
-#mediaBody {
-    width     : 100vw;
-    height    : 100vh;
-    margin    : 0%;
-    padding   : 0%;
-    overflow: hidden;
-    background-color: black;
 }
 
 .setTimerButton {
