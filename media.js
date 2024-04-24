@@ -12,34 +12,44 @@ var strtvl = 1;
 var strtTm = 0;
 
 window.process.argv.forEach(arg => {
-    if (arg.startsWith('--endtime-ems=')) {
-        endTime = arg.split('=')[1];
-    } else if (arg.startsWith('--mediafile-ems=')) {
-        mediaFile = arg.split('=')[1];
-    } else if (arg.startsWith('--media-loop=')) {
-        loopFile = arg.substring(arg.indexOf('=') + 1) === 'true';
-    } else if (arg.startsWith('--start-vol=')) {
-        strtvl = arg.split('=')[1];
-    } else if (arg.startsWith('--start-time=')) {
-        strtTm = arg.split('=')[1];
+    let parts = arg.split('=');
+    let key = parts[0];
+    let value = parts[1] || ''; // Handles cases where there might not be a value
+
+    switch (key) {
+        case '--endtime-ems':
+            endTime = value;
+            break;
+        case '--mediafile-ems':
+            mediaFile = value;
+            break;
+        case '--media-loop':
+            loopFile = value === 'true';
+            break;
+        case '--start-vol':
+            strtvl = value;
+            break;
+        case '--start-time':
+            strtTm = value;
+            break;
     }
 });
 
 mediaFile=decodeURIComponent(mediaFile);
 var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
-ipcRenderer.on('timeGoto-message', function (evt, message) {
-    if (!liveStreamMode) {
+if (!liveStreamMode) {
+    ipcRenderer.on('timeGoto-message', function (evt, message) {
         const localTs = performance.now();
         const now = Date.now();
         const travelTime = now - message.timestamp;
 
         const adjustedTime = message.currentTime + (travelTime * .001);
         requestAnimationFrame(() => {
-            video.currentTime = adjustedTime + (performance.now() - localTs);
+            video.currentTime = adjustedTime + ((performance.now() - localTs)*.001);
         });
-    }
-});
+    });
+}
 
 ipcRenderer.on('pauseCtl', function (evt, message) {
     if (video.paused) {
