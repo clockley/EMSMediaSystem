@@ -3,7 +3,7 @@ const epochStart = Date.now();
 
 const { ipcRenderer } = require('electron');
 var video = document.createElement('video');
-var img = document.createElement('img');
+var img = null;
 var mediaFile;
 var cntDnInt = null;
 var endTime;
@@ -30,12 +30,13 @@ var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") ||
 
 ipcRenderer.on('timeGoto-message', function (evt, message) {
     if (!liveStreamMode) {
+        const localTs = performance.now();
         const now = Date.now();
         const travelTime = now - message.timestamp;
 
         const adjustedTime = message.currentTime + (travelTime * .001);
         requestAnimationFrame(() => {
-            video.currentTime = adjustedTime;
+            video.currentTime = adjustedTime + (performance.now() - localTs);
         });
     }
 });
@@ -123,6 +124,7 @@ async function loadMedia() {
     }
 
     if (isImg) {
+        img = document.createElement('img');
         img.src=mediaFile;
         img.setAttribute("id", "bigPlayer");
         document.body.appendChild(img);
