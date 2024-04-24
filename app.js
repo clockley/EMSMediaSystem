@@ -1042,6 +1042,7 @@ async function createMediaWindow(path) {
                 webSecurity: false,
                 contextIsolation: false,
                 nativeWindowOpen: false,
+                backgroundThrottling: false,
                 additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",]
             },
         });
@@ -1057,6 +1058,7 @@ async function createMediaWindow(path) {
                 webSecurity: false,
                 contextIsolation: false,
                 nativeWindowOpen: false,
+                backgroundThrottling: false,
                 additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : ""]
             }
         });

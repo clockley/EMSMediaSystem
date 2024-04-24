@@ -31,7 +31,7 @@ window.process.argv.forEach(arg => {
 });
 
 mediaFile=decodeURIComponent(mediaFile);
-var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
+var liveStreamMode = mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback");
 
 if (!liveStreamMode) {
     ipcRenderer.on('timeGoto-message', function (evt, message) {
@@ -86,7 +86,7 @@ function sendRemainingTime(video) {
         const currentTime = performance.now();
         // Update only if at least 33.33 milliseconds have passed
         if (currentTime - lastTime > interval) {
-            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, getHighPrecisionTimestamp()]);
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, getHighPrecisionTimestamp()+(currentTime - performance.now())]);
             lastTime = currentTime;
         }
         requestAnimationFrame(send);
@@ -94,12 +94,10 @@ function sendRemainingTime(video) {
     requestAnimationFrame(send);
 }
 
-
 function loadMedia() {
     var h = null;
     var isImg = false;
 
-    console.time("imgTest");
     switch (getFileExt(mediaFile)) {
         case "bmp":
         case "gif":
@@ -113,7 +111,6 @@ function loadMedia() {
             isImg = false;
     }
 
-    console.timeEnd("imgTest");
     if (isImg) {
         img = document.createElement('img');
         img.src=mediaFile;
@@ -137,6 +134,7 @@ function loadMedia() {
         h = new hls();
         h.loadSource(mediaFile);
     } else {
+        video.currentTime = strtTm;
         video.addEventListener('play', () => {
             const playbackState = {
               currentTime: video.currentTime,
@@ -169,8 +167,6 @@ function loadMedia() {
     if (hslMediaMode) {
         h.attachMedia(video);
     }
-
-    video.currentTime = strtTm;
 
     if (!liveStreamMode) {
         sendRemainingTime(video);
