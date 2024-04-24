@@ -570,43 +570,6 @@ function setSBFormYouTubeMediaPlayer() {
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
 }
 
-function setSBFormTimeoutMediaPlayer() {
-    resetPlayer();
-    if (mediaWindow == null) {
-        if (document.getElementById("mediaCntDn") != null) {
-            document.getElementById("mediaCntDn").textContent = "00:00:000";
-        }
-    }
-
-    document.getElementById("audio").style.display = "none";
-    document.getElementById("plystCtrl").style.display = "none";
-    document.getElementById("dyneForm").innerHTML =
-        `
-        <form>
-            <input type="url" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
-
-            <input checked type="time" name="cntTmeVidStrt" id="cntTmeVidStrt" value="11:00">
-            <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
-            <label for=""mdScrCtrl>Second Monitor</label>
-        
-            <br>
-
-            <button id="mediaWindowPlayButton" type="button">▶️</button>
-        </form>
-        <br>
-    `;
-    document.getElementById("mdFile").value = require('path').join(require('os').homedir(), 'Desktop') + "/cntDwnWthStartTime.mp4"
-    restoreMediaFile();
-
-    if (mediaWindow == null) {
-        document.getElementById("mediaWindowPlayButton").textContent = "▶️";
-    } else {
-        document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
-    }
-
-    document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
-}
-
 function setSBFormMediaPlayer() {
     resetPlayer();
     if (mediaWindow == null) {
@@ -813,8 +776,7 @@ function installSidebarFormEvents() {
     document.getElementById("AlrmsRBtnFrmID").onclick = setSBFormAlrms;
     document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
-    document.getElementById("TmOut").onclick = setSBFormTimeoutMediaPlayer;
-
+ 
     document.querySelector('form').addEventListener('change', function (event) {
         if (event.target.type === 'radio') {
             if (event.target.value == 'Media Player') {
@@ -1059,10 +1021,7 @@ async function createMediaWindow(path) {
             installedVideoEventListener = true;
         }
     }
-    var endTime = '0';
-    if (document.getElementById("cntTmeVidStrt")) {
-        endTime = document.getElementById("cntTmeVidStrt").value;
-    }
+
     var strtVl = 1;
     if (document.getElementById('volumeControl') != null) {
         strtVl = document.getElementById('volumeControl').value;
@@ -1083,7 +1042,7 @@ async function createMediaWindow(path) {
                 webSecurity: false,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",]
+                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",]
             },
         });
     } else {
@@ -1098,7 +1057,7 @@ async function createMediaWindow(path) {
                 webSecurity: false,
                 contextIsolation: false,
                 nativeWindowOpen: false,
-                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--endtime-ems='.concat(endTime), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : ""]
+                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : ""]
             }
         });
     }

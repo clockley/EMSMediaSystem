@@ -5,8 +5,6 @@ const { ipcRenderer } = require('electron');
 var video = null;
 var img = null;
 var mediaFile;
-var cntDnInt = null;
-var endTime;
 var loopFile = false;
 var strtvl = 1;
 var strtTm = 0;
@@ -17,9 +15,6 @@ window.process.argv.forEach(arg => {
     let value = parts[1] || ''; // Handles cases where there might not be a value
 
     switch (key) {
-        case '--endtime-ems':
-            endTime = value;
-            break;
         case '--mediafile-ems':
             mediaFile = value;
             break;
@@ -182,20 +177,6 @@ function loadMedia() {
         video.addEventListener('pause', (event) => {
             if (video.duration-video.currentTime < 0.1) {
                 video.currentTime = video.duration;
-            }
-            clearInterval(cntDnInt);
-        })
-
-        video.addEventListener('loadeddata', (event) => {
-            if (endTime != 0) {
-                clearInterval(cntDnInt);
-                if (endTime != 0||endTime != null) {
-                    var endTme = new Date();
-                    endTme.setHours(endTime.split(":")[0]);
-                    endTme.setMinutes(endTime.split(":")[1]);
-                    var curTime=new Date();
-                    video.currentTime = video.duration - ((curTime - endTme) / 1000);
-                }
             }
         })
     }
