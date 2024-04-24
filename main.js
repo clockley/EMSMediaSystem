@@ -7,6 +7,8 @@ require('@electron/remote/main').initialize();
 // be closed automatically when the JavaScript object is garbage collected.
 let win;
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
+
 
 var toHHMMSS = (secs) => {
   if (isNaN(secs)) {
