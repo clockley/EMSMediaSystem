@@ -96,11 +96,11 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
 
     targetTime = message[3] - (adjustedIpcDelay * .001); // Adjust target time considering the modified IPC delay
-    const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) * .1));
-    const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
+    //const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) * .1));
+    //const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
 
 
-    if (now - lastUpdateTime > syncInterval || Math.abs(video.currentTime - targetTime) >= 2) {
+    if (now - lastUpdateTime > .5) {
         if (opMode == MEDIAPLAYER) {
             if (video != null && !video.seeking) {
                 hybridSync(targetTime);
@@ -113,6 +113,13 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     }
     message = null;
 });
+
+
+function resetPIDOnSeek() {
+    integral = 0; // Reset integral
+    lastTimeDifference = 0; // Reset last time difference
+    console.log("PID reset after seek");
+}
 
 function adjustPlaybackRate(targetTime) {
     const currentTime = video.currentTime;
@@ -127,6 +134,7 @@ function adjustPlaybackRate(targetTime) {
 
     // Dynamic clamping based on time difference
     if (Math.abs(timeDifference) > .5) {
+        integral = 0;
         // Loosen the clamp when the difference is more than .5 second
         minRate = 0.5;
         maxRate = 1.5;
@@ -458,15 +466,21 @@ function vlCtl(v) {
 }
 
 function pauseMedia(e) {
-    if (mediaWindow != null) {
-        mediaWindow.send('pauseCtl', 0);
-    }
+    (async () => {
+        if (mediaWindow) {
+            mediaWindow.send('pauseCtl', 0);
+            targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+        }
+    })().catch(error => console.error('Failed to fetch video current time:', error));
 }
 
 function unPauseMedia(e) {
-    if (mediaWindow != null) {
-        mediaWindow.send('playCtl', 0);
-    }
+    (async () => {
+        if (mediaWindow) {
+            mediaWindow.send('playCtl', 0);
+            targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+        }
+    })().catch(error => console.error('Failed to fetch video current time:', error));
 }
 
 function pauseButton(e) {
@@ -971,6 +985,13 @@ async function createMediaWindow(path) {
                 }
                 if (e.target.isConnected) {
                     mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                    (async () => {
+                        if (mediaWindow) {
+                            targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+                            resetPIDOnSeek();
+                        }
+                    })().catch(error => console.error('Failed to fetch video current time:', error));
+                    
                 }
             });
 
@@ -980,11 +1001,18 @@ async function createMediaWindow(path) {
                 }
                 if (e.target.isConnected && mediaWindow != null) {
                     mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                    (async () => {
+                        if (mediaWindow) {
+                            targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+                        }
+                    })().catch(error => console.error('Failed to fetch video current time:', error));
+                    
                 }
             });
 
             video.addEventListener('ended', (e) => {
                 videoEnded = true;
+                targetTime = 0;
                 saveMediaFile();
             });
 
