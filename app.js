@@ -79,7 +79,7 @@ function getHighPrecisionTimestamp() {
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
     var now = getHighPrecisionTimestamp();
-    const sendTime = message[4];
+    const sendTime = message[3];
     const ipcDelay = now - sendTime; // Compute the IPC delay
 
     // Measure DOM update time and add to IPC delay
@@ -95,7 +95,7 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
 
     let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
 
-    targetTime = message[3] - (adjustedIpcDelay * .001); // Adjust target time considering the modified IPC delay
+    targetTime = message[2] - (adjustedIpcDelay * .001); // Adjust target time considering the modified IPC delay
     //const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) * .1));
     //const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
 
