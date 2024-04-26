@@ -11,11 +11,7 @@ app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true'
 
 
 var toHHMMSS = (secs) => {
-  const hours = (secs / 3600) | 0; // Using bitwise OR to floor values
-  const minutes = ((secs % 3600) / 60) | 0;
-  const seconds = (secs % 60) | 0;
-  const milliseconds = ((secs * 1000) % 1000) | 0;
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(milliseconds).padStart(3, '0')}`;
+  return `${((secs / 3600) | 0).toString().padStart(2, '0')}:${(((secs % 3600) / 60) | 0).toString().padStart(2, '0')}:${((secs % 60) | 0).toString().padStart(2, '0')}:${(((secs * 1000) % 1000) | 0).toString().padStart(3, '0')}`;
 };
 
 function createWindow() {
