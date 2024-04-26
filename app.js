@@ -1134,15 +1134,15 @@ document.addEventListener('DOMContentLoaded', () => {
             break;
         case 'linux':
             osName='Linux';
-            const slider = document.getElementById('adwaita-slider');
+            /*const slider = document.getElementById('adwaita-slider');
             const updateSlider = (event) => {
                 const value = (event.target.value - event.target.min) / (event.target.max - event.target.min);
                 event.target.style.background = `linear-gradient(to right, #4a90d9 0%, #4a90d9 ${value * 100}%, #b3b3b3 ${value * 100}%, #b3b3b3 100%)`;
             };
             slider.addEventListener('input', updateSlider);
-            updateSlider({target: slider});
-            console.log("Loading Adwaita GTK3 styles");
-            bodyClass.add('linux');
+            updateSlider({target: slider});*/
+            console.log("Loading Win10 styles on Linux");
+            bodyClass.add('WinStyle');
             break;
     }
 });
