@@ -124,9 +124,7 @@ function loadMedia() {
 
     video.setAttribute("src", mediaFile);
 
-    hslMediaMode = mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com");
-
-    if (hslMediaMode) {
+    if (liveStreamMode) {
         const youtubedl = require('youtube-dl-exec')
         youtubedl(mediaFile, {getUrl: true, addHeader: ['referer:youtube.com','user-agent:googlebot']}).then(r => {video.src=r})
         mediaFile=video.src
@@ -164,7 +162,7 @@ function loadMedia() {
         close();
     });
 
-    if (hslMediaMode) {
+    if (liveStreamMode) {
         h.attachMedia(video);
     }
 
