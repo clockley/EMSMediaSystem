@@ -15,10 +15,10 @@ var toHHMMSS = (secs) => {
     return "00:00:00:000";
   }
 
-  const hours = Math.floor(secs / 3600);
-  const minutes = Math.floor((secs % 3600) / 60);
-  const seconds = Math.floor(secs % 60);
-  const milliseconds = Math.floor((secs * 1000) % 1000);
+  const hours = (secs / 3600) | 0; // Using bitwise OR to floor values
+  const minutes = ((secs % 3600) / 60) | 0;
+  const seconds = (secs % 60) | 0;
+  const milliseconds = ((secs * 1000) % 1000) | 0;
 
   const pad = (num, size) => ('000' + num).slice(-size);
 
