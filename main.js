@@ -11,17 +11,12 @@ app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true'
 
 
 var toHHMMSS = (secs) => {
-  if (isNaN(secs)) {
-    return "00:00:00:000";
-  }
-
   const hours = (secs / 3600) | 0; // Using bitwise OR to floor values
   const minutes = ((secs % 3600) / 60) | 0;
   const seconds = (secs % 60) | 0;
   const milliseconds = ((secs * 1000) % 1000) | 0;
 
   const pad = (num, size) => ('000' + num).slice(-size);
-
   return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2) + ':' + pad(milliseconds, 3);
 };
 
