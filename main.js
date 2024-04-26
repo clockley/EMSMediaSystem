@@ -18,7 +18,7 @@ var toHHMMSS = (secs) => {
 
   return hours.padStart(2, '0') + ':' +
          minutes.padStart(2, '0') + ':' +
-         seconds.padStart(2, '0') + '.' +
+         seconds.padStart(2, '0') + ':' +
          milliseconds.padStart(3, '0');
 };
 
