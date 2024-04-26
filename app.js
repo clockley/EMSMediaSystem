@@ -101,7 +101,6 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
 
 
     if (now - lastUpdateTime > .5) {
-        console.log("GAGA");
         if (opMode == MEDIAPLAYER) {
             if (video != null && !video.seeking) {
                 hybridSync(targetTime);
