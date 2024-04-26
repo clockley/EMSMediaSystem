@@ -12,17 +12,18 @@ app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true'
 
 var toHHMMSS = (secs) => {
   if (isNaN(secs)) {
-    return "00:00:000";
+    return "00:00:00:000";
   }
-  var pad = function(num, size) { return ('000' + num).slice(size * -1); },
-  time = parseFloat(secs).toFixed(3),
-  hours = Math.floor(time / 60 / 60),
-  minutes = Math.floor(time / 60) % 60,
-  seconds = Math.floor(time - minutes * 60),
-  milliseconds = time.slice(-3);
+
+  const hours = Math.floor(secs / 3600);
+  const minutes = Math.floor((secs % 3600) / 60);
+  const seconds = Math.floor(secs % 60);
+  const milliseconds = Math.floor((secs * 1000) % 1000);
+
+  const pad = (num, size) => ('000' + num).slice(-size);
 
   return pad(hours, 2) + ':' + pad(minutes, 2) + ':' + pad(seconds, 2) + ':' + pad(milliseconds, 3);
-}
+};
 
 function createWindow() {
   ipcMain.on('timeRemaining-message', (event, arg) => {
@@ -31,13 +32,7 @@ function createWindow() {
     }
   })
 
-  ipcMain.on('timeGoto-message', function (evt, message) {
-    //win.webContents.send('timeGoto-message', message)
-     console.log("DUDU");
-  });
-
   ipcMain.on('playback-state-change', (event, playbackState) => {
-    // Assuming 'otherWin' is the BrowserWindow instance without sound
     win.webContents.send('update-playback-state', playbackState);
   });
 
