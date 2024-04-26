@@ -152,8 +152,9 @@ function adjustPlaybackRate(targetTime) {
         playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
     }
 
-    // Set the new playback rate
-    video.playbackRate = playbackRate;
+    if (!isNaN(playbackRate)) {
+        video.playbackRate = playbackRate;
+    }
 
     // Adjust control parameters dynamically based on synchronization accuracy
     if (Math.abs(timeDifference) <= synchronizationThreshold) {
@@ -467,7 +468,7 @@ function vlCtl(v) {
 
 function pauseMedia(e) {
     (async () => {
-        if (mediaWindow) {
+        if (mediaWindow && !mediaWindow.isDestroyed()) {
             mediaWindow.send('pauseCtl', 0);
             targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
         }
@@ -476,7 +477,7 @@ function pauseMedia(e) {
 
 function unPauseMedia(e) {
     (async () => {
-        if (mediaWindow) {
+        if (mediaWindow && !mediaWindow.isDestroyed()) {
             mediaWindow.send('playCtl', 0);
             targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
         }
@@ -984,9 +985,11 @@ async function createMediaWindow(path) {
                     return;
                 }
                 if (e.target.isConnected) {
-                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                    if (mediaWindow && !mediaWindow.isDestroyed()) {
+                        mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                    }
                     (async () => {
-                        if (mediaWindow) {
+                        if (mediaWindow && !mediaWindow.isDestroyed) {
                             targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
                             resetPIDOnSeek();
                         }
@@ -999,10 +1002,10 @@ async function createMediaWindow(path) {
                 if (dontSyncRemote) {
                     return;
                 }
-                if (e.target.isConnected && mediaWindow != null) {
+                if (e.target.isConnected && mediaWindow != null && !mediaWindow.isDestroyed()) {
                     mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                     (async () => {
-                        if (mediaWindow) {
+                        if (mediaWindow && !mediaWindow.isDestroyed()) {
                             targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
                         }
                     })().catch(error => console.error('Failed to fetch video current time:', error));
@@ -1013,6 +1016,7 @@ async function createMediaWindow(path) {
             video.addEventListener('ended', (e) => {
                 videoEnded = true;
                 targetTime = 0;
+                resetPIDOnSeek();
                 saveMediaFile();
             });
 
@@ -1104,10 +1108,8 @@ async function createMediaWindow(path) {
             mediaWindow = null;
             if (document.getElementById("mediaWindowPlayButton") != null) {
                 document.getElementById("mediaWindowPlayButton").innerText = "▶️";
-                ipcRenderer.send('timeRemaining-message', 0);
             } else {
                 document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
-                    ipcRenderer.send('timeRemaining-message', 0);
                     document.getElementById("mediaWindowPlayButton").innerText = "▶️";
                 }, { once: true });
             }
