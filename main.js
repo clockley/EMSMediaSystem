@@ -15,11 +15,7 @@ var toHHMMSS = (secs) => {
   const minutes = ((secs % 3600) / 60) | 0;
   const seconds = (secs % 60) | 0;
   const milliseconds = ((secs * 1000) % 1000) | 0;
-
-  return hours.toString().padStart(2, '0') + ':' +
-         minutes.toString().padStart(2, '0') + ':' +
-         seconds.toString().padStart(2, '0') + ':' +
-         milliseconds.toString().padStart(3, '0');
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(milliseconds).padStart(3, '0')}`;
 };
 
 function createWindow() {
