@@ -9,8 +9,8 @@ var loopFile = false;
 var strtvl = 1;
 var strtTm = 0;
 
-window.process.argv.forEach(arg => {
-    let parts = arg.split('=');
+for (let i = 0; i < window.process.argv.length; ++i) {
+    let parts = window.process.argv[i].split('=');
     let key = parts[0];
     let value = parts[1] || ''; // Handles cases where there might not be a value
 
@@ -28,7 +28,7 @@ window.process.argv.forEach(arg => {
             strtTm = value;
             break;
     }
-});
+}
 
 mediaFile=decodeURIComponent(mediaFile);
 var liveStreamMode = mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback") || mediaFile.includes("youtu.be");
