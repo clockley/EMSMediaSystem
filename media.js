@@ -94,7 +94,7 @@ function sendRemainingTime(video) {
     requestAnimationFrame(send);
 }
 
-function loadMedia() {
+async function loadMedia() {
     var h = null;
     var isImg = false;
 
@@ -126,8 +126,8 @@ function loadMedia() {
 
     if (liveStreamMode) {
         const youtubedl = require('youtube-dl-exec')
-        youtubedl(mediaFile, {getUrl: true, addHeader: ['referer:youtube.com','user-agent:googlebot']}).then(r => {video.src=r})
-        mediaFile=video.src
+        await youtubedl(mediaFile, {getUrl: true, addHeader: ['referer:youtube.com','user-agent:googlebot']}).then(r => {video.src=r})
+        mediaFile=video.src;
         const hls = require("hls.js");
         h = new hls();
         h.loadSource(mediaFile);
