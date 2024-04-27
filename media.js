@@ -98,7 +98,7 @@ async function loadMedia() {
     var h = null;
     var isImg = false;
 
-    switch (getFileExt(mediaFile)) {
+    switch (getFileExt(mediaFile.toLowerCase())) {
         case "bmp":
         case "gif":
         case "jpg":
