@@ -31,7 +31,7 @@ window.process.argv.forEach(arg => {
 });
 
 mediaFile=decodeURIComponent(mediaFile);
-var liveStreamMode = mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback");
+var liveStreamMode = mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback") || mediaFile.includes("youtu.be");
 
 if (!liveStreamMode) {
     ipcRenderer.on('timeGoto-message', function (evt, message) {
@@ -126,7 +126,24 @@ async function loadMedia() {
 
     if (liveStreamMode) {
         const youtubedl = require('youtube-dl-exec')
-        await youtubedl(mediaFile, {getUrl: true, addHeader: ['referer:youtube.com','user-agent:googlebot']}).then(r => {video.src=r})
+        try {
+            await youtubedl(mediaFile, {getUrl: true, addHeader: ['referer:youtube.com','user-agent:googlebot']}).then(r => {video.src=r})
+        } catch (error) {
+            if (mediaFile.includes("youtu")) {
+                const response = await fetch(mediaFile);
+                const body = await response.text();
+
+                const regex = /"hlsManifestUrl":"([^"]+)"/;
+                const match = body.match(regex);
+                if (match && match[1]) {
+                    mediaFile = decodeURIComponent(match[1]);
+                    video.src = mediaFile;
+                } else {
+                    throw new Error('M3U8 URL not found');
+                }
+            }
+        }
+
         mediaFile=video.src;
         const hls = require("hls.js");
         h = new hls();
