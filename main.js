@@ -42,7 +42,7 @@ function createWindow() {
       webSecurity: false
     }
   })
-
+  win.setAspectRatio(1.618);
   require("@electron/remote/main").enable(win.webContents);
 
   win.on('resize', () => {
