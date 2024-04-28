@@ -3,6 +3,7 @@
 const performanceStart = performance.now();
 const epochStart = Date.now();
 const { app, BrowserWindow, ipcMain, ipcRenderer } = require('electron');
+const electron = require('@electron/remote');
 
 var nextFile = null;
 var timers = [];
@@ -933,10 +934,7 @@ function isLiveStream(mediaFile) {
 }
 
 async function createMediaWindow(path) {
-    const electron = require('@electron/remote');
-    const app = electron.app;
     const { BrowserWindow } = electron;
-
     if (!document.getElementById("mdFile").value.includes("fake")) {
         mediaFile = document.getElementById("mdFile").value;
     } else {
