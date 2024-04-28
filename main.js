@@ -45,10 +45,11 @@ function createWindow() {
 
   require("@electron/remote/main").enable(win.webContents);
 
-   win.on('resize', () => {
-    let [ width, height ] = win.getSize();
-    settings.setSync('windowBounds', win.getBounds());
-    console.log(`Window resized to width: ${width}, height: ${height}`);
+  win.on('resize', () => {
+    settings.set('windowBounds', win.getBounds())
+        .catch(error => {
+            console.error('Error saving window bounds:', error);
+        });
   });
 
   // and load the index.html of the app.
