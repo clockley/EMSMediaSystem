@@ -1,5 +1,7 @@
 "use strict";
 const { app, BrowserWindow, ipcMain } = require('electron');
+const settings = require('electron-settings');
+
 require('@electron/remote/main').initialize();
 
 
@@ -15,6 +17,7 @@ var toHHMMSS = (secs) => {
 };
 
 function createWindow() {
+  let windowBounds = settings.getSync('windowBounds');
   ipcMain.on('timeRemaining-message', (event, arg) => {
     if (win != null) {
       win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]])
@@ -27,8 +30,10 @@ function createWindow() {
 
 // Create the browser window.
   win = new BrowserWindow({
-    width: 1068,
-    height: 660,
+    width: windowBounds ? windowBounds.width : 1068,
+    height: windowBounds ? windowBounds.height : 660,
+    minWidth: 690,
+    minHeight: 531,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
@@ -42,6 +47,7 @@ function createWindow() {
 
    win.on('resize', () => {
     let [ width, height ] = win.getSize();
+    settings.setSync('windowBounds', win.getBounds());
     console.log(`Window resized to width: ${width}, height: ${height}`);
   });
 
