@@ -193,7 +193,10 @@ async function loadMedia() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', function () {
+if (document.readyState) {
     loadMedia();
+} else {
+    document.addEventListener('DOMContentLoaded', function () {
+        loadMedia();
+    });
 }
-);
