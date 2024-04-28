@@ -193,7 +193,7 @@ async function loadMedia() {
     }
 }
 
-if (document.readyState) {
+if (document.readyState == 'interactive') {
     loadMedia();
 } else {
     document.addEventListener('DOMContentLoaded', function () {
