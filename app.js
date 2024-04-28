@@ -711,8 +711,10 @@ function setSBFormMediaPlayer() {
                     }
                     if (video) {
                         if (targetTime != null) {
-                            if (!masterPauseState)
+                            if (!masterPauseState) {
+                                unPauseMedia();
                                 video.play();
+                            }
                         }
                     }
                     dontSyncRemote = false;
@@ -1116,6 +1118,10 @@ async function createMediaWindow(path) {
     }
 
     mediaWindow.loadFile("media.html");
+    if (!masterPauseState) {
+        unPauseMedia();
+        video.play();
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
