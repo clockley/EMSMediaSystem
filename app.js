@@ -1118,10 +1118,8 @@ async function createMediaWindow(path) {
     }
 
     mediaWindow.loadFile("media.html");
-    if (!masterPauseState) {
-        unPauseMedia();
-        video.play();
-    }
+    unPauseMedia();
+    video.play();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
