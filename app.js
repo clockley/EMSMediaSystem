@@ -58,9 +58,11 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
         masterPauseState = true;
         if (video) {
             video.pause();
+            pauseMedia();
             video.currentTime = playbackState.currentTime; //sync on pause
         }
     }
+    console.log(masterPauseState);
 });
 
 let lastTimeDifference = 0; // Last time difference for derivative calculation
@@ -1018,6 +1020,7 @@ async function createMediaWindow(path) {
             video.addEventListener('ended', (e) => {
                 videoEnded = true;
                 targetTime = 0;
+                masterPauseState = false;
                 resetPIDOnSeek();
                 saveMediaFile();
             });
@@ -1039,8 +1042,10 @@ async function createMediaWindow(path) {
                     //event.target.play(); //continue to play even if detached
                 }
                 if (event.target.parentNode != null) {
-                    pauseMedia();
-                    masterPauseState = true;
+                    if (mediaWindow && !mediaWindow.isDestroyed()) {
+                        pauseMedia();
+                        masterPauseState = true;
+                    }
                 }
             });
             document.getElementById("preview").addEventListener('play', (event) => {
@@ -1049,6 +1054,7 @@ async function createMediaWindow(path) {
                     //event.target.play(); //continue to play even if detached
                 }
                 unPauseMedia();
+                masterPauseState = false;
             });
 
 
@@ -1116,6 +1122,7 @@ async function createMediaWindow(path) {
                 }, { once: true });
             }
             timeRemaining = "00:00:000"
+            masterPauseState = false;
         });
     }
 
