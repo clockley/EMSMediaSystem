@@ -1,6 +1,7 @@
 "use strict";
 const { app, BrowserWindow, ipcMain } = require('electron');
 const settings = require('electron-settings');
+const { debounce } = require('lodash');
 
 require('@electron/remote/main').initialize();
 
@@ -45,12 +46,14 @@ function createWindow() {
   win.setAspectRatio(1.618);
   require("@electron/remote/main").enable(win.webContents);
 
-  win.on('resize', () => {
+  const saveWindoowBounds = debounce(() => {
     settings.set('windowBounds', win.getBounds())
         .catch(error => {
             console.error('Error saving window bounds:', error);
         });
-  });
+}, 300); 
+
+  win.on('resize', saveWindoowBounds);
 
   // and load the index.html of the app.
   win.loadFile('index.html');
