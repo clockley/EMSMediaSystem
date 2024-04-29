@@ -51,6 +51,7 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
     if (playbackState.playing && video.paused) {
         masterPauseState = false;
         if (video) {
+            unPauseMedia();
             video.play();
         }
     } else if (!playbackState.playing && !video.paused) {
@@ -462,7 +463,7 @@ function setSBFormAlrms() {
 }
 
 function vlCtl(v) {
-    if (mediaWindow != null) {
+    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
         mediaWindow.send('vlcl', v);
     }
 }
@@ -490,6 +491,7 @@ function pauseButton(e) {
         if (!video.paused) {
             video.pause();
         } else {
+            unPauseMedia();
             video.play();
         }
     }
