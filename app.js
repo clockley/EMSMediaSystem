@@ -27,6 +27,8 @@ var osName = '';
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
+const SPECIALEVNTS = 3;
+const ALARMS = 4;
 
 class AlarmInputState {
     constructor(fileInputValue, timeInputValue) {
@@ -276,6 +278,7 @@ function resetPlayer() {
 }
 
 function setSBFormWkly() {
+    opMode = WEKLYSCHD;
     dontSyncRemote = true;
     saveMediaFile();
     resetPlayer();
@@ -302,6 +305,7 @@ function setSBFormWkly() {
 }
 
 function setSBFormSpcl() {
+    opMode=SPECIALEVNTS;
     dontSyncRemote = true;
     saveMediaFile();
     resetPlayer();
@@ -430,6 +434,7 @@ function addAlarm(e) {
 }
 
 function setSBFormAlrms() {
+    opMode=ALARMS;
     dontSyncRemote = true;
     saveMediaFile();
     resetPlayer();
@@ -550,6 +555,7 @@ function playMedia(e) {
 }
 
 function setSBFormYouTubeMediaPlayer() {
+    opMode = MEDIAPLAYERYT;
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn") != null) {
@@ -591,6 +597,7 @@ function setSBFormYouTubeMediaPlayer() {
 }
 
 function setSBFormMediaPlayer() {
+    opMode = MEDIAPLAYER;
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn") != null) {
@@ -806,13 +813,11 @@ function installSidebarFormEvents() {
                 if (video && !activeLiveStream && mediaWindow != null) {
                     dontSyncRemote = false;
                 }
-                opMode = MEDIAPLAYER;
                 mediaCntDnEle = document.getElementById('mediaCntDn');
                 document.getElementById("playlist").style.display='none';
             } else {
                 document.getElementById("playlist").style.display='';
                 mediaCntDnEle = null;
-                opMode = -1;
             }
         }
     });
