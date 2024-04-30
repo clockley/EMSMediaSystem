@@ -900,6 +900,8 @@ async function initPlayer() {
         case MEDIAPLAYER:
             document.getElementById("MdPlyrRBtnFrmID").checked=true;
             setSBFormMediaPlayer();
+            mediaCntDnEle = document.getElementById('mediaCntDn');
+            document.getElementById("playlist").style.display='none';
             break;
         case MEDIAPLAYERYT:
             document.getElementById("YtPlyrRBtnFrmID").checked=true;
