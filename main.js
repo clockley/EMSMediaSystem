@@ -23,7 +23,18 @@ function createWindow() {
     if (win != null) {
       win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]])
     }
-  })
+  });
+
+  ipcMain.on('set-mode', (event, arg) => {
+    settings.set('operating-mode', arg)
+        .catch(error => {
+            console.error('Error saving window bounds:', error);
+        });
+  });
+
+  ipcMain.handle('get-setting', async (event, setting) => {
+    return await settings.get(setting);
+  });
 
   ipcMain.on('playback-state-change', (event, playbackState) => {
     win.webContents.send('update-playback-state', playbackState);

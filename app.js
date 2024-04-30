@@ -279,6 +279,7 @@ function resetPlayer() {
 
 function setSBFormWkly() {
     opMode = WEKLYSCHD;
+    ipcRenderer.send('set-mode', opMode);
     dontSyncRemote = true;
     saveMediaFile();
     resetPlayer();
@@ -305,7 +306,8 @@ function setSBFormWkly() {
 }
 
 function setSBFormSpcl() {
-    opMode=SPECIALEVNTS;
+    opMode = SPECIALEVNTS;
+    ipcRenderer.send('set-mode', opMode);
     dontSyncRemote = true;
     saveMediaFile();
     resetPlayer();
@@ -434,7 +436,8 @@ function addAlarm(e) {
 }
 
 function setSBFormAlrms() {
-    opMode=ALARMS;
+    opMode = ALARMS;
+    ipcRenderer.send('set-mode', opMode);
     dontSyncRemote = true;
     saveMediaFile();
     resetPlayer();
@@ -556,6 +559,7 @@ function playMedia(e) {
 
 function setSBFormYouTubeMediaPlayer() {
     opMode = MEDIAPLAYERYT;
+    ipcRenderer.send('set-mode', opMode);
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn") != null) {
@@ -598,6 +602,7 @@ function setSBFormYouTubeMediaPlayer() {
 
 function setSBFormMediaPlayer() {
     opMode = MEDIAPLAYER;
+    ipcRenderer.send('set-mode', opMode);
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn") != null) {
@@ -888,8 +893,34 @@ function ISO8601_week_no(dt) {
     return 1 + Math.ceil((firstThursday - tdt) / 604800000);
 }
 
-function initPlayer() {
-    setSBFormWkly();
+async function initPlayer() {
+    mode = await ipcRenderer.invoke('get-setting', "operating-mode");
+
+    switch (mode) {
+        case MEDIAPLAYER:
+            document.getElementById("MdPlyrRBtnFrmID").checked=true;
+            setSBFormMediaPlayer();
+            break;
+        case MEDIAPLAYERYT:
+            document.getElementById("YtPlyrRBtnFrmID").checked=true;
+            setSBFormYouTubeMediaPlayer();
+            break;
+        case WEKLYSCHD:
+            document.getElementById("WklyRBtnFrmID").checked=true;
+            setSBFormWkly();
+            break;
+        case SPECIALEVNTS:
+            document.getElementById("SpclRBtnFrmID").checked=true;
+            setSBFormSpcl();
+            break;
+        case ALARMS:
+            document.getElementById("AlrmsRBtnFrmID").checked=true;
+            setSBFormAlrms();
+            break;
+        default:
+            document.getElementById("MdPlyrRBtnFrmID").checked=true;
+            setSBFormMediaPlayer();
+    }
 }
 
 window.addEventListener("load", (event) => {
