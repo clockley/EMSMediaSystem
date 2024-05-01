@@ -102,10 +102,11 @@ function updateTimestamp() {
     const update = (time) => {
         // Update at most 30 times per second
         if (time - lastUpdateTimeLocalPlayer >= 33.33) {
-            if (mediaCntDnEle)
+            if (mediaCntDnEle && audioOnlyFile) {
                 mediaCntDnEle.textContent = toHHMMSS(video.duration-video.currentTime);
-            else
+            } else {
                 return;
+            }
             lastUpdateTimeLocalPlayer = time;
         }
         requestAnimationFrame(update);
@@ -770,13 +771,13 @@ function setSBFormMediaPlayer() {
         </div>
     `;
     }
-    if (playingMediaAudioOnly)
-        updateTimestamp();
+
     if (video == null) {
         video = video = document.getElementById('preview');
         saveMediaFile();
     }
     restoreMediaFile();
+    updateTimestamp();
     document.getElementById('volumeControl').value = CrVL;
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
 
@@ -917,6 +918,7 @@ function installSidebarFormEvents() {
                     dontSyncRemote = false;
                 }
                 mediaCntDnEle = document.getElementById('mediaCntDn');
+                updateTimestamp();
                 if (masterPauseState) {
                     mediaCntDnEle.textContent = savedCurTime;
                 }
