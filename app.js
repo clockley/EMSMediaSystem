@@ -8,7 +8,7 @@ const electron = require('@electron/remote');
 var nextFile = null;
 var timers = [];
 var alarmFileMetadata = [];
-var timeRemaining = "00:00:000";
+var timeRemaining = "00:00:00:000";
 var dontSyncRemote = false;
 var mediaPlayDelay = null;
 var video = null;
@@ -626,7 +626,7 @@ function playMedia(e) {
         //activeLiveStream
         clearTimeout(mediaPlayDelay);
         if (opMode == MEDIAPLAYER)
-            document.getElementById('mediaCntDn').textContent = "00:00:000";
+            document.getElementById('mediaCntDn').textContent = "00:00:00:000";
 
         activeLiveStream = true;
         e.target.textContent = "▶️";
@@ -638,6 +638,7 @@ function playMedia(e) {
             video.pause();
             video.currentTime = 0;
             playingMediaAudioOnly = false;
+            document.getElementById('mediaCntDn').textContent = "00:00:00:000";
             saveMediaFile();
             if (video) {
                 video.muted=true;
@@ -653,7 +654,7 @@ function setSBFormYouTubeMediaPlayer() {
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn") != null) {
-            document.getElementById("mediaCntDn").textContent = "00:00:000";
+            document.getElementById("mediaCntDn").textContent = "00:00:00:000";
         }
     }
 
@@ -700,7 +701,7 @@ function setSBFormMediaPlayer() {
     resetPlayer();
     if (mediaWindow == null) {
         if (document.getElementById("mediaCntDn") != null) {
-            document.getElementById("mediaCntDn").textContent = "00:00:000";
+            document.getElementById("mediaCntDn").textContent = "00:00:00:000";
         }
     }
     document.getElementById("audio").style.display = "none";
@@ -738,7 +739,7 @@ function setSBFormMediaPlayer() {
             <br>
             <center><video id="preview"></video></center>
             <div id=cntdndiv>
-            <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: calc(1vw + 80%);line-height: 1;" id="mediaCntDn">00:00:000<span>
+            <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: calc(1vw + 80%);line-height: 1;" id="mediaCntDn">00:00:00:000<span>
             </div>
         `;
     } else {
@@ -774,7 +775,7 @@ function setSBFormMediaPlayer() {
         <br>
         <center><video id="preview"></video></center>
         <div id=cntdndiv>
-        <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: 48px;line-height: 1.2;" id="mediaCntDn">00:00:000<span>
+        <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: 48px;line-height: 1.2;" id="mediaCntDn">00:00:00:000<span>
         </div>
     `;
     }
@@ -790,10 +791,10 @@ function setSBFormMediaPlayer() {
 
     if (mediaWindow == null && !playingMediaAudioOnly) {
         document.getElementById("mediaWindowPlayButton").textContent = "▶️";
-        document.getElementById("mediaCntDn").textContent = "00:00:000";
+        document.getElementById("mediaCntDn").textContent = "00:00:00:000";
     } else {
         document.getElementById('mediaCntDn').textContent = timeRemaining;
-        timeRemaining = "00:00:000";
+        timeRemaining = "00:00:00:000";
         document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
         if (typeof currentMediaFile === 'undefined') {
             currentMediaFile = document.getElementById("mdFile").files
@@ -1049,6 +1050,7 @@ function installPreviewEventHandlers() {
         video.addEventListener('ended', (e) => {
             if (playingMediaAudioOnly) {
                 playingMediaAudioOnly = false;
+                document.getElementById('mediaCntDn').textContent = "00:00:00:000";
                 if (video) {
                     video.muted=true;
                 }
@@ -1058,7 +1060,7 @@ function installPreviewEventHandlers() {
                     video.currentTime = 0;
                 }
                 if (document.getElementById("mediaCntDn") != null) {
-                    document.getElementById("mediaCntDn").innerText = "00:00:000";
+                    document.getElementById("mediaCntDn").innerText = "00:00:00:000";
                 }
                 mediaWindow = null;
                 if (document.getElementById("mediaWindowPlayButton") != null) {
@@ -1068,7 +1070,7 @@ function installPreviewEventHandlers() {
                         document.getElementById("mediaWindowPlayButton").innerText = "▶️";
                     }, { once: true });
                 }
-                timeRemaining = "00:00:000"
+                timeRemaining = "00:00:00:000";
                 masterPauseState = false;
             }
             videoEnded = true;
@@ -1283,6 +1285,7 @@ async function createMediaWindow(path) {
         return;
     } else {
         playingMediaAudioOnly = false;
+        document.getElementById('mediaCntDn').textContent = "00:00:00:000";
         saveMediaFile();
         if (video) {
             video.muted=true;
@@ -1333,7 +1336,7 @@ async function createMediaWindow(path) {
                 video.currentTime = 0;
             }
             if (document.getElementById("mediaCntDn") != null) {
-                document.getElementById("mediaCntDn").innerText = "00:00:000";
+                document.getElementById("mediaCntDn").innerText = "00:00:00:000";
             }
             mediaWindow = null;
             if (document.getElementById("mediaWindowPlayButton") != null) {
@@ -1343,7 +1346,7 @@ async function createMediaWindow(path) {
                     document.getElementById("mediaWindowPlayButton").innerText = "▶️";
                 }, { once: true });
             }
-            timeRemaining = "00:00:000"
+            timeRemaining = "00:00:00:000"
             masterPauseState = false;
         });
     }
