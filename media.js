@@ -85,7 +85,7 @@ function sendRemainingTime(video) {
     const send = () => {
         const currentTime = performance.now();
         // Update only if at least 33.33 milliseconds have passed
-        if (currentTime - lastTime > interval) {
+        if (currentTime - lastTime > interval && !video.paused) {
             ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, getHighPrecisionTimestamp()+(currentTime - performance.now())]);
             lastTime = currentTime;
         }
@@ -194,6 +194,7 @@ async function loadMedia() {
 }
 
 if (document.readyState == 'interactive') {
+    console.log(document.readyState);
     loadMedia();
 } else {
     document.addEventListener('DOMContentLoaded', function () {
