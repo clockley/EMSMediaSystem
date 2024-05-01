@@ -8,6 +8,7 @@ var mediaFile;
 var loopFile = false;
 var strtvl = 1;
 var strtTm = 0;
+var init = false;
 
 for (let i = 0; i < window.process.argv.length; ++i) {
     let parts = window.process.argv[i].split('=');
@@ -151,6 +152,11 @@ async function loadMedia() {
     } else {
         video.currentTime = strtTm;
         video.addEventListener('play', () => {
+            if (!init) {
+                init = true;
+                console.log("Rejected Early Pause");
+                return;
+            }
             const playbackState = {
               currentTime: video.currentTime,
               playing: !video.paused,
