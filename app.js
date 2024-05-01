@@ -584,8 +584,10 @@ function playMedia(e) {
   
     if (document.getElementById("mdFile").value == "" && !playingMediaAudioOnly) {
         if (e.target.textContent = "⏹️") {
-            if (mediaWindow)
+            if (mediaWindow) {
                 mediaWindow.close();
+                saveMediaFile();
+            }
             e.target.textContent = "▶️";
         }
         return;
@@ -628,6 +630,10 @@ function playMedia(e) {
             video.pause();
             video.currentTime = 0;
             playingMediaAudioOnly = false;
+            saveMediaFile();
+            if (video) {
+                video.muted=true;
+            }
             audioOnlyFile = false;
         }
     }
@@ -1034,6 +1040,10 @@ function installPreviewEventHandlers() {
         video.addEventListener('ended', (e) => {
             if (playingMediaAudioOnly) {
                 playingMediaAudioOnly = false;
+                if (video) {
+                    video.muted=true;
+                }
+                saveMediaFile();
                 if (video != null) {
                     video.pause();
                     video.currentTime = 0;
@@ -1057,6 +1067,9 @@ function installPreviewEventHandlers() {
             masterPauseState = false;
             resetPIDOnSeek();
             saveMediaFile();
+            if (video) {
+                video.muted=true;
+            }
         });
 
         video.addEventListener('pause', (event) => {
@@ -1261,6 +1274,10 @@ async function createMediaWindow(path) {
         return;
     } else {
         playingMediaAudioOnly = false;
+        saveMediaFile();
+        if (video) {
+            video.muted=true;
+        }
     }
 
     if (externalDisplay && document.getElementById("mdScrCtlr").checked) {
