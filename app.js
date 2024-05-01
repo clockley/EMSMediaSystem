@@ -27,7 +27,7 @@ var mediaCntDnEle = null;
 var CrVL = 1;
 var opMode = -1;
 var osName = '';
-var playingMedia = false;
+var localTimeStampUpdateIsRunning = false;
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
@@ -92,10 +92,14 @@ function getHighPrecisionTimestamp() {
 }
 
 function updateTimestamp() {
-    if (!mediaCntDnEle) {
+    if (localTimeStampUpdateIsRunning) {
         return;
     }
-
+    if (!mediaCntDnEle) {
+        localTimeStampUpdateIsRunning = false;
+        return;
+    }
+    localTimeStampUpdateIsRunning = true;
     let lastUpdateTimeLocalPlayer = 0;
 
     // Function to update the timestamp text
@@ -105,6 +109,7 @@ function updateTimestamp() {
             if (mediaCntDnEle && audioOnlyFile) {
                 mediaCntDnEle.textContent = toHHMMSS(video.duration-video.currentTime);
             } else {
+                localTimeStampUpdateIsRunning = false;
                 return;
             }
             lastUpdateTimeLocalPlayer = time;
