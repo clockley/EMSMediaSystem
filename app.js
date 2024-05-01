@@ -18,6 +18,7 @@ var targetTime = 0;
 var startTime = 0;
 var prePathname = '';
 var savedCurTime = '';
+var playingMediaAudioOnly = false;
 var audioOnlyFile = false;
 let weakSet = new WeakSet();
 let obj = {};
@@ -26,6 +27,7 @@ var mediaCntDnEle = null;
 var CrVL = 1;
 var opMode = -1;
 var osName = '';
+var playingMedia = false;
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
@@ -76,6 +78,10 @@ let kI = 0.001; // Integral gain
 let kD = 0.003; // Derivative gain
 let synchronizationThreshold = 0.05; // Threshold to keep local video within .05 second of remote
 
+var toHHMMSS = (secs) => {
+    return `${((secs / 3600) | 0).toString().padStart(2, '0')}:${(((secs % 3600) / 60) | 0).toString().padStart(2, '0')}:${((secs % 60) | 0).toString().padStart(2, '0')}:${(((secs * 1000) % 1000) | 0).toString().padStart(3, '0')}`;
+};
+
 function getHighPrecisionTimestamp() {
     const currentPerformance = performance.now();
     const elapsed = currentPerformance - performanceStart;
@@ -83,6 +89,27 @@ function getHighPrecisionTimestamp() {
     const timestampInSeconds = highPrecisionTimestamp * 0.001;
 
     return timestampInSeconds;
+}
+
+function updateTimestamp() {
+    if (!mediaCntDnEle) {
+        return;
+    }
+
+    let lastUpdateTimeLocalPlayer = 0;
+
+    // Function to update the timestamp text
+    const update = (time) => {
+        // Update at most 30 times per second
+        if (time - lastUpdateTimeLocalPlayer >= 33.33) {
+            if (mediaCntDnEle)
+                mediaCntDnEle.textContent = toHHMMSS(video.duration-video.currentTime);
+            lastUpdateTimeLocalPlayer = time;
+        }
+        requestAnimationFrame(update);
+    };
+
+    requestAnimationFrame(update);
 }
 
 ipcRenderer.on('timeRemaining-message', function (evt, message) {
@@ -349,6 +376,7 @@ function timerCallback(timerID) {
         var audioElement = new Audio(this.result);
         audioElement.play();
         audioElement.addEventListener("ended", function (e) {
+            audioOnlyFile = false;
             if (document.getElementById("as1") != null) {
                 document.getElementById("as" + timerID).innerText = "▶️";
             } else {
@@ -477,6 +505,8 @@ function setSBFormAlrms() {
 function vlCtl(v) {
     if (mediaWindow != null && !mediaWindow.isDestroyed()) {
         mediaWindow.send('vlcl', v);
+    } else if (audioOnlyFile) {
+        video.volume = v;
     }
 }
 
@@ -496,6 +526,11 @@ function unPauseMedia(e) {
             targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
         }
     })().catch(error => console.error('Failed to fetch video current time:', error));
+    if (playingMediaAudioOnly && document.getElementById("mediaWindowPlayButton")) {
+        document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
+    }
+    (async () =>{ waitForMetadata().then(() =>{audioOnlyFile= opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0})});
+
 }
 
 function pauseButton(e) {
@@ -509,13 +544,41 @@ function pauseButton(e) {
     }
 }
 
+function waitForMetadata() {
+    if (!video || !video.src || isLiveStream(video.src)) {
+        console.log("No source set or it's a live stream, which may not trigger 'loadedmetadata'.");
+        return Promise.reject("Invalid source or live stream.");
+    }
+
+    return new Promise((resolve, reject) => {
+        // Handler for resolving the promise
+        const onMetadataLoaded = () => {
+            console.log("Metadata loaded.");
+            audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
+            video.removeEventListener('loadedmetadata', onMetadataLoaded);
+            resolve(video);
+        };
+
+        video.addEventListener('loadedmetadata', onMetadataLoaded, { once: true });
+
+
+        const onError = (e) => {
+            console.error("Error loading video:", e);
+            video.removeEventListener('error', onError);
+            reject(e);
+        };
+        video.addEventListener('error', onError, { once: true });
+
+        video.load();
+    });
+}
+
 function playMedia(e) {
-    //new Date().setHours(document.getElementById("cntTmeVidStrt").value.split(":")[0], document.getElementById("cntTmeVidStrt").value.split(":")[1], 00)
     if (!e) {
         return;
     }
-
-    if (document.getElementById("mdFile").value == "") {
+  
+    if (document.getElementById("mdFile").value == "" && !playingMediaAudioOnly) {
         if (e.target.textContent = "⏹️") {
             if (mediaWindow)
                 mediaWindow.close();
@@ -525,6 +588,7 @@ function playMedia(e) {
     }
 
     if (e.target.textContent == "▶️") {
+        audioOnlyFile = opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
         videoEnded = false;
         e.target.textContent = "⏹️";
         currentMediaFile = document.getElementById("mdFile").files;
@@ -555,6 +619,12 @@ function playMedia(e) {
         if (mediaWindow) {
             mediaWindow.close();
             saveMediaFile();
+        }
+        if (audioOnlyFile) {
+            video.pause();
+            video.currentTime = 0;
+            playingMediaAudioOnly = false;
+            audioOnlyFile = false;
         }
     }
 }
@@ -587,6 +657,12 @@ function setSBFormYouTubeMediaPlayer() {
         </form>
         <br>
     `;
+
+    document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
+
+    if (playingMediaAudioOnly) {
+        return;
+    }
     restoreMediaFile();
 
     if (document.getElementById("mdFile").value.includes(":\\fakepath\\")) {
@@ -598,8 +674,6 @@ function setSBFormYouTubeMediaPlayer() {
     } else {
         document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
     }
-
-    document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
 }
 
 function setSBFormMediaPlayer() {
@@ -686,6 +760,8 @@ function setSBFormMediaPlayer() {
         </div>
     `;
     }
+    if (playingMediaAudioOnly)
+        updateTimestamp();
     if (video == null) {
         video = video = document.getElementById('preview');
         saveMediaFile();
@@ -694,14 +770,18 @@ function setSBFormMediaPlayer() {
     document.getElementById('volumeControl').value = CrVL;
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
 
-    if (mediaWindow == null) {
+    if (mediaWindow == null && !playingMediaAudioOnly) {
         document.getElementById("mediaWindowPlayButton").textContent = "▶️";
         document.getElementById("mediaCntDn").textContent = "00:00:000";
     } else {
         document.getElementById('mediaCntDn').textContent = timeRemaining;
         timeRemaining = "00:00:000";
         document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
-        document.getElementById("mdFile").files = currentMediaFile;
+        if (typeof currentMediaFile === 'undefined') {
+            currentMediaFile = document.getElementById("mdFile").files
+        } else {
+            document.getElementById("mdFile").files = currentMediaFile;
+        }
     }
     document.getElementById('volumeControl').addEventListener('input', function () {
         vlCtl(this.value);
@@ -746,6 +826,9 @@ function setSBFormMediaPlayer() {
 }
 
 function saveMediaFile() {
+    if (playingMediaAudioOnly) {
+        return;
+    }
     if (!document.getElementById("mdFile")) {
         return;
     }
@@ -828,7 +911,8 @@ function installSidebarFormEvents() {
                 document.getElementById("playlist").style.display='none';
             } else {
                 document.getElementById("playlist").style.display='';
-                savedCurTime = mediaCntDnEle.textContent;
+                if (mediaCntDnEle)
+                    savedCurTime = mediaCntDnEle.textContent;
                 mediaCntDnEle = null;
             }
         }
@@ -942,6 +1026,26 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('ended', (e) => {
+            if (playingMediaAudioOnly) {
+                playingMediaAudioOnly = false;
+                if (video != null) {
+                    video.pause();
+                    video.currentTime = 0;
+                }
+                if (document.getElementById("mediaCntDn") != null) {
+                    document.getElementById("mediaCntDn").innerText = "00:00:000";
+                }
+                mediaWindow = null;
+                if (document.getElementById("mediaWindowPlayButton") != null) {
+                    document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+                } else {
+                    document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
+                        document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+                    }, { once: true });
+                }
+                timeRemaining = "00:00:000"
+                masterPauseState = false;
+            }
             videoEnded = true;
             targetTime = 0;
             masterPauseState = false;
@@ -973,6 +1077,12 @@ function installPreviewEventHandlers() {
             }
         });
         video.addEventListener('play', (event) => {
+            if (audioOnlyFile) {
+                video.muted=false;
+                playingMediaAudioOnly = true;
+                playMedia();
+                updateTimestamp();
+            }
             if (event.target.clientHeight == 0) {
                 event.preventDefault();
                 //event.target.play(); //continue to play even if detached
@@ -1109,6 +1219,8 @@ async function createMediaWindow(path) {
         }
         video.muted = true;
         video.setAttribute("src", mediaFile);
+        await waitForMetadata().then(() =>{audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0)});
+
         video.setAttribute("controls", "true");
         video.setAttribute("disablePictureInPicture", "true");
         video.id = "preview";
@@ -1122,6 +1234,17 @@ async function createMediaWindow(path) {
     var strtVl = 1;
     if (document.getElementById('volumeControl') != null) {
         strtVl = document.getElementById('volumeControl').value;
+    }
+
+    if (audioOnlyFile && mediaWindow == null) {
+        video.muted=false;
+        video.play();
+        playingMediaAudioOnly = true;
+        if (playingMediaAudioOnly)
+            updateTimestamp();
+        return;
+    } else {
+        playingMediaAudioOnly = false;
     }
 
     if (externalDisplay && document.getElementById("mdScrCtlr").checked) {
@@ -1185,7 +1308,8 @@ async function createMediaWindow(path) {
 
     mediaWindow.loadFile("media.html");
     unPauseMedia();
-    video.play();
+    if (video == null)
+        video.play();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
