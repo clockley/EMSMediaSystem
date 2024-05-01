@@ -17,6 +17,7 @@ var activeLiveStream = false;
 var targetTime = 0;
 var startTime = 0;
 var prePathname = '';
+var savedCurTime = '';
 let weakSet = new WeakSet();
 let obj = {};
 var installedVideoEventListener = false;
@@ -819,9 +820,13 @@ function installSidebarFormEvents() {
                     dontSyncRemote = false;
                 }
                 mediaCntDnEle = document.getElementById('mediaCntDn');
+                if (masterPauseState) {
+                    mediaCntDnEle.textContent = savedCurTime;
+                }
                 document.getElementById("playlist").style.display='none';
             } else {
                 document.getElementById("playlist").style.display='';
+                savedCurTime = mediaCntDnEle.textContent;
                 mediaCntDnEle = null;
             }
         }
