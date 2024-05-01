@@ -18,6 +18,7 @@ var targetTime = 0;
 var startTime = 0;
 var prePathname = '';
 var savedCurTime = '';
+var audioOnlyFile = false;
 let weakSet = new WeakSet();
 let obj = {};
 var installedVideoEventListener = false;
@@ -787,6 +788,7 @@ function saveMediaFile() {
                 if (document.getElementById("mdLpCtlr") != null) {
                     video.loop = document.getElementById("mdLpCtlr").checked;
                 }
+                video.load();
             }
         }
     }
@@ -898,6 +900,92 @@ function ISO8601_week_no(dt) {
     return 1 + Math.ceil((firstThursday - tdt) / 604800000);
 }
 
+function installPreviewEventHandlers() {
+    if (!installedVideoEventListener) {
+        video.addEventListener('loadedmetadata', function() {
+            audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
+        });
+        video.addEventListener('seeked', (e) => {
+            if (mediaWindow == null) {
+                return;
+            }
+            if (dontSyncRemote) {
+                dontSyncRemote = false;
+                console.log("rejected sync");
+                return;
+            }
+            if (e.target.isConnected) {
+                if (mediaWindow && !mediaWindow.isDestroyed()) {
+                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                }
+                (async () => {
+                    if (mediaWindow && !mediaWindow.isDestroyed) {
+                        targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+                        resetPIDOnSeek();
+                    }
+                })().catch(error => console.error('Failed to fetch video current time:', error));
+            }
+        });
+
+        video.addEventListener('seeking', (e) => {
+            if (dontSyncRemote) {
+                return;
+            }
+            if (e.target.isConnected && mediaWindow != null && !mediaWindow.isDestroyed()) {
+                mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                (async () => {
+                    if (mediaWindow && !mediaWindow.isDestroyed()) {
+                        targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+                    }
+                })().catch(error => console.error('Failed to fetch video current time:', error));
+            }
+        });
+
+        video.addEventListener('ended', (e) => {
+            videoEnded = true;
+            targetTime = 0;
+            masterPauseState = false;
+            resetPIDOnSeek();
+            saveMediaFile();
+        });
+
+        video.addEventListener('pause', (event) => {
+            if (activeLiveStream) {
+                return;
+            }
+            if (video.currentTime - video.duration == 0) {
+                return;
+            }
+            if (!event.target.isConnected) {
+                event.preventDefault();
+                event.target.play();
+            }
+            if (event.target.clientHeight == 0) {
+                event.preventDefault();
+                return;
+                //event.target.play(); //continue to play even if detached
+            }
+            if (event.target.parentNode != null) {
+                if (mediaWindow && !mediaWindow.isDestroyed()) {
+                    pauseMedia();
+                    masterPauseState = true;
+                }
+            }
+        });
+        video.addEventListener('play', (event) => {
+            if (event.target.clientHeight == 0) {
+                event.preventDefault();
+                //event.target.play(); //continue to play even if detached
+            }
+            unPauseMedia();
+            masterPauseState = false;
+        });
+
+
+        installedVideoEventListener = true;
+    }
+}
+
 async function initPlayer() {
     mode = await ipcRenderer.invoke('get-setting', "operating-mode");
 
@@ -905,6 +993,7 @@ async function initPlayer() {
         case MEDIAPLAYER:
             document.getElementById("MdPlyrRBtnFrmID").checked=true;
             setSBFormMediaPlayer();
+            installPreviewEventHandlers();
             mediaCntDnEle = document.getElementById('mediaCntDn');
             document.getElementById("playlist").style.display='none';
             break;
@@ -927,6 +1016,9 @@ async function initPlayer() {
         default:
             document.getElementById("MdPlyrRBtnFrmID").checked=true;
             setSBFormMediaPlayer();
+            installPreviewEventHandlers();
+            mediaCntDnEle = document.getElementById('mediaCntDn');
+            document.getElementById("playlist").style.display='none';
     }
 }
 
@@ -982,6 +1074,10 @@ function isLiveStream(mediaFile) {
         mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback") || mediaFile.includes("youtu.be");
 }
 
+function isAudioTrackLoadedIntoVideoElement(e) {
+    return e.videoTracks && e.videoTracks.length === 0;
+}
+
 async function createMediaWindow(path) {
     const { BrowserWindow } = electron;
     if (!document.getElementById("mdFile").value.includes("fake")) {
@@ -1020,88 +1116,6 @@ async function createMediaWindow(path) {
         video.controlsList = "noplaybackrate";
         if (document.getElementById("mdLpCtlr") != null) {
             video.loop = document.getElementById("mdLpCtlr").checked;
-        }
-        if (!installedVideoEventListener) {
-            video.addEventListener('seeked', (e) => {
-                if (mediaWindow == null) {
-                    return;
-                }
-                if (dontSyncRemote) {
-                    dontSyncRemote = false;
-                    console.log("rejected sync");
-                    return;
-                }
-                if (e.target.isConnected) {
-                    if (mediaWindow && !mediaWindow.isDestroyed()) {
-                        mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-                    }
-                    (async () => {
-                        if (mediaWindow && !mediaWindow.isDestroyed) {
-                            targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
-                            resetPIDOnSeek();
-                        }
-                    })().catch(error => console.error('Failed to fetch video current time:', error));
-                    
-                }
-            });
-
-            video.addEventListener('seeking', (e) => {
-                if (dontSyncRemote) {
-                    return;
-                }
-                if (e.target.isConnected && mediaWindow != null && !mediaWindow.isDestroyed()) {
-                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-                    (async () => {
-                        if (mediaWindow && !mediaWindow.isDestroyed()) {
-                            targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
-                        }
-                    })().catch(error => console.error('Failed to fetch video current time:', error));
-                    
-                }
-            });
-
-            video.addEventListener('ended', (e) => {
-                videoEnded = true;
-                targetTime = 0;
-                masterPauseState = false;
-                resetPIDOnSeek();
-                saveMediaFile();
-            });
-
-            document.getElementById("preview").addEventListener('pause', (event) => {
-                if (activeLiveStream) {
-                    return;
-                }
-                if (video.currentTime - video.duration == 0) {
-                    return;
-                }
-                if (!event.target.isConnected) {
-                    event.preventDefault();
-                    event.target.play();
-                }
-                if (event.target.clientHeight == 0) {
-                    event.preventDefault();
-                    return;
-                    //event.target.play(); //continue to play even if detached
-                }
-                if (event.target.parentNode != null) {
-                    if (mediaWindow && !mediaWindow.isDestroyed()) {
-                        pauseMedia();
-                        masterPauseState = true;
-                    }
-                }
-            });
-            document.getElementById("preview").addEventListener('play', (event) => {
-                if (event.target.clientHeight == 0) {
-                    event.preventDefault();
-                    //event.target.play(); //continue to play even if detached
-                }
-                unPauseMedia();
-                masterPauseState = false;
-            });
-
-
-            installedVideoEventListener = true;
         }
     }
 
