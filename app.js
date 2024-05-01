@@ -201,6 +201,8 @@ function adjustPlaybackRate(targetTime) {
 }
 
 function hybridSync(targetTime) {
+    if (audioOnlyFile)
+        return;
     // Adjust using a smooth transition algorithm
     adjustPlaybackRate(targetTime);
 }
