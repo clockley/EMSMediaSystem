@@ -1234,7 +1234,7 @@ async function createMediaWindow(path) {
     var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
     if (liveStreamMode == false && video != null) {
-        video.pause();
+        //video.pause();
         startTime = video.currentTime;
     }
 
