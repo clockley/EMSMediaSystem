@@ -1118,9 +1118,8 @@ function installPreviewEventHandlers() {
                 updateTimestamp();
                 return;
             }
-            if (event.target.clientHeight == 0) {
-                event.preventDefault();
-                //event.target.play(); //continue to play even if detached
+            if (event.target.clientHeight == 0 || !event.target.isConnected) {
+                return;
             }
             unPauseMedia();
             masterPauseState = false;
