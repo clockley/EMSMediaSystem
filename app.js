@@ -1112,6 +1112,7 @@ function installPreviewEventHandlers() {
 
             if (audioOnlyFile) {
                 video.muted=false;
+                video.volume=document.getElementById('volumeControl').value;
                 playingMediaAudioOnly = true;
                 playMedia();
                 unPauseMedia();
@@ -1277,6 +1278,7 @@ async function createMediaWindow(path) {
 
     if (audioOnlyFile && mediaWindow == null) {
         video.muted=false;
+        video.volume=document.getElementById('volumeControl').value;
         video.play();
         playingMediaAudioOnly = true;
         if (playingMediaAudioOnly)
