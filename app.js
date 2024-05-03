@@ -57,8 +57,8 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
     if (playbackState.playing && video.paused) {
         masterPauseState = false;
         if (video) {
-            unPauseMedia();
             video.play();
+            unPauseMedia();
         }
     } else if (!playbackState.playing && !video.paused) {
         masterPauseState = true;
@@ -829,7 +829,6 @@ function setSBFormMediaPlayer() {
                     if (video) {
                         if (targetTime != null) {
                             if (!masterPauseState) {
-                                unPauseMedia();
                                 video.play();
                             }
                         }
@@ -1354,7 +1353,7 @@ async function createMediaWindow(path) {
 
     mediaWindow.loadFile("media.html");
     unPauseMedia();
-    if (video == null)
+    if (video != null)
         video.play();
 }
 
