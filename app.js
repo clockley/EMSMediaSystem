@@ -186,9 +186,11 @@ function adjustPlaybackRate(targetTime) {
     // Immediate synchronization for very large discrepancies
     if (Math.abs(timeDifference) > 1 || timeDifference < -1) {
         // Directly jump to the target time if difference is more than 1 second
+        dontSyncRemote=true;
         video.currentTime = targetTime;
         playbackRate = 1.0; // Reset playback rate
         dynamicPIDTuning();
+        dontSyncRemote=false;
     } else {
         // Calculate new playback rate within dynamically adjusted bounds
         playbackRate = video.playbackRate + (kP * timeDifference) + (kI * integral) + (kD * derivative);
