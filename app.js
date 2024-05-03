@@ -190,7 +190,6 @@ function adjustPlaybackRate(targetTime) {
         video.currentTime = targetTime;
         playbackRate = 1.0; // Reset playback rate
         dynamicPIDTuning();
-        dontSyncRemote=false;
     } else {
         // Calculate new playback rate within dynamically adjusted bounds
         playbackRate = video.playbackRate + (kP * timeDifference) + (kI * integral) + (kD * derivative);
@@ -1031,6 +1030,7 @@ function installPreviewEventHandlers() {
                         resetPIDOnSeek();
                     }
                 })().catch(error => console.error('Failed to fetch video current time:', error));
+                targetTime=video.currentTime;
             }
         });
 
