@@ -1113,7 +1113,9 @@ function installPreviewEventHandlers() {
 
             if (audioOnlyFile) {
                 video.muted=false;
-                video.volume=document.getElementById('volumeControl').value;
+                if (document.getElementById('volumeControl')) {
+                    video.volume=document.getElementById('volumeControl').value;
+                }
                 playingMediaAudioOnly = true;
                 playMedia();
                 unPauseMedia();
