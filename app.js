@@ -64,7 +64,6 @@ ipcRenderer.on('update-playback-state', (event, playbackState) => {
         masterPauseState = true;
         if (video) {
             video.pause();
-            pauseMedia();
             video.currentTime = playbackState.currentTime; //sync on pause
         }
     }
@@ -1045,6 +1044,7 @@ function installPreviewEventHandlers() {
                         targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
                     }
                 })().catch(error => console.error('Failed to fetch video current time:', error));
+                targetTime=video.currentTime;
             }
         });
 
