@@ -1356,6 +1356,7 @@ async function createMediaWindow(path) {
     }
 
     mediaWindow.loadFile("media.html");
+    mediaWindow.show();
     unPauseMedia();
     if (video != null)
         video.play();
