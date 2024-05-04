@@ -10,24 +10,15 @@ var strtvl = 1;
 var strtTm = 0;
 var init = false;
 
-for (let i = 0; i < window.process.argv.length; ++i) {
-    let parts = window.process.argv[i].split('=');
-    let key = parts[0];
-    let value = parts[1] || ''; // Handles cases where there might not be a value
-
-    switch (key) {
-        case '--mediafile-ems':
-            mediaFile = value;
-            break;
-        case '--media-loop':
-            loopFile = value === 'true';
-            break;
-        case '--start-vol':
-            strtvl = value;
-            break;
-        case '--start-time':
-            strtTm = value;
-            break;
+for (const arg of window.process.argv) {
+    if (arg.startsWith('--mediafile-ems=')) {
+        mediaFile = arg.substring(16);
+    } else if (arg === '--media-loop=true') {
+        loopFile = true;
+    } else if (arg.startsWith('--start-vol=')) {
+        strtvl = parseFloat(arg.substring(12));
+    } else if (arg.startsWith('--start-time=')) {
+        strtTm = parseFloat(arg.substring(13));
     }
 }
 
@@ -122,7 +113,7 @@ async function loadMedia() {
     } else {
         video = document.getElementById("bigPlayer");
     }
-
+    video.volume=strtvl;
     video.setAttribute("src", mediaFile);
 
     if (liveStreamMode) {
