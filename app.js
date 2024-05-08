@@ -129,7 +129,9 @@ ipcRenderer.on('timeRemaining-message', function (evt, message) {
     let timeStamp = message[0];
     if (opMode == MEDIAPLAYER) {
         requestAnimationFrame(() => {
-            mediaCntDnEle.textContent = timeStamp; //don't check if element is null, we won't crash
+            if (mediaCntDnEle != null) {
+                mediaCntDnEle.textContent = timeStamp;
+            }
             timeStamp = null;
         });
     }
@@ -542,7 +544,7 @@ function unPauseMedia(e) {
         document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
     }
     (async () =>{ waitForMetadata().then(() =>{audioOnlyFile= opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0})});
-    if (video.paused) {
+    if (video && video.paused) {
         video.play();
     }
 }
@@ -867,9 +869,9 @@ function saveMediaFile() {
     } else {
         mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? mdfileElement.value : mdfileElement.files[0].path;
     }
-
+    let liveStream = isLiveStream(mediaFile);
     if ((mdfileElement != null && (mediaWindow == null && mdfileElement != null &&
-        !(isLiveStream(mediaFile)))) || (mediaWindow != null && mdfileElement != null && isLiveStream(mediaFile)) || activeLiveStream && mediaWindow != null) {
+        !(liveStream))) || (mediaWindow != null && mdfileElement != null && liveStream) || activeLiveStream && mediaWindow != null) {
         if (video == null) {
             video = document.getElementById('preview');
         }
@@ -1289,7 +1291,8 @@ async function createMediaWindow(path) {
         return;
     } else {
         playingMediaAudioOnly = false;
-        document.getElementById('mediaCntDn').textContent = "00:00:00:000";
+        if (document.getElementById('mediaCntDn'))
+            document.getElementById('mediaCntDn').textContent = "00:00:00:000";
         saveMediaFile();
         if (video) {
             video.muted=true;
@@ -1298,7 +1301,8 @@ async function createMediaWindow(path) {
 
     if (externalDisplay && document.getElementById("mdScrCtlr").checked) {
         mediaWindow = new BrowserWindow({
-            backgroundColor: '#000000',
+            backgroundColor: '#00000000',
+            transparent: true,
             x: externalDisplay.bounds.x + 50,
             y: externalDisplay.bounds.y + 50,
             width: externalDisplay.width,
@@ -1312,12 +1316,13 @@ async function createMediaWindow(path) {
                 contextIsolation: false,
                 nativeWindowOpen: false,
                 backgroundThrottling: false,
-                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",]
+                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",'--live-stream='+liveStreamMode]
             },
         });
     } else {
         mediaWindow = new BrowserWindow({
-            backgroundColor: '#000000',
+            backgroundColor: '#00000000',
+            transparent: true,
             width: displays[0].width,
             height: displays[0].height,
             fullscreen: true,
@@ -1328,7 +1333,7 @@ async function createMediaWindow(path) {
                 contextIsolation: false,
                 nativeWindowOpen: false,
                 backgroundThrottling: false,
-                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : ""]
+                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",'--live-stream='+liveStreamMode]
             }
         });
     }
