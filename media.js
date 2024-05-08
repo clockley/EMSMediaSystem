@@ -9,6 +9,7 @@ var loopFile = false;
 var strtvl = 1;
 var strtTm = 0;
 var init = false;
+var liveStreamMode = false;
 
 for (const arg of window.process.argv) {
     if (arg.startsWith('--mediafile-ems=')) {
@@ -19,11 +20,12 @@ for (const arg of window.process.argv) {
         strtvl = parseFloat(arg.substring(12));
     } else if (arg.startsWith('--start-time=')) {
         strtTm = parseFloat(arg.substring(13));
+    } else if (arg === '--live-stream=true') {
+        liveStreamMode = true;
     }
 }
 
 mediaFile=decodeURIComponent(mediaFile);
-var liveStreamMode = mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback") || mediaFile.includes("youtu.be");
 
 if (!liveStreamMode) {
     ipcRenderer.on('timeGoto-message', function (evt, message) {
@@ -145,7 +147,6 @@ async function loadMedia() {
         video.addEventListener('play', () => {
             if (!init) {
                 init = true;
-                console.log("Rejected Early Pause");
                 return;
             }
             const playbackState = {
@@ -191,7 +192,6 @@ async function loadMedia() {
 }
 
 if (document.readyState == 'interactive') {
-    console.log(document.readyState);
     loadMedia();
 } else {
     document.addEventListener('DOMContentLoaded', function () {
