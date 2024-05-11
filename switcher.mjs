@@ -1,4 +1,6 @@
 const bonjour = require('bonjour')();
+const { Atem } = require('atem-connection');
+const atem = null;
 
 export function detectSwitcherAddress() {
     // Start browsing for Blackmagic services
@@ -16,4 +18,22 @@ export function detectSwitcherAddress() {
     }, 30000);
 
     return service.referer.address;
+}
+
+export function connectToAtemSwitcher(ip) {
+    atem = new Atem();
+    atem.on('info', console.log);
+    atem.on('error', console.error);
+    (async () => {
+        await atem.connect(ip);
+    })();
+}
+
+export function changeInput(num) {
+    if (!atem) {
+        return;
+    }
+    atem.changeProgramInput(num).then(() => {
+        console.log('Program input changed to 1');
+    }).catch(console.error);
 }
