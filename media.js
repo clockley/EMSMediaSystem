@@ -27,37 +27,39 @@ for (const arg of window.process.argv) {
 
 mediaFile=decodeURIComponent(mediaFile);
 
-if (!liveStreamMode) {
-    ipcRenderer.on('timeGoto-message', function (evt, message) {
-        const localTs = performance.now();
-        const now = Date.now();
-        const travelTime = now - message.timestamp;
+async function installICPHandlers() {
+    if (!liveStreamMode) {
+        ipcRenderer.on('timeGoto-message', function (evt, message) {
+            const localTs = performance.now();
+            const now = Date.now();
+            const travelTime = now - message.timestamp;
 
-        const adjustedTime = message.currentTime + (travelTime * .001);
-        requestAnimationFrame(() => {
-            video.currentTime = adjustedTime + ((performance.now() - localTs)*.001);
+            const adjustedTime = message.currentTime + (travelTime * .001);
+            requestAnimationFrame(() => {
+                video.currentTime = adjustedTime + ((performance.now() - localTs)*.001);
+            });
         });
-    });
-}
-
-ipcRenderer.on('pauseCtl', function (evt, message) {
-    if (video.paused) {
-        video.play();
-    } else if (!video.paused) {
-        video.pause();
     }
-});
 
-ipcRenderer.on('playCtl', function (evt, message) {
-    if (!liveStreamMode)
+    ipcRenderer.on('pauseCtl', function (evt, message) {
         if (video.paused) {
             video.play();
+        } else if (!video.paused) {
+            video.pause();
         }
-});
+    });
 
-ipcRenderer.on('vlcl', function (evt, message) {
-    video.volume = message;
-});
+    ipcRenderer.on('playCtl', function (evt, message) {
+        if (!liveStreamMode)
+            if (video.paused) {
+                video.play();
+            }
+    });
+
+    ipcRenderer.on('vlcl', function (evt, message) {
+        video.volume = message;
+    });
+}
 
 function getFileExt(fname) {
     return fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2);
@@ -91,6 +93,8 @@ function sendRemainingTime(video) {
 async function loadMedia() {
     var h = null;
     var isImg = false;
+
+    prom = installICPHandlers();
 
     switch (getFileExt(mediaFile.toLowerCase())) {
         case "bmp":
@@ -169,6 +173,8 @@ async function loadMedia() {
         }
         );
     }
+
+    await prom;
 
     if (loopFile) {
         video.setAttribute("loop", true);
