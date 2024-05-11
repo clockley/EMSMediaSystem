@@ -3,6 +3,7 @@
 const performanceStart = performance.now();
 const epochStart = Date.now();
 const { app, BrowserWindow, ipcMain, ipcRenderer } = require('electron');
+const bonjour = require('bonjour')();
 const electron = require('@electron/remote');
 
 var nextFile = null;
