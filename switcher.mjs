@@ -3,7 +3,6 @@ const { Atem } = require('atem-connection');
 const atem = null;
 
 export function detectSwitcherAddress() {
-    // Start browsing for Blackmagic services
     bonjour.find({ type: '_blackmagic._tcp' }, function (service) {
         console.log('Found a Blackmagic device:');
         console.log(`Name: ${service.name}`);
@@ -11,7 +10,6 @@ export function detectSwitcherAddress() {
         console.log(`Port: ${service.port}`);
     });
 
-    // Optional: stop browsing after a certain period
     setTimeout(() => {
         bonjour.destroy();
         console.log('Stopped browsing');
@@ -20,13 +18,11 @@ export function detectSwitcherAddress() {
     return service.referer.address;
 }
 
-export function connectToAtemSwitcher(ip) {
+export async function connectToAtemSwitcher(ip) {
     atem = new Atem();
     atem.on('info', console.log);
     atem.on('error', console.error);
-    (async () => {
-        await atem.connect(ip);
-    })();
+    await atem.connect(ip);
 }
 
 export function changeInput(num) {
