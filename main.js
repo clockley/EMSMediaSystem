@@ -3,7 +3,6 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const settings = require('electron-settings');
 const rmt = require('@electron/remote/main');
 rmt.initialize();
-console.time("mstart");
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -77,8 +76,7 @@ function createWindow() {
       win = null;
       app.quit();
 
-    })
-    console.timeEnd("mstart");
+    });
   });
   ipcMain.on('timeRemaining-message', (event, arg) => {
     if (win != null) {
