@@ -2,8 +2,8 @@
 //Copyright 2019 - Ephesus Apprentice Alchemist
 const performanceStart = performance.now();
 const epochStart = Date.now();
-const { app, BrowserWindow, ipcMain, ipcRenderer } = require('electron');
-const bonjour = require('bonjour')();
+console.time("start");
+const { app, BrowserWindow, ipcRenderer } = require('electron');
 const electron = require('@electron/remote');
 
 var nextFile = null;
@@ -21,8 +21,6 @@ var prePathname = '';
 var savedCurTime = '';
 var playingMediaAudioOnly = false;
 var audioOnlyFile = false;
-let weakSet = new WeakSet();
-let obj = {};
 var installedVideoEventListener = false;
 var mediaCntDnEle = null;
 var CrVL = 1;
@@ -49,28 +47,6 @@ class AlarmInputState {
 }
 
 let lastUpdateTime = 0;
-
-ipcRenderer.on('update-playback-state', (event, playbackState) => {
-    // Handle play/pause state
-    if (!video) {
-        return;
-    }
-    if (playbackState.playing && video.paused) {
-        masterPauseState = false;
-        if (video) {
-            video.play();
-            unPauseMedia();
-        }
-    } else if (!playbackState.playing && !video.paused) {
-        masterPauseState = true;
-        if (video) {
-            video.pause();
-            video.currentTime = playbackState.currentTime; //sync on pause
-        }
-    }
-    console.log(masterPauseState);
-});
-
 let lastTimeDifference = 0; // Last time difference for derivative calculation
 let integral = 0; // Integral sum for error accumulation
 let kP = 0.005; // Proportional gain
@@ -119,51 +95,71 @@ function updateTimestamp() {
 
     requestAnimationFrame(update);
 }
+async function installIPCHandler() {
+    ipcRenderer.on('timeRemaining-message', function (evt, message) {
+        var now = getHighPrecisionTimestamp();
+        const sendTime = message[3];
+        const ipcDelay = now - sendTime; // Compute the IPC delay
 
-ipcRenderer.on('timeRemaining-message', function (evt, message) {
-    var now = getHighPrecisionTimestamp();
-    const sendTime = message[3];
-    const ipcDelay = now - sendTime; // Compute the IPC delay
-
-    // Measure DOM update time and add to IPC delay
-    let domUpdateTimeStart = now;
-    let timeStamp = message[0];
-    if (opMode == MEDIAPLAYER) {
-        requestAnimationFrame(() => {
-            if (mediaCntDnEle != null) {
-                mediaCntDnEle.textContent = timeStamp;
-            }
-            timeStamp = null;
-        });
-    }
-    let domUpdateTime = getHighPrecisionTimestamp() - domUpdateTimeStart;
-
-    let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
-
-    targetTime = message[2] - (adjustedIpcDelay * .001); // Adjust target time considering the modified IPC delay
-    //const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) * .1));
-    //const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
-
-
-    if (now - lastUpdateTime > .5) {
+        // Measure DOM update time and add to IPC delay
+        let domUpdateTimeStart = now;
+        let timeStamp = message[0];
         if (opMode == MEDIAPLAYER) {
-            if (video != null && !video.seeking) {
-                hybridSync(targetTime);
-                lastUpdateTime = now;
-                if (mediaWindow && !video.paused) {
-                    dynamicPIDTuning();
+            requestAnimationFrame(() => {
+                if (mediaCntDnEle != null) {
+                    mediaCntDnEle.textContent = timeStamp;
+                }
+                timeStamp = null;
+            });
+        }
+        let domUpdateTime = getHighPrecisionTimestamp() - domUpdateTimeStart;
+
+        let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
+
+        targetTime = message[2] - (adjustedIpcDelay * .001); // Adjust target time considering the modified IPC delay
+        //const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) * .1));
+        //const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
+
+
+        if (now - lastUpdateTime > .5) {
+            if (opMode == MEDIAPLAYER) {
+                if (video != null && !video.seeking) {
+                    hybridSync(targetTime);
+                    lastUpdateTime = now;
+                    if (mediaWindow && !video.paused) {
+                        dynamicPIDTuning();
+                    }
                 }
             }
         }
-    }
-    message = null;
-});
+        message = null;
+    });
 
+    ipcRenderer.on('update-playback-state', (event, playbackState) => {
+        // Handle play/pause state
+        if (!video) {
+            return;
+        }
+        if (playbackState.playing && video.paused) {
+            masterPauseState = false;
+            if (video) {
+                video.play();
+                unPauseMedia();
+            }
+        } else if (!playbackState.playing && !video.paused) {
+            masterPauseState = true;
+            if (video) {
+                video.pause();
+                video.currentTime = playbackState.currentTime; //sync on pause
+            }
+        }
+        console.log(masterPauseState);
+    });
+}
 
 function resetPIDOnSeek() {
     integral = 0; // Reset integral
     lastTimeDifference = 0; // Reset last time difference
-    console.log("PID reset after seek");
 }
 
 function adjustPlaybackRate(targetTime) {
@@ -699,6 +695,7 @@ function setSBFormYouTubeMediaPlayer() {
 }
 
 function setSBFormMediaPlayer() {
+    console.timeEnd("start");
     opMode = MEDIAPLAYER;
     ipcRenderer.send('set-mode', opMode);
     resetPlayer();
@@ -787,6 +784,7 @@ function setSBFormMediaPlayer() {
         video = video = document.getElementById('preview');
         saveMediaFile();
     }
+
     restoreMediaFile();
     updateTimestamp();
     document.getElementById('volumeControl').value = CrVL;
@@ -989,7 +987,7 @@ function installFilePickerEventHandler() {
     });
 }
 
-function installEvents(x) {
+function installEvents() {
     installSidebarFormEvents();
     installFilePickerEventHandler();
     installOnFileEndEventHandler();
@@ -1173,9 +1171,12 @@ async function initPlayer() {
     }
 }
 
-window.addEventListener("load", (event) => {
+ipcprom = installIPCHandler();
+
+window.addEventListener("load", async (event) => {
     initPlayer();
     installEvents();
+    await ipcprom;
 });
 
 function addToPlaylist(wnum, song) {
@@ -1369,7 +1370,6 @@ async function createMediaWindow(path) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("Starships were meant to fly");
     const platform = process.platform;
     const bodyClass = document.body.classList;
 
