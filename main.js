@@ -1,10 +1,9 @@
 "use strict";
 const { app, BrowserWindow, ipcMain } = require('electron');
 const settings = require('electron-settings');
-const { debounce } = require('lodash');
-
-require('@electron/remote/main').initialize();
-
+const rmt = require('@electron/remote/main');
+rmt.initialize();
+console.time("mstart");
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -17,14 +16,15 @@ var toHHMMSS = (secs) => {
   return `${((secs / 3600) | 0).toString().padStart(2, '0')}:${(((secs % 3600) / 60) | 0).toString().padStart(2, '0')}:${((secs % 60) | 0).toString().padStart(2, '0')}:${(((secs * 1000) % 1000) | 0).toString().padStart(3, '0')}`;
 };
 
-function createWindow() {
-  let windowBounds = settings.getSync('windowBounds');
-  ipcMain.on('timeRemaining-message', (event, arg) => {
-    if (win != null) {
-      win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]])
-    }
-  });
+function debounce(func, delay) {
+  let timeoutId = null;
+  return (...args) => {
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => func.apply(this, args), delay);
+  };
+}
 
+function createWindow() {
   ipcMain.on('set-mode', (event, arg) => {
     settings.set('operating-mode', arg)
         .catch(error => {
@@ -36,51 +36,58 @@ function createWindow() {
     return await settings.get(setting);
   });
 
+  settings.get('windowBounds').then(windowBounds => {
+    win = new BrowserWindow({
+      width: windowBounds ? windowBounds.width : 1068,
+      height: windowBounds ? windowBounds.height : 660,
+      minWidth: 735,
+      minHeight: 531,
+      autoHideMenuBar: true,
+      webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false,
+        userGesture: true,
+        webSecurity: false
+      }
+    })
+    win.setAspectRatio(1.618);
+
+    rmt.enable(win.webContents);
+
+    const saveWindowBounds = debounce(() => {
+      settings.set('windowBounds', win.getBounds())
+          .catch(error => {
+              console.error('Error saving window bounds:', error);
+          });
+  }, 300); 
+
+    win.on('resize', saveWindowBounds);
+
+    // and load the index.html of the app.
+    win.loadFile('index.html');
+
+    // Open the DevTools.
+    //  win.webContents.openDevTools()
+
+    // Emitted when the window is closed.
+    win.on('closed', () => {
+      // Dereference the window object, usually you would store windows
+      // in an array if your app supports multi windows, this is the time
+      // when you should delete the corresponding element.
+      win = null;
+      app.quit();
+
+    })
+    console.timeEnd("mstart");
+  });
+  ipcMain.on('timeRemaining-message', (event, arg) => {
+    if (win != null) {
+      win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]])
+    }
+  });
   ipcMain.on('playback-state-change', (event, playbackState) => {
     win.webContents.send('update-playback-state', playbackState);
   });
-
-// Create the browser window.
-  win = new BrowserWindow({
-    width: windowBounds ? windowBounds.width : 1068,
-    height: windowBounds ? windowBounds.height : 660,
-    minWidth: 735,
-    minHeight: 531,
-    autoHideMenuBar: true,
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-      userGesture: true,
-      webSecurity: false
-    }
-  })
-  win.setAspectRatio(1.618);
-  require("@electron/remote/main").enable(win.webContents);
-
-  const saveWindoowBounds = debounce(() => {
-    settings.set('windowBounds', win.getBounds())
-        .catch(error => {
-            console.error('Error saving window bounds:', error);
-        });
-}, 300); 
-
-  win.on('resize', saveWindoowBounds);
-
-  // and load the index.html of the app.
-  win.loadFile('index.html');
-
-  // Open the DevTools.
-  //  win.webContents.openDevTools()
-
-  // Emitted when the window is closed.
-  win.on('closed', () => {
-    // Dereference the window object, usually you would store windows
-    // in an array if your app supports multi windows, this is the time
-    // when you should delete the corresponding element.
-    win = null;
-    app.quit();
-
-  })
 }
 
 // This method will be called when Electron has finished
