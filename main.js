@@ -46,7 +46,8 @@ function createWindow() {
         nodeIntegration: true,
         contextIsolation: false,
         userGesture: true,
-        webSecurity: false
+        webSecurity: false,
+        backgroundThrottling: false
       }
     })
     win.setAspectRatio(1.618);
@@ -79,12 +80,14 @@ function createWindow() {
     });
   });
   ipcMain.on('timeRemaining-message', (event, arg) => {
-    if (win != null) {
-      win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]])
+    if (win) {
+      win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]]);
     }
   });
   ipcMain.on('playback-state-change', (event, playbackState) => {
-    win.webContents.send('update-playback-state', playbackState);
+    if (win) {
+      win.webContents.send('update-playback-state', playbackState);
+    }
   });
 }
 
