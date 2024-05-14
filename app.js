@@ -1193,7 +1193,7 @@ function installPreviewEventHandlers() {
             }
             if (!event.target.isConnected) {
                 event.preventDefault();
-                event.target.play();
+                masterPauseState = false;
                 return;
             }
             if (event.target.clientHeight == 0) {
@@ -1220,6 +1220,7 @@ function installPreviewEventHandlers() {
                 event.preventDefault();
                 return;
             }
+            masterPauseState = false;
             waitForMetadata().then(() =>{
                 audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0)
 
@@ -1238,8 +1239,8 @@ function installPreviewEventHandlers() {
                     return;
                 }
                 unPauseMedia();
-                masterPauseState = false;
             });
+            unPauseMedia();
         });
 
 
