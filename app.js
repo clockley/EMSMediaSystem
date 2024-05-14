@@ -537,6 +537,9 @@ function vlCtl(v) {
 }
 
 function pauseMedia(e) {
+    if (video.src == window.location.href || isImg(video.src)) {
+        return;
+    }
     (async () => {
         if (mediaWindow && !mediaWindow.isDestroyed()) {
             mediaWindow.send('pauseCtl', 0);
@@ -546,7 +549,7 @@ function pauseMedia(e) {
 }
 
 function unPauseMedia(e) {
-    if (video.src == window.location.href) {
+    if (video.src == window.location.href || isImg(video.src)) {
         return;
     }
     (async () => {
