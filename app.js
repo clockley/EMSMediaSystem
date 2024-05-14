@@ -640,7 +640,8 @@ function playMedia(e) {
             createMediaWindow();
             e.target.textContent = "⏹️";
             video.currentTime=0;
-            video.src='';
+            if (!video.paused)
+                video.src='';
             return;
         }
         audioOnlyFile = opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
@@ -1475,7 +1476,8 @@ async function createMediaWindow(path) {
                     img = document.createElement('img');
                     img.src=mediaFile;
                     img.setAttribute("id", "preview");
-                    document.getElementById("preview").style.display='none';
+                    if (!document.getElementById("preview"))
+                        document.getElementById("preview").style.display='none';
                     document.getElementById("preview").parentNode.appendChild(img);
                 }
             }
