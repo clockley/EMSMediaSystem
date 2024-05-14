@@ -564,7 +564,7 @@ function unPauseMedia(e) {
     waitForMetadata().then(() =>{
         audioOnlyFile= opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
         if (video.src != window.location.href) {
-            if (video && video.paused) {
+            if (video && video.paused && mediaWindow && !mediaWindow.isDestroyed()) {
                 video.play();
             }
         }
