@@ -103,9 +103,7 @@ async function initializeIPC() {
 }
 
 app.on('will-finish-launching', async () => {
-  ipcMain.on('timeRemaining-message', () => {
-    ipcInitPromise = initializeIPC();
-  });
+  ipcInitPromise = initializeIPC();
 });
 
 // This method will be called when Electron has finished
