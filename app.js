@@ -894,6 +894,7 @@ function setSBFormMediaPlayer() {
         img.setAttribute("id", "preview");
         document.getElementById("preview").style.display='none';
         document.getElementById("preview").parentNode.appendChild(img);
+        document.getElementById("cntdndiv").style.display='none';
         return;
     }
     }
@@ -933,12 +934,14 @@ function saveMediaFile() {
     if (imgEle = document.querySelector('img')) {
         imgEle.remove();
         document.getElementById("preview").style.display='';
+        document.getElementById("cntdndiv").style.display='';
     }
 
     if (isImg(mediaFile) && !document.querySelector('img') && !mediaWindow) {
         let imgEle = null;
         if ((imgEle = document.querySelector('img')) != null) {
             imgEle.remove();
+            document.getElementById("cntdndiv").style.display='';
             if (video) {
                 video.style.display='none';
             }
@@ -948,6 +951,7 @@ function saveMediaFile() {
         img.setAttribute("id", "preview");
         document.getElementById("preview").style.display='none';
         document.getElementById("preview").parentNode.appendChild(img);
+        document.getElementById("cntdndiv").style.display='none';
         return;
     }
     let liveStream = isLiveStream(mediaFile);
@@ -1389,6 +1393,7 @@ async function createMediaWindow(path) {
             if (document.getElementById("mdLpCtlr") != null) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
             }
+            document.getElementById("cntdndiv").style.display='';
         }
     } else {
         if (video && !isImg(video.src))
@@ -1465,6 +1470,7 @@ async function createMediaWindow(path) {
             if (imgEle = document.querySelector('img') && !isImg(mediaFile)) {
                 imgEle.remove();
                 document.getElementById("preview").style.display='';
+                document.getElementById("cntdndiv").style.display='';
             } else if (isImg(mediaFile)) {
                 if (imgEle) {
                     imgEle.src = mediaFile;
@@ -1472,6 +1478,7 @@ async function createMediaWindow(path) {
                     let imgEle = null;
                     if ((imgEle = document.querySelector('img')) != null) {
                         imgEle.remove();
+                        document.getElementById("cntdndiv").style.display='';
                     }
                     img = document.createElement('img');
                     img.src=mediaFile;
@@ -1479,6 +1486,7 @@ async function createMediaWindow(path) {
                     if (!document.getElementById("preview"))
                         document.getElementById("preview").style.display='none';
                     document.getElementById("preview").parentNode.appendChild(img);
+                    document.getElementById("cntdndiv").style.display='none';
                 }
             }
             if (video != null) {
