@@ -1,4 +1,5 @@
 "use strict";
+//console.time("start");
 const { app, BrowserWindow, ipcMain } = require('electron');
 const settings = require('electron-settings');
 const rmt = require('@electron/remote/main');
@@ -6,7 +7,8 @@ rmt.initialize();
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
-let win;
+let win = null;
+let ipcInitPromise = null;
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
 
@@ -23,7 +25,7 @@ function debounce(func, delay) {
   };
 }
 
-function createWindow() {
+async function createWindow() {
   ipcMain.on('set-mode', (event, arg) => {
     settings.set('operating-mode', arg)
         .catch(error => {
@@ -65,7 +67,6 @@ function createWindow() {
 
     // and load the index.html of the app.
     win.loadFile('index.html');
-
     // Open the DevTools.
     //  win.webContents.openDevTools()
 
@@ -79,17 +80,33 @@ function createWindow() {
 
     });
   });
-  ipcMain.on('timeRemaining-message', (event, arg) => {
-    if (win) {
-      win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]]);
-    }
-  });
-  ipcMain.on('playback-state-change', (event, playbackState) => {
-    if (win) {
-      win.webContents.send('update-playback-state', playbackState);
-    }
+  await ipcInitPromise;
+  //console.timeEnd("start");
+}
+
+async function initializeIPC() {
+  return new Promise((resolve) => {
+    ipcMain.on('timeRemaining-message', (event, arg) => {
+      if (win) {
+        win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]]);
+      }
+    });
+
+    ipcMain.on('playback-state-change', (event, playbackState) => {
+      if (win) {
+        win.webContents.send('update-playback-state', playbackState);
+      }
+    });
+
+    resolve();
   });
 }
+
+app.on('will-finish-launching', async () => {
+  ipcMain.on('timeRemaining-message', () => {
+    ipcInitPromise = initializeIPC();
+  });
+});
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
