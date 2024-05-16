@@ -1164,7 +1164,7 @@ function installPreviewEventHandlers() {
                 if (document.getElementById("mediaCntDn") != null) {
                     document.getElementById("mediaCntDn").innerText = "00:00:00:000";
                 }
-                mediaWindow = null;
+
                 if (document.getElementById("mediaWindowPlayButton") != null) {
                     document.getElementById("mediaWindowPlayButton").innerText = "▶️";
                 } else {
@@ -1496,7 +1496,6 @@ async function createMediaWindow(path) {
             if (document.getElementById("mediaCntDn") != null) {
                 document.getElementById("mediaCntDn").innerText = "00:00:00:000";
             }
-            mediaWindow = null;
             if (document.getElementById("mediaWindowPlayButton") != null) {
                 document.getElementById("mediaWindowPlayButton").innerText = "▶️";
             } else {
@@ -1507,6 +1506,7 @@ async function createMediaWindow(path) {
             timeRemaining = "00:00:00:000"
             masterPauseState = false;
             saveMediaFile();
+            mediaWindow = null;
         });
     }
 
