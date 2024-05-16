@@ -691,7 +691,8 @@ function playMedia(e) {
             playingMediaAudioOnly = false;
             activeLiveStream=false;
             saveMediaFile();
-            document.getElementById('mediaCntDn').textContent = "00:00:00:000";
+            if (document.getElementById('mediaCntDn'))
+                document.getElementById('mediaCntDn').textContent = "00:00:00:000";
             if (video) {
                 video.muted=true;
             }
@@ -1203,6 +1204,9 @@ function installPreviewEventHandlers() {
 
         video.addEventListener('pause', (event) => {
             if (!event.target.isConnected) {
+                if (mediaWindow == null && playingMediaAudioOnly == false) {
+                    return;
+                }
                 event.preventDefault();
                 video.play();
                 masterPauseState = false;
