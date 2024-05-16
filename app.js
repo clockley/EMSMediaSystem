@@ -544,6 +544,7 @@ async function pauseMedia(e) {
     if (mediaWindow && !mediaWindow.isDestroyed()) {
         await mediaWindow.webContents.executeJavaScript('document.querySelector("video").pause()');
         targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+        resetPIDOnSeek();
     }
 }
 
@@ -553,6 +554,7 @@ async function unPauseMedia(e) {
     }
 
     if (mediaWindow && !mediaWindow.isDestroyed()) {
+        resetPIDOnSeek();
         await mediaWindow.webContents.executeJavaScript('document.querySelector("video").play()');
     }
     if (playingMediaAudioOnly && document.getElementById("mediaWindowPlayButton")) {
