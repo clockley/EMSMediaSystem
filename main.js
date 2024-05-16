@@ -49,7 +49,8 @@ async function createWindow() {
         contextIsolation: false,
         userGesture: true,
         webSecurity: false,
-        backgroundThrottling: false
+        backgroundThrottling: false,
+        autoplayPolicy: 'no-user-gesture-required'
       }
     })
     win.setAspectRatio(1.618);

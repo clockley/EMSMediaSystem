@@ -26,6 +26,7 @@ var CrVL = 1;
 var opMode = -1;
 var osName = '';
 var localTimeStampUpdateIsRunning = false;
+var dontPauseOnPipExit = false;
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
@@ -1110,6 +1111,14 @@ function ISO8601_week_no(dt) {
 
 function installPreviewEventHandlers() {
     if (!installedVideoEventListener) {
+        video.addEventListener('enterpictureinpicture', (event) => {
+            console.log('Entered Picture-in-Picture mode.');
+        });
+        
+        video.addEventListener('leavepictureinpicture', (event) => {
+            dontPauseOnPipExit=true;
+            console.log('Exited Picture-in-Picture mode.');
+        });
         video.addEventListener('loadstart', function(event) {
             if (video.src == window.location.href) {
                 event.preventDefault();
@@ -1168,6 +1177,11 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('ended', (e) => {
+            document.exitPictureInPicture().then(() =>{
+                ;
+            }).catch((error) => {
+                console.log(error);
+            });
             if (playingMediaAudioOnly) {
                 playingMediaAudioOnly = false;
                 if (document.getElementById('mediaCntDn'))
@@ -1204,6 +1218,12 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('pause', (event) => {
+            if (dontPauseOnPipExit) {
+                dontPauseOnPipExit=false;
+                event.preventDefault();
+                video.play();
+                return;
+            }
             if (!event.target.isConnected) {
                 if (mediaWindow == null && playingMediaAudioOnly == false) {
                     return;
