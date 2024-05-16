@@ -651,6 +651,7 @@ function playMedia(e) {
             video.muted=false;
             playingMediaAudioOnly=true;
             video.play();
+            updateTimestamp();
             e.target.textContent = "⏹️";
             return;
         }
@@ -1201,16 +1202,6 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('pause', (event) => {
-            if (video.src == window.location.href) {
-                event.preventDefault();
-                return;
-            }
-            if (activeLiveStream) {
-                return;
-            }
-            if (video.currentTime - video.duration == 0) {
-                return;
-            }
             if (!event.target.isConnected) {
                 event.preventDefault();
                 video.play();
@@ -1220,6 +1211,16 @@ function installPreviewEventHandlers() {
             if (event.target.clientHeight == 0) {
                 event.preventDefault();
                 event.target.play(); //continue to play even if detached
+                return;
+            }
+            if (video.src == window.location.href) {
+                event.preventDefault();
+                return;
+            }
+            if (activeLiveStream) {
+                return;
+            }
+            if (video.currentTime - video.duration == 0) {
                 return;
             }
             if (event.target.parentNode != null) {
