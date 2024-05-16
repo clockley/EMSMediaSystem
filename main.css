@@ -233,8 +233,7 @@ footer {
     width: 70vw;
     height: 39.375vw;
     object-fit: contain;
-    border: 2px solid #2C2C2C;
-    border-radius: 5px;
+    border-radius: 10px;
     overflow: hidden;
     max-height: 100vh;
 }
