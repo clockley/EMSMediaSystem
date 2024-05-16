@@ -10,6 +10,7 @@ var timers = [];
 var alarmFileMetadata = [];
 var timeRemaining = "00:00:00:000";
 var dontSyncRemote = false;
+var pidSeeking = false;
 var mediaPlayDelay = null;
 var video = null;
 var masterPauseState = false;
@@ -184,7 +185,7 @@ function adjustPlaybackRate(targetTime) {
     // Immediate synchronization for very large discrepancies
     if (Math.abs(timeDifference) > 1 || timeDifference < -1) {
         // Directly jump to the target time if difference is more than 1 second
-        dontSyncRemote=true;
+        pidSeeking=true;
         video.currentTime = targetTime;
         playbackRate = 1.0; // Reset playback rate
         dynamicPIDTuning();
@@ -1133,6 +1134,10 @@ function installPreviewEventHandlers() {
             audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
         });
         video.addEventListener('seeked', (e) => {
+            if (pidSeeking) {
+                pidSeeking=false;
+                e.preventDefault();
+            }
             resetPIDOnSeek();
             if (video.src == window.location.href) {
                 e.preventDefault();
@@ -1141,7 +1146,7 @@ function installPreviewEventHandlers() {
             if (mediaWindow == null) {
                 return;
             }
-            if (dontSyncRemote) {
+            if (dontSyncRemote == true) {
                 dontSyncRemote = false;
                 console.log("rejected sync");
                 return;
@@ -1161,8 +1166,12 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('seeking', (e) => {
+            if (pidSeeking) {
+                pidSeeking=false;
+                e.preventDefault();
+            }
             resetPIDOnSeek();
-            if (dontSyncRemote) {
+            if (dontSyncRemote == true) {
                 return;
             }
             if (e.target.isConnected && mediaWindow != null && !mediaWindow.isDestroyed()) {
@@ -1215,6 +1224,9 @@ function installPreviewEventHandlers() {
             if (video) {
                 video.muted=true;
             }
+            waitForMetadata().then(() =>{
+                saveMediaFile();
+            });
         });
 
         video.addEventListener('pause', (event) => {
