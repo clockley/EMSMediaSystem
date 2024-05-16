@@ -144,14 +144,13 @@ async function installIPCHandler() {
             if (video && !isImg(mediaFile)) {
                 console.log("PLAY");
                 await video.play();
-                unPauseMedia();
             }
         } else if (!playbackState.playing && !video.paused) {
             masterPauseState = true;
             if (video) {
                 console.log("PAUSE");
-                pauseMedia();
                 video.currentTime = playbackState.currentTime; //sync on pause
+                await video.pause();
             }
         }
     });
@@ -537,45 +536,35 @@ function vlCtl(v) {
     }
 }
 
-function pauseMedia(e) {
+async function pauseMedia(e) {
     if (video.src == window.location.href || isImg(video.src)) {
         return;
     }
-    (async () => {
-        if (mediaWindow && !mediaWindow.isDestroyed()) {
-            mediaWindow.send('pauseCtl', 0);
-            targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
-        }
-    })().catch(error => console.error('Failed to fetch video current time:', error));
+
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+        await mediaWindow.webContents.executeJavaScript('document.querySelector("video").pause()');
+        targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+    }
 }
 
-function unPauseMedia(e) {
+async function unPauseMedia(e) {
     if (video.src == window.location.href || isImg(video.src)) {
         return;
     }
-    (async () => {
-        if (mediaWindow && !mediaWindow.isDestroyed()) {
-            mediaWindow.send('playCtl', 0);
-            targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
-        }
-    })().catch(error => console.error('Failed to fetch video current time:', error));
+
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+        await mediaWindow.webContents.executeJavaScript('document.querySelector("video").play()');
+    }
     if (playingMediaAudioOnly && document.getElementById("mediaWindowPlayButton")) {
         document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
     }
-    waitForMetadata().then(() =>{
-        audioOnlyFile= opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
-        if (video.src != window.location.href) {
-            if (video && video.paused && mediaWindow && !mediaWindow.isDestroyed()) {
-                video.play();
-            }
-        }
-    });
 }
 
 function pauseButton(e) {
     if (video.src == window.location.href) {
         return;
     }
+    console.log("PAUSEBUTN");
     if (video != null) {
         if (!video.paused) {
             video.pause();
@@ -701,6 +690,8 @@ function playMedia(e) {
             audioOnlyFile = false;
         }
         waitForMetadata().then(() =>{
+            saveMediaFile();
+        }).catch((error) => {
             saveMediaFile();
         });
     }
@@ -1243,7 +1234,6 @@ function installPreviewEventHandlers() {
             }
         });
         video.addEventListener('play', async (event) => {
-            await waitForMetadata();
             if (audioOnlyFile) {
                 updateTimestamp();
             }
