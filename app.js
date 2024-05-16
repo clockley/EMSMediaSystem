@@ -904,6 +904,7 @@ function setSBFormMediaPlayer() {
 
     if (isImg(mediaFile) && !document.querySelector('img')) {
         img = document.createElement('img');
+        video.src='';
         img.src=mediaFile;
         img.setAttribute("id", "preview");
         document.getElementById("preview").style.display='none';
@@ -961,6 +962,7 @@ function saveMediaFile() {
             }
         }
         img = document.createElement('img');
+        video.src='';
         img.src=mediaFile;
         img.setAttribute("id", "preview");
         document.getElementById("preview").style.display='none';
@@ -1439,6 +1441,8 @@ async function createMediaWindow(path) {
         video.volume=document.getElementById('volumeControl').value;
         if (!isImg(mediaFile)) {
             await video.play();
+        } else {
+            video.src='';
         }
         playingMediaAudioOnly = true;
         if (playingMediaAudioOnly)
@@ -1510,6 +1514,7 @@ async function createMediaWindow(path) {
                         imgEle.remove();
                         document.getElementById("cntdndiv").style.display='';
                     }
+                    video.src='';
                     img = document.createElement('img');
                     img.src=mediaFile;
                     img.setAttribute("id", "preview");
