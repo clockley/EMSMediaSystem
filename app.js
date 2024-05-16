@@ -1235,6 +1235,9 @@ function installPreviewEventHandlers() {
             }
         });
         video.addEventListener('play', async (event) => {
+            if (audioOnlyFile) {
+                updateTimestamp();
+            }
             if (mediaWindow != null) {
                 unPauseMedia();
                 return;
