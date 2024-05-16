@@ -676,8 +676,8 @@ function playMedia(e) {
         clearTimeout(mediaPlayDelay);
         if (opMode == MEDIAPLAYER)
             document.getElementById('mediaCntDn').textContent = "00:00:00:000";
-
-        activeLiveStream = true;
+        if (!audioOnlyFile)
+            activeLiveStream = true;
         e.target.textContent = "▶️";
         if (mediaWindow) {
             mediaWindow.close();
@@ -1229,6 +1229,7 @@ function installPreviewEventHandlers() {
                     video.muted=false;
                     mediaScrnPlyBtn.textContent = '⏹️';
                     audioOnlyFile = true;
+                    playingMediaAudioOnly=true;
                     return;
                 }
             }
