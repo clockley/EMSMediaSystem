@@ -1108,6 +1108,7 @@ function installPreviewEventHandlers() {
             audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
         });
         video.addEventListener('seeked', (e) => {
+            resetPIDOnSeek();
             if (video.src == window.location.href) {
                 e.preventDefault();
                 return;
@@ -1135,6 +1136,7 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('seeking', (e) => {
+            resetPIDOnSeek();
             if (dontSyncRemote) {
                 return;
             }
