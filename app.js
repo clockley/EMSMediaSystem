@@ -683,7 +683,6 @@ function playMedia(e) {
         e.target.textContent = "▶️";
         if (mediaWindow) {
             mediaWindow.close();
-            saveMediaFile();
         }
         if (audioOnlyFile) {
             video.pause();
@@ -697,6 +696,9 @@ function playMedia(e) {
             }
             audioOnlyFile = false;
         }
+        waitForMetadata().then(() =>{
+            saveMediaFile();
+        });
     }
 }
 
@@ -930,7 +932,7 @@ function saveMediaFile() {
         saveMediaFile.urlInpt = mdfileElement.value;
     }
 
-    if (mediaWindow != null) {
+    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
         return;
     }
 
