@@ -149,10 +149,6 @@ async function loadMedia() {
     } else {
         video.currentTime = strtTm;
         video.addEventListener('play', () => {
-            if (!init) {
-                init = true;
-                return;
-            }
             const playbackState = {
               currentTime: video.currentTime,
               playing: !video.paused,
