@@ -1206,6 +1206,7 @@ function installPreviewEventHandlers() {
             }
             if (!event.target.isConnected) {
                 event.preventDefault();
+                video.play();
                 masterPauseState = false;
                 return;
             }
