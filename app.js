@@ -588,6 +588,8 @@ function pauseButton(e) {
 
 function waitForMetadata() {
     if (!video || !video.src || isLiveStream(video.src) || isImg(video.src) || video.src == window.location.href) {
+        playingMediaAudioOnly=false;
+        audioOnlyFile=false;
         console.log("No source set or it's a live stream, which may not trigger 'loadedmetadata'.");
         return Promise.reject("Invalid source or live stream.");
     }
@@ -952,6 +954,11 @@ function saveMediaFile() {
         document.getElementById("cntdndiv").style.display='';
     }
 
+    if (isImg(mediaFile)) {
+        playingMediaAudioOnly=false;
+        audioOnlyFile=false;
+    }
+
     if (isImg(mediaFile) && !document.querySelector('img') && !mediaWindow) {
         let imgEle = null;
         if ((imgEle = document.querySelector('img')) != null) {
@@ -1177,7 +1184,6 @@ function installPreviewEventHandlers() {
                 }
                 saveMediaFile();
                 if (video != null) {
-                    video.pause();
                     video.currentTime = 0;
                 }
                 if (document.getElementById("mediaCntDn") != null) {
@@ -1262,19 +1268,24 @@ function installPreviewEventHandlers() {
                 return;
             }
             masterPauseState = false;
-            waitForMetadata().then(() =>{
-                audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0)
+            if (isImg(video.src)) {
+                audioOnlyFile=false;
+                playingMediaAudioOnly=false;
+            } else {
+                waitForMetadata().then(() =>{
+                    audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0)
 
-                if (audioOnlyFile) {
-                    video.muted=false;
-                    if (document.getElementById('volumeControl')) {
-                        video.volume=document.getElementById('volumeControl').value;
+                    if (audioOnlyFile) {
+                        video.muted=false;
+                        if (document.getElementById('volumeControl')) {
+                            video.volume=document.getElementById('volumeControl').value;
+                        }
+                        playingMediaAudioOnly = true;
+                        updateTimestamp();
+                        return;
                     }
-                    playingMediaAudioOnly = true;
-                    updateTimestamp();
-                    return;
-                }
-            });
+                });
+            }
         });
 
 
