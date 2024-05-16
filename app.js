@@ -134,7 +134,7 @@ async function installIPCHandler() {
         message = null;
     });
 
-    ipcRenderer.on('update-playback-state', (event, playbackState) => {
+    ipcRenderer.on('update-playback-state', async (event, playbackState) => {
         // Handle play/pause state
         if (!video) {
             return;
@@ -142,18 +142,18 @@ async function installIPCHandler() {
         if (playbackState.playing && video.paused) {
             masterPauseState = false;
             if (video && !isImg(mediaFile)) {
-                video.play();
+                console.log("PLAY");
+                await video.play();
                 unPauseMedia();
             }
         } else if (!playbackState.playing && !video.paused) {
             masterPauseState = true;
             if (video) {
-                video.pause();
+                console.log("PAUSE");
                 pauseMedia();
                 video.currentTime = playbackState.currentTime; //sync on pause
             }
         }
-        console.log(masterPauseState);
     });
 }
 
@@ -1243,6 +1243,7 @@ function installPreviewEventHandlers() {
             }
         });
         video.addEventListener('play', async (event) => {
+            await waitForMetadata();
             if (audioOnlyFile) {
                 updateTimestamp();
             }
@@ -1536,6 +1537,7 @@ async function createMediaWindow(path) {
                 }
             }
             if (video != null) {
+                video.muted=true;
                 video.pause();
                 video.currentTime = 0;
             }
