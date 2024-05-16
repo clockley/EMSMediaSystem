@@ -648,6 +648,7 @@ function playMedia(e) {
         audioOnlyFile = opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
         if (audioOnlyFile) {
             video.muted=false;
+            playingMediaAudioOnly=true;
             video.play();
             e.target.textContent = "⏹️";
             return;
@@ -1160,7 +1161,8 @@ function installPreviewEventHandlers() {
         video.addEventListener('ended', (e) => {
             if (playingMediaAudioOnly) {
                 playingMediaAudioOnly = false;
-                document.getElementById('mediaCntDn').textContent = "00:00:00:000";
+                if (document.getElementById('mediaCntDn'))
+                    document.getElementById('mediaCntDn').textContent = "00:00:00:000";
                 if (video) {
                     video.muted=true;
                 }
@@ -1255,7 +1257,7 @@ function installPreviewEventHandlers() {
                     updateTimestamp();
                     return;
                 }
-                if (event.target.clientHeight == 0 || !event.target.isConnected) {
+                if (!event.target.isConnected) {
                     return;
                 }
                 unPauseMedia();
