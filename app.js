@@ -927,7 +927,8 @@ function saveMediaFile() {
         } else if (mdfileElement.value == "") {
             return;
         }
-        dontSyncRemote=true;
+        if (opMode != MEDIAPLAYER && dontSyncRemote != true)
+            dontSyncRemote=true;
         saveMediaFile.fileInpt = mdfileElement.files;
         saveMediaFile.urlInpt = mdfileElement.value;
     }
