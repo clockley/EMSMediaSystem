@@ -528,6 +528,10 @@ function vlCtl(v) {
 }
 
 async function pauseMedia(e) {
+    if (activeLiveStream) {
+        await mediaWindow.webContents.executeJavaScript('document.querySelector("video").pause()');
+        return;
+    }
     if (video.src == window.location.href || isImg(video.src)) {
         return;
     }
@@ -540,6 +544,10 @@ async function pauseMedia(e) {
 }
 
 async function unPauseMedia(e) {
+    if (activeLiveStream) {
+        await mediaWindow.webContents.executeJavaScript('document.querySelector("video").play()');
+        return;
+    }
     if (video.src == window.location.href || isImg(video.src)) {
         return;
     }
@@ -625,13 +633,15 @@ function playMedia(e) {
     }
 
     if (e.target.textContent == "▶️") {
-        if (isImg(mediaFile)) {
-            createMediaWindow();
-            e.target.textContent = "⏹️";
-            video.currentTime=0;
-            if (!video.paused)
-                video.src='';
-            return;
+        if (opMode == MEDIAPLAYER) {
+            if (isImg(mediaFile)) {
+                createMediaWindow();
+                e.target.textContent = "⏹️";
+                video.currentTime=0;
+                if (!video.paused)
+                    video.src='';
+                return;
+            }
         }
         audioOnlyFile = opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
         if (audioOnlyFile) {
@@ -1419,10 +1429,11 @@ async function createMediaWindow(path) {
     }
 
     saveMediaFile();
-
-    if (!isImg(mediaFile)) {
-        if (video.src != window.location.href) {
-            await waitForMetadata().then(() =>{audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0)});
+    if (opMode != MEDIAPLAYERYT) {
+        if (!isImg(mediaFile)) {
+            if (video.src != window.location.href) {
+                await waitForMetadata().then(() =>{audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0)});
+            }
         }
     }
 
@@ -1585,8 +1596,10 @@ async function createMediaWindow(path) {
     mediaWindow.loadFile("media.html");
     mediaWindow.show();
     unPauseMedia();
-    if (video != null && !isImg(mediaFile)) {
-        await video.play();
+    if (opMode != MEDIAPLAYERYT) {
+        if (video != null && !isImg(mediaFile)) {
+            await video.play();
+        }
     }
 }
 
