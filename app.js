@@ -958,7 +958,7 @@ function saveMediaFile() {
         audioOnlyFile=false;
     }
 
-    if (isImg(mediaFile) && !document.querySelector('img') && !mediaWindow) {
+    if (isImg(mediaFile) && !document.querySelector('img') && (!mediaWindow || mediaWindow.isDestroyed())) {
         let imgEle = null;
         if ((imgEle = document.querySelector('img')) != null) {
             imgEle.remove();
