@@ -1,7 +1,5 @@
 //Project Alchemy
 //Copyright 2019 - Ephesus Apprentice Alchemist
-const performanceStart = performance.now();
-const epochStart = Date.now();
 const { app, BrowserWindow, ipcRenderer } = require('electron');
 const electron = require('@electron/remote');
 
@@ -59,15 +57,6 @@ var toHHMMSS = (secs) => {
     return `${((secs / 3600) | 0).toString().padStart(2, '0')}:${(((secs % 3600) / 60) | 0).toString().padStart(2, '0')}:${((secs % 60) | 0).toString().padStart(2, '0')}:${(((secs * 1000) % 1000) | 0).toString().padStart(3, '0')}`;
 };
 
-function getHighPrecisionTimestamp() {
-    const currentPerformance = performance.now();
-    const elapsed = currentPerformance - performanceStart;
-    const highPrecisionTimestamp = epochStart + elapsed;
-    const timestampInSeconds = highPrecisionTimestamp * 0.001;
-
-    return timestampInSeconds;
-}
-
 function updateTimestamp() {
     if (localTimeStampUpdateIsRunning) {
         return;
@@ -98,7 +87,7 @@ function updateTimestamp() {
 }
 async function installIPCHandler() {
     ipcRenderer.on('timeRemaining-message', function (evt, message) {
-        var now = getHighPrecisionTimestamp();
+        var now = Date.now();
         const sendTime = message[3];
         const ipcDelay = now - sendTime; // Compute the IPC delay
 
@@ -113,7 +102,7 @@ async function installIPCHandler() {
                 timeStamp = null;
             });
         }
-        let domUpdateTime = getHighPrecisionTimestamp() - domUpdateTimeStart;
+        let domUpdateTime = Date.now() - domUpdateTimeStart;
 
         let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
 
