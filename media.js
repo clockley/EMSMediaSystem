@@ -1,6 +1,3 @@
-const performanceStart = performance.now();
-const epochStart = Date.now();
-
 const { ipcRenderer } = require('electron');
 var video = null;
 var img = null;
@@ -82,7 +79,7 @@ function sendRemainingTime(video) {
         const currentTime = performance.now();
         // Update only if at least 33.33 milliseconds have passed
         if (currentTime - lastTime > interval && !video.paused) {
-            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, getHighPrecisionTimestamp()+(currentTime - performance.now())]);
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, Date.now()+(currentTime - performance.now())]);
             lastTime = currentTime;
         }
         requestAnimationFrame(send);
