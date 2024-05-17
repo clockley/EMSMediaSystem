@@ -24,7 +24,7 @@ for (const arg of window.process.argv) {
         liveStreamMode = true;
     }
 }
-
+console.log(strtTm);
 mediaFile=decodeURIComponent(mediaFile);
 
 async function installICPHandlers() {
