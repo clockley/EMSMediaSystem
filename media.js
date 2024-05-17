@@ -24,7 +24,7 @@ for (const arg of window.process.argv) {
         liveStreamMode = true;
     }
 }
-console.log(strtTm);
+
 mediaFile=decodeURIComponent(mediaFile);
 
 async function installICPHandlers() {
@@ -94,8 +94,6 @@ async function loadMedia() {
     var h = null;
     var isImg = false;
 
-    prom = installICPHandlers();
-
     switch (getFileExt(mediaFile.toLowerCase())) {
         case "bmp":
         case "gif":
@@ -117,6 +115,7 @@ async function loadMedia() {
         document.querySelector('video').style.display='none';
         return;
     } else {
+        prom = installICPHandlers();
         video = document.getElementById("bigPlayer");
     }
     video.volume=strtvl;
