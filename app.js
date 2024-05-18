@@ -2,7 +2,7 @@
 //Copyright 2019 - Ephesus Apprentice Alchemist
 const { app, BrowserWindow, ipcRenderer } = require('electron');
 const electron = require('@electron/remote');
-
+const { detectSwitcherAddress, connectToAtemSwitcher, changeInput } = require('./switcher');
 var nextFile = null;
 var timers = [];
 var alarmFileMetadata = [];
