@@ -51,7 +51,7 @@ let integral = 0; // Integral sum for error accumulation
 let kP = 0.005; // Proportional gain
 let kI = 0.001; // Integral gain
 let kD = 0.003; // Derivative gain
-let synchronizationThreshold = 0.05; // Threshold to keep local video within .05 second of remote
+let synchronizationThreshold = 0.01; // Threshold to keep local video within .01 second of remote
 
 var toHHMMSS = (secs) => {
     return `${((secs / 3600) | 0).toString().padStart(2, '0')}:${(((secs % 3600) / 60) | 0).toString().padStart(2, '0')}:${((secs % 60) | 0).toString().padStart(2, '0')}:${(((secs * 1000) % 1000) | 0).toString().padStart(3, '0')}`;
