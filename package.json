@@ -10,6 +10,7 @@
   "author": "Christian Lockley",
   "license": "GPL-3.0-or-later",
   "devDependencies": {
+    "electron": "^30.0.6",
     "@electron/packager": "^18.3.2"
   },
   "dependencies": {
