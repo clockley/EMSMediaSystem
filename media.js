@@ -119,22 +119,16 @@ async function loadMedia() {
     video.setAttribute("src", mediaFile);
 
     if (liveStreamMode) {
-        const youtubedl = require('youtube-dl-exec')
-        try {
-            await youtubedl(mediaFile, {getUrl: true, addHeader: ['referer:youtube.com','user-agent:googlebot']}).then(r => {video.src=r})
-        } catch (error) {
-            if (mediaFile.includes("youtu")) {
-                const response = await fetch(mediaFile);
-                const body = await response.text();
-
-                const regex = /"hlsManifestUrl":"([^"]+)"/;
-                const match = body.match(regex);
-                if (match && match[1]) {
-                    mediaFile = decodeURIComponent(match[1]);
-                    video.src = mediaFile;
-                } else {
-                    throw new Error('M3U8 URL not found');
-                }
+        if (mediaFile.includes("youtu")) {
+            const response = await fetch(mediaFile);
+            const body = await response.text();
+            const regex = /"hlsManifestUrl":"([^"]+)"/;
+            const match = body.match(regex);
+            if (match && match[1]) {
+                mediaFile = decodeURIComponent(match[1]);
+                video.src = mediaFile;
+            } else {
+                throw new Error('M3U8 URL not found');
             }
         }
 
