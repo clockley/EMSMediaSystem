@@ -10,8 +10,8 @@
   "author": "Christian Lockley",
   "license": "GPL-3.0-or-later",
   "devDependencies": {
-    "electron": "^30.0.6",
-    "@electron/packager": "^18.3.2"
+    "@electron/packager": "^18.3.2",
+    "electron": "^30.0.6"
   },
   "dependencies": {
     "@electron/remote": "^2.0.8",
@@ -19,7 +19,6 @@
     "bonjour": "^3.5.0",
     "electron-settings": "^4.0.4",
     "hls.js": "^1.1.5",
-    "lodash": "^4.17.21",
-    "youtube-dl-exec": "^2.1.10"
+    "lodash": "^4.17.21"
   }
 }
