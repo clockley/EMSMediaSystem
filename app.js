@@ -1121,14 +1121,6 @@ function ISO8601_week_no(dt) {
 
 function installPreviewEventHandlers() {
     if (!installedVideoEventListener) {
-        video.addEventListener('enterpictureinpicture', (event) => {
-            console.log('Entered Picture-in-Picture mode.');
-        });
-        
-        video.addEventListener('leavepictureinpicture', (event) => {
-            dontPauseOnPipExit=true;
-            console.log('Exited Picture-in-Picture mode.');
-        });
         video.addEventListener('loadstart', function(event) {
             if (video.src == window.location.href) {
                 event.preventDefault();
@@ -1196,11 +1188,6 @@ function installPreviewEventHandlers() {
         video.addEventListener('ended', (e) => {
             playingMediaAudioOnly=false;
             audioOnlyFile=false;
-            document.exitPictureInPicture().then(() =>{
-                ;
-            }).catch((error) => {
-                console.log(error);
-            });
             if (document.getElementById("mediaWindowPlayButton")) {
                 document.getElementById("mediaWindowPlayButton").textContent="▶️";
             }
