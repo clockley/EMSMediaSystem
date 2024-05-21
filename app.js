@@ -31,6 +31,7 @@ const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
 const SPECIALEVNTS = 3;
 const ALARMS = 4;
+const timeOrigin = performance.timeOrigin;
 
 class AlarmInputState {
     constructor(fileInputValue, timeInputValue) {
@@ -51,7 +52,11 @@ let integral = 0; // Integral sum for error accumulation
 let kP = 0.005; // Proportional gain
 let kI = 0.001; // Integral gain
 let kD = 0.003; // Derivative gain
-let synchronizationThreshold = 0.01; // Threshold to keep local video within .01 second of remote
+let synchronizationThreshold = 0.01667 // Threshold to keep local video within .01667 second of remote
+
+function getHighResolutionTimestamp() {
+    return timeOrigin + performance.now();
+}
 
 var toHHMMSS = (secs) => {
     return `${((secs / 3600) | 0).toString().padStart(2, '0')}:${(((secs % 3600) / 60) | 0).toString().padStart(2, '0')}:${((secs % 60) | 0).toString().padStart(2, '0')}:${(((secs * 1000) % 1000) | 0).toString().padStart(3, '0')}`;
@@ -85,14 +90,15 @@ function updateTimestamp() {
 
     requestAnimationFrame(update);
 }
+
 async function installIPCHandler() {
     ipcRenderer.on('timeRemaining-message', function (evt, message) {
-        var now = Date.now();
+        var now = getHighResolutionTimestamp();
         const sendTime = message[3];
         const ipcDelay = now - sendTime; // Compute the IPC delay
 
         // Measure DOM update time and add to IPC delay
-        let domUpdateTimeStart = now;
+        let domUpdateTimeStart = getHighResolutionTimestamp();
         let timeStamp = message[0];
         if (opMode == MEDIAPLAYER) {
             requestAnimationFrame(() => {
@@ -102,7 +108,7 @@ async function installIPCHandler() {
                 timeStamp = null;
             });
         }
-        let domUpdateTime = Date.now() - domUpdateTimeStart;
+        let domUpdateTime = getHighResolutionTimestamp() - domUpdateTimeStart;
 
         let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
 
@@ -111,7 +117,7 @@ async function installIPCHandler() {
         //const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
 
 
-        if (now - lastUpdateTime > .5) {
+        if (now - lastUpdateTime > .12) {
             if (opMode == MEDIAPLAYER) {
                 if (video != null && !video.seeking) {
                     hybridSync(targetTime);
@@ -202,7 +208,7 @@ function hybridSync(targetTime) {
 }
 function dynamicPIDTuning() {
     let isOscillating = false;
-    let lastCrossing = performance.now();
+    let lastCrossing = getHighResolutionTimestamp();
     let numberOfCrossings = 0;
     let accumulatedPeriod = 0;
     let significantErrorThreshold = 0.1; // Threshold to consider error significant for zero-crossing
@@ -210,7 +216,7 @@ function dynamicPIDTuning() {
     let maxAllowedPeriod = 5000; // Max period in ms to wait before forcing parameter update
 
     return function adjustPID(currentError) {
-        const now = performance.now();
+        const now = getHighResolutionTimestamp();
         const period = now - lastCrossing;
         
         // Check if the error sign has changed (zero-crossing point)
@@ -1155,7 +1161,7 @@ function installPreviewEventHandlers() {
             }
             if (e.target.isConnected) {
                 if (mediaWindow && !mediaWindow.isDestroyed()) {
-                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: getHighResolutionTimestamp() });
                 }
                 (async () => {
                     if (mediaWindow && !mediaWindow.isDestroyed) {
@@ -1177,7 +1183,7 @@ function installPreviewEventHandlers() {
                 return;
             }
             if (e.target.isConnected && mediaWindow != null && !mediaWindow.isDestroyed()) {
-                mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: getHighResolutionTimestamp() });
                 (async () => {
                     if (mediaWindow && !mediaWindow.isDestroyed()) {
                         targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');

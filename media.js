@@ -7,6 +7,7 @@ var strtvl = 1;
 var strtTm = 0;
 var init = false;
 var liveStreamMode = false;
+const timeOrigin = performance.timeOrigin;
 
 for (const arg of window.process.argv) {
     if (arg.startsWith('--mediafile-ems=')) {
@@ -27,13 +28,13 @@ mediaFile=decodeURIComponent(mediaFile);
 async function installICPHandlers() {
     if (!liveStreamMode) {
         ipcRenderer.on('timeGoto-message', function (evt, message) {
-            const localTs = performance.now();
-            const now = Date.now();
+            const localTs = getHighResolutionTimestamp();
+            const now = getHighResolutionTimestamp();
             const travelTime = now - message.timestamp;
 
             const adjustedTime = message.currentTime + (travelTime * .001);
             requestAnimationFrame(() => {
-                video.currentTime = adjustedTime + ((performance.now() - localTs)*.001);
+                video.currentTime = adjustedTime + ((getHighResolutionTimestamp() - localTs)*.001);
             });
         });
     }
@@ -62,13 +63,8 @@ function getFileExt(fname) {
     return fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2);
 }
 
-function getHighPrecisionTimestamp() {
-    const currentPerformance = performance.now();
-    const elapsed = currentPerformance - performanceStart;
-    const highPrecisionTimestamp = epochStart + elapsed;
-    const timestampInSeconds = highPrecisionTimestamp * 0.001;
-
-    return timestampInSeconds;
+function getHighResolutionTimestamp() {
+    return timeOrigin + performance.now();
 }
 
 function sendRemainingTime(video) {
@@ -76,10 +72,10 @@ function sendRemainingTime(video) {
     const interval = 1000 / 30;  // Set the interval for 30 updates per second
 
     const send = () => {
-        const currentTime = performance.now();
+        const currentTime = getHighResolutionTimestamp();
         // Update only if at least 33.33 milliseconds have passed
         if (currentTime - lastTime > interval && !video.paused) {
-            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, Date.now()+(currentTime - performance.now())]);
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, getHighResolutionTimestamp()+(currentTime - getHighResolutionTimestamp())]);
             lastTime = currentTime;
         }
         requestAnimationFrame(send);
