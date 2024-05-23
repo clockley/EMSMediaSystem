@@ -4,8 +4,8 @@
 <head>
   <meta charset="UTF-8">
   <title>EJax Media System 2.0.0-rc2 JS Edition</title>
-  <!-- https://electronjs.org/docs/tutorial/security#csp-meta-tag -->
-  <meta http-equiv="Content-Security-Policy" content="script-src 'self';" />
+  <!-- Update CSP to allow inline scripts -->
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';" />
   <link rel="stylesheet" type="text/css" href="main.css">
   <script async type="text/javascript" src="app.js"></script>
 </head>
@@ -13,26 +13,24 @@
 <body class="grid-container">
   <main>
     <form>
-      <input type="radio" id="WklyRBtnFrmID" name="plystTyp" value="Weekly Playlist">
-      <label for="Weekly Playlist">Weekly Playlist</label>
+      <input type="radio" id="WklyRBtnFrmID" name="plystTyp" value="Weekly Playlist" checked>
+      <label for="WklyRBtnFrmID" class="tab">Weekly Playlist</label>
 
       <input type="radio" id="SpclRBtnFrmID" name="plystTyp" value="Special Events">
-      <label for="Special Events">Special Events</label>
+      <label for="SpclRBtnFrmID" class="tab">Special Events</label>
 
       <input type="radio" id="AlrmsRBtnFrmID" name="plystTyp" value="Alarms">
-      <label for="Alarms">Alarms</label>
+      <label for="AlrmsRBtnFrmID" class="tab">Alarms</label>
 
       <input type="radio" id="MdPlyrRBtnFrmID" name="plystTyp" value="Media Player">
-      <label for="Media Player">Media Player</label>
+      <label for="MdPlyrRBtnFrmID" class="tab">Media Player</label>
 
-      <input type="radio" id="YtPlyrRBtnFrmID" name="plystTyp" value="yls"> 
-      <label for="YouTube Live Stream">YouTube Live Stream</label>
-
-      <div id="dyneForm">
-      </div>
-      <div id="dyneFormMedia">
-      </div>
+      <input type="radio" id="YtPlyrRBtnFrmID" name="plystTyp" value="YouTube Live Stream">
+      <label for="YtPlyrRBtnFrmID" class="tab">Live Stream Viewer</label>
+      <hr>
     </form>
+    <div id="dyneForm">
+    </div>
   </main>
   <div class="sideBar1">
     <ul id="playlist" class="sideBar1"></ul><br>
@@ -49,7 +47,24 @@
         <label for="plystLpctrl">Loop File</label>
       </div>
   </footer>
+  <script>
+    document.querySelectorAll('input[name="plystTyp"]').forEach(input => {
+      input.addEventListener('change', function() {
+        document.querySelectorAll('.tab-content').forEach(content => {
+          content.style.display = 'none';
+        });
 
+        const selectedContentId = `dyneForm${this.value.replace(/\s+/g, '')}`;
+        const selectedContent = document.getElementById(selectedContentId);
+        if (selectedContent) {
+          selectedContent.style.display = 'block';
+        }
+      });
+    });
+
+    // Trigger change event on page load for the initially checked radio button
+    document.querySelector('input[name="plystTyp"]:checked').dispatchEvent(new Event('change'));
+  </script>
 </body>
 
 </html>

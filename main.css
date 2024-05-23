@@ -1,10 +1,10 @@
 .index-grid-container {
-    display              : grid;
+    display: grid;
     grid-template-columns: 1fr 1fr 1fr;
-    grid-template-rows   : auto auto auto auto auto auto;
-    grid-template-areas  :
+    grid-template-rows: repeat(6, auto);
+    grid-template-areas:
         "main main sideBar1"
-        "main main  sideBar1"
+        "main main sideBar1"
         "footerBar footerBar footerBar";
 }
 
@@ -41,7 +41,7 @@ body.linux button:active {
     box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2); /* inner shadow for pressed effect */
 }
 
-body.linux input:focus, 
+body.linux input:focus,
 body.linux textarea:focus {
     border-color: #4a90d9; /* focus color similar to Adwaita blue */
     outline: none;
@@ -57,7 +57,6 @@ body.linux textarea:focus {
     margin: 10px 20px; /* Adds margin to the left and right */
     position: relative;
     transition: background-color 0.3s; /* Smooth transition for background color */
-    background: #b3b3b3; /* base track color */
 }
 
 .adwaita-slider:hover {
@@ -205,7 +204,7 @@ footer {
 #playlist {
     overflow-y: scroll;
     max-height: 25vh;
-    display   : block;
+    display: block;
     min-height: 5vh;
 }
 
@@ -214,18 +213,18 @@ footer {
 }
 
 .plEntry {
-    margin : 0%;
+    margin: 0%;
     padding: 0%;
     display: block;
 }
 
 [draggable] {
-    -moz-user-select   : none;
-    -khtml-user-select : none;
+    -moz-user-select: none;
+    -khtml-user-select: none;
     -webkit-user-select: none;
-    user-select        : none;
+    user-select: none;
     /* Required to make elements draggable in old WebKit */
-    -khtml-user-drag : element;
+    -khtml-user-drag: element;
     -webkit-user-drag: element;
 }
 
@@ -238,19 +237,11 @@ footer {
     max-height: 100vh;
 }
 
-.setTimerButton {
-    height: 32px;
-    width : 32px;
-}
-
-#mediaWindowPlayButton {
-    height: 32px;
-    width : 32px;
-}
-
+.setTimerButton,
+#mediaWindowPlayButton,
 #mediaWindowPauseButton {
     height: 32px;
-    width : 32px;
+    width: 32px;
 }
 
 video::-webkit-media-controls-volume-slider,
@@ -262,8 +253,76 @@ video::-webkit-media-controls-mute-button {
     display: flex !important;
     opacity: 1 !important;
 }
-/*
+
 /* Style for the volume slider */
 #volumeControl {
     width: 150px; /* Adjust the width of the slider for better reachability */
+}
+
+body {
+    font-family: Arial, sans-serif;
+    user-select: none;
+}
+
+input[type="radio"] {
+    display: none;
+}
+
+label.tab {
+    padding: 10px 20px;
+    cursor: pointer;
+    display: inline-block;
+    border: 1px solid #ccc;
+    border-bottom: none;
+    margin-bottom: -1px;
+    background-color: #f1f1f1;
+    color: #000;
+    user-select: none;
+}
+
+label.tab:hover {
+    background-color: #e1e1e1;
+}
+
+input[type="radio"]:checked + label.tab {
+    background-color: white;
+    border-bottom: 1px solid white;
+    position: relative;
+    top: 1px;
+}
+
+.tab-content {
+    display: none;
+    border: 1px solid #ccc;
+    padding: 20px;
+}
+
+#dyneFormWeekly,
+#dyneFormSpecial,
+#dyneFormAlarms,
+#dyneFormMedia,
+#dyneFormYouTube {
+    display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+    /*
+    label.tab {
+        background-color: #333;
+        color: #fff;
+    }
+
+    label.tab:hover {
+        background-color: #444;
+    }
+
+    input[type="radio"]:checked + label.tab {
+        background-color: #555;
+        border-bottom: 1px solid #555;
+    }
+
+    .tab-content {
+        background-color: #444;
+        border-color: #666;
+    }*/
 }
