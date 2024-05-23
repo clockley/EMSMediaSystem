@@ -1,6 +1,5 @@
 //Project Alchemy
-//Copyright 2019 - 2024 Ephesus Apprentice Alchemist (Christian Lockley)
-//Oh, sneaky Satan! Cool and neat.
+//Copyright 2019 - 2024 Christian Lockley
 const { app, BrowserWindow, ipcRenderer } = require('electron');
 const electron = require('@electron/remote');
 const { detectSwitcherAddress, connectToAtemSwitcher, changeInput } = require('./switcher');
