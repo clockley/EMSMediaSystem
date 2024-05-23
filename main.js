@@ -1,6 +1,6 @@
 "use strict";
 //console.time("start");
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut} = require('electron');
 const settings = require('electron-settings');
 const rmt = require('@electron/remote/main');
 rmt.initialize();
@@ -65,7 +65,10 @@ async function createWindow() {
   }, 300); 
 
     win.on('resize', saveWindowBounds);
-
+    win.setMenu(null);
+    globalShortcut.register('Ctrl+Shift+I', () => {
+      win.webContents.toggleDevTools();
+    });
     // and load the index.html of the app.
     win.loadFile('index.html');
     // Open the DevTools.
