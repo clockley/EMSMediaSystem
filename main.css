@@ -1,6 +1,6 @@
 .index-grid-container {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     grid-template-rows: repeat(6, auto);
     grid-template-areas:
         "main main sideBar1"
@@ -11,6 +11,8 @@
 body.windows {
     /* Windows-specific styles */
     font-family: "Segoe UI", sans-serif;
+    color: #333;
+    background-color: #fff;
 }
 
 body.linux {
@@ -23,7 +25,7 @@ body.linux {
 body.linux button,
 body.linux input,
 body.linux textarea {
-    background-color: #ffffff;
+    background-color: #fff;
     border: 1px solid #c7c7c7;
     padding: 8px 16px;
     font-size: 14px;
@@ -53,7 +55,6 @@ body.linux textarea:focus {
     width: calc(100% - 40px); /* Adjust width to allow thumb to reach ends */
     height: 2px; /* Slider thickness */
     background: #b3b3b3; /* Default track color for light mode */
-    outline: none; /* Removes the outline */
     margin: 10px 20px; /* Adds margin to the left and right */
     position: relative;
     transition: background-color 0.3s; /* Smooth transition for background color */
@@ -65,7 +66,6 @@ body.linux textarea:focus {
 
 .adwaita-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
-    border: none;
     height: 16px;
     width: 16px;
     background: #4a90d9; /* Adwaita blue for the slider thumb */
@@ -105,17 +105,10 @@ body.linux .slider:active::-webkit-slider-thumb {
     background: #3465a4; /* darker blue when active */
 }
 
-body.windows {
-    /* Windows-specific styles */
-    font-family: "Segoe UI", Arial, sans-serif;
-    color: #333333;
-    background-color: #ffffff;
-}
-
 body.windows button,
 body.windows input,
 body.windows textarea {
-    background-color: #ffffff;
+    background-color: #fff;
     border: 1px solid #ccc;
     padding: 6px 12px;
     font-size: 14px;
@@ -131,7 +124,6 @@ body.windows button:hover {
     width: calc(100% - 40px); /* Adjust width to allow thumb to reach ends */
     height: 2px; /* Slider thickness */
     background: #ccc; /* Default track color for light mode */
-    outline: none; /* Removes the outline */
     margin: 10px 20px; /* Adds margin to the left and right */
     position: relative;
     transition: background-color 0.3s; /* Smooth transition for background color */
@@ -147,7 +139,6 @@ body.windows button:hover {
     height: 20px;
     background: #0078D7; /* Windows 10 accent color */
     cursor: pointer;
-    border-radius: 0; /* Windows sliders usually do not have rounded thumbs */
     margin-top: -9px; /* Centers the thumb over the track */
     transition: background-color 0.3s; /* Smooth transition for color changes */
 }
@@ -162,7 +153,7 @@ body.windows button:hover {
 @media (prefers-color-scheme: dark) {
     body.windows {
         background-color: #2c2c2c;
-        color: #ffffff;
+        color: #fff;
     }
 
     body.windows button,
@@ -213,18 +204,13 @@ footer {
 }
 
 .plEntry {
-    margin: 0%;
-    padding: 0%;
+    margin: 0;
+    padding: 0;
     display: block;
 }
 
 [draggable] {
-    -moz-user-select: none;
-    -khtml-user-select: none;
-    -webkit-user-select: none;
-    user-select: none;
-    /* Required to make elements draggable in old WebKit */
-    -khtml-user-drag: element;
+    user-select: none; /* Required to make elements draggable in old WebKit */
     -webkit-user-drag: element;
 }
 
