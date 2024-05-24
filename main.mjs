@@ -49,7 +49,7 @@ async function createWindow() {
         nodeIntegration: true,
         contextIsolation: false,
         userGesture: true,
-        webSecurity: false,
+        webSecurity: true,
         backgroundThrottling: false,
         autoplayPolicy: 'no-user-gesture-required'
       }
