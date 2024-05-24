@@ -1,14 +1,16 @@
-const { ipcRenderer } = require('electron');
+const { ipcRenderer } = window.electron;
+const argv = window.electron.argv;
+import hls from './node_modules/hls.js/dist/hls.mjs';
+
 var video = null;
 var img = null;
 var mediaFile;
 var loopFile = false;
 var strtvl = 1;
 var strtTm = 0;
-var init = false;
 var liveStreamMode = false;
-
-for (const arg of window.process.argv) {
+var prom = null;
+for (const arg of argv) {
     if (arg.startsWith('--mediafile-ems=')) {
         mediaFile = arg.substring(16);
     } else if (arg === '--media-loop=true') {
@@ -133,7 +135,6 @@ async function loadMedia() {
         }
 
         mediaFile=video.src;
-        const hls = require("hls.js");
         h = new hls();
         h.loadSource(mediaFile);
     } else {
