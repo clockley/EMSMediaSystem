@@ -1,8 +1,9 @@
 "use strict";
 //console.time("start");
-const { app, BrowserWindow, ipcMain, globalShortcut} = require('electron');
-const settings = require('electron-settings');
-const rmt = require('@electron/remote/main');
+import { app, BrowserWindow, ipcMain, globalShortcut} from 'electron';
+import settings from 'electron-settings';
+import rmt from '@electron/remote/main/index.js';
+
 rmt.initialize();
 
 // Keep a global reference of the window object, if you don't, the window will
@@ -85,7 +86,7 @@ async function createWindow() {
     });
   });
   await ipcInitPromise;
-  //console.timeEnd("start");
+//console.timeEnd("start");
 }
 
 async function initializeIPC() {
