@@ -1497,9 +1497,6 @@ async function createMediaWindow() {
             autoHideMenuBar: true,
             frame: false,
             webPreferences: {
-                nodeIntegration: false,
-                webSecurity: true,
-                contextIsolation: true,
                 nativeWindowOpen: false,
                 backgroundThrottling: false,
                 additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",'--live-stream='+liveStreamMode],
@@ -1515,9 +1512,6 @@ async function createMediaWindow() {
             fullscreen: true,
             autoHideMenuBar: true,
             webPreferences: {
-                nodeIntegration: false,
-                webSecurity: true,
-                contextIsolation: true,
                 nativeWindowOpen: false,
                 backgroundThrottling: false,
                 additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",'--live-stream='+liveStreamMode],
@@ -1527,6 +1521,7 @@ async function createMediaWindow() {
     }
 
     if (mediaWindow != null) {
+        mediaWindow.setMenu(null);
         mediaWindow.on('closed', async () => {
             saveMediaFile();
 
