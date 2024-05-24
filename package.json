@@ -2,7 +2,7 @@
   "name": "EJaxMediaSystem",
   "version": "2.0.0-rc2",
   "description": "This program simplifies weekly music mangment.",
-  "main": "main.js",
+  "main": "main.mjs",
   "scripts": {
     "start": "electron .",
     "test": "echo \"Error: no test specified\" && exit 1"
