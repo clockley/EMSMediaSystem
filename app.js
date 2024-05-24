@@ -2,6 +2,7 @@
 //Copyright 2019 - 2024 Christian Lockley
 const { app, BrowserWindow, ipcRenderer } = require('electron');
 const electron = require('@electron/remote');
+const path  = require('node:path');
 const { detectSwitcherAddress, connectToAtemSwitcher, changeInput } = require('./switcher');
 var nextFile = null;
 var timers = [];
@@ -1400,7 +1401,7 @@ function isAudioTrackLoadedIntoVideoElement(e) {
     return e.videoTracks && e.videoTracks.length === 0;
 }
 
-async function createMediaWindow(path) {
+async function createMediaWindow() {
     const { BrowserWindow } = electron;
     if (!document.getElementById("mdFile").value.includes("fake")) {
         mediaFile = document.getElementById("mdFile").value;
@@ -1496,12 +1497,13 @@ async function createMediaWindow(path) {
             autoHideMenuBar: true,
             frame: false,
             webPreferences: {
-                nodeIntegration: true,
-                webSecurity: false,
-                contextIsolation: false,
+                nodeIntegration: false,
+                webSecurity: true,
+                contextIsolation: true,
                 nativeWindowOpen: false,
                 backgroundThrottling: false,
-                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",'--live-stream='+liveStreamMode]
+                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",'--live-stream='+liveStreamMode],
+                preload: path.join(__dirname, 'preload.js'),
             },
         });
     } else {
@@ -1513,12 +1515,13 @@ async function createMediaWindow(path) {
             fullscreen: true,
             autoHideMenuBar: true,
             webPreferences: {
-                nodeIntegration: true,
-                webSecurity: false,
-                contextIsolation: false,
+                nodeIntegration: false,
+                webSecurity: true,
+                contextIsolation: true,
                 nativeWindowOpen: false,
                 backgroundThrottling: false,
-                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",'--live-stream='+liveStreamMode]
+                additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",'--live-stream='+liveStreamMode],
+                preload: path.join(__dirname, 'preload.js'),
             }
         });
     }
