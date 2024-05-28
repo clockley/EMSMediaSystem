@@ -793,7 +793,7 @@ function setSBFormMediaPlayer() {
             </form>
             <br>
             <br>
-            <center><video id="preview"></video></center>
+            <center><video controls id="preview"></video></center>
             <div id=cntdndiv>
             <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: calc(1vw + 80%);line-height: 1;" id="mediaCntDn">00:00:00:000<span>
             </div>
@@ -829,7 +829,7 @@ function setSBFormMediaPlayer() {
         </form>
         <br>
         <br>
-        <center><video id="preview"></video></center>
+        <center><video controls id="preview"></video></center>
         <div id=cntdndiv>
         <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: 48px;line-height: 1.2;" id="mediaCntDn">00:00:00:000<span>
         </div>
