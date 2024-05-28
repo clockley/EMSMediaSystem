@@ -1,3 +1,4 @@
+"use strict";
 //Project Alchemy
 //Copyright 2019 - 2024 Christian Lockley
 const { app, BrowserWindow, ipcRenderer } = require('electron');
@@ -27,6 +28,8 @@ var opMode = -1;
 var osName = '';
 var localTimeStampUpdateIsRunning = false;
 var dontPauseOnPipExit = false;
+var mediaFile;
+var currentMediaFile;
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
@@ -656,7 +659,6 @@ function playMedia(e) {
             e.target.textContent = "⏹️";
             return;
         }
-        videoEnded = false;
         e.target.textContent = "⏹️";
         currentMediaFile = document.getElementById("mdFile").files;
 
@@ -1216,7 +1218,6 @@ function installPreviewEventHandlers() {
                 timeRemaining = "00:00:00:000";
                 masterPauseState = false;
             }
-            videoEnded = true;
             targetTime = 0;
             masterPauseState = false;
             resetPIDOnSeek();
@@ -1312,7 +1313,7 @@ function installPreviewEventHandlers() {
 }
 
 async function initPlayer() {
-    mode = await ipcRenderer.invoke('get-setting', "operating-mode");
+    let mode = await ipcRenderer.invoke('get-setting', "operating-mode");
 
     switch (mode) {
         case MEDIAPLAYER:
@@ -1347,7 +1348,7 @@ async function initPlayer() {
     }
 }
 
-ipcprom = installIPCHandler();
+var ipcprom = installIPCHandler();
 
 window.addEventListener("load", async (event) => {
     initPlayer();
