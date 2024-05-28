@@ -42,8 +42,8 @@ async function createWindow() {
     win = new BrowserWindow({
       width: windowBounds ? windowBounds.width : 1068,
       height: windowBounds ? windowBounds.height : 660,
-      minWidth: 735,
-      minHeight: 531,
+      minWidth: 1096,
+      minHeight: 681,
       autoHideMenuBar: true,
       webPreferences: {
         nodeIntegration: true,
