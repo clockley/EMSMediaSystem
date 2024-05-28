@@ -58,7 +58,11 @@ var toHHMMSS = (secs) => {
     return `${((secs / 3600) | 0).toString().padStart(2, '0')}:${(((secs % 3600) / 60) | 0).toString().padStart(2, '0')}:${((secs % 60) | 0).toString().padStart(2, '0')}:${(((secs * 1000) % 1000) | 0).toString().padStart(3, '0')}`;
 };
 
-function updateTimestamp() {
+function updateTimestamp(oneShot) {
+    if (oneShot && mediaCntDnEle) {
+        mediaCntDnEle.textContent = toHHMMSS(video.duration-video.currentTime);
+        return;
+    }
     if (localTimeStampUpdateIsRunning) {
         return;
     }
@@ -83,7 +87,6 @@ function updateTimestamp() {
         }
         requestAnimationFrame(update);
     };
-
     requestAnimationFrame(update);
 }
 async function installIPCHandler() {
@@ -649,7 +652,7 @@ function playMedia(e) {
             video.muted=false;
             playingMediaAudioOnly=true;
             video.play();
-            updateTimestamp();
+            updateTimestamp(false);
             e.target.textContent = "⏹️";
             return;
         }
@@ -842,7 +845,7 @@ function setSBFormMediaPlayer() {
     }
 
     restoreMediaFile();
-    updateTimestamp();
+    updateTimestamp(false);
     document.getElementById('volumeControl').value = CrVL;
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
 
@@ -1034,7 +1037,7 @@ function installSidebarFormEvents() {
                     dontSyncRemote = false;
                 }
                 mediaCntDnEle = document.getElementById('mediaCntDn');
-                updateTimestamp();
+                updateTimestamp(false);
                 if (masterPauseState) {
                     mediaCntDnEle.textContent = savedCurTime;
                 }
@@ -1146,6 +1149,7 @@ function installPreviewEventHandlers() {
                 console.log("rejected sync");
                 return;
             }
+            updateTimestamp(true);
             if (e.target.isConnected) {
                 if (mediaWindow && !mediaWindow.isDestroyed()) {
                     mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
@@ -1169,6 +1173,7 @@ function installPreviewEventHandlers() {
             if (dontSyncRemote == true) {
                 return;
             }
+            updateTimestamp(true);
             if (e.target.isConnected && mediaWindow != null && !mediaWindow.isDestroyed()) {
                 mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                 (async () => {
@@ -1261,7 +1266,7 @@ function installPreviewEventHandlers() {
         });
         video.addEventListener('play', async (event) => {
             if (audioOnlyFile) {
-                updateTimestamp();
+                updateTimestamp(false);
             }
             if (mediaWindow != null) {
                 unPauseMedia();
@@ -1295,7 +1300,7 @@ function installPreviewEventHandlers() {
                         video.volume=document.getElementById('volumeControl').value;
                     }
                     playingMediaAudioOnly = true;
-                    updateTimestamp();
+                    updateTimestamp(false);
                     return;
                 }
             }
@@ -1472,7 +1477,7 @@ async function createMediaWindow() {
         }
         playingMediaAudioOnly = true;
         if (playingMediaAudioOnly)
-            updateTimestamp();
+            updateTimestamp(false);
         return;
     } else {
         playingMediaAudioOnly = false;
