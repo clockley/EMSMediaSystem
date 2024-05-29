@@ -536,7 +536,7 @@ function vlCtl(v) {
 
 async function pauseMedia(e) {
     if (activeLiveStream) {
-        await mediaWindow.webContents.executeJavaScript('document.querySelector("video").pause()');
+        await mediaWindow.send('pauseVideo');
         return;
     }
     if (video.src == window.location.href || isImg(video.src)) {
@@ -544,7 +544,7 @@ async function pauseMedia(e) {
     }
 
     if (mediaWindow && !mediaWindow.isDestroyed()) {
-        await mediaWindow.webContents.executeJavaScript('document.querySelector("video").pause()');
+        await mediaWindow.send('pauseVideo');
         targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
         resetPIDOnSeek();
     }
@@ -552,7 +552,7 @@ async function pauseMedia(e) {
 
 async function unPauseMedia(e) {
     if (activeLiveStream) {
-        await mediaWindow.webContents.executeJavaScript('document.querySelector("video").play()');
+        await mediaWindow.send('playVideo');
         return;
     }
     if (video.src == window.location.href || isImg(video.src)) {
@@ -561,7 +561,7 @@ async function unPauseMedia(e) {
 
     if (mediaWindow && !mediaWindow.isDestroyed()) {
         resetPIDOnSeek();
-        await mediaWindow.webContents.executeJavaScript('document.querySelector("video").play()');
+        await mediaWindow.send('playVideo');
     }
     if (playingMediaAudioOnly && document.getElementById("mediaWindowPlayButton")) {
         document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
