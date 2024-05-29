@@ -776,10 +776,10 @@ function setSBFormMediaPlayer() {
                 <br>
 
                 <input type="number" min="0" max="60" step="1" value="0" name="mdTimeout" id="mdDelay">
-                <label for="mdTimeout">Delay</label>
+                <label for="mdTimeout">Start Delay</label>
     
                 <input name="malrm1" id="malrm1" type="time">
-                <label for="malrm1"> Run At </label>
+                <label for="malrm1"> Schedule </label>
                 <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
                 <label for=""mdScrCtrl>Second Monitor</label>
                 <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
@@ -812,10 +812,10 @@ function setSBFormMediaPlayer() {
             <br>
 
             <input type="number" min="0" max="60" step="1" value="0" name="mdTimeout" id="mdDelay">
-            <label for="mdTimeout">Delay</label>
+            <label for="mdTimeout">Start Delay</label>
 
             <input name="malrm1" id="malrm1" type="time">
-            <label for="malrm1"> Run At </label>
+            <label for="malrm1"> Schedule </label>
             <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
             <label for=""mdScrCtrl>Second Monitor</label>
             <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
