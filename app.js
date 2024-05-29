@@ -1577,7 +1577,6 @@ async function createMediaWindow() {
     }
 
     mediaWindow.loadFile("media.html");
-    mediaWindow.show();
     unPauseMedia();
     if (opMode != MEDIAPLAYERYT) {
         if (video != null && !isImg(mediaFile)) {
