@@ -1500,10 +1500,8 @@ async function createMediaWindow() {
             width: externalDisplay.width,
             height: externalDisplay.height,
             fullscreen: true,
-            autoHideMenuBar: true,
             frame: false,
             webPreferences: {
-                nativeWindowOpen: false,
                 backgroundThrottling: false,
                 additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",'--live-stream='+liveStreamMode],
                 preload: path.join(__dirname, 'preload.js'),
@@ -1516,9 +1514,7 @@ async function createMediaWindow() {
             width: displays[0].width,
             height: displays[0].height,
             fullscreen: true,
-            autoHideMenuBar: true,
             webPreferences: {
-                nativeWindowOpen: false,
                 backgroundThrottling: false,
                 additionalArguments: ['--start-time='.concat(startTime), '--start-vol='.concat(strtVl), '--mediafile-ems='.concat(encodeURIComponent(mediaFile)), document.getElementById("mdLpCtlr") != undefined ? '--media-loop='.concat(document.getElementById("mdLpCtlr").checked) : "",'--live-stream='+liveStreamMode],
                 preload: path.join(__dirname, 'preload.js'),
