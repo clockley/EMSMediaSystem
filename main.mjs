@@ -1,6 +1,6 @@
 "use strict";
 //console.time("start");
-import { app, BrowserWindow, ipcMain, globalShortcut} from 'electron';
+import { app, BrowserWindow, ipcMain, globalShortcut, screen} from 'electron';
 import settings from 'electron-settings';
 import rmt from '@electron/remote/main/index.js';
 
@@ -91,6 +91,10 @@ async function createWindow() {
 
 async function initializeIPC() {
   return new Promise((resolve) => {
+    ipcMain.handle('get-all-displays', () => {
+      return screen.getAllDisplays();
+    });
+
     ipcMain.on('timeRemaining-message', (event, arg) => {
       if (win) {
         win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]]);

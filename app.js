@@ -1431,8 +1431,7 @@ async function createMediaWindow() {
         }
     }
 
-    var electronScreen = electron.screen;
-    var displays = electronScreen.getAllDisplays();
+    var displays = await ipcRenderer.invoke('get-all-displays');
     var externalDisplay = null;
     for (var i in displays) {
         if (displays[i].bounds.x != 0 || displays[i].bounds.y != 0) {
