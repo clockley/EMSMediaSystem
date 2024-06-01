@@ -1411,10 +1411,6 @@ function isLiveStream(mediaFile) {
         mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback") || mediaFile.includes("youtu.be");
 }
 
-function isAudioTrackLoadedIntoVideoElement(e) {
-    return e.videoTracks && e.videoTracks.length === 0;
-}
-
 async function createMediaWindow() {
     const { BrowserWindow } = electron;
     if (!document.getElementById("mdFile").value.includes("fake")) {
