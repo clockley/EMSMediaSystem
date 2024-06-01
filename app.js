@@ -61,6 +61,14 @@ var toHHMMSS = (secs) => {
     return `${((secs / 3600) | 0).toString().padStart(2, '0')}:${(((secs % 3600) / 60) | 0).toString().padStart(2, '0')}:${((secs % 60) | 0).toString().padStart(2, '0')}:${(((secs * 1000) % 1000) | 0).toString().padStart(3, '0')}`;
 };
 
+function isActiveMediaWindow() {
+    return mediaWindow != null && !mediaWindow.isDestroyed();
+}
+
+function isDeadMediaWindow() {
+    return mediaWindow == null || mediaWindow.isDestroyed();
+}
+
 function updateTimestamp(oneShot) {
     if (oneShot && mediaCntDnEle) {
         mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
@@ -527,7 +535,7 @@ function setSBFormAlrms() {
 }
 
 function vlCtl(v) {
-    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+    if (isActiveMediaWindow()) {
         mediaWindow.send('vlcl', v);
     } else if (audioOnlyFile) {
         video.volume = v;
@@ -543,7 +551,7 @@ async function pauseMedia(e) {
         return;
     }
 
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
+    if (isActiveMediaWindow()) {
         await mediaWindow.send('pauseVideo');
         targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
         resetPIDOnSeek();
@@ -559,7 +567,7 @@ async function unPauseMedia(e) {
         return;
     }
 
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
+    if (isActiveMediaWindow()) {
         resetPIDOnSeek();
         await mediaWindow.send('playVideo');
     }
@@ -713,7 +721,7 @@ function setSBFormYouTubeMediaPlayer() {
     opMode = MEDIAPLAYERYT;
     ipcRenderer.send('set-mode', opMode);
     resetPlayer();
-    if (mediaWindow == null || mediaWindow.isDestroyed()) {
+    if (isDeadMediaWindow()) {
         if (document.getElementById("mediaCntDn") != null) {
             document.getElementById("mediaCntDn").textContent = "00:00:00:000";
         }
@@ -749,7 +757,7 @@ function setSBFormYouTubeMediaPlayer() {
         document.getElementById("mdFile").value = '';
     }
 
-    if (mediaWindow == null || mediaWindow.isDestroyed()) {
+    if (isDeadMediaWindow()) {
         document.getElementById("mediaWindowPlayButton").textContent = "▶️";
     } else {
         document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
@@ -760,7 +768,7 @@ function setSBFormMediaPlayer() {
     opMode = MEDIAPLAYER;
     ipcRenderer.send('set-mode', opMode);
     resetPlayer();
-    if (mediaWindow == null || mediaWindow.isDestroyed()) {
+    if (isDeadMediaWindow()) {
         if (document.getElementById("mediaCntDn") != null) {
             document.getElementById("mediaCntDn").textContent = "00:00:00:000";
         }
@@ -851,7 +859,7 @@ function setSBFormMediaPlayer() {
     document.getElementById('volumeControl').value = CrVL;
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
 
-    if ((mediaWindow == null || mediaWindow.isDestroyed()) && !playingMediaAudioOnly) {
+    if ((isDeadMediaWindow()) && !playingMediaAudioOnly) {
         document.getElementById("mediaWindowPlayButton").textContent = "▶️";
         document.getElementById("mediaCntDn").textContent = "00:00:00:000";
     } else {
@@ -880,14 +888,14 @@ function setSBFormMediaPlayer() {
                 }
             }
             if (video != null) {
-                if (!mediaWindow) {
+                if (isDeadMediaWindow()) {
                     if (!document.getElementById("mdFile").value.includes("fake")) {
                         mediaFile = document.getElementById("mdFile").value;
                     } else {
                         mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
                     }
                 }
-                if (mediaWindow != null && mediaFile != null && !isLiveStream(mediaFile)) {
+                if (isActiveMediaWindow() && mediaFile != null && !isLiveStream(mediaFile)) {
                     if (video == null) {
                         video = document.getElementById("preview");
                         saveMediaFile();
@@ -941,7 +949,7 @@ function saveMediaFile() {
         saveMediaFile.urlInpt = mdfileElement.value;
     }
 
-    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+    if (isActiveMediaWindow()) {
         return;
     }
 
@@ -963,7 +971,7 @@ function saveMediaFile() {
         audioOnlyFile = false;
     }
 
-    if (isImg(mediaFile) && !document.querySelector('img') && (!mediaWindow || mediaWindow.isDestroyed())) {
+    if (isImg(mediaFile) && !document.querySelector('img') && (isDeadMediaWindow())) {
         let imgEle = null;
         if ((imgEle = document.querySelector('img')) != null) {
             imgEle.remove();
@@ -983,7 +991,7 @@ function saveMediaFile() {
     }
     let liveStream = isLiveStream(mediaFile);
     if ((mdfileElement != null && (mediaWindow == null && mdfileElement != null &&
-        !(liveStream))) || (mediaWindow != null && mdfileElement != null && liveStream) || activeLiveStream && mediaWindow != null) {
+        !(liveStream))) || (isActiveMediaWindow() && mdfileElement != null && liveStream) || activeLiveStream && mediaWindow != null) {
         if (video == null) {
             video = document.getElementById('preview');
         }
@@ -1143,7 +1151,7 @@ function installPreviewEventHandlers() {
                 e.preventDefault();
                 return;
             }
-            if (mediaWindow == null || mediaWindow.isDestroyed()) {
+            if (isDeadMediaWindow()) {
                 return;
             }
             if (dontSyncRemote == true) {
@@ -1153,11 +1161,11 @@ function installPreviewEventHandlers() {
             }
             updateTimestamp(true);
             if (e.target.isConnected) {
-                if (mediaWindow && !mediaWindow.isDestroyed()) {
+                if (isActiveMediaWindow()) {
                     mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                 }
                 (async () => {
-                    if (mediaWindow && !mediaWindow.isDestroyed) {
+                    if (isActiveMediaWindow()) {
                         targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
                         resetPIDOnSeek();
                     }
@@ -1176,10 +1184,10 @@ function installPreviewEventHandlers() {
                 return;
             }
             updateTimestamp(true);
-            if (e.target.isConnected && mediaWindow != null && !mediaWindow.isDestroyed()) {
+            if (e.target.isConnected && isActiveMediaWindow()) {
                 mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                 (async () => {
-                    if (mediaWindow && !mediaWindow.isDestroyed()) {
+                    if (isActiveMediaWindow()) {
                         targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
                     }
                 })().catch(error => console.error('Failed to fetch video current time:', error));
@@ -1235,7 +1243,7 @@ function installPreviewEventHandlers() {
                 return;
             }
             if (!event.target.isConnected) {
-                if ((mediaWindow == null || mediaWindow.isDestroyed()) && playingMediaAudioOnly == false) {
+                if ((isDeadMediaWindow()) && playingMediaAudioOnly == false) {
                     return;
                 }
                 event.preventDefault();
@@ -1259,7 +1267,7 @@ function installPreviewEventHandlers() {
                 return;
             }
             if (event.target.parentNode != null) {
-                if (mediaWindow && !mediaWindow.isDestroyed()) {
+                if (isActiveMediaWindow()) {
                     pauseMedia();
                     masterPauseState = true;
                 }
@@ -1467,7 +1475,7 @@ async function createMediaWindow() {
         strtVl = document.getElementById('volumeControl').value;
     }
 
-    if (audioOnlyFile && (mediaWindow == null || mediaWindow.isDestroyed())) {
+    if (audioOnlyFile && isDeadMediaWindow()) {
         video.muted = false;
         video.volume = document.getElementById('volumeControl').value;
         if (!isImg(mediaFile)) {
