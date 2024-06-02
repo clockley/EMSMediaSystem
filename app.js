@@ -590,13 +590,11 @@ function setSBFormAlrms() {
 
 
 function vlCtl(v) {
-    ipcRenderer.invoke('active-media-window').then( ret => {
-        if (!ret) {
-            ipcRenderer.send('vlcl', v, 0);
-        } else {
-            video.volume = v;
-        }
-    });
+    if (isActiveMediaWindow()) {
+        ipcRenderer.send('vlcl', v, 0);
+    } else {
+        video.volume = v;
+    }
 }
 
 async function pauseMedia(e) {
