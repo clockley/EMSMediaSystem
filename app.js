@@ -100,6 +100,7 @@ function updateTimestamp(oneShot) {
     };
     requestAnimationFrame(update);
 }
+
 async function installIPCHandler() {
     ipcRenderer.on('timeRemaining-message', function (evt, message) {
         var now = Date.now();
@@ -159,6 +160,60 @@ async function installIPCHandler() {
                 await video.pause();
             }
         }
+    });
+
+    ipcRenderer.on('media-window-closed', async (event, id) => {
+        saveMediaFile();
+
+        if (!isImg(mediaFile)) {
+            if (video.src != window.location.href) {
+                waitForMetadata().then(() => { audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0) });
+            }
+            video.src = mediaFile;
+        }
+
+        let imgEle = null;
+        if (imgEle = document.querySelector('img') && !isImg(mediaFile)) {
+            imgEle.remove();
+            document.getElementById("preview").style.display = '';
+            document.getElementById("cntdndiv").style.display = '';
+        } else if (isImg(mediaFile)) {
+            if (imgEle) {
+                imgEle.src = mediaFile;
+            } else {
+                let imgEle = null;
+                if ((imgEle = document.querySelector('img')) != null) {
+                    imgEle.remove();
+                    document.getElementById("cntdndiv").style.display = '';
+                }
+                video.src = '';
+                img = document.createElement('img');
+                img.src = mediaFile;
+                img.setAttribute("id", "preview");
+                if (!document.getElementById("preview"))
+                    document.getElementById("preview").style.display = 'none';
+                document.getElementById("preview").parentNode.appendChild(img);
+                document.getElementById("cntdndiv").style.display = 'none';
+            }
+        }
+        if (video != null) {
+            video.muted = true;
+            video.pause();
+            video.currentTime = 0;
+        }
+        if (document.getElementById("mediaCntDn") != null) {
+            document.getElementById("mediaCntDn").innerText = "00:00:00:000";
+        }
+        if (document.getElementById("mediaWindowPlayButton") != null) {
+            document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+        } else {
+            document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
+                document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+            }, { once: true });
+        }
+        timeRemaining = "00:00:00:000"
+        masterPauseState = false;
+        saveMediaFile();
     });
 }
 
@@ -1520,63 +1575,6 @@ async function createMediaWindow() {
     }
 
     await ipcRenderer.invoke('create-media-window', windowOptions);
-
-    if (isActiveMediaWindow()) {
-        mediaWindow.on('closed', async () => {
-            saveMediaFile();
-
-            if (!isImg(mediaFile)) {
-                if (video.src != window.location.href) {
-                    waitForMetadata().then(() => { audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0) });
-                }
-                video.src = mediaFile;
-            }
-
-            let imgEle = null;
-            if (imgEle = document.querySelector('img') && !isImg(mediaFile)) {
-                imgEle.remove();
-                document.getElementById("preview").style.display = '';
-                document.getElementById("cntdndiv").style.display = '';
-            } else if (isImg(mediaFile)) {
-                if (imgEle) {
-                    imgEle.src = mediaFile;
-                } else {
-                    let imgEle = null;
-                    if ((imgEle = document.querySelector('img')) != null) {
-                        imgEle.remove();
-                        document.getElementById("cntdndiv").style.display = '';
-                    }
-                    video.src = '';
-                    img = document.createElement('img');
-                    img.src = mediaFile;
-                    img.setAttribute("id", "preview");
-                    if (!document.getElementById("preview"))
-                        document.getElementById("preview").style.display = 'none';
-                    document.getElementById("preview").parentNode.appendChild(img);
-                    document.getElementById("cntdndiv").style.display = 'none';
-                }
-            }
-            if (video != null) {
-                video.muted = true;
-                video.pause();
-                video.currentTime = 0;
-            }
-            if (document.getElementById("mediaCntDn") != null) {
-                document.getElementById("mediaCntDn").innerText = "00:00:00:000";
-            }
-            if (document.getElementById("mediaWindowPlayButton") != null) {
-                document.getElementById("mediaWindowPlayButton").innerText = "▶️";
-            } else {
-                document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
-                    document.getElementById("mediaWindowPlayButton").innerText = "▶️";
-                }, { once: true });
-            }
-            timeRemaining = "00:00:00:000"
-            masterPauseState = false;
-            saveMediaFile();
-            mediaWindow = null;
-        });
-    }
 
     mediaWindow.loadFile("media.html");
     unPauseMedia();
