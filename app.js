@@ -824,11 +824,6 @@ function setSBFormMediaPlayer() {
     opMode = MEDIAPLAYER;
     ipcRenderer.send('set-mode', opMode);
     resetPlayer();
-    if (isDeadMediaWindow()) {
-        if (document.getElementById("mediaCntDn") != null) {
-            document.getElementById("mediaCntDn").textContent = "00:00:00:000";
-        }
-    }
     document.getElementById("audio").style.display = "none";
     document.getElementById("plystCtrl").style.display = "none";
     if (osName == "Linux") {
@@ -903,6 +898,12 @@ function setSBFormMediaPlayer() {
         <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: calc(1vw + 80%);line-height: 1.2;" id="mediaCntDn">00:00:00:000<span>
         </div>
     `;
+    }
+
+    if (isDeadMediaWindow()) {
+        if (document.getElementById("mediaCntDn") != null) {
+            document.getElementById("mediaCntDn").textContent = "00:00:00:000";
+        }
     }
 
     if (video == null) {
