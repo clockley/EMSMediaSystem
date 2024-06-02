@@ -94,9 +94,11 @@ function updateTimestamp(oneShot) {
             }
             lastUpdateTimeLocalPlayer = time;
         }
-        requestAnimationFrame(update);
+        if (!video.paused)
+            requestAnimationFrame(update);
     };
-    requestAnimationFrame(update);
+    if (!video.paused)
+        requestAnimationFrame(update);
 }
 
 async function installIPCHandler() {
@@ -127,7 +129,7 @@ async function installIPCHandler() {
 
         if (now - lastUpdateTime > .5) {
             if (opMode == MEDIAPLAYER) {
-                if (video != null && !video.seeking) {
+                if (!video.paused && video != null && !video.seeking) {
                     hybridSync(targetTime);
                     lastUpdateTime = now;
                     if (!audioOnlyFile && !video.paused && !activeLiveStream) {
@@ -198,6 +200,7 @@ async function installIPCHandler() {
             video.muted = true;
             video.pause();
             video.currentTime = 0;
+            targetTime = 0;
         }
         if (document.getElementById("mediaCntDn") != null) {
             document.getElementById("mediaCntDn").innerText = "00:00:00:000";
@@ -662,6 +665,7 @@ function waitForMetadata() {
                 resolve(video);
                 return;
             }
+            video.currentTime = 0;
             console.log("Video can play through to the end without buffering.");
             audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
             video.removeEventListener('canplaythrough', onCanPlayThrough);
@@ -692,10 +696,10 @@ function playMedia(e) {
 
     if (document.getElementById("mdFile").value == "" && !playingMediaAudioOnly) {
         if (e.target.textContent = "⏹️") {
-            if (isActiveMediaWindow()) {
-                ipcRenderer.send('close-media-window', 0);
-                saveMediaFile();
-            }
+            ipcRenderer.send('close-media-window', 0);
+            saveMediaFile();
+            video.currentTime = 0;
+            video.pause();
             e.target.textContent = "▶️";
         }
         return;
@@ -748,12 +752,10 @@ function playMedia(e) {
         if (!audioOnlyFile)
             activeLiveStream = true;
         e.target.textContent = "▶️";
-        if (isActiveMediaWindow()) {
-            ipcRenderer.send('close-media-window', 0);
-        }
+        ipcRenderer.send('close-media-window', 0);
+        video.pause();
+        video.currentTime = 0;
         if (audioOnlyFile) {
-            video.pause();
-            video.currentTime = 0;
             activeLiveStream = false;
             saveMediaFile();
             if (document.getElementById('mediaCntDn'))
@@ -1215,11 +1217,9 @@ function installPreviewEventHandlers() {
             }
             updateTimestamp(true);
             if (e.target.isConnected) {
-                if (isActiveMediaWindow()) {
-                    ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-                    ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
-                    resetPIDOnSeek();
-                }
+                ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
+                resetPIDOnSeek();
             }
         });
 
@@ -1233,11 +1233,9 @@ function installPreviewEventHandlers() {
                 return;
             }
             updateTimestamp(true);
-            if (e.target.isConnected && isActiveMediaWindow()) {
-                ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-                ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
-                resetPIDOnSeek();
-            }
+            ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+            ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
+            resetPIDOnSeek();
         });
 
         video.addEventListener('ended', (e) => {
