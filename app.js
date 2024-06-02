@@ -1576,7 +1576,6 @@ async function createMediaWindow() {
 
     await ipcRenderer.invoke('create-media-window', windowOptions);
 
-    mediaWindow.loadFile("media.html");
     unPauseMedia();
     if (opMode != MEDIAPLAYERYT) {
         if (video != null && !isImg(mediaFile)) {
