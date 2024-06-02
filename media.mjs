@@ -1,4 +1,4 @@
-git import hls from './node_modules/hls.js/dist/hls.mjs';
+import hls from './node_modules/hls.js/dist/hls.mjs';
 
 var video = null;
 var img = null;
