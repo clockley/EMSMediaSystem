@@ -1,5 +1,4 @@
-const { ipcRenderer, argv } = window.electron;
-import hls from './node_modules/hls.js/dist/hls.mjs';
+git import hls from './node_modules/hls.js/dist/hls.mjs';
 
 var video = null;
 var img = null;
@@ -54,15 +53,6 @@ async function installICPHandlers() {
 
 function getFileExt(fname) {
     return fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2);
-}
-
-function getHighPrecisionTimestamp() {
-    const currentPerformance = performance.now();
-    const elapsed = currentPerformance - performanceStart;
-    const highPrecisionTimestamp = epochStart + elapsed;
-    const timestampInSeconds = highPrecisionTimestamp * 0.001;
-
-    return timestampInSeconds;
 }
 
 function sendRemainingTime(video) {
