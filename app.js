@@ -1,8 +1,7 @@
 //"use strict";
 //Project Alchemy
 //Copyright 2019 - 2024 Christian Lockley
-const { app, BrowserWindow, ipcRenderer } = require('electron');
-const electron = require('@electron/remote');
+const { app, ipcRenderer } = require('electron');
 const path = require('node:path');
 const { detectSwitcherAddress, connectToAtemSwitcher, changeInput } = require('./switcher');
 var nextFile = null;
@@ -1459,7 +1458,6 @@ function isLiveStream(mediaFile) {
 }
 
 async function createMediaWindow() {
-    const { BrowserWindow } = electron;
     if (!document.getElementById("mdFile").value.includes("fake")) {
         mediaFile = document.getElementById("mdFile").value;
     } else {
