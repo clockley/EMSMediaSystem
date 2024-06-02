@@ -97,7 +97,7 @@ async function initializeIPC() {
 
     ipcMain.handle('create-media-window', (event, windowOptions) => {
       mediaWindow = new BrowserWindow(windowOptions);
-      mediaWindow.openDevTools();
+      //mediaWindow.openDevTools();
       mediaWindow.setMenu(null);
       mediaWindow.loadFile("media.html");
       mediaWindow.on('closed', async () => {
