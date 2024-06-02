@@ -1233,8 +1233,10 @@ function installPreviewEventHandlers() {
                 return;
             }
             updateTimestamp(true);
-            ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-            ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
+            if (e.target.isConnected) {
+                ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
+            }
             resetPIDOnSeek();
         });
 
