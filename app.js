@@ -589,42 +589,45 @@ function setSBFormAlrms() {
     }
 }
 
+
 function vlCtl(v) {
-    if (isActiveMediaWindow()) {
-        mediaWindow.send('vlcl', v);
-    } else if (audioOnlyFile) {
-        video.volume = v;
-    }
+    ipcRenderer.invoke('active-media-window').then( ret => {
+        if (!ret) {
+            ipcRenderer.send('vlcl', v, 0);
+        } else {
+            video.volume = v;
+        }
+    });
 }
 
 async function pauseMedia(e) {
     if (activeLiveStream) {
-        await mediaWindow.send('pauseVideo');
+        await ipcRenderer.send('pauseVideo');
         return;
     }
     if (video.src == window.location.href || isImg(video.src)) {
         return;
     }
 
-    if (isActiveMediaWindow()) {
-        await mediaWindow.send('pauseVideo');
-        targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
-        resetPIDOnSeek();
+    if (!playingMediaAudioOnly) {
+        ipcRenderer.send('pauseVideo');
+        targetTime = await ipcRenderer.invoke('get-media-current-time');
     }
+    resetPIDOnSeek();
 }
 
 async function unPauseMedia(e) {
     if (activeLiveStream) {
-        await mediaWindow.send('playVideo');
+        await ipcRenderer.send('playVideo');
         return;
     }
     if (video.src == window.location.href || isImg(video.src)) {
         return;
     }
 
-    if (isActiveMediaWindow()) {
+    if (!playingMediaAudioOnly) {
         resetPIDOnSeek();
-        await mediaWindow.send('playVideo');
+        await ipcRenderer.send('playVideo');
     }
     if (playingMediaAudioOnly && document.getElementById("mediaWindowPlayButton")) {
         document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
@@ -1217,7 +1220,7 @@ function installPreviewEventHandlers() {
             updateTimestamp(true);
             if (e.target.isConnected) {
                 if (isActiveMediaWindow()) {
-                    mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                    ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                 }
                 (async () => {
                     if (isActiveMediaWindow()) {
@@ -1240,7 +1243,7 @@ function installPreviewEventHandlers() {
             }
             updateTimestamp(true);
             if (e.target.isConnected && isActiveMediaWindow()) {
-                mediaWindow.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                 (async () => {
                     if (isActiveMediaWindow()) {
                         targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
