@@ -1,7 +1,7 @@
 //"use strict";
 //Project Alchemy
 //Copyright 2019 - 2024 Christian Lockley
-const { app, ipcRenderer } = require('electron');
+const { ipcRenderer } = require('electron');
 const path = require('node:path');
 const { detectSwitcherAddress, connectToAtemSwitcher, changeInput } = require('./switcher');
 var nextFile = null;
@@ -372,7 +372,7 @@ function isImg(pathname) {
 }
 
 function getMediaFilesFolder() {
-    return require('path').dirname(require('@electron/remote').app.getPath('exe')) + process && process.type === 'renderer' ? "/../../../." : "/../.";
+    return "/../../../."; //I need to remove this feature, just need to code a replacement
 }
 
 function clearPlaylist() {
