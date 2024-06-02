@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const fs = require('fs');
 
 contextBridge.exposeInMainWorld('electron', {
     ipcRenderer: {
@@ -12,5 +13,6 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.once(channel, (event, ...args) => callback(event, ...args));
     },
     },
-  argv: process.argv
+  argv: process.argv,
+  readdirSync: (dirPath) => fs.readdirSync(dirPath)
 });

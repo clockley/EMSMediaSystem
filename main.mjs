@@ -2,9 +2,12 @@
 //console.time("start");
 import { app, BrowserWindow, ipcMain, globalShortcut, screen } from 'electron';
 import settings from 'electron-settings';
-import rmt from '@electron/remote/main/index.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 let mediaWindow = null;
-rmt.initialize();
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -47,11 +50,11 @@ async function createWindow() {
       autoHideMenuBar: true,
       webPreferences: {
         nodeIntegration: true,
-        contextIsolation: false,
         userGesture: true,
         webSecurity: true,
         backgroundThrottling: false,
-        autoplayPolicy: 'no-user-gesture-required'
+        autoplayPolicy: 'no-user-gesture-required',
+        preload: path.join(__dirname, 'preload.js')
       }
     })
     win.setAspectRatio(1.618);
