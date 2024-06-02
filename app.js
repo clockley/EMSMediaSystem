@@ -1222,12 +1222,6 @@ function installPreviewEventHandlers() {
                 if (isActiveMediaWindow()) {
                     ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                 }
-                (async () => {
-                    if (isActiveMediaWindow()) {
-                        targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
-                        resetPIDOnSeek();
-                    }
-                })().catch(error => console.error('Failed to fetch video current time:', error));
                 targetTime = video.currentTime;
             }
         });
@@ -1244,11 +1238,6 @@ function installPreviewEventHandlers() {
             updateTimestamp(true);
             if (e.target.isConnected && isActiveMediaWindow()) {
                 ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-                (async () => {
-                    if (isActiveMediaWindow()) {
-                        targetTime = await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
-                    }
-                })().catch(error => console.error('Failed to fetch video current time:', error));
                 targetTime = video.currentTime;
             }
         });
