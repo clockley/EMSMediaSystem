@@ -589,7 +589,7 @@ function setSBFormAlrms() {
 
 
 function vlCtl(v) {
-    if (isActiveMediaWindow()) {
+    if (!audioOnlyFile) {
         ipcRenderer.send('vlcl', v, 0);
     } else {
         video.volume = v;
