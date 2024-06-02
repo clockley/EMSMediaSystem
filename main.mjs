@@ -1,9 +1,9 @@
 "use strict";
 //console.time("start");
-import { app, BrowserWindow, ipcMain, globalShortcut, screen} from 'electron';
+import { app, BrowserWindow, ipcMain, globalShortcut, screen } from 'electron';
 import settings from 'electron-settings';
 import rmt from '@electron/remote/main/index.js';
-
+let mediaWindow = null;
 rmt.initialize();
 
 // Keep a global reference of the window object, if you don't, the window will
@@ -21,17 +21,17 @@ var toHHMMSS = (secs) => {
 function debounce(func, delay) {
   let timeoutId = null;
   return (...args) => {
-      if (timeoutId !== null) clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => func.apply(this, args), delay);
+    if (timeoutId !== null) clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => func.apply(this, args), delay);
   };
 }
 
 async function createWindow() {
   ipcMain.on('set-mode', (event, arg) => {
     settings.set('operating-mode', arg)
-        .catch(error => {
-            console.error('Error saving window bounds:', error);
-        });
+      .catch(error => {
+        console.error('Error saving window bounds:', error);
+      });
   });
 
   ipcMain.handle('get-setting', async (event, setting) => {
@@ -60,10 +60,10 @@ async function createWindow() {
 
     const saveWindowBounds = debounce(() => {
       settings.set('windowBounds', win.getBounds())
-          .catch(error => {
-              console.error('Error saving window bounds:', error);
-          });
-  }, 300); 
+        .catch(error => {
+          console.error('Error saving window bounds:', error);
+        });
+    }, 300);
 
     win.on('resize', saveWindowBounds);
     win.setMenu(null);
@@ -86,13 +86,68 @@ async function createWindow() {
     });
   });
   await ipcInitPromise;
-//console.timeEnd("start");
+  //console.timeEnd("start");
 }
 
 async function initializeIPC() {
   return new Promise((resolve) => {
     ipcMain.handle('get-all-displays', () => {
       return screen.getAllDisplays();
+    });
+
+    ipcMain.handle('create-media-window', (event, windowOptions) => {
+      mediaWindow = new BrowserWindow(windowOptions);
+      mediaWindow.openDevTools();
+      mediaWindow.setMenu(null);
+      mediaWindow.loadFile("media.html");
+      mediaWindow.on('closed', async () => {
+        if (win)
+          win.webContents.send('media-window-closed', mediaWindow.id);
+      });
+      return mediaWindow.id;
+    });
+
+    ipcMain.on('is-active-media-window', (event, id) => {
+      event.returnValue = mediaWindow != null && !mediaWindow.isDestroyed();
+    });
+
+    ipcMain.on('is-dead-media-window', (event, id) => {
+      event.returnValue = mediaWindow == null || mediaWindow.isDestroyed();
+    });
+
+    ipcMain.on('vlcl', (event, v, id) => {
+      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+        mediaWindow.send('vlcl', v);
+      }
+    });
+
+    ipcMain.on('timeGoto-message', (event, arg) => {
+      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+        mediaWindow.send('timeGoto-message', arg);
+      }
+    });
+
+    ipcMain.on('pauseVideo', (event, id) => {
+      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+        mediaWindow.send('pauseVideo');
+      }
+    });
+
+    ipcMain.on('playVideo', (event, id) => {
+      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+        mediaWindow.send('playVideo');
+      }
+    });
+
+    ipcMain.handle('get-media-current-time', async () => {
+      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+        return await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+      }
+    });
+
+    ipcMain.on('close-media-window', (event, id) => {
+      if (mediaWindow)
+        mediaWindow.close();
     });
 
     ipcMain.on('timeRemaining-message', (event, arg) => {
