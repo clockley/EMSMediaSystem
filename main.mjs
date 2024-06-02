@@ -54,7 +54,7 @@ async function createWindow() {
         webSecurity: true,
         backgroundThrottling: false,
         autoplayPolicy: 'no-user-gesture-required',
-        preload: path.join(__dirname, 'app_preload.js')
+        preload: path.join(__dirname, 'app_preload.mjs')
       }
     })
     win.setAspectRatio(1.618);
