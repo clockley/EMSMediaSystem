@@ -62,11 +62,11 @@ var toHHMMSS = (secs) => {
 };
 
 function isActiveMediaWindow() {
-    return mediaWindow != null && !mediaWindow.isDestroyed();
+    return ipcRenderer.sendSync('is-active-media-window', 0);
 }
 
 function isDeadMediaWindow() {
-    return mediaWindow == null || mediaWindow.isDestroyed();
+    return ipcRenderer.sendSync('is-dead-media-window', 0);
 }
 
 function updateTimestamp(oneShot) {
