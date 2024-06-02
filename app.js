@@ -607,7 +607,7 @@ async function pauseMedia(e) {
 
     if (!playingMediaAudioOnly) {
         ipcRenderer.send('pauseVideo');
-        targetTime = await ipcRenderer.invoke('get-media-current-time');
+        ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
     }
     resetPIDOnSeek();
 }
@@ -1217,8 +1217,9 @@ function installPreviewEventHandlers() {
             if (e.target.isConnected) {
                 if (isActiveMediaWindow()) {
                     ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+                    ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
+                    resetPIDOnSeek();
                 }
-                targetTime = video.currentTime;
             }
         });
 
@@ -1234,7 +1235,8 @@ function installPreviewEventHandlers() {
             updateTimestamp(true);
             if (e.target.isConnected && isActiveMediaWindow()) {
                 ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-                targetTime = video.currentTime;
+                ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
+                resetPIDOnSeek();
             }
         });
 
