@@ -1428,13 +1428,8 @@ function playFile(path) {
 }
 
 function getPlaylistByWeek(wnum) {
-    const remote = {
-        rmtm: require('@electron/remote'),
-        fs: require('fs')
-    }
-
     try {
-        remote.fs.readdirSync(getMediaFilesFolder() + wnum).forEach(file => {
+        window.electron.readdirSync(getMediaFilesFolder() + wnum).forEach(file => {
             addToPlaylist(getMediaFilesFolder() + wnum, file);
         });
     } catch (err) {
