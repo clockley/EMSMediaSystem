@@ -18,6 +18,5 @@
     "bonjour": "^3.5.0",
     "electron-settings": "^4.0.4",
     "hls.js": "^1.1.5",
-    "lodash": "^4.17.21"
   }
 }
