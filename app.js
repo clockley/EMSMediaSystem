@@ -1,9 +1,8 @@
 //"use strict";
 //Project Alchemy
 //Copyright 2019 - 2024 Christian Lockley
-const { ipcRenderer } = require('electron');
-const path = require('node:path');
-const { detectSwitcherAddress, connectToAtemSwitcher, changeInput } = require('./switcher');
+const { ipcRenderer, path, process, fileURLToPath, __filename, __dirname } = window.electron;
+
 var nextFile = null;
 var timers = [];
 var alarmFileMetadata = [];
@@ -1546,7 +1545,7 @@ async function createMediaWindow() {
                 document.getElementById("mdLpCtlr") != undefined ? '--media-loop=' + document.getElementById("mdLpCtlr").checked : "",
                 '--live-stream=' + liveStreamMode
             ],
-            preload: path.join(__dirname, 'preload.js')
+            preload: path.join(__dirname, 'media_preload.js')
         }
     };
 
