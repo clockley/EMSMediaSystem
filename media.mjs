@@ -1,5 +1,4 @@
-const { ipcRenderer } = window.electron;
-const argv = window.electron.argv;
+const { ipcRenderer, argv } = window.electron;
 import hls from './node_modules/hls.js/dist/hls.mjs';
 
 var video = null;
