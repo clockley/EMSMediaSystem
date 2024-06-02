@@ -59,8 +59,6 @@ async function createWindow() {
     })
     win.setAspectRatio(1.618);
 
-    rmt.enable(win.webContents);
-
     const saveWindowBounds = debounce(() => {
       settings.set('windowBounds', win.getBounds())
         .catch(error => {
