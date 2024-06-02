@@ -1448,8 +1448,6 @@ function getPlaylistByEvent(evnt) {
     getPlaylistByWeek(evnt);
 }
 
-let mediaWindow = null;
-
 function isLiveStream(mediaFile) {
     return mediaFile.includes("m3u8") || mediaFile.includes("mpd") ||
         mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback") || mediaFile.includes("youtu.be");
