@@ -131,7 +131,7 @@ async function installIPCHandler() {
                 if (video != null && !video.seeking) {
                     hybridSync(targetTime);
                     lastUpdateTime = now;
-                    if (mediaWindow && !video.paused) {
+                    if (isActiveMediaWindow() && !video.paused) {
                         dynamicPIDTuning();
                     }
                 }
@@ -638,7 +638,7 @@ function playMedia(e) {
 
     if (document.getElementById("mdFile").value == "" && !playingMediaAudioOnly) {
         if (e.target.textContent = "⏹️") {
-            if (mediaWindow) {
+            if (isActiveMediaWindow()) {
                 mediaWindow.close();
                 saveMediaFile();
             }
@@ -694,7 +694,7 @@ function playMedia(e) {
         if (!audioOnlyFile)
             activeLiveStream = true;
         e.target.textContent = "▶️";
-        if (mediaWindow) {
+        if (isActiveMediaWindow()) {
             mediaWindow.close();
         }
         if (audioOnlyFile) {
@@ -990,8 +990,8 @@ function saveMediaFile() {
         return;
     }
     let liveStream = isLiveStream(mediaFile);
-    if ((mdfileElement != null && (mediaWindow == null && mdfileElement != null &&
-        !(liveStream))) || (isActiveMediaWindow() && mdfileElement != null && liveStream) || activeLiveStream && mediaWindow != null) {
+    if ((mdfileElement != null && (isDeadMediaWindow() && mdfileElement != null &&
+        !(liveStream))) || (isActiveMediaWindow() && mdfileElement != null && liveStream) || activeLiveStream && isActiveMediaWindow()) {
         if (video == null) {
             video = document.getElementById('preview');
         }
@@ -1043,7 +1043,7 @@ function installSidebarFormEvents() {
             if (event.target.value == 'Media Player') {
                 installPreviewEventHandlers();
                 dontSyncRemote = true;
-                if (video && !activeLiveStream && mediaWindow != null) {
+                if (video && !activeLiveStream && isActiveMediaWindow()) {
                     dontSyncRemote = false;
                 }
                 mediaCntDnEle = document.getElementById('mediaCntDn');
@@ -1277,7 +1277,7 @@ function installPreviewEventHandlers() {
             if (audioOnlyFile) {
                 updateTimestamp(false);
             }
-            if (mediaWindow != null) {
+            if (isActiveMediaWindow()) {
                 unPauseMedia();
                 return;
             }
@@ -1519,10 +1519,9 @@ async function createMediaWindow() {
         windowOptions.y = externalDisplay.bounds.y + 50;
     }
 
-    mediaWindow = new BrowserWindow(windowOptions);
+    await ipcRenderer.invoke('create-media-window', windowOptions);
 
-    if (mediaWindow != null) {
-        mediaWindow.setMenu(null);
+    if (isActiveMediaWindow()) {
         mediaWindow.on('closed', async () => {
             saveMediaFile();
 
