@@ -694,7 +694,7 @@ function playMedia(e) {
     if (document.getElementById("mdFile").value == "" && !playingMediaAudioOnly) {
         if (e.target.textContent = "⏹️") {
             if (isActiveMediaWindow()) {
-                mediaWindow.close();
+                ipcRenderer.send('close-media-window', 0);
                 saveMediaFile();
             }
             e.target.textContent = "▶️";
@@ -750,7 +750,7 @@ function playMedia(e) {
             activeLiveStream = true;
         e.target.textContent = "▶️";
         if (isActiveMediaWindow()) {
-            mediaWindow.close();
+            ipcRenderer.send('close-media-window', 0);
         }
         if (audioOnlyFile) {
             video.pause();
