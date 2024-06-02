@@ -1,7 +1,7 @@
 //"use strict";
 //Project Alchemy
 //Copyright 2019 - 2024 Christian Lockley
-const { ipcRenderer, path, process, fileURLToPath, __filename, __dirname } = window.electron;
+const { ipcRenderer, path, process, __filename, __dirname } = window.electron;
 
 var nextFile = null;
 var timers = [];
