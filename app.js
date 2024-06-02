@@ -845,7 +845,7 @@ function setSBFormMediaPlayer() {
                 <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
                 <label for=""mdScrCtrl>Second Monitor</label>
                 <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
-                <label for=""mdLpCtlr>🔁</label>
+                <label for=""mdLpCtlr>Loop</label>
 
                 <label for="volumeControl">🎧</label>
                 <input type="range" class="adwaita-slider" id="volumeControl" min="0" max="1" step="0.01" value="1"
@@ -881,7 +881,7 @@ function setSBFormMediaPlayer() {
             <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
             <label for=""mdScrCtrl>Second Monitor</label>
             <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
-            <label for=""mdLpCtlr>🔁</label>
+            <label for=""mdLpCtlr>Loop</label>
 
             <label for="volumeControl">🎧</label>
             <input type="range" class="WinStyle-slider" id="volumeControl" min="0" max="1" step="0.01" value="1"
