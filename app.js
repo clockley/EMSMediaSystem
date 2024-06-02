@@ -130,7 +130,7 @@ async function installIPCHandler() {
                 if (video != null && !video.seeking) {
                     hybridSync(targetTime);
                     lastUpdateTime = now;
-                    if (isActiveMediaWindow() && !video.paused) {
+                    if (!audioOnlyFile && !video.paused && !activeLiveStream) {
                         dynamicPIDTuning();
                     }
                 }
