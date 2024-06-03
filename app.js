@@ -649,41 +649,31 @@ function pauseButton(e) {
 }
 
 function waitForMetadata() {
-    if (!video || !video.src || isLiveStream(video.src) || isImg(video.src) || video.src == window.location.href) {
+    if (!video || !video.src || video.src === window.location.href || isLiveStream(video.src) || isImg(video.src)) {
         playingMediaAudioOnly = false;
         audioOnlyFile = false;
-        console.log("No source set or it's a live stream, which may not trigger 'loadedmetadata'.");
         return Promise.reject("Invalid source or live stream.");
     }
 
     return new Promise((resolve, reject) => {
-        // Handler for resolving the promise when video is fully loaded
         const onCanPlayThrough = (e) => {
-            if (video.src == window.location.href) {
+            if (video.src === window.location.href) {
                 e.preventDefault();
-                video.removeEventListener('canplaythrough', onCanPlayThrough);
                 resolve(video);
                 return;
             }
             video.currentTime = 0;
-            console.log("Video can play through to the end without buffering.");
             audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
-            video.removeEventListener('canplaythrough', onCanPlayThrough);
             resolve(video);
         };
 
-        // Handler for errors
         const onError = (e) => {
-            console.error("Error loading video:", e);
-            if (video)
-                video.removeEventListener('error', onError);
             reject(e);
         };
 
         video.addEventListener('canplaythrough', onCanPlayThrough, { once: true });
         video.addEventListener('error', onError, { once: true });
 
-        // Trigger loading the video
         video.load();
     });
 }
