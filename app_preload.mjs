@@ -19,8 +19,5 @@ contextBridge.exposeInMainWorld('electron', {
         readFileSync: (filePath, encoding) => fs.readFileSync(filePath, encoding),
         writeFileSync: (filePath, data) => fs.writeFileSync(filePath, data)
     },
-    process: {
-        platform: process.platform
-    },
     __dirname: __dirname
 });
