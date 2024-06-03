@@ -1285,9 +1285,12 @@ function installPreviewEventHandlers() {
                     return;
                 }
                 event.preventDefault();
-                if ((video.duration-video.currentTime) > 0) {
-                    video.play();
-                }
+                video.play().then(() => {
+                    ;
+                }).catch(error => {
+                    playingMediaAudioOnly = false;
+                });
+
                 masterPauseState = false;
                 return;
             }
