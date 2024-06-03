@@ -928,14 +928,15 @@ function setSBFormMediaPlayer() {
                 }
             }
             if (video != null) {
-                if (!isActiveMediaWindow()) {
+                let isActiveMW = isActiveMediaWindow();
+                if (!isActiveMW) {
                     if (!document.getElementById("mdFile").value.includes("fake")) {
                         mediaFile = document.getElementById("mdFile").value;
                     } else {
                         mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
                     }
                 }
-                if (isActiveMediaWindow() && mediaFile != null && !isLiveStream(mediaFile)) {
+                if (isActiveMW && mediaFile != null && !isLiveStream(mediaFile)) {
                     if (video == null) {
                         video = document.getElementById("preview");
                         saveMediaFile();
