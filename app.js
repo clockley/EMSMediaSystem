@@ -974,7 +974,7 @@ function saveMediaFile() {
         return;
     }
 
-    if (playingMediaAudioOnly) {
+    if (playingMediaAudioOnly && opMode == MEDIAPLAYER) {
         mediaFile = mdfileElement.files[0].path;
         return;
     }
