@@ -147,8 +147,10 @@ async function initializeIPC() {
     });
 
     ipcMain.on('close-media-window', (event, id) => {
-      if (mediaWindow)
+      if (mediaWindow) {
+        mediaWindow.hide();
         mediaWindow.close();
+      }
     });
 
     ipcMain.on('timeRemaining-message', (event, arg) => {
