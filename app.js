@@ -691,6 +691,7 @@ function playMedia(e) {
             video.currentTime = 0;
             video.pause();
             e.target.textContent = "▶️";
+            localTimeStampUpdateIsRunning = false;
         }
         return;
     }
@@ -755,6 +756,7 @@ function playMedia(e) {
             }
             audioOnlyFile = false;
         }
+        localTimeStampUpdateIsRunning = false;
         waitForMetadata().then(() => {
             saveMediaFile();
         }).catch((error) => {
@@ -1270,6 +1272,7 @@ function installPreviewEventHandlers() {
             if (video) {
                 video.muted = true;
             }
+            localTimeStampUpdateIsRunning = false;
         });
 
         video.addEventListener('pause', (event) => {
