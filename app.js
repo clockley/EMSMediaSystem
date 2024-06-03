@@ -1514,7 +1514,6 @@ async function createMediaWindow() {
         playingMediaAudioOnly = false;
         if (document.getElementById('mediaCntDn'))
             document.getElementById('mediaCntDn').textContent = "00:00:00:000";
-        saveMediaFile();
         if (video) {
             video.muted = true;
         }
