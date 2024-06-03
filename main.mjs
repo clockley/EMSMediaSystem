@@ -147,7 +147,7 @@ async function initializeIPC() {
     });
 
     ipcMain.on('close-media-window', (event, id) => {
-      if (mediaWindow || !mediaWindow.isDestroyed()) {
+      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
         mediaWindow.hide();
         mediaWindow.close();
       }
