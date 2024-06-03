@@ -1559,11 +1559,10 @@ async function createMediaWindow() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    const platform = process.platform;
+document.addEventListener('DOMContentLoaded', async () => {
     const bodyClass = document.body.classList;
 
-    switch (platform) {
+    switch (await ipcRenderer.invoke('get-platform')) {
         case 'win32':
             osName = 'Windows';
             console.log("Loading Windows 10 styles");
