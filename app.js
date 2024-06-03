@@ -28,6 +28,7 @@ var localTimeStampUpdateIsRunning = false;
 var dontPauseOnPipExit = false;
 var mediaFile;
 var currentMediaFile;
+var fileEnded = false;
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
@@ -1258,6 +1259,8 @@ function installPreviewEventHandlers() {
                 saveMediaFile();
             }
             targetTime = 0;
+            fileEnded = true;
+            video.pause();
             masterPauseState = false;
             resetPIDOnSeek();
             if (video) {
@@ -1267,6 +1270,10 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('pause', (event) => {
+            if (fileEnded) {
+                fileEnded = false;
+                return;
+            }
             if (dontPauseOnPipExit) {
                 dontPauseOnPipExit = false;
                 event.preventDefault();
@@ -1305,6 +1312,9 @@ function installPreviewEventHandlers() {
             }
         });
         video.addEventListener('play', async (event) => {
+            if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
+                audioOnlyFile = true;
+            }
             if (audioOnlyFile) {
                 updateTimestamp(false);
             }
