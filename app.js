@@ -1285,7 +1285,9 @@ function installPreviewEventHandlers() {
                     return;
                 }
                 event.preventDefault();
-                video.play();
+                if ((video.duration-video.currentTime) > 0) {
+                    video.play();
+                }
                 masterPauseState = false;
                 return;
             }
