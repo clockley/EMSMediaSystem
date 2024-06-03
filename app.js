@@ -976,14 +976,16 @@ function setSBFormMediaPlayer() {
 }
 
 function saveMediaFile() {
-    if (playingMediaAudioOnly) {
-        return;
-    }
-    if (!document.getElementById("mdFile")) {
+    var mdfileElement = document.getElementById("mdFile");
+    if (!mdfileElement) {
         return;
     }
 
-    var mdfileElement = document.getElementById("mdFile");
+    if (playingMediaAudioOnly) {
+        mediaFile = mdfileElement.files[0].path;
+        return;
+    }
+
     if (mdfileElement != null && mdfileElement != 'undefined') {
         if (mdfileElement.files != null && mdfileElement.files.length == 0) {
             return;
