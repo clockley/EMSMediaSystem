@@ -112,11 +112,17 @@ function updateTimestamp(oneShot) {
             }
             lastUpdateTimeLocalPlayer = time;
         }
-        if (!video.paused)
+        if (!video.paused) {
             requestAnimationFrame(update);
+        } else {
+            localTimeStampUpdateIsRunning = false;
+        }
     };
-    if (!video.paused)
+    if (!video.paused) {
         requestAnimationFrame(update);
+    } else {
+        localTimeStampUpdateIsRunning = false;
+    }
 }
 
 async function installIPCHandler() {
