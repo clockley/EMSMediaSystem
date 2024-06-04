@@ -687,10 +687,10 @@ function playMedia(e) {
     }
 
     if (e.target.textContent == "▶️") {
+        e.target.textContent = "⏹️";
         if (opMode == MEDIAPLAYER) {
             if (isImg(mediaFile)) {
                 createMediaWindow();
-                e.target.textContent = "⏹️";
                 video.currentTime = 0;
                 if (!video.paused)
                     video.src = '';
@@ -703,22 +703,21 @@ function playMedia(e) {
             playingMediaAudioOnly = true;
             video.play();
             updateTimestamp(false);
-            e.target.textContent = "⏹️";
             return;
         }
-        e.target.textContent = "⏹️";
-        currentMediaFile = document.getElementById("mdFile").files;
 
+        currentMediaFile = document.getElementById("mdFile").files;
+        let mdly = document.getElementById("mdDelay");
         if (opMode == MEDIAPLAYER && document.getElementById("malrm1").value != "") {
             var deadlinestr = "";
             var deadlinestrarr = String(new Date()).split(" ");
             deadlinestrarr[4] = document.getElementById("malrm1").value;
             for (i = 0; i < deadlinestrarr.length; ++i) { deadlinestr += (deadlinestrarr[i] + " ") }
             deadline = new Date(deadlinestr);
-            document.getElementById("mdDelay").value = ((deadline.getTime() - new Date().getTime()) / 1000);
+            mdly.value = ((deadline.getTime() - new Date().getTime()) / 1000);
         }
-        if (document.getElementById("mdDelay") != null) {
-            mediaPlayDelay = setTimeout(createMediaWindow, document.getElementById("mdDelay").value * 1000);
+        if (mdly != null || mdly.value > 0) {
+            mediaPlayDelay = setTimeout(createMediaWindow, mdly.value * 1000);
         } else {
             createMediaWindow();
         }
