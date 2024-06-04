@@ -16,9 +16,23 @@ let ipcInitPromise = null;
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
 
+const padStart = (num, targetLength, padString) => {
+  const numStr = num.toString();
+  const paddingNeeded = targetLength - numStr.length;
 
-var toHHMMSS = (secs) => {
-  return `${((secs / 3600) | 0).toString().padStart(2, '0')}:${(((secs % 3600) / 60) | 0).toString().padStart(2, '0')}:${((secs % 60) | 0).toString().padStart(2, '0')}:${(((secs * 1000) % 1000) | 0).toString().padStart(3, '0')}`;
+  if (paddingNeeded > 0) {
+      let padding = '';
+      for (let i = 0; i < paddingNeeded; i++) {
+          padding += padString;
+      }
+      return padding + numStr;
+  } else {
+      return numStr;
+  }
+};
+
+const toHHMMSS = (secs) => {
+  return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
 };
 
 function debounce(func, delay) {
