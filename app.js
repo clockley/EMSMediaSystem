@@ -1002,13 +1002,13 @@ function saveMediaFile() {
         document.getElementById("preview").style.display = '';
         document.getElementById("cntdndiv").style.display = '';
     }
-
-    if (isImg(mediaFile)) {
+    let iM;
+    if ((iM = isImg(mediaFile))) {
         playingMediaAudioOnly = false;
         audioOnlyFile = false;
     }
 
-    if (isImg(mediaFile) && !document.querySelector('img') && (!isActiveMW)) {
+    if (iM && !document.querySelector('img') && (!isActiveMW)) {
         let imgEle = null;
         if ((imgEle = document.querySelector('img')) != null) {
             imgEle.remove();
