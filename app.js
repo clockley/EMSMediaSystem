@@ -690,6 +690,10 @@ function playMedia(e) {
         e.target = document.getElementById("mediaWindowPlayButton");
     }
 
+    if (encodeURI(mediaFile) != removeFileProtocol(video.src)) {
+        saveMediaFile();
+    }
+
     if (document.getElementById("mdFile").value == "" && !playingMediaAudioOnly) {
         if (e.target.textContent == "⏹️") {
             ipcRenderer.send('close-media-window', 0);
