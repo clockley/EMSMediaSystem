@@ -65,6 +65,10 @@ function isActiveMediaWindow() {
     return ipcRenderer.sendSync('is-active-media-window', 0);
 }
 
+function isActiveMediaWindowAsync() {
+    return ipcRenderer.sendSync('is-active-media-window-async', 0);
+}
+
 function updateTimestamp(oneShot) {
     if (oneShot && mediaCntDnEle) {
         mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
@@ -1306,7 +1310,7 @@ function installPreviewEventHandlers() {
                 }
             }
         });
-        video.addEventListener('play', async (event) => {
+        video.addEventListener('play', (event) => {
             if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
                 audioOnlyFile = true;
             }
@@ -1499,7 +1503,7 @@ async function createMediaWindow() {
         strtVl = document.getElementById('volumeControl').value;
     }
 
-    if (audioOnlyFile && !isActiveMediaWindow()) {
+    if (audioOnlyFile && await !isActiveMediaWindowAsync()) {
         video.muted = false;
         video.volume = document.getElementById('volumeControl').value;
         if (!isImg(mediaFile)) {
