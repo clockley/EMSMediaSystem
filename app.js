@@ -987,7 +987,7 @@ function saveMediaFile() {
         if (opMode != MEDIAPLAYER && dontSyncRemote != true)
             dontSyncRemote = true;
         saveMediaFile.fileInpt = mdfileElement.files;
-        saveMediaFile.urlInpt = mdfileElement.value;
+        saveMediaFile.urlInpt = mdfileElement.value.toLowerCase();
     }
     const isActiveMW = isActiveMediaWindow();
     if (isActiveMW) {
