@@ -65,7 +65,6 @@ function isActiveMediaWindow() {
 }
 
 function updateTimestamp(oneShot) {
-    /*
     if (oneShot && mediaCntDnEle) {
         mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
         return;
@@ -97,7 +96,6 @@ function updateTimestamp(oneShot) {
     };
     if (!video.paused)
         requestAnimationFrame(update);
-    */
 }
 
 async function installIPCHandler() {
