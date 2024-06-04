@@ -47,24 +47,6 @@
         <label for="plystLpctrl">Loop File</label>
       </div>
   </footer>
-  <script>
-    document.querySelectorAll('input[name="plystTyp"]').forEach(input => {
-      input.addEventListener('change', function() {
-        document.querySelectorAll('.tab-content').forEach(content => {
-          content.style.display = 'none';
-        });
-
-        const selectedContentId = `dyneForm${this.value.replace(/\s+/g, '')}`;
-        const selectedContent = document.getElementById(selectedContentId);
-        if (selectedContent) {
-          selectedContent.style.display = 'block';
-        }
-      });
-    });
-
-    // Trigger change event on page load for the initially checked radio button
-    document.querySelector('input[name="plystTyp"]:checked').dispatchEvent(new Event('change'));
-  </script>
 </body>
 
 </html>
