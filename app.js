@@ -1209,9 +1209,6 @@ function installPreviewEventHandlers() {
                 e.preventDefault();
                 return;
             }
-            if (!isActiveMediaWindow()) {
-                return;
-            }
             if (dontSyncRemote == true) {
                 dontSyncRemote = false;
                 console.log("rejected sync");
