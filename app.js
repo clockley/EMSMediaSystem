@@ -81,7 +81,8 @@ function updateTimestamp(oneShot) {
         localTimeStampUpdateIsRunning = false;
         return;
     }
-    localTimeStampUpdateIsRunning = true;
+    if (playingMediaAudioOnly || !video.paused)
+        localTimeStampUpdateIsRunning = true;
     let lastUpdateTimeLocalPlayer = 0;
 
     // Function to update the timestamp text
