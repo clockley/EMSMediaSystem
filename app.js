@@ -65,6 +65,7 @@ function isActiveMediaWindow() {
 }
 
 function updateTimestamp(oneShot) {
+    /*
     if (oneShot && mediaCntDnEle) {
         mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
         return;
@@ -96,6 +97,7 @@ function updateTimestamp(oneShot) {
     };
     if (!video.paused)
         requestAnimationFrame(update);
+    */
 }
 
 async function installIPCHandler() {
@@ -1046,7 +1048,7 @@ function saveMediaFile() {
                 prePathname = mdfileElement.files[0].path;
                 startTime = 0;
             }
-            if (mdfileElement.files) {
+            if (!playingMediaAudioOnly && mdfileElement.files) {
                 video.setAttribute("src", mdfileElement.files[0].path);
                 video.setAttribute("controls", "true");
                 video.setAttribute("disablePictureInPicture", "true");
