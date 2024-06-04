@@ -34,6 +34,7 @@ const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
 const SPECIALEVNTS = 3;
 const ALARMS = 4;
+const imageExtensions = new Set(["bmp", "gif", "jpg", "jpeg", "png", "webp"]);
 
 class AlarmInputState {
     constructor(fileInputValue, timeInputValue) {
@@ -355,19 +356,7 @@ class Timer {
 };
 
 function isImg(pathname) {
-    if (!mediaFile) {
-        return false;
-    }
-    switch ((pathname.slice((pathname.lastIndexOf(".") - 1 >>> 0) + 2)).toLowerCase()) {
-        case "bmp":
-        case "gif":
-        case "jpg":
-        case "jpeg":
-        case "png":
-        case "webp":
-            return true;
-    }
-    return false;
+    return imageExtensions.has(pathname.substring((pathname.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase());
 }
 
 function getMediaFilesFolder() {
@@ -607,7 +596,7 @@ async function pauseMedia(e) {
 
     if (!playingMediaAudioOnly) {
         ipcRenderer.send('pauseVideo');
-        ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
+        ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
     }
     resetPIDOnSeek();
 }
@@ -1206,7 +1195,7 @@ function installPreviewEventHandlers() {
             updateTimestamp(true);
             if (e.target.isConnected) {
                 ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-                ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
+                ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
                 resetPIDOnSeek();
             }
         });
@@ -1223,7 +1212,7 @@ function installPreviewEventHandlers() {
             updateTimestamp(true);
             if (e.target.isConnected) {
                 ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-                ipcRenderer.invoke('get-media-current-time').then(r => {targetTime = r});
+                ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
             }
             resetPIDOnSeek();
         });
