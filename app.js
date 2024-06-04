@@ -839,7 +839,7 @@ function setSBFormMediaPlayer() {
             </form>
             <br>
             <br>
-            <center><video controls id="preview"></video></center>
+            <center><video disablePictureInPicture controls id="preview"></video></center>
             <div id=cntdndiv>
             <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: calc(1vw + 80%);line-height: 1;" id="mediaCntDn">00:00:00:000<span>
             </div>
@@ -875,7 +875,7 @@ function setSBFormMediaPlayer() {
         </form>
         <br>
         <br>
-        <center><video controls id="preview"></video></center>
+        <center><video disablePictureInPicture controls id="preview"></video></center>
         <div id=cntdndiv>
         <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: calc(1vw + 80%);line-height: 1.2;" id="mediaCntDn">00:00:00:000<span>
         </div>
@@ -1048,8 +1048,6 @@ function saveMediaFile() {
                 if ((uncachedLoad = encodeURI(mdfileElement.files[0].path) != removeFileProtocol(video.src))) {
                     video.setAttribute("src", mdfileElement.files[0].path);
                 }
-                video.setAttribute("controls", "true");
-                video.setAttribute("disablePictureInPicture", "true");
                 video.id = "preview";
                 video.currentTime = startTime;
                 video.controlsList = "noplaybackrate";
@@ -1492,8 +1490,6 @@ async function createMediaWindow() {
         if (video == null) {
             video.muted = true;
             video.setAttribute("src", mediaFile);
-            video.setAttribute("controls", "true");
-            video.setAttribute("disablePictureInPicture", "true");
             video.id = "preview";
             video.currentTime = startTime;
             video.controlsList = "noplaybackrate";
