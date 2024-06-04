@@ -1001,7 +1001,7 @@ function saveMediaFile() {
         return;
     }
 
-    if (mdfileElement.files.length != 0 && encodeURI(mdfileElement.files[0].path) == removeFileProtocol(video.src)) {
+    if (mdfileElement.files != null && mdfileElement.files.length != 0 && encodeURI(mdfileElement.files[0].path) == removeFileProtocol(video.src)) {
         return;
     }
 
