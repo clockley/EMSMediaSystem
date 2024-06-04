@@ -689,7 +689,7 @@ function playMedia(e) {
         e = {};
         e.target = document.getElementById("mediaWindowPlayButton");
     }
-
+    fileEnded = false;
     if (encodeURI(mediaFile) != removeFileProtocol(video.src)) {
         saveMediaFile();
     }
@@ -721,6 +721,7 @@ function playMedia(e) {
         if (audioOnlyFile) {
             video.muted = false;
             playingMediaAudioOnly = true;
+            currentMediaFile = document.getElementById("mdFile").files;
             video.play();
             updateTimestamp(false);
             return;
@@ -1353,6 +1354,7 @@ function installPreviewEventHandlers() {
             let mediaScrnPlyBtn = document.getElementById("mediaWindowPlayButton");
             if (mediaScrnPlyBtn && audioOnlyFile) {
                 if (mediaScrnPlyBtn.textContent == '▶️') {
+                    fileEnded = false;
                     video.muted = false;
                     mediaScrnPlyBtn.textContent = '⏹️';
                     audioOnlyFile = true;
