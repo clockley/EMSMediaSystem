@@ -52,7 +52,7 @@ async function createWindow() {
   });
 
   ipcMain.handle('get-setting', async (event, setting) => {
-    return await settings.get(setting);
+    return settings.get(setting);
   });
 
   settings.get('windowBounds').then(windowBounds => {
