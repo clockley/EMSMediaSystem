@@ -994,6 +994,10 @@ function saveMediaFile() {
         return;
     }
 
+    if (mdfileElement.files.length != 0 && encodeURI(mdfileElement.files[0].path) == removeFileProtocol(video.src)) {
+        return;
+    }
+
     if (playingMediaAudioOnly && opMode == MEDIAPLAYER) {
         mediaFile = mdfileElement.files[0].path;
         return;
