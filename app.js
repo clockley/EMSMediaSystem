@@ -1496,11 +1496,6 @@ async function createMediaWindow() {
     }
 
     saveMediaFile();
-    if (opMode != MEDIAPLAYERYT) {
-        if (video.src != window.location.href) {
-            await waitForMetadata().then(() => { audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0) });
-        }
-    }
 
     var displays = await ipcRenderer.invoke('get-all-displays');
     var externalDisplay = null;
