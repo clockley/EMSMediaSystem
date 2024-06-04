@@ -1010,6 +1010,9 @@ function saveMediaFile() {
     }
 
     if (playingMediaAudioOnly && opMode == MEDIAPLAYER) {
+        if (mdfileElement.files[0].length == 0) {
+            return;
+        }
         mediaFile = mdfileElement.files[0].path;
         return;
     }
