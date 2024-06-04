@@ -979,6 +979,9 @@ function setSBFormMediaPlayer() {
             return;
         }
     }
+    if (encodeURI(mediaFile) != removeFileProtocol(video.src)) {
+        saveMediaFile();
+    }
 }
 
 function removeFileProtocol(filePath) {
