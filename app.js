@@ -723,16 +723,15 @@ function playMedia(e) {
         }
         dontSyncRemote = false;
     } else if (e.target.textContent = "⏹️") {
+        ipcRenderer.send('close-media-window', 0);
         playingMediaAudioOnly = false;
         dontSyncRemote = true;
-        //activeLiveStream
         clearTimeout(mediaPlayDelay);
         if (opMode == MEDIAPLAYER)
             document.getElementById('mediaCntDn').textContent = "00:00:00:000";
         if (!audioOnlyFile)
             activeLiveStream = true;
         e.target.textContent = "▶️";
-        ipcRenderer.send('close-media-window', 0);
         video.pause();
         video.currentTime = 0;
         if (audioOnlyFile) {
