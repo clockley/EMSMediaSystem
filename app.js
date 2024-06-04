@@ -1575,10 +1575,9 @@ async function createMediaWindow() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+function loadPlatformCSS(mode) {
     const bodyClass = document.body.classList;
-
-    switch (await ipcRenderer.invoke('get-platform')) {
+    switch (mode) {
         case 'win32':
             osName = 'Windows';
             console.log("Loading Windows 10 styles");
@@ -1600,4 +1599,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             bodyClass.add('WinStyle');
             break;
     }
-});
+}
+
+if (document.readyState == 'interactive') {
+    ipcRenderer.invoke('get-platform').then(mode => {
+        loadPlatformCSS(mode);
+    });
+} else {
+    document.addEventListener('DOMContentLoaded', () => {
+        ipcRenderer.invoke('get-platform').then(mode => {
+            loadPlatformCSS(mode);
+        });
+    });
+}
