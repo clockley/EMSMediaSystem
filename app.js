@@ -899,7 +899,9 @@ function setSBFormMediaPlayer() {
     document.getElementById('volumeControl').value = CrVL;
     document.getElementById("mdFile").addEventListener("change", saveMediaFile)
 
-    if ((!isActiveMediaWindow()) && !playingMediaAudioOnly) {
+    let isActiveMW = isActiveMediaWindow();
+
+    if (!isActiveMW && !playingMediaAudioOnly) {
         document.getElementById("mediaWindowPlayButton").textContent = "▶️";
         document.getElementById("mediaCntDn").textContent = "00:00:00:000";
     } else {
@@ -928,7 +930,6 @@ function setSBFormMediaPlayer() {
                 }
             }
             if (video != null) {
-                let isActiveMW = isActiveMediaWindow();
                 if (!isActiveMW) {
                     if (!document.getElementById("mdFile").value.includes("fake")) {
                         mediaFile = document.getElementById("mdFile").value;
@@ -991,8 +992,8 @@ function saveMediaFile() {
         saveMediaFile.fileInpt = mdfileElement.files;
         saveMediaFile.urlInpt = mdfileElement.value;
     }
-
-    if (isActiveMediaWindow()) {
+    const isActiveMW = isActiveMediaWindow();
+    if (isActiveMW) {
         return;
     }
 
@@ -1014,7 +1015,7 @@ function saveMediaFile() {
         audioOnlyFile = false;
     }
 
-    if (isImg(mediaFile) && !document.querySelector('img') && (!isActiveMediaWindow())) {
+    if (isImg(mediaFile) && !document.querySelector('img') && (!isActiveMW)) {
         let imgEle = null;
         if ((imgEle = document.querySelector('img')) != null) {
             imgEle.remove();
@@ -1033,7 +1034,6 @@ function saveMediaFile() {
         return;
     }
     let liveStream = isLiveStream(mediaFile);
-    const isActiveMW = isActiveMediaWindow();
     if ((mdfileElement != null && (!isActiveMW && mdfileElement != null &&
         !(liveStream))) || (isActiveMW && mdfileElement != null && liveStream) || activeLiveStream && isActiveMW) {
         if (video == null) {
