@@ -1,6 +1,6 @@
 "use strict";
 //console.time("start");
-import { app, BrowserWindow, ipcMain, globalShortcut, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import settings from 'electron-settings';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -82,9 +82,6 @@ async function createWindow() {
 
     win.on('resize', saveWindowBounds);
     win.setMenu(null);
-    globalShortcut.register('Ctrl+Shift+I', () => {
-      win.webContents.toggleDevTools();
-    });
     // and load the index.html of the app.
     win.loadFile('index.html');
     // Open the DevTools.
