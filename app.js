@@ -79,8 +79,9 @@ const toHHMMSS = (secs) => {
 function isActiveMediaWindow() {
     if (isActiveMediaWindowCache == 1) {
         return true;
+    } else if (isActiveMediaWindowCache == -1) {
+        return false;
     }
-    return ipcRenderer.sendSync('is-active-media-window', 0);
 }
 
 function isActiveMediaWindowAsync() {

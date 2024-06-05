@@ -124,10 +124,6 @@ async function initializeIPC() {
       return mediaWindow.id;
     });
 
-    ipcMain.on('is-active-media-window', (event, id) => {
-      event.returnValue = mediaWindow != null && !mediaWindow.isDestroyed();
-    });
-
     ipcMain.handle('is-active-media-window-async', (event, id) => {
       return mediaWindow != null && !mediaWindow.isDestroyed();
     });
