@@ -912,7 +912,6 @@ function setSBFormMediaPlayer() {
 
     if (video == null) {
         video = document.getElementById('preview');
-        saveMediaFile();
     }
 
     restoreMediaFile();
