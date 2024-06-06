@@ -914,7 +914,7 @@ function setSBFormMediaPlayer() {
     }
 
     if (video == null) {
-        video = video = document.getElementById('preview');
+        video = document.getElementById('preview');
         saveMediaFile();
     }
 
