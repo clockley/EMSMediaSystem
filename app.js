@@ -29,6 +29,7 @@ var dontPauseOnPipExit = false;
 var mediaFile;
 var currentMediaFile;
 var fileEnded = false;
+var dyneForm = null;
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
@@ -177,13 +178,11 @@ async function installIPCHandler() {
         if (playbackState.playing && video.paused) {
             masterPauseState = false;
             if (video && !isImg(mediaFile)) {
-                console.log("PLAY");
                 await video.play();
             }
         } else if (!playbackState.playing && !video.paused) {
             masterPauseState = true;
             if (video) {
-                console.log("PAUSE");
                 video.currentTime = playbackState.currentTime; //sync on pause
                 await video.pause();
             }
@@ -417,7 +416,7 @@ function setSBFormWkly() {
     dontSyncRemote = true;
     saveMediaFile();
     resetPlayer();
-    document.getElementById("dyneForm").innerHTML =
+    dyneForm.innerHTML =
         `
     <select id="dtselcter">
     </select>
@@ -446,7 +445,7 @@ function setSBFormSpcl() {
     saveMediaFile();
     resetPlayer();
 
-    document.getElementById("dyneForm").innerHTML =
+    dyneForm.innerHTML =
         `
     <select id="spcleventslst">
         <option value="Communion">Communion</option>
@@ -501,7 +500,6 @@ function setTimer(e) {
     }
 
     var timerID = parseInt(e.target.attributes.getNamedItem("id").value.match(/\d/g).join``.trim());
-    console.log(timerID);
 
     if (document.getElementById("af" + timerID).files.length == 0 && e.target.innerText == "▶️") {
         return;
@@ -579,7 +577,7 @@ function setSBFormAlrms() {
 
     document.getElementById("audio").style.visibility = "hidden";
     document.getElementById("plystCtrl").style.visibility = "hidden";
-    document.getElementById("dyneForm").innerHTML =
+    dyneForm.innerHTML =
         `
         <form id="alrmForm">
             <div id="intrnlArmlFrmDiv">
@@ -654,7 +652,6 @@ function pauseButton(e) {
     if (video.src == window.location.href) {
         return;
     }
-    console.log("PAUSEBUTN");
     if (video != null) {
         if (!video.paused) {
             video.pause();
@@ -798,7 +795,7 @@ function setSBFormYouTubeMediaPlayer() {
 
     document.getElementById("audio").style.display = "none";
     document.getElementById("plystCtrl").style.display = "none";
-    document.getElementById("dyneForm").innerHTML =
+    dyneForm.innerHTML =
         `
         <form>
             <input type="url" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
@@ -840,7 +837,7 @@ function setSBFormMediaPlayer() {
     document.getElementById("audio").style.display = "none";
     document.getElementById("plystCtrl").style.display = "none";
     if (osName == "Linux") {
-        document.getElementById("dyneForm").innerHTML =
+        dyneForm.innerHTML =
             `
             <form>
                 <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
@@ -876,7 +873,7 @@ function setSBFormMediaPlayer() {
             </div>
         `;
     } else {
-        document.getElementById("dyneForm").innerHTML =
+        dyneForm.innerHTML =
             `
         <form>
             <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
@@ -925,14 +922,14 @@ function setSBFormMediaPlayer() {
     mdFile.addEventListener("change", saveMediaFile)
 ;
     let isActiveMW = isActiveMediaWindow();
-
+    let plyBtn = document.getElementById("mediaWindowPlayButton");
     if (!isActiveMW && !playingMediaAudioOnly) {
-        document.getElementById("mediaWindowPlayButton").textContent = "▶️";
+        plyBtn.textContent = "▶️";
         document.getElementById("mediaCntDn").textContent = "00:00:00:000";
     } else {
         document.getElementById('mediaCntDn').textContent = timeRemaining;
         timeRemaining = "00:00:00:000";
-        document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
+        plyBtn.textContent = "⏹️";
         if (typeof currentMediaFile === 'undefined') {
             currentMediaFile = mdFile.files
         } else {
@@ -944,7 +941,7 @@ function setSBFormMediaPlayer() {
         CrVL = this.value;
     });
     dontSyncRemote = true;
-    document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
+    plyBtn.addEventListener("click", playMedia);
     document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseButton);
     if (mdFile != null) {
         if (document.getElementById("preview").parentNode != null) {
@@ -1239,7 +1236,6 @@ function installPreviewEventHandlers() {
             }
             if (dontSyncRemote == true) {
                 dontSyncRemote = false;
-                console.log("rejected sync");
                 return;
             }
             updateTimestamp(true);
@@ -1411,7 +1407,7 @@ function installPreviewEventHandlers() {
 
 async function initPlayer() {
     let mode = await ipcRenderer.invoke('get-setting', "operating-mode");
-
+    dyneForm = document.getElementById("dyneForm");
     switch (mode) {
         case MEDIAPLAYER:
             document.getElementById("MdPlyrRBtnFrmID").checked = true;
@@ -1606,11 +1602,9 @@ function loadPlatformCSS(mode) {
     switch (mode) {
         case 'win32':
             osName = 'Windows';
-            console.log("Loading Windows 10 styles");
             bodyClass.add('WinStyle');
             break;
         case 'darwin':
-            console.log("Unsupported platform will not load any custom styles");
             break;
         case 'linux':
             osName = 'Linux';
@@ -1621,7 +1615,6 @@ function loadPlatformCSS(mode) {
             };
             slider.addEventListener('input', updateSlider);
             updateSlider({target: slider});*/
-            console.log("Loading Win10 styles on Linux");
             bodyClass.add('WinStyle');
             break;
     }
