@@ -921,8 +921,9 @@ function setSBFormMediaPlayer() {
     restoreMediaFile();
     updateTimestamp(false);
     document.getElementById('volumeControl').value = CrVL;
-    document.getElementById("mdFile").addEventListener("change", saveMediaFile)
-
+    let mdFile = document.getElementById("mdFile");
+    mdFile.addEventListener("change", saveMediaFile)
+;
     let isActiveMW = isActiveMediaWindow();
 
     if (!isActiveMW && !playingMediaAudioOnly) {
@@ -933,9 +934,9 @@ function setSBFormMediaPlayer() {
         timeRemaining = "00:00:00:000";
         document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
         if (typeof currentMediaFile === 'undefined') {
-            currentMediaFile = document.getElementById("mdFile").files
+            currentMediaFile = mdFile.files
         } else {
-            document.getElementById("mdFile").files = currentMediaFile;
+            mdFile.files = currentMediaFile;
         }
     }
     document.getElementById('volumeControl').addEventListener('input', function () {
@@ -945,7 +946,7 @@ function setSBFormMediaPlayer() {
     dontSyncRemote = true;
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
     document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseButton);
-    if (document.getElementById("mdFile") != null) {
+    if (mdFile != null) {
         if (document.getElementById("preview").parentNode != null) {
             if (!masterPauseState && video != null && !video.paused) {
                 dontSyncRemote = false;
@@ -955,10 +956,10 @@ function setSBFormMediaPlayer() {
             }
             if (video != null) {
                 if (!isActiveMW) {
-                    if (!document.getElementById("mdFile").value.includes("fake")) {
-                        mediaFile = document.getElementById("mdFile").value;
+                    if (!mdFile.value.includes("fake")) {
+                        mediaFile = mdFile.value;
                     } else {
-                        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+                        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? mdFile.value : mdFile.files[0].path;
                     }
                 }
                 if (isActiveMW && mediaFile != null && !isLiveStream(mediaFile)) {
