@@ -815,6 +815,7 @@ function setSBFormYouTubeMediaPlayer() {
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
 
     if (playingMediaAudioOnly) {
+        document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
         return;
     }
     restoreMediaFile();
