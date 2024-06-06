@@ -193,8 +193,8 @@ async function installIPCHandler() {
     ipcRenderer.on('media-window-closed', async (event, id) => {
         isActiveMediaWindowCache = -1;
         saveMediaFile();
-
-        if (!isImg(mediaFile)) {
+        let isImgFile = isImg(mediaFile);
+        if (!isImgFile) {
             if (video.src != window.location.href) {
                 waitForMetadata().then(() => { audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0) });
             }
@@ -202,11 +202,11 @@ async function installIPCHandler() {
         }
 
         let imgEle = null;
-        if (imgEle = document.querySelector('img') && !isImg(mediaFile)) {
+        if (imgEle = document.querySelector('img') && !isImgFile) {
             imgEle.remove();
             document.getElementById("preview").style.display = '';
             document.getElementById("cntdndiv").style.display = '';
-        } else if (isImg(mediaFile)) {
+        } else if (isImgFile) {
             if (imgEle) {
                 imgEle.src = mediaFile;
             } else {
