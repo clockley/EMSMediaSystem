@@ -57,7 +57,7 @@ let kP = 0.005; // Proportional gain
 let kI = 0.001; // Integral gain
 let kD = 0.003; // Derivative gain
 let synchronizationThreshold = 0.01; // Threshold to keep local video within .01 second of remote
-let isActiveMediaWindowCache = -1;
+let isActiveMediaWindowCache = false;
 
 const padStart = (num, targetLength, padString) => {
     const numStr = num.toString();
@@ -77,11 +77,7 @@ const toHHMMSS = (secs) => {
 };
 
 function isActiveMediaWindow() {
-    if (isActiveMediaWindowCache == 1) {
-        return true;
-    } else if (isActiveMediaWindowCache == -1) {
-        return false;
-    }
+    return isActiveMediaWindowCache;
 }
 
 function isActiveMediaWindowAsync() {
@@ -189,7 +185,7 @@ async function installIPCHandler() {
     });
 
     ipcRenderer.on('media-window-closed', async (event, id) => {
-        isActiveMediaWindowCache = -1;
+        isActiveMediaWindowCache = false;
         saveMediaFile();
         let isImgFile = isImg(mediaFile);
         if (!isImgFile) {
@@ -1588,7 +1584,7 @@ async function createMediaWindow() {
     }
 
     await ipcRenderer.invoke('create-media-window', windowOptions);
-    isActiveMediaWindowCache = 1;
+    isActiveMediaWindowCache = true;
 
     unPauseMedia();
     if (opMode != MEDIAPLAYERYT) {
