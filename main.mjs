@@ -1,6 +1,6 @@
 "use strict";
 //console.time("start");
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker } from 'electron';
 import settings from 'electron-settings';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mediaWindow = null;
+let powerSaveBlockerId = null;
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -112,6 +113,10 @@ async function initializeIPC() {
     ipcMain.handle('create-media-window', (event, windowOptions) => {
       mediaWindow = new BrowserWindow(windowOptions);
       mediaWindow.loadFile("media.html");
+      if (!powerSaveBlockerId) {
+        powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+        console.log("powerSaveBlocker on");
+      }
       mediaWindow.on('closed', () => {
         if (win)
           win.webContents.send('media-window-closed', mediaWindow.id);
@@ -157,6 +162,11 @@ async function initializeIPC() {
       if (mediaWindow != null && !mediaWindow.isDestroyed()) {
         mediaWindow.hide();
         mediaWindow.close();
+      }
+      if (powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+        powerSaveBlocker.stop(powerSaveBlockerId);
+        console.log("powerSaveBlocker off");
+        powerSaveBlockerId = null;
       }
     });
 
