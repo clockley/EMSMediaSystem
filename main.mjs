@@ -18,18 +18,16 @@ app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true'
 
 const padStart = (num, targetLength, padString) => {
   const numStr = num.toString();
-  const paddingNeeded = targetLength - numStr.length;
+  let paddingNeeded = targetLength - numStr.length;
+  let padding = '';
 
-  if (paddingNeeded > 0) {
-      let padding = '';
-      for (let i = 0; i < paddingNeeded; i++) {
-          padding += padString;
-      }
-      return padding + numStr;
-  } else {
-      return numStr;
+  while (paddingNeeded > 0) {
+    padding += padString;
+    paddingNeeded--;
   }
-};
+
+  return padding + numStr;
+}
 
 const toHHMMSS = (secs) => {
   return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
@@ -72,7 +70,7 @@ async function createWindow() {
       }
     })
     win.setAspectRatio(1.618);
-//win.openDevTools();
+    //win.openDevTools();
     const saveWindowBounds = debounce(() => {
       settings.set('windowBounds', win.getBounds())
         .catch(error => {

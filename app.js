@@ -58,20 +58,19 @@ let kI = 0.001; // Integral gain
 let kD = 0.003; // Derivative gain
 let synchronizationThreshold = 0.01; // Threshold to keep local video within .01 second of remote
 let isActiveMediaWindowCache = -1;
+
 const padStart = (num, targetLength, padString) => {
     const numStr = num.toString();
-    const paddingNeeded = targetLength - numStr.length;
+    let paddingNeeded = targetLength - numStr.length;
+    let padding = '';
 
-    if (paddingNeeded > 0) {
-        let padding = '';
-        for (let i = 0; i < paddingNeeded; i++) {
-            padding += padString;
-        }
-        return padding + numStr;
-    } else {
-        return numStr;
+    while (paddingNeeded > 0) {
+        padding += padString;
+        paddingNeeded--;
     }
-};
+
+    return padding + numStr;
+}
 
 const toHHMMSS = (secs) => {
     return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
@@ -919,8 +918,7 @@ function setSBFormMediaPlayer() {
     updateTimestamp(false);
     document.getElementById('volumeControl').value = CrVL;
     let mdFile = document.getElementById("mdFile");
-    mdFile.addEventListener("change", saveMediaFile)
-;
+    mdFile.addEventListener("change", saveMediaFile);
     let isActiveMW = isActiveMediaWindow();
     let plyBtn = document.getElementById("mediaWindowPlayButton");
     if (!isActiveMW && !playingMediaAudioOnly) {
