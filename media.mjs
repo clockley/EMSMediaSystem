@@ -53,7 +53,7 @@ async function installICPHandlers() {
 }
 
 function getFileExt(fname) {
-    return fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2);
+    return (fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2)).toLowerCase();
 }
 
 function sendRemainingTime(video) {
@@ -76,7 +76,7 @@ async function loadMedia() {
     var h = null;
     var isImg = false;
 
-    switch (getFileExt(mediaFile.toLowerCase())) {
+    switch (getFileExt(mediaFile)) {
         case "bmp":
         case "gif":
         case "jpg":
