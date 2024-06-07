@@ -693,7 +693,7 @@ function playMedia(e) {
         e.target = document.getElementById("mediaWindowPlayButton");
     }
     fileEnded = false;
-    if (encodeURI(mediaFile) != removeFileProtocol(video.src)) {
+    if (video != null && encodeURI(mediaFile) != removeFileProtocol(video.src)) {
         saveMediaFile();
     }
 
@@ -741,7 +741,7 @@ function playMedia(e) {
             deadline = new Date(deadlinestr);
             mdly.value = ((deadline.getTime() - new Date().getTime()) / 1000);
         }
-        if (mdly != null || mdly.value > 0) {
+        if (mdly != null && mdly.value > 0) {
             mediaPlayDelay = setTimeout(createMediaWindow, mdly.value * 1000);
         } else {
             createMediaWindow();
@@ -935,8 +935,8 @@ function setSBFormMediaPlayer() {
             mdFile.files = currentMediaFile;
         }
     }
-    dontSyncRemote = true;
     plyBtn.addEventListener("click", playMedia);
+    dontSyncRemote = true;
     document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseButton);
     let isImgFile;
     if (mdFile != null) {
