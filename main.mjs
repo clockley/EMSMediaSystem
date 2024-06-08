@@ -100,6 +100,21 @@ async function createWindow() {
   //console.timeEnd("start");
 }
 
+function disablePowerSave() {
+  if (!powerSaveBlockerId) {
+    powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+    console.log("powerSaveBlocker on");
+  }
+}
+
+function enablePowersave() {
+  if (powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+    powerSaveBlocker.stop(powerSaveBlockerId);
+    console.log("powerSaveBlocker off");
+    powerSaveBlockerId = null;
+  }
+}
+
 async function initializeIPC() {
   return new Promise((resolve) => {
     ipcMain.handle('get-all-displays', () => {
@@ -113,11 +128,9 @@ async function initializeIPC() {
     ipcMain.handle('create-media-window', (event, windowOptions) => {
       mediaWindow = new BrowserWindow(windowOptions);
       mediaWindow.loadFile("media.html");
-      if (!powerSaveBlockerId) {
-        powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
-        console.log("powerSaveBlocker on");
-      }
+      disablePowerSave();
       mediaWindow.on('closed', () => {
+        enablePowersave();
         if (win)
           win.webContents.send('media-window-closed', mediaWindow.id);
       });
@@ -162,11 +175,6 @@ async function initializeIPC() {
       if (mediaWindow != null && !mediaWindow.isDestroyed()) {
         mediaWindow.hide();
         mediaWindow.close();
-      }
-      if (powerSaveBlocker.isStarted(powerSaveBlockerId)) {
-        powerSaveBlocker.stop(powerSaveBlockerId);
-        console.log("powerSaveBlocker off");
-        powerSaveBlockerId = null;
       }
     });
 
