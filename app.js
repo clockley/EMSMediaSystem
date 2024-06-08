@@ -80,10 +80,6 @@ function isActiveMediaWindow() {
     return isActiveMediaWindowCache;
 }
 
-function isActiveMediaWindowAsync() {
-    return ipcRenderer.sendSync('is-active-media-window-async', 0);
-}
-
 function updateTimestamp(oneShot) {
     if (oneShot && mediaCntDnEle) {
         mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
@@ -711,6 +707,7 @@ function playMedia(e) {
 
     if (e.target.textContent == "▶️") {
         e.target.textContent = "⏹️";
+        ipcRenderer.send('disable-powersave');
         if (opMode == MEDIAPLAYER) {
             if (isImg(mediaFile)) {
                 createMediaWindow();
@@ -749,6 +746,7 @@ function playMedia(e) {
         dontSyncRemote = false;
     } else if (e.target.textContent = "⏹️") {
         ipcRenderer.send('close-media-window', 0);
+        ipcRenderer.send('enable-powersave');
         playingMediaAudioOnly = false;
         dontSyncRemote = true;
         clearTimeout(mediaPlayDelay);
@@ -1261,7 +1259,6 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('ended', (e) => {
-            playingMediaAudioOnly = false;
             audioOnlyFile = false;
             if (document.getElementById("mediaWindowPlayButton")) {
                 document.getElementById("mediaWindowPlayButton").textContent = "▶️";
@@ -1365,7 +1362,9 @@ function installPreviewEventHandlers() {
                 if (mediaScrnPlyBtn.textContent == '▶️') {
                     fileEnded = false;
                     video.muted = false;
-                    video.loop = document.getElementById("mdLpCtlr").checked;
+                    if (document.getElementById("mdLpCtlr")) {
+                        video.loop = document.getElementById("mdLpCtlr").checked;
+                    }
                     mediaScrnPlyBtn.textContent = '⏹️';
                     audioOnlyFile = true;
                     playingMediaAudioOnly = true;
@@ -1536,7 +1535,7 @@ async function createMediaWindow() {
         strtVl = document.getElementById('volumeControl').value;
     }
 
-    if (audioOnlyFile && await !isActiveMediaWindowAsync()) {
+    if (audioOnlyFile && !isActiveMediaWindow()) {
         video.muted = false;
         video.loop = document.getElementById("mdLpCtlr").checked;
         video.volume = document.getElementById('volumeControl').value;
