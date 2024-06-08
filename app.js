@@ -1385,7 +1385,9 @@ function installPreviewEventHandlers() {
             } else {
                 if (audioOnlyFile) {
                     video.muted = false;
-                    video.loop = document.getElementById("mdLpCtlr").checked;
+                    if (document.getElementById("mdLpCtlr")) {
+                        video.loop = document.getElementById("mdLpCtlr").checked;
+                    }
                     if (document.getElementById('volumeControl')) {
                         video.volume = document.getElementById('volumeControl').value;
                     }
