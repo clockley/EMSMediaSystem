@@ -401,55 +401,6 @@ function resetPlayer() {
     }
 }
 
-function setSBFormWkly() {
-    opMode = WEKLYSCHD;
-    ipcRenderer.send('set-mode', opMode);
-    dontSyncRemote = true;
-    saveMediaFile();
-    resetPlayer();
-    dyneForm.innerHTML =
-        `
-    <select id="dtselcter">
-    </select>
-    `
-    getPlaylistByWeek(ISO8601_week_no(new Date()));
-    var sel = document.getElementById('dtselcter');
-    var wn = ISO8601_week_no(new Date());
-    for (var i = 1; i <= 52; ++i) {
-        var tmp = document.createElement('option');
-        tmp.selected = i == wn ? true : false;
-        tmp.value = i;
-        tmp.innerText = i;
-        sel.appendChild(tmp);
-    }
-
-    document.getElementById("dtselcter").addEventListener("change", (event) => {
-        resetPlayer();
-        getPlaylistByWeek(event.target.value);
-    })
-}
-
-function setSBFormSpcl() {
-    opMode = SPECIALEVNTS;
-    ipcRenderer.send('set-mode', opMode);
-    dontSyncRemote = true;
-    saveMediaFile();
-    resetPlayer();
-
-    dyneForm.innerHTML =
-        `
-    <select id="spcleventslst">
-        <option value="Communion">Communion</option>
-        <option value="Wedding">Wedding</option>
-    </select>
-    `;
-    getPlaylistByEvent(document.getElementById("spcleventslst").value);
-    document.getElementById("spcleventslst").addEventListener("change", (event) => {
-        resetPlayer();
-        getPlaylistByEvent(event.target.value);
-    })
-}
-
 function saveRestoreAlrmFrm(divId, op) {
     if (typeof saveRestoreAlrmFrm.alrmForm == 'undefined') {
         saveRestoreAlrmFrm.alrmForm = document.getElementById(divId).cloneNode(true);
@@ -1110,8 +1061,6 @@ function restoreMediaFile() {
 }
 
 function installSidebarFormEvents() {
-    document.getElementById("WklyRBtnFrmID").onclick = setSBFormWkly;
-    document.getElementById("SpclRBtnFrmID").onclick = setSBFormSpcl;
     document.getElementById("AlrmsRBtnFrmID").onclick = setSBFormAlrms;
     document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
@@ -1419,14 +1368,6 @@ function initPlayer() {
             case MEDIAPLAYERYT:
                 document.getElementById("YtPlyrRBtnFrmID").checked = true;
                 setSBFormYouTubeMediaPlayer();
-                break;
-            case WEKLYSCHD:
-                document.getElementById("WklyRBtnFrmID").checked = true;
-                setSBFormWkly();
-                break;
-            case SPECIALEVNTS:
-                document.getElementById("SpclRBtnFrmID").checked = true;
-                setSBFormSpcl();
                 break;
             case ALARMS:
                 document.getElementById("AlrmsRBtnFrmID").checked = true;
