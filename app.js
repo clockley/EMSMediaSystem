@@ -1362,6 +1362,7 @@ function installPreviewEventHandlers() {
                 if (mediaScrnPlyBtn.textContent == '▶️') {
                     fileEnded = false;
                     video.muted = false;
+                    ipcRenderer.send('disable-powersave');
                     if (document.getElementById("mdLpCtlr")) {
                         video.loop = document.getElementById("mdLpCtlr").checked;
                     }
@@ -1385,6 +1386,7 @@ function installPreviewEventHandlers() {
             } else {
                 if (audioOnlyFile) {
                     video.muted = false;
+                    ipcRenderer.send('disable-powersave');
                     if (document.getElementById("mdLpCtlr")) {
                         video.loop = document.getElementById("mdLpCtlr").checked;
                     }
