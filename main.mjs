@@ -71,7 +71,6 @@ async function createWindow() {
       }
     })
     win.setAspectRatio(1.618);
-    win.openDevTools();
     const saveWindowBounds = debounce(() => {
       settings.set('windowBounds', win.getBounds())
         .catch(error => {
