@@ -380,10 +380,6 @@ function isImg(pathname) {
     return imageExtensions.has(pathname.substring((pathname.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase());
 }
 
-function getMediaFilesFolder() {
-    return "/../../../."; //I need to remove this feature, just need to code a replacement
-}
-
 function clearPlaylist() {
     document.getElementById("playlist").innerHTML = "";
 }
@@ -1408,22 +1404,6 @@ function playFile(path) {
     audio.load();
     if (path != "")
         return audio.play();
-}
-
-function getPlaylistByWeek(wnum) {
-    try {
-        window.electron.readdirSync(getMediaFilesFolder() + wnum).forEach(file => {
-            addToPlaylist(getMediaFilesFolder() + wnum, file);
-        });
-    } catch (err) {
-        if (err.code == 'ENOENT') {
-            console.log('Finle not found');
-        }
-    }
-}
-
-function getPlaylistByEvent(evnt) {
-    getPlaylistByWeek(evnt);
 }
 
 function isLiveStream(mediaFile) {
