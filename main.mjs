@@ -71,7 +71,7 @@ async function createWindow() {
       }
     })
     win.setAspectRatio(1.618);
-    //win.openDevTools();
+    win.openDevTools();
     const saveWindowBounds = debounce(() => {
       settings.set('windowBounds', win.getBounds())
         .catch(error => {
@@ -128,9 +128,7 @@ async function initializeIPC() {
     ipcMain.handle('create-media-window', (event, windowOptions) => {
       mediaWindow = new BrowserWindow(windowOptions);
       mediaWindow.loadFile("media.html");
-      disablePowerSave();
       mediaWindow.on('closed', () => {
-        enablePowersave();
         if (win)
           win.webContents.send('media-window-closed', mediaWindow.id);
       });
@@ -139,6 +137,14 @@ async function initializeIPC() {
 
     ipcMain.handle('is-active-media-window-async', (event, id) => {
       return mediaWindow != null && !mediaWindow.isDestroyed();
+    });
+
+    ipcMain.on('disable-powersave', () => {
+      disablePowerSave();
+    });
+
+    ipcMain.on('enable-powersave', () => {
+      enablePowersave();
     });
 
     ipcMain.on('vlcl', (event, v, id) => {
