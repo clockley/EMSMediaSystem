@@ -1403,40 +1403,41 @@ function installPreviewEventHandlers() {
     }
 }
 
-async function initPlayer() {
-    let mode = await ipcRenderer.invoke('get-setting', "operating-mode");
-    dyneForm = document.getElementById("dyneForm");
-    switch (mode) {
-        case MEDIAPLAYER:
-            document.getElementById("MdPlyrRBtnFrmID").checked = true;
-            setSBFormMediaPlayer();
-            installPreviewEventHandlers();
-            mediaCntDnEle = document.getElementById('mediaCntDn');
-            document.getElementById("playlist").style.display = 'none';
-            break;
-        case MEDIAPLAYERYT:
-            document.getElementById("YtPlyrRBtnFrmID").checked = true;
-            setSBFormYouTubeMediaPlayer();
-            break;
-        case WEKLYSCHD:
-            document.getElementById("WklyRBtnFrmID").checked = true;
-            setSBFormWkly();
-            break;
-        case SPECIALEVNTS:
-            document.getElementById("SpclRBtnFrmID").checked = true;
-            setSBFormSpcl();
-            break;
-        case ALARMS:
-            document.getElementById("AlrmsRBtnFrmID").checked = true;
-            setSBFormAlrms();
-            break;
-        default:
-            document.getElementById("MdPlyrRBtnFrmID").checked = true;
-            setSBFormMediaPlayer();
-            installPreviewEventHandlers();
-            mediaCntDnEle = document.getElementById('mediaCntDn');
-            document.getElementById("playlist").style.display = 'none';
-    }
+function initPlayer() {
+    ipcRenderer.invoke('get-setting', "operating-mode").then(mode => {
+        dyneForm = document.getElementById("dyneForm");
+        switch (mode) {
+            case MEDIAPLAYER:
+                document.getElementById("MdPlyrRBtnFrmID").checked = true;
+                setSBFormMediaPlayer();
+                installPreviewEventHandlers();
+                mediaCntDnEle = document.getElementById('mediaCntDn');
+                document.getElementById("playlist").style.display = 'none';
+                break;
+            case MEDIAPLAYERYT:
+                document.getElementById("YtPlyrRBtnFrmID").checked = true;
+                setSBFormYouTubeMediaPlayer();
+                break;
+            case WEKLYSCHD:
+                document.getElementById("WklyRBtnFrmID").checked = true;
+                setSBFormWkly();
+                break;
+            case SPECIALEVNTS:
+                document.getElementById("SpclRBtnFrmID").checked = true;
+                setSBFormSpcl();
+                break;
+            case ALARMS:
+                document.getElementById("AlrmsRBtnFrmID").checked = true;
+                setSBFormAlrms();
+                break;
+            default:
+                document.getElementById("MdPlyrRBtnFrmID").checked = true;
+                setSBFormMediaPlayer();
+                installPreviewEventHandlers();
+                mediaCntDnEle = document.getElementById('mediaCntDn');
+                document.getElementById("playlist").style.display = 'none';
+        }
+    });
 }
 
 var ipcprom = installIPCHandler();
