@@ -72,7 +72,19 @@ function sendRemainingTime(video) {
     requestAnimationFrame(send);
 }
 
+function pauseMediaSessionHandler() {
+    ipcRenderer.send('mediasession-pause');;
+    video.pause()
+}
+
+function playMediaSessionHandler() {
+    ipcRenderer.send('mediasession-play');
+    video.play()
+}
+
 async function loadMedia() {
+    navigator.mediaSession.setActionHandler('play', playMediaSessionHandler);
+    navigator.mediaSession.setActionHandler('pause', pauseMediaSessionHandler);
     var h = null;
     var isImg = false;
 

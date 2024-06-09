@@ -189,6 +189,14 @@ async function initializeIPC() {
       }
     });
 
+    ipcMain.on('mediasession-pause', () => {
+      win.webContents.send('mediasession-pause');
+    });
+
+    ipcMain.on('mediasession-play', () => {
+      win.webContents.send('mediasession-play');
+    });
+
     ipcMain.on('playback-state-change', (event, playbackState) => {
       if (win) {
         win.webContents.send('update-playback-state', playbackState);
