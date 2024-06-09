@@ -673,19 +673,23 @@ function playMedia(e) {
                 return;
             }
         }
+        let mdly = document.getElementById("mdDelay");
         audioOnlyFile = opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
         if (audioOnlyFile) {
             video.muted = false;
             video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
             currentMediaFile = document.getElementById("mdFile").files;
+            if (audioOnlyFile && mdly != null && mdly.value > 0) {
+                mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
+                return;
+            }
             video.play();
             updateTimestamp(false);
             return;
         }
 
         currentMediaFile = document.getElementById("mdFile").files;
-        let mdly = document.getElementById("mdDelay");
         if (opMode == MEDIAPLAYER && document.getElementById("malrm1").value != "") {
             var deadlinestr = "";
             var deadlinestrarr = String(new Date()).split(" ");
@@ -1159,6 +1163,11 @@ function ISO8601_week_no(dt) {
     return 1 + Math.ceil((firstThursday - tdt) / 604800000);
 }
 
+function playAudioFileAfterDelay() {
+    video.play();
+    updateTimestamp(false);
+}
+
 function installPreviewEventHandlers() {
     if (!installedVideoEventListener) {
         video.addEventListener('loadstart', function (event) {
@@ -1306,6 +1315,14 @@ function installPreviewEventHandlers() {
             }
         });
         video.addEventListener('play', (event) => {
+            let mdly = document.getElementById("mdDelay");
+            if (audioOnlyFile && mdly != null && mdly.value > 0) {
+                event.preventDefault();
+                mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
+                mdly.value = 0;
+                video.pause();
+                return;
+            }
             mediaSessionPause = false;
             if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
                 audioOnlyFile = true;
@@ -1329,6 +1346,7 @@ function installPreviewEventHandlers() {
                     mediaScrnPlyBtn.textContent = '⏹️';
                     audioOnlyFile = true;
                     playingMediaAudioOnly = true;
+                    updateTimestamp(false);
                     return;
                 }
             }
