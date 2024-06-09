@@ -1320,6 +1320,7 @@ function installPreviewEventHandlers() {
                 event.preventDefault();
                 mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
                 mdly.value = 0;
+                document.getElementById('mediaWindowPlayButton').textContent = "⏹️";
                 video.pause();
                 return;
             }
