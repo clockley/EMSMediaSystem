@@ -30,6 +30,7 @@ var mediaFile;
 var currentMediaFile;
 var fileEnded = false;
 var dyneForm = null;
+var mediaSessionPause = false;
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const WEKLYSCHD = 2;
@@ -178,6 +179,14 @@ async function installIPCHandler() {
                 await video.pause();
             }
         }
+    });
+
+    ipcRenderer.on('mediasession-pause', () => {
+        mediaSessionPause = true;
+    });
+
+    ipcRenderer.on('mediasession-play', () => {
+        mediaSessionPause = false;
     });
 
     ipcRenderer.on('media-window-closed', async (event, id) => {
@@ -1246,6 +1255,9 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('pause', (event) => {
+            if (mediaSessionPause) {
+                return;
+            }
             if (fileEnded) {
                 fileEnded = false;
                 return;
@@ -1293,6 +1305,7 @@ function installPreviewEventHandlers() {
             }
         });
         video.addEventListener('play', (event) => {
+            mediaSessionPause = false;
             if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
                 audioOnlyFile = true;
             }
