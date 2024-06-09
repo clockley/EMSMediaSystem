@@ -1204,6 +1204,7 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('ended', (e) => {
+            ipcRenderer.send('enable-powersave');
             audioOnlyFile = false;
             if (document.getElementById("mediaWindowPlayButton")) {
                 document.getElementById("mediaWindowPlayButton").textContent = "▶️";
