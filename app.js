@@ -1256,6 +1256,7 @@ function installPreviewEventHandlers() {
 
         video.addEventListener('pause', (event) => {
             if (mediaSessionPause) {
+                ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
                 return;
             }
             if (fileEnded) {
