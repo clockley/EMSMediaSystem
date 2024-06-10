@@ -617,6 +617,9 @@ function setSBFormYouTubeMediaPlayer() {
     opMode = MEDIAPLAYERYT;
     ipcRenderer.send('set-mode', opMode);
     resetPlayer();
+    if (mediaFile != null && undeisLiveStream(mediaFile)) {
+        document.getElementById("mdFile").value = mediaFile;
+    }
     if (!isActiveMediaWindow()) {
         if (document.getElementById("mediaCntDn") != null) {
             document.getElementById("mediaCntDn").textContent = "00:00:00:000";
@@ -628,23 +631,16 @@ function setSBFormYouTubeMediaPlayer() {
     dyneForm.innerHTML =
         `
         <form>
-
+        <input type="url" name="mdFile" id="mdFile" placeholder="Paste your video URL here..." style="width: 80%; padding: 15px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; outline: none;" onfocus="this.style.borderColor='#0056b3';" onblur="this.style.borderColor='#ddd';" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
+        <br>
+        <br>
             <select name="dspSelct" id="dspSelct">
                 <option value="" disabled>--Select Display Device--</option>
             </select>
             <br>
             <br>
-
-            <input type="url" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
-
-            <br>
-
-            <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
-            <label for=""mdScrCtrl>Second Monitor</label>
-
-            <br>
-
             <button id="mediaWindowPlayButton" type="button">▶️</button>
+
         </form>
         <br>
     `;
