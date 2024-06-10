@@ -387,7 +387,7 @@ async function unPauseMedia(e) {
         return;
     }
 
-    if (!playingMediaAudioOnly) {
+    if (!playingMediaAudioOnly && e != null && e.target.isConnected) {
         resetPIDOnSeek();
         await ipcRenderer.send('playVideo');
     }
@@ -1110,7 +1110,7 @@ function installPreviewEventHandlers() {
                 updateTimestamp(false);
             }
             if (isActiveMediaWindow()) {
-                unPauseMedia();
+                unPauseMedia(event);
                 return;
             }
             let mediaScrnPlyBtn = document.getElementById("mediaWindowPlayButton");
