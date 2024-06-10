@@ -134,10 +134,6 @@ async function initializeIPC() {
       return mediaWindow.id;
     });
 
-    ipcMain.handle('is-active-media-window-async', (event, id) => {
-      return mediaWindow != null && !mediaWindow.isDestroyed();
-    });
-
     ipcMain.on('disable-powersave', () => {
       disablePowerSave();
     });
