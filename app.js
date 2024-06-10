@@ -4,7 +4,6 @@
 const { ipcRenderer, path, __dirname } = window.electron;
 
 var nextFile = null;
-var timers = [];
 var timeRemaining = "00:00:00:000";
 var dontSyncRemote = false;
 var pidSeeking = false;
@@ -341,55 +340,8 @@ function dynamicPIDTuning() {
     };
 }
 
-
-class Timer {
-    constructor(timeout, callback, timerID) {
-        this.timerID = timerID;
-        this.timeout = timeout;
-        this.callback = callback;
-        this.timerID = timerID;
-        this.active = true;
-        this.audioElement = null;
-        this.timerHandle = setTimeout(this.callback, timeout, this.timerID);
-    }
-    resetTimer() {
-        clearTimeout(this.timerHandle);
-        this.active = false;
-    }
-    setAudioElement(ae) {
-        this.audioElement = ae;
-    }
-    getAudioElement() {
-        return this.audioElement;
-    }
-    stopAudio() {
-        this.resetTimer();
-        if (this.audioElement != null) {
-            this.audioElement.pause();
-            this.audioElement.currentTime = 0;
-        }
-    }
-};
-
 function isImg(pathname) {
     return imageExtensions.has(pathname.substring((pathname.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase());
-}
-
-function clearPlaylist() {
-    document.getElementById("playlist").innerHTML = "";
-}
-
-function resetMediaSrc() {
-    playFile("");
-}
-
-function resetPlayer() {
-    document.getElementById("audio").style.visibility = document.getElementById("plystCtrl").style.visibility = "visible";
-    document.getElementById("audio").style.display = document.getElementById("plystCtrl").style.display = "";
-    if (!playingMediaAudioOnly) {
-        clearPlaylist();
-        resetMediaSrc();
-    }
 }
 
 function saveRestoreAlrmFrm(divId, op) {
@@ -400,31 +352,6 @@ function saveRestoreAlrmFrm(divId, op) {
     } else if (op == "restore" && typeof saveRestoreAlrmFrm.alrmForm != 'undefined') {
         document.getElementById(divId).innerHTML = saveRestoreAlrmFrm.alrmForm.innerHTML;
     }
-}
-
-function registerAudioObj(ID, aObj) {
-    timers[ID - 1].setAudioElement(aObj);
-}
-
-function timerCallback(timerID) {
-    var reader = new FileReader();
-
-    reader.onload = function (e) {
-        var audioElement = new Audio(this.result);
-        audioElement.play();
-        audioElement.addEventListener("ended", function (e) {
-            audioOnlyFile = false;
-            if (document.getElementById("as1") != null) {
-                document.getElementById("as" + timerID).innerText = "▶️";
-            } else {
-                document.getElementById("AlrmsRBtnFrmID").addEventListener("click", function () {
-                    document.getElementById("as" + timerID).innerText = "▶️";
-                }, { once: true });
-            }
-        });
-        registerAudioObj(timerID, audioElement);
-    }
-    reader.readAsDataURL(document.getElementById("af" + timerID).files[0]);
 }
 
 function vlCtl(v) {
@@ -616,7 +543,6 @@ function setSBFormYouTubeMediaPlayer() {
     }
     opMode = MEDIAPLAYERYT;
     ipcRenderer.send('set-mode', opMode);
-    resetPlayer();
 
     if (!isActiveMediaWindow()) {
         if (document.getElementById("mediaCntDn") != null) {
@@ -624,8 +550,6 @@ function setSBFormYouTubeMediaPlayer() {
         }
     }
 
-    document.getElementById("audio").style.display = "none";
-    document.getElementById("plystCtrl").style.display = "none";
     dyneForm.innerHTML =
         `
         <form>
@@ -687,9 +611,7 @@ function setSBFormMediaPlayer() {
     }
     opMode = MEDIAPLAYER;
     ipcRenderer.send('set-mode', opMode);
-    resetPlayer();
-    document.getElementById("audio").style.display = "none";
-    document.getElementById("plystCtrl").style.display = "none";
+
     if (osName == "Linux") {
         dyneForm.innerHTML =
             `
@@ -1015,69 +937,9 @@ function installSidebarFormEvents() {
     });
 }
 
-function endOfPlaylist() {
-    if (document.getElementById("plystLpctrlPlst").checked) {
-        nextFile = getFirstFile();
-        playFile(nextFile.getAttribute("data-path"));
-        setNextFile(nextFile);
-    }
-}
-
-function installOnFileEndEventHandler() {
-    document.getElementById("audio").addEventListener("ended", function (e) {
-        if (e) {
-            if (nextFile == null) {
-                endOfPlaylist();
-                return;
-            }
-            playFile(nextFile.getAttribute("data-path"));
-            setNextFile(nextFile);
-        }
-    });
-}
-
-function installFileLoopCtlEventHandler() {
-    document.getElementById("plystLpctrlLpFl").addEventListener("change", function (e) {
-        if (e) {
-            document.getElementById("audio").loop = e.currentTarget.checked;
-        }
-    });
-}
-
-function getFirstFile() {
-    return document.getElementById("playlist").childNodes[0].firstChild;
-}
-
-function setNextFile(elm) {
-    nextFile = elm.parentNode.nextElementSibling != null ? elm.parentNode.nextElementSibling.childNodes[0] : null;
-}
-
-function installFilePickerEventHandler() {
-    document.getElementById("playlist").addEventListener("click", function (e) {
-        if (e.target.getAttribute("data-path") != null) {
-            setNextFile(e.target);
-            playFile(e.target.getAttribute("data-path"));
-        }
-    });
-}
-
 function installEvents() {
     installSidebarFormEvents();
     installFilePickerEventHandler();
-    installOnFileEndEventHandler();
-    installFileLoopCtlEventHandler();
-}
-
-function ISO8601_week_no(dt) {
-    var tdt = new Date(dt.valueOf());
-    var dayn = (dt.getDay() + 6) % 7;
-    tdt.setDate(tdt.getDate() - dayn + 3);
-    var firstThursday = tdt.valueOf();
-    tdt.setMonth(0, 1);
-    if (tdt.getDay() !== 4) {
-        tdt.setMonth(0, 1 + ((4 - tdt.getDay()) + 7) % 7);
-    }
-    return 1 + Math.ceil((firstThursday - tdt) / 604800000);
 }
 
 function playAudioFileAfterDelay() {
@@ -1333,25 +1195,6 @@ window.addEventListener("load", async (event) => {
     installEvents();
     await ipcprom;
 });
-
-function addToPlaylist(wnum, song) {
-    var li = document.createElement("li");
-    var header = document.createElement("header");
-    header.appendChild(document.createTextNode(song));
-    li.appendChild(header);
-    li.classList.add("plEntry");
-    li.setAttribute("draggable", "true");
-    header.setAttribute("data-path", "../" + wnum + "/" + song);
-    document.getElementById("playlist").appendChild(li);
-}
-
-function playFile(path) {
-    var audio = document.getElementById("audio");
-    document.getElementById("audioSource").src = encodeURI(path);
-    audio.load();
-    if (path != "")
-        return audio.play();
-}
 
 function isLiveStream(mediaFile) {
     return mediaFile.includes("m3u8") || mediaFile.includes("mpd") ||
