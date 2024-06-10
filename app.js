@@ -654,10 +654,10 @@ function setSBFormYouTubeMediaPlayer() {
             el.textContent = `Display ${i + 1} ${displays[i].bounds.width}x${displays[i].bounds.height}`;
             dspSelct.appendChild(el);
 
-            if (dspSelct.options.length > 1) {
-                dspSelct.selectedIndex = 1; // Hardcode 2nd option
-            } else if (dspSelct.options.length === 1) {
-                dspSelct.selectedIndex = 0;
+            if (dspSelct.options.length > 2) {
+                dspSelct.selectedIndex = 2; // Hardcode 2nd option
+            } else if (dspSelct.options.length == 2) {
+                dspSelct.selectedIndex = 1;
             }
         }
     });
@@ -774,10 +774,10 @@ function setSBFormMediaPlayer() {
             el.textContent = `Display ${i + 1} ${displays[i].bounds.width}x${displays[i].bounds.height}`;
             dspSelct.appendChild(el);
 
-            if (dspSelct.options.length > 1) {
-                dspSelct.selectedIndex = 1; // Hardcode 2nd option
-            } else if (dspSelct.options.length === 1) {
-                dspSelct.selectedIndex = 0;
+            if (dspSelct.options.length > 2) {
+                dspSelct.selectedIndex = 2; // Hardcode 2nd option
+            } else if (dspSelct.options.length == 2) {
+                dspSelct.selectedIndex = 1;
             }
         }
     });
