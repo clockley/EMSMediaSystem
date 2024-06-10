@@ -5,7 +5,6 @@ const { ipcRenderer, path, __dirname } = window.electron;
 
 var nextFile = null;
 var timers = [];
-var alarmFileMetadata = [];
 var timeRemaining = "00:00:00:000";
 var dontSyncRemote = false;
 var pidSeeking = false;
@@ -37,19 +36,6 @@ const WEKLYSCHD = 2;
 const SPECIALEVNTS = 3;
 const ALARMS = 4;
 const imageExtensions = new Set(["bmp", "gif", "jpg", "jpeg", "png", "webp"]);
-
-class AlarmInputState {
-    constructor(fileInputValue, timeInputValue) {
-        this.fileInputValue = fileInputValue;
-        this.timeInputValue = timeInputValue;
-    }
-    getTimeInputValue() {
-        return this.timeInputValue;
-    }
-    getFileInputValue() {
-        return this.fileInputValue;
-    }
-}
 
 let lastUpdateTime = 0;
 let lastTimeDifference = 0; // Last time difference for derivative calculation
@@ -440,121 +426,6 @@ function timerCallback(timerID) {
     }
     reader.readAsDataURL(document.getElementById("af" + timerID).files[0]);
 }
-
-function setTimer(e) {
-    if (e.target == undefined) {
-        return;
-    }
-
-    var timerID = parseInt(e.target.attributes.getNamedItem("id").value.match(/\d/g).join``.trim());
-
-    if (document.getElementById("af" + timerID).files.length == 0 && e.target.innerText == "▶️") {
-        return;
-    }
-
-    if (e.target.innerText == "⏹️") {
-        e.target.innerText = "▶️";
-        if (timers[timerID - 1] == null) {
-            return;
-        }
-        timers[timerID - 1].stopAudio();
-        timers[timerID - 1] = null;
-        alarmFileMetadata[timerID - 1] = null;
-        saveRestoreAlrmFrm("dyneForm", "save");
-        return;
-    }
-
-    e.target.innerText = "⏹️"
-
-    saveRestoreAlrmFrm("dyneForm", "save");
-
-    alarmFileMetadata[timerID - 1] = new AlarmInputState(document.getElementById("af" + timerID).files, document.getElementById("alrm" + timerID).value);
-
-    var h = parseInt(document.getElementById("alrm" + timerID).value.split(":")[0]);
-    var m = parseInt(document.getElementById("alrm" + timerID).value.split(":")[1]);
-    var cur = new Date();
-    var duration = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate(), h, m, 0, 0) - cur;
-
-    if (duration < 0) {
-        duration += 86400000;
-    }
-
-    timers[timerID - 1] = new Timer(duration, timerCallback, timerID);
-}
-
-function addAlarm(e) {
-    if (typeof addAlarm.counter == 'undefined') {
-        addAlarm.counter = 4;
-    }
-
-    var x = parseInt(document.getElementById("intrnlArmlFrmDiv").childElementCount - addAlarm.counter) + 1;
-    var nodeInput = document.createElement("input");
-    nodeInput.setAttribute("name", "alrm" + x);
-    nodeInput.setAttribute("type", "time");
-    var nodeLabel = document.createElement("label");
-    var nodeFileInput = document.createElement("input");
-    nodeFileInput.setAttribute("type", "file");
-    var alrmSetBtn = document.createElement("button");
-    alrmSetBtn.setAttribute("id", "as" + x);
-    alrmSetBtn.setAttribute("class", "setTimerButton");
-    alrmSetBtn.setAttribute("type", "button");
-    alrmSetBtn.innerText = "▶️";
-    nodeLabel.setAttribute("for", "alrm" + x);
-    nodeInput.setAttribute("id", "alrm" + x);
-    nodeLabel.innerText = " Alarm " + x + " ";
-    nodeFileInput.setAttribute("id", "af" + x);
-    document.getElementById("intrnlArmlFrmDiv").appendChild(nodeInput);
-    document.getElementById("intrnlArmlFrmDiv").appendChild(nodeLabel);
-    document.getElementById("intrnlArmlFrmDiv").appendChild(nodeFileInput);
-    document.getElementById("intrnlArmlFrmDiv").appendChild(alrmSetBtn);
-    document.getElementById("intrnlArmlFrmDiv").appendChild(document.createElement("br"));
-    addAlarm.counter += 4;
-
-    document.getElementById("as" + x).addEventListener('click', setTimer);
-
-    saveRestoreAlrmFrm("dyneForm", "save");
-}
-
-function setSBFormAlrms() {
-    if (opMode == ALARMS) {
-        return;
-    }
-    opMode = ALARMS;
-    ipcRenderer.send('set-mode', opMode);
-    dontSyncRemote = true;
-    saveMediaFile();
-    resetPlayer();
-
-    document.getElementById("audio").style.visibility = "hidden";
-    document.getElementById("plystCtrl").style.visibility = "hidden";
-    dyneForm.innerHTML =
-        `
-        <form id="alrmForm">
-            <div id="intrnlArmlFrmDiv">
-                <input name="alrm1" id="alrm1" type="time"><label for="alrm1"> Alarm 1 </label><input id="af1" type="file"><button id="as1" type="button" class="setTimerButton">▶️</button>
-                <br>
-            </div>
-            <button id="addAlrm" type="button">+</button>
-        </form>
-    `;
-    saveRestoreAlrmFrm("dyneForm", "restore");
-
-    for (var i = 1; i <= alarmFileMetadata.length; ++i) {
-        if (alarmFileMetadata[i - 1] == null) {
-            continue;
-        }
-        document.getElementById("alrm" + i).value = alarmFileMetadata[i - 1].getTimeInputValue();
-        document.getElementById("af" + i).files = alarmFileMetadata[i - 1].getFileInputValue();
-    }
-
-    document.getElementById("addAlrm").addEventListener("click", addAlarm);
-
-    var setAlrmButtonList = document.getElementsByClassName("setTimerButton");
-    for (var i = 0; i < setAlrmButtonList.length; i++) {
-        setAlrmButtonList[i].addEventListener('click', setTimer);
-    }
-}
-
 
 function vlCtl(v) {
     if (!audioOnlyFile) {
@@ -1119,7 +990,6 @@ function restoreMediaFile() {
 }
 
 function installSidebarFormEvents() {
-    document.getElementById("AlrmsRBtnFrmID").onclick = setSBFormAlrms;
     document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
 
@@ -1447,10 +1317,6 @@ function initPlayer() {
             case MEDIAPLAYERYT:
                 document.getElementById("YtPlyrRBtnFrmID").checked = true;
                 setSBFormYouTubeMediaPlayer();
-                break;
-            case ALARMS:
-                document.getElementById("AlrmsRBtnFrmID").checked = true;
-                setSBFormAlrms();
                 break;
             default:
                 document.getElementById("MdPlyrRBtnFrmID").checked = true;
