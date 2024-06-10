@@ -757,6 +757,13 @@ function setSBFormYouTubeMediaPlayer() {
     dyneForm.innerHTML =
         `
         <form>
+
+            <select name="dspSelct" id="dspSelct">
+                <option value="" disabled>--Select Display Device--</option>
+            </select>
+            <br>
+            <br>
+
             <input type="url" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
 
             <br>
@@ -770,6 +777,21 @@ function setSBFormYouTubeMediaPlayer() {
         </form>
         <br>
     `;
+
+    ipcRenderer.invoke('get-all-displays').then(displays => {
+        for (let i = 0; i < displays.length; i++) {
+            var el = document.createElement("option");
+            let dspSelct = document.getElementById("dspSelct");
+            el.textContent = `Display ${i + 1} ${displays[i].bounds.width}x${displays[i].bounds.height}`;
+            dspSelct.appendChild(el);
+
+            if (dspSelct.options.length > 1) {
+                dspSelct.selectedIndex = 1; // Hardcode 2nd option
+            } else if (dspSelct.options.length === 1) {
+                dspSelct.selectedIndex = 0;
+            }
+        }
+    });
 
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
 
@@ -812,8 +834,9 @@ function setSBFormMediaPlayer() {
     
                 <input name="malrm1" id="malrm1" type="time">
                 <label for="malrm1"> Schedule </label>
-                <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
-                <label for=""mdScrCtrl>Second Monitor</label>
+                <select name="dspSelct" id="dspSelct">
+                    <option value="" disabled>--Select Display Device--</option>
+                </select>
                 <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
                 <label for=""mdLpCtlr>Loop</label>
 
@@ -848,8 +871,10 @@ function setSBFormMediaPlayer() {
 
             <input name="malrm1" id="malrm1" type="time">
             <label for="malrm1"> Schedule </label>
-            <input checked type="checkbox" name="mdScrCtlr" id="mdScrCtlr">
-            <label for=""mdScrCtrl>Second Monitor</label>
+            <select name="dspSelct" id="dspSelct">
+                <option value="" disabled>--Select Display Device--</option>
+            </select>
+
             <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
             <label for=""mdLpCtlr>Loop</label>
 
@@ -872,6 +897,21 @@ function setSBFormMediaPlayer() {
         </div>
     `;
     }
+
+    ipcRenderer.invoke('get-all-displays').then(displays => {
+        for (let i = 0; i < displays.length; i++) {
+            var el = document.createElement("option");
+            let dspSelct = document.getElementById("dspSelct");
+            el.textContent = `Display ${i + 1} ${displays[i].bounds.width}x${displays[i].bounds.height}`;
+            dspSelct.appendChild(el);
+
+            if (dspSelct.options.length > 1) {
+                dspSelct.selectedIndex = 1; // Hardcode 2nd option
+            } else if (dspSelct.options.length === 1) {
+                dspSelct.selectedIndex = 0;
+            }
+        }
+    });
 
     if (video == null) {
         video = document.getElementById('preview');
@@ -1472,12 +1512,7 @@ async function createMediaWindow() {
 
     var displays = await ipcRenderer.invoke('get-all-displays');
     var externalDisplay = null;
-    for (var i in displays) {
-        if (displays[i].bounds.x != 0 || displays[i].bounds.y != 0) {
-            externalDisplay = displays[i];
-            break;
-        }
-    }
+    externalDisplay = displays[document.getElementById("dspSelct").selectedIndex - 1];
     activeLiveStream = liveStreamMode;
     if (liveStreamMode == false) {
         if (video == null) {
@@ -1529,8 +1564,8 @@ async function createMediaWindow() {
     const windowOptions = {
         backgroundColor: '#00000000',
         transparent: true,
-        width: externalDisplay && document.getElementById("mdScrCtlr").checked ? externalDisplay.width : displays[0].width,
-        height: externalDisplay && document.getElementById("mdScrCtlr").checked ? externalDisplay.height : displays[0].height,
+        width: externalDisplay.width,
+        height: externalDisplay.height,
         fullscreen: true,
         frame: false,
         webPreferences: {
@@ -1546,10 +1581,8 @@ async function createMediaWindow() {
         }
     };
 
-    if (externalDisplay && document.getElementById("mdScrCtlr").checked) {
-        windowOptions.x = externalDisplay.bounds.x + 50;
-        windowOptions.y = externalDisplay.bounds.y + 50;
-    }
+    windowOptions.x = externalDisplay.bounds.x + 50;
+    windowOptions.y = externalDisplay.bounds.y + 50;
 
     await ipcRenderer.invoke('create-media-window', windowOptions);
     isActiveMediaWindowCache = true;
