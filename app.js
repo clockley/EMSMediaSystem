@@ -617,9 +617,7 @@ function setSBFormYouTubeMediaPlayer() {
     opMode = MEDIAPLAYERYT;
     ipcRenderer.send('set-mode', opMode);
     resetPlayer();
-    if (mediaFile != null && undeisLiveStream(mediaFile)) {
-        document.getElementById("mdFile").value = mediaFile;
-    }
+
     if (!isActiveMediaWindow()) {
         if (document.getElementById("mediaCntDn") != null) {
             document.getElementById("mediaCntDn").textContent = "00:00:00:000";
@@ -644,6 +642,10 @@ function setSBFormYouTubeMediaPlayer() {
         </form>
         <br>
     `;
+
+    if (mediaFile != null && isLiveStream(mediaFile)) {
+        document.getElementById("mdFile").value = mediaFile;
+    }
 
     ipcRenderer.invoke('get-all-displays').then(displays => {
         for (let i = 0; i < displays.length; i++) {
