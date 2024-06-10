@@ -926,9 +926,7 @@ function installSidebarFormEvents() {
                 if (masterPauseState) {
                     mediaCntDnEle.textContent = savedCurTime;
                 }
-                document.getElementById("playlist").style.display = 'none';
             } else {
-                document.getElementById("playlist").style.display = '';
                 if (mediaCntDnEle)
                     savedCurTime = mediaCntDnEle.textContent;
                 mediaCntDnEle = null;
@@ -1171,7 +1169,6 @@ function initPlayer() {
                 setSBFormMediaPlayer();
                 installPreviewEventHandlers();
                 mediaCntDnEle = document.getElementById('mediaCntDn');
-                document.getElementById("playlist").style.display = 'none';
                 break;
             case MEDIAPLAYERYT:
                 document.getElementById("YtPlyrRBtnFrmID").checked = true;
@@ -1182,7 +1179,6 @@ function initPlayer() {
                 setSBFormMediaPlayer();
                 installPreviewEventHandlers();
                 mediaCntDnEle = document.getElementById('mediaCntDn');
-                document.getElementById("playlist").style.display = 'none';
         }
     });
 }
