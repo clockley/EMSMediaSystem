@@ -516,6 +516,9 @@ function addAlarm(e) {
 }
 
 function setSBFormAlrms() {
+    if (opMode == ALARMS) {
+        return;
+    }
     opMode = ALARMS;
     ipcRenderer.send('set-mode', opMode);
     dontSyncRemote = true;
@@ -737,6 +740,9 @@ function playMedia(e) {
 }
 
 function setSBFormYouTubeMediaPlayer() {
+    if (opMode == MEDIAPLAYERYT) {
+        return;
+    }
     opMode = MEDIAPLAYERYT;
     ipcRenderer.send('set-mode', opMode);
     resetPlayer();
@@ -785,6 +791,9 @@ function setSBFormYouTubeMediaPlayer() {
 }
 
 function setSBFormMediaPlayer() {
+    if (opMode == MEDIAPLAYER) {
+        return;
+    }
     opMode = MEDIAPLAYER;
     ipcRenderer.send('set-mode', opMode);
     resetPlayer();
