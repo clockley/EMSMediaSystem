@@ -939,7 +939,6 @@ function installSidebarFormEvents() {
 
 function installEvents() {
     installSidebarFormEvents();
-    installFilePickerEventHandler();
 }
 
 function playAudioFileAfterDelay() {
