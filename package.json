@@ -11,7 +11,7 @@
   "license": "GPL-3.0-or-later",
   "devDependencies": {
     "@electron/packager": "^18.3.2",
-    "electron": "^30.0.6"
+    "electron": "^31.0.0"
   },
   "dependencies": {
     "atem-connection": "^3.5.0",
