@@ -83,7 +83,7 @@ async function createWindow() {
     // and load the index.html of the app.
     win.loadFile('index.html');
     // Open the DevTools.
-      //win.webContents.openDevTools()
+    //win.webContents.openDevTools()
 
     // Emitted when the window is closed.
     win.on('closed', () => {
@@ -100,19 +100,24 @@ async function createWindow() {
 }
 
 function disablePowerSave() {
-  if (!powerSaveBlockerId) {
+  if (powerSaveBlockerId === null) {
     powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
-    console.log("powerSaveBlocker on");
+    console.log('Power Save Blocker started:', powerSaveBlockerId);
+  } else {
+    console.log('Power Save Blocker is already active:', powerSaveBlockerId);
   }
 }
 
 function enablePowersave() {
-  if (powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+  if (powerSaveBlockerId !== null) {
     powerSaveBlocker.stop(powerSaveBlockerId);
-    console.log("powerSaveBlocker off");
+    console.log('Power Save Blocker stopped:', powerSaveBlockerId);
     powerSaveBlockerId = null;
+  } else {
+    console.log('No active Power Save Blocker to stop.');
   }
 }
+
 
 async function initializeIPC() {
   return new Promise((resolve) => {
