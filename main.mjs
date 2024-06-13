@@ -36,9 +36,12 @@ const toHHMMSS = (secs) => {
 
 function debounce(func, delay) {
   let timeoutId = null;
+  const boundFunc = func.bind(this);
   return (...args) => {
-    if (timeoutId !== null) clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => func.apply(this, args), delay);
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+    timeoutId = setTimeout(() => boundFunc(...args), delay);
   };
 }
 
