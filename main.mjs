@@ -162,15 +162,13 @@ async function initializeIPC() {
       }
     });
 
-    ipcMain.on('pauseVideo', (event, id) => {
+    ipcMain.on('play-ctl', (event, cmd, id) => {
       if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-        mediaWindow.send('pauseVideo');
-      }
-    });
-
-    ipcMain.on('playVideo', (event, id) => {
-      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-        mediaWindow.send('playVideo');
+        if (cmd == "play") {
+          mediaWindow.send('playVideo');
+        } else {
+          mediaWindow.send('pauseVideo');
+        }
       }
     });
 

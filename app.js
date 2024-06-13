@@ -362,7 +362,7 @@ function vlCtl(v) {
 
 async function pauseMedia(e) {
     if (activeLiveStream) {
-        await ipcRenderer.send('pauseVideo');
+        await ipcRenderer.send('play-ctl', 'pause');
         return;
     }
     if (video.src == window.location.href || isImg(video.src)) {
@@ -370,7 +370,7 @@ async function pauseMedia(e) {
     }
 
     if (!playingMediaAudioOnly) {
-        ipcRenderer.send('pauseVideo');
+        await ipcRenderer.send('play-ctl', 'pause');
         ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
     }
     resetPIDOnSeek();
@@ -378,7 +378,7 @@ async function pauseMedia(e) {
 
 async function unPauseMedia(e) {
     if (activeLiveStream) {
-        await ipcRenderer.send('playVideo');
+        await ipcRenderer.send('play-ctl', 'play');
         return;
     }
     if (video.src == window.location.href || isImg(video.src)) {
@@ -387,7 +387,7 @@ async function unPauseMedia(e) {
 
     if (!playingMediaAudioOnly && e != null && e.target.isConnected) {
         resetPIDOnSeek();
-        await ipcRenderer.send('playVideo');
+        await ipcRenderer.send('play-ctl', 'play');
     }
     if (playingMediaAudioOnly && document.getElementById("mediaWindowPlayButton")) {
         document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
