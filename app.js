@@ -23,7 +23,6 @@ var CrVL = 1;
 var opMode = -1;
 var osName = '';
 var localTimeStampUpdateIsRunning = false;
-var dontPauseOnPipExit = false;
 var mediaFile;
 var currentMediaFile;
 var fileEnded = false;
@@ -35,7 +34,6 @@ const WEKLYSCHD = 2;
 const SPECIALEVNTS = 3;
 const ALARMS = 4;
 const imageExtensions = new Set(["bmp", "gif", "jpg", "jpeg", "png", "webp"]);
-
 let lastUpdateTime = 0;
 let lastTimeDifference = 0; // Last time difference for derivative calculation
 let integral = 0; // Integral sum for error accumulation
@@ -1046,12 +1044,6 @@ function installPreviewEventHandlers() {
             }
             if (fileEnded) {
                 fileEnded = false;
-                return;
-            }
-            if (dontPauseOnPipExit) {
-                dontPauseOnPipExit = false;
-                event.preventDefault();
-                video.play();
                 return;
             }
             if (!event.target.isConnected) {
