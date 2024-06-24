@@ -39,12 +39,12 @@ async function installICPHandlers() {
         });
     }
 
-    ipcRenderer.on('pauseVideo', async function () {
-        video.pause();
-    });
-
-    ipcRenderer.on('playVideo', async function () {
-        await video.play();
+    ipcRenderer.on('play-ctl', async function (event, cmd) {
+        if (cmd == "pause") {
+            video.pause();
+        } else if (cmd == "play") {
+            await video.play();
+        }
     });
 
     ipcRenderer.on('vlcl', function (evt, message) {
