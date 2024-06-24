@@ -164,11 +164,7 @@ async function initializeIPC() {
 
     ipcMain.on('play-ctl', (event, cmd, id) => {
       if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-        if (cmd == "play") {
-          mediaWindow.send('playVideo');
-        } else {
-          mediaWindow.send('pauseVideo');
-        }
+          mediaWindow.send('play-ctl', cmd);
       }
     });
 
