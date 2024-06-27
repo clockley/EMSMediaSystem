@@ -1190,10 +1190,9 @@ function isLiveStream(mediaFile) {
 
 async function createMediaWindow() {
     mediaFile = opMode == MEDIAPLAYERYT ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
-    var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
+    var liveStreamMode = isLiveStream(mediaFile);
 
     if (liveStreamMode == false && video != null) {
-        //video.pause();
         startTime = video.currentTime;
     }
 
