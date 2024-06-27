@@ -1,4 +1,4 @@
-//"use strict";
+"use strict";
 //Project Alchemy
 //Copyright 2019 - 2024 Christian Lockley
 const { ipcRenderer, path, __dirname } = window.electron;
