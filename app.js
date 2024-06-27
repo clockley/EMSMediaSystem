@@ -1233,11 +1233,13 @@ async function createMediaWindow() {
         strtVl = document.getElementById('volumeControl').value;
     }
 
+    const isImgFile = isImg(mediaFile);
+
     if (audioOnlyFile && !isActiveMediaWindow()) {
         video.muted = false;
         video.loop = document.getElementById("mdLpCtlr").checked;
         video.volume = document.getElementById('volumeControl').value;
-        if (!isImg(mediaFile)) {
+        if (!isImgFile) {
             await video.play();
         } else {
             video.src = '';
@@ -1269,7 +1271,7 @@ async function createMediaWindow() {
                 '--start-vol=' + strtVl,
                 '--mediafile-ems=' + encodeURIComponent(mediaFile),
                 document.getElementById("mdLpCtlr") != undefined ? '--media-loop=' + document.getElementById("mdLpCtlr").checked : "",
-                '--live-stream=' + liveStreamMode
+                '--live-stream=' + liveStreamMode, isImgFile ? "--isImg" : ""
             ],
             preload: path.join(__dirname, 'media_preload.js')
         }
@@ -1283,7 +1285,7 @@ async function createMediaWindow() {
 
     unPauseMedia();
     if (opMode != MEDIAPLAYERYT) {
-        if (video != null && !isImg(mediaFile)) {
+        if (video != null && !isImgFile) {
             await video.play();
         }
     }

@@ -9,6 +9,7 @@ var strtvl = 1;
 var strtTm = 0;
 var liveStreamMode = false;
 var prom = null;
+var isImg = false;
 for (const arg of argv) {
     if (arg.startsWith('--mediafile-ems=')) {
         mediaFile = arg.substring(16);
@@ -20,6 +21,8 @@ for (const arg of argv) {
         strtTm = parseFloat(arg.substring(13));
     } else if (arg === '--live-stream=true') {
         liveStreamMode = true;
+    } else if (arg === '--isImg') {
+        isImg = true;
     }
 }
 
@@ -52,10 +55,6 @@ async function installICPHandlers() {
     });
 }
 
-function getFileExt(fname) {
-    return (fname.slice((fname.lastIndexOf(".") - 1 >>> 0) + 2)).toLowerCase();
-}
-
 function sendRemainingTime(video) {
     let lastTime = 0;  // Last time the message was sent
     const interval = 1000 / 30;  // Set the interval for 30 updates per second
@@ -86,20 +85,6 @@ async function loadMedia() {
     navigator.mediaSession.setActionHandler('play', playMediaSessionHandler);
     navigator.mediaSession.setActionHandler('pause', pauseMediaSessionHandler);
     var h = null;
-    var isImg = false;
-
-    switch (getFileExt(mediaFile)) {
-        case "bmp":
-        case "gif":
-        case "jpg":
-        case "jpeg":
-        case "png":
-        case "webp":
-            isImg = true;
-            break;
-        default:
-            isImg = false;
-    }
 
     if (isImg) {
         img = document.createElement('img');
