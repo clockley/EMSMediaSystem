@@ -3,7 +3,6 @@
 //Copyright 2019 - 2024 Christian Lockley
 const { ipcRenderer, path, __dirname } = window.electron;
 
-var nextFile = null;
 var timeRemaining = "00:00:00:000";
 var dontSyncRemote = false;
 var pidSeeking = false;
@@ -17,7 +16,6 @@ var prePathname = '';
 var savedCurTime = '';
 var playingMediaAudioOnly = false;
 var audioOnlyFile = false;
-var installedVideoEventListener = false;
 var mediaCntDnEle = null;
 var CrVL = 1;
 var opMode = -1;
@@ -939,7 +937,7 @@ function playAudioFileAfterDelay() {
 }
 
 function installPreviewEventHandlers() {
-    if (!installedVideoEventListener) {
+    if (!installPreviewEventHandlers.installedVideoEventListener) {
         video.addEventListener('loadstart', function (event) {
             if (video.src == window.location.href) {
                 event.preventDefault();
@@ -1144,7 +1142,7 @@ function installPreviewEventHandlers() {
         });
 
 
-        installedVideoEventListener = true;
+        installPreviewEventHandlers.installedVideoEventListener = true;
     }
 }
 
