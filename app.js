@@ -365,7 +365,7 @@ async function pauseMedia(e) {
         await ipcRenderer.send('play-ctl', 'pause');
         return;
     }
-    if (video.src == window.location.href || isImg(video.src)) {
+    if (video.src == window.location.href || video.readyState == 0) {
         return;
     }
 
@@ -381,7 +381,7 @@ async function unPauseMedia(e) {
         await ipcRenderer.send('play-ctl', 'play');
         return;
     }
-    if (video.src == window.location.href || isImg(video.src)) {
+    if (video.src == window.location.href || video.readyState == 0) {
         return;
     }
 
