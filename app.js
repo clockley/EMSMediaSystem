@@ -826,11 +826,7 @@ function saveMediaFile() {
         return;
     }
 
-    if (!mdfileElement.value.includes("fake")) {
-        mediaFile = mdfileElement.value;
-    } else {
-        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? mdfileElement.value : mdfileElement.files[0].path;
-    }
+    mediaFile = opMode == MEDIAPLAYERYT ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
 
     let imgEle = null;
     if (imgEle = document.querySelector('img')) {
