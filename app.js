@@ -1189,12 +1189,7 @@ function isLiveStream(mediaFile) {
 }
 
 async function createMediaWindow() {
-    if (!document.getElementById("mdFile").value.includes("fake")) {
-        mediaFile = document.getElementById("mdFile").value;
-    } else {
-        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
-    }
-
+    mediaFile = opMode == MEDIAPLAYERYT ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
     var liveStreamMode = (mediaFile.includes("m3u8") || mediaFile.includes("mpd") || mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback")) == true ? true : false;
 
     if (liveStreamMode == false && video != null) {
