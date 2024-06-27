@@ -3,7 +3,6 @@
 //Copyright 2019 - 2024 Christian Lockley
 const { ipcRenderer, path, __dirname } = window.electron;
 
-var timeRemaining = "00:00:00:000";
 var dontSyncRemote = false;
 var pidSeeking = false;
 var mediaPlayDelay = null;
@@ -221,7 +220,6 @@ async function installIPCHandler() {
                 document.getElementById("mediaWindowPlayButton").innerText = "▶️";
             }, { once: true });
         }
-        timeRemaining = "00:00:00:000"
         masterPauseState = false;
         saveMediaFile();
     });
@@ -721,8 +719,7 @@ function setSBFormMediaPlayer() {
         document.getElementById("mediaCntDn").textContent = "00:00:00:000";
     } else {
         plyBtn.textContent = "⏹️";
-        document.getElementById('mediaCntDn').textContent = timeRemaining;
-        timeRemaining = "00:00:00:000";
+        document.getElementById('mediaCntDn').textContent = "00:00:00:000";
         if (typeof currentMediaFile === 'undefined') {
             currentMediaFile = mdFile.files
         } else {
@@ -1016,7 +1013,6 @@ function installPreviewEventHandlers() {
                         document.getElementById("mediaWindowPlayButton").innerText = "▶️";
                     }, { once: true });
                 }
-                timeRemaining = "00:00:00:000";
                 masterPauseState = false;
                 saveMediaFile();
             }
