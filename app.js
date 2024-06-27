@@ -991,6 +991,7 @@ function installPreviewEventHandlers() {
                 document.getElementById("mediaWindowPlayButton").textContent = "▶️";
             }
             if (playingMediaAudioOnly) {
+                video.src = '';
                 playingMediaAudioOnly = false;
                 if (document.getElementById('mediaCntDn'))
                     document.getElementById('mediaCntDn').textContent = "00:00:00:000";
