@@ -1298,13 +1298,9 @@ function loadPlatformCSS(mode) {
 }
 
 if (document.readyState == 'interactive') {
-    ipcRenderer.invoke('get-platform').then(mode => {
-        loadPlatformCSS(mode);
-    });
+    loadPlatformCSS(navigator.platform.split(" ")[0].toLowerCase());
 } else {
     document.addEventListener('DOMContentLoaded', () => {
-        ipcRenderer.invoke('get-platform').then(mode => {
-            loadPlatformCSS(mode);
-        });
+        loadPlatformCSS(navigator.platform.split(" ")[0].toLowerCase());
     });
 }

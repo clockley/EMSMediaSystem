@@ -128,10 +128,6 @@ async function initializeIPC() {
       return screen.getAllDisplays();
     });
 
-    ipcMain.handle('get-platform', () => {
-      return process.platform;;
-    });
-
     ipcMain.handle('create-media-window', (event, windowOptions) => {
       mediaWindow = new BrowserWindow(windowOptions);
       mediaWindow.loadFile("media.html");
