@@ -3,9 +3,6 @@
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker } from 'electron';
 import settings from 'electron-settings';
 import path from 'path';
-import { fileURLToPath } from 'url';
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 let mediaWindow = null;
 let powerSaveBlockerId = null;
@@ -70,7 +67,7 @@ async function createWindow() {
         webSecurity: true,
         backgroundThrottling: false,
         autoplayPolicy: 'no-user-gesture-required',
-        preload: path.join(__dirname, 'app_preload.mjs')
+        preload: path.join(app.getAppPath(), 'app_preload.mjs')
       }
     })
     win.setAspectRatio(1.618);
