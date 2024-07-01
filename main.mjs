@@ -1,11 +1,12 @@
 "use strict";
 //console.time("start");
-import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker } from 'electron';
+import { app, ipcMain } from 'electron';
 import settings from 'electron-settings';
 import path from 'path';
 
 let mediaWindow = null;
 let powerSaveBlockerId = null;
+let screen = null;
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -14,7 +15,7 @@ let ipcInitPromise = null;
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
 
-const padStart = (num, targetLength, padString) => {
+function padStart(num, targetLength, padString) {
   const numStr = num.toString();
   let paddingNeeded = targetLength - numStr.length;
   let padding = '';
@@ -27,9 +28,9 @@ const padStart = (num, targetLength, padString) => {
   return padding + numStr;
 }
 
-const toHHMMSS = (secs) => {
+function toHHMMSS(secs) {
   return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
-};
+}
 
 function debounce(func, delay) {
   let timeoutId = null;
@@ -53,50 +54,59 @@ async function createWindow() {
   ipcMain.handle('get-setting', async (event, setting) => {
     return settings.get(setting);
   });
-
   settings.get('windowBounds').then(windowBounds => {
-    win = new BrowserWindow({
-      width: windowBounds ? windowBounds.width : 1068,
-      height: windowBounds ? windowBounds.height : 660,
-      minWidth: 1096,
-      minHeight: 681,
-      autoHideMenuBar: true,
-      webPreferences: {
-        nodeIntegration: true,
-        userGesture: true,
-        webSecurity: true,
-        backgroundThrottling: false,
-        autoplayPolicy: 'no-user-gesture-required',
-        preload: path.join(app.getAppPath(), 'app_preload.mjs')
-      }
-    })
-    win.setAspectRatio(1.618);
-    const saveWindowBounds = debounce(() => {
-      settings.set('windowBounds', win.getBounds())
-        .catch(error => {
-          console.error('Error saving window bounds:', error);
-        });
-    }, 300);
+    import('electron').then(({ BrowserWindow }) => {
+      win = new BrowserWindow({
+        width: windowBounds ? windowBounds.width : 1068,
+        height: windowBounds ? windowBounds.height : 660,
+        minWidth: 1096,
+        minHeight: 681,
+        autoHideMenuBar: true,
+        webPreferences: {
+          nodeIntegration: true,
+          userGesture: true,
+          webSecurity: true,
+          backgroundThrottling: false,
+          autoplayPolicy: 'no-user-gesture-required',
+          preload: path.join(app.getAppPath(), 'app_preload.mjs')
+        }
+      });
+      win.setAspectRatio(1.618);
+      const saveWindowBounds = debounce(() => {
+        settings.set('windowBounds', win.getBounds())
+          .catch(error => {
+            console.error('Error saving window bounds:', error);
+          });
+      }, 300);
 
-    win.on('resize', saveWindowBounds);
-    win.setMenu(null);
-    // and load the index.html of the app.
-    win.loadFile('index.html');
-    // Open the DevTools.
-    //win.webContents.openDevTools()
+      win.on('resize', saveWindowBounds);
+      win.setMenu(null);
+      // and load the index.html of the app.
+      win.loadFile('index.html');
+      // Open the DevTools.
+      //win.webContents.openDevTools()
 
-    // Emitted when the window is closed.
-    win.on('closed', () => {
-      // Dereference the window object, usually you would store windows
-      // in an array if your app supports multi windows, this is the time
-      // when you should delete the corresponding element.
-      win = null;
-      app.quit();
-
+      // Emitted when the window is closed.
+      win.on('closed', () => {
+        // Dereference the window object, usually you would store windows
+        // in an array if your app supports multi windows, this is the time
+        // when you should delete the corresponding element.
+        win = null;
+        app.quit();
+      });
     });
-  });
+  }).catch(console.error);
   await ipcInitPromise;
   //console.timeEnd("start");
+}
+
+async function loadPowerSaveBlocker() {
+  if (!powerSaveBlocker) {
+    return import('electron').then((module) => {
+      powerSaveBlocker = module.powerSaveBlocker;
+    });
+  }
+  return Promise.resolve();
 }
 
 function disablePowerSave() {
@@ -118,11 +128,19 @@ function enablePowersave() {
   }
 }
 
+async function loadScreen() {
+  if (!screen) {
+    return import('electron').then((module) => {
+      screen = module.screen;
+    });
+  }
+  return Promise.resolve();
+}
 
 async function initializeIPC() {
   return new Promise((resolve) => {
     ipcMain.handle('get-all-displays', () => {
-      return screen.getAllDisplays();
+      return loadScreen().then(() => screen.getAllDisplays());
     });
 
     ipcMain.handle('create-media-window', (event, windowOptions) => {
@@ -136,11 +154,17 @@ async function initializeIPC() {
     });
 
     ipcMain.on('disable-powersave', () => {
-      disablePowerSave();
+      loadPowerSaveBlocker().then(() => {
+        disablePowerSave();
+      });
     });
 
     ipcMain.on('enable-powersave', () => {
-      enablePowersave();
+      ipcMain.on('enable-powersave', () => {
+        loadPowerSaveBlocker().then(() => {
+          enablePowersave();
+        });
+      });
     });
 
     ipcMain.on('vlcl', (event, v, id) => {
@@ -157,7 +181,7 @@ async function initializeIPC() {
 
     ipcMain.on('play-ctl', (event, cmd, id) => {
       if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-          mediaWindow.send('play-ctl', cmd);
+        mediaWindow.send('play-ctl', cmd);
       }
     });
 
@@ -198,9 +222,7 @@ async function initializeIPC() {
   });
 }
 
-app.on('will-finish-launching', async () => {
-  ipcInitPromise = initializeIPC();
-});
+ipcInitPromise = initializeIPC();
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
