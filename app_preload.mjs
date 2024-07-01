@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -11,13 +10,7 @@ contextBridge.exposeInMainWorld('electron', {
         send: (channel, data) => ipcRenderer.send(channel, data),
         on: (channel, callback) => ipcRenderer.on(channel, (event, ...args) => callback(event, ...args)),
         invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
-        sendSync: (channel, ...args) => ipcRenderer.sendSync(channel, ...args)
     },
     path: path,
-    fs: {
-        readdirSync: (dirPath) => fs.readdirSync(dirPath),
-        readFileSync: (filePath, encoding) => fs.readFileSync(filePath, encoding),
-        writeFileSync: (filePath, data) => fs.writeFileSync(filePath, data)
-    },
     __dirname: __dirname
 });
