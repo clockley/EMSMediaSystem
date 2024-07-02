@@ -10,23 +10,24 @@ var strtTm = 0;
 var liveStreamMode = false;
 var prom = null;
 var isImg = false;
-for (const arg of argv) {
-    if (arg.startsWith('--mediafile-ems=')) {
-        mediaFile = arg.substring(16);
-    } else if (arg === '--media-loop=true') {
-        loopFile = true;
-    } else if (arg.startsWith('--start-vol=')) {
-        strtvl = parseFloat(arg.substring(12));
-    } else if (arg.startsWith('--start-time=')) {
-        strtTm = parseFloat(arg.substring(13));
-    } else if (arg === '--live-stream=true') {
-        liveStreamMode = true;
-    } else if (arg === '--isImg') {
+for (let i = argv.length - 1; i > 0; --i) {
+    if (argv[i].charCodeAt(0) === 45) {
+        break;
+    }
+    if (argv[i].startsWith('__mediafile-ems=')) {
+        mediaFile = decodeURIComponent(argv[i].substring(16));
+    } else if (argv[i] === '__isImg') {
         isImg = true;
+    } else if (argv[i] === '__live-stream=true') {
+        liveStreamMode = true;
+    } else if (argv[i].startsWith('__start-time=')) {
+        strtTm = parseFloat(argv[i].substring(13));
+    } else if (argv[i].startsWith('__start-vol=')) {
+        strtvl = parseFloat(argv[i].substring(12));
+    } else if (argv[i] === '__media-loop=true') {
+        loopFile = true;
     }
 }
-
-mediaFile=decodeURIComponent(mediaFile);
 
 async function installICPHandlers() {
     if (!liveStreamMode) {
@@ -37,7 +38,7 @@ async function installICPHandlers() {
 
             const adjustedTime = message.currentTime + (travelTime * .001);
             requestAnimationFrame(() => {
-                video.currentTime = adjustedTime + ((performance.now() - localTs)*.001);
+                video.currentTime = adjustedTime + ((performance.now() - localTs) * .001);
             });
         });
     }
@@ -63,7 +64,7 @@ function sendRemainingTime(video) {
         const currentTime = performance.now();
         // Update only if at least 33.33 milliseconds have passed
         if (currentTime - lastTime > interval && !video.paused) {
-            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, Date.now()+(currentTime - performance.now())]);
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, Date.now() + (currentTime - performance.now())]);
             lastTime = currentTime;
         }
         requestAnimationFrame(send);
@@ -82,24 +83,21 @@ function playMediaSessionHandler() {
 }
 
 async function loadMedia() {
-    navigator.mediaSession.setActionHandler('play', playMediaSessionHandler);
-    navigator.mediaSession.setActionHandler('pause', pauseMediaSessionHandler);
-    var h = null;
+    let h = null;
 
     if (isImg) {
         img = document.createElement('img');
-        img.src=mediaFile;
+        img.src = mediaFile;
         img.setAttribute("id", "bigPlayer");
         document.body.appendChild(img);
-        document.querySelector('video').style.display='none';
+        document.querySelector('video').style.display = 'none';
         return;
     } else {
         prom = installICPHandlers();
         video = document.getElementById("bigPlayer");
     }
-    video.volume=strtvl;
-    video.setAttribute("src", mediaFile);
-
+    video.volume = strtvl;
+    video.src = mediaFile;
     if (liveStreamMode) {
         if (mediaFile.includes("youtu")) {
             const response = await fetch(mediaFile);
@@ -114,15 +112,17 @@ async function loadMedia() {
             }
         }
 
-        mediaFile=video.src;
+        mediaFile = video.src;
         h = new hls();
         h.loadSource(mediaFile);
     } else {
+        navigator.mediaSession.setActionHandler('play', playMediaSessionHandler);
+        navigator.mediaSession.setActionHandler('pause', pauseMediaSessionHandler);
         video.currentTime = strtTm;
         video.addEventListener('play', () => {
             const playbackState = {
-              currentTime: video.currentTime,
-              playing: !video.paused,
+                currentTime: video.currentTime,
+                playing: !video.paused,
             };
             ipcRenderer.send('playback-state-change', playbackState);
             if (strtvl != null) {
@@ -133,34 +133,30 @@ async function loadMedia() {
 
         video.addEventListener('pause', () => {
             const playbackState = {
-              currentTime: video.currentTime,
-              playing: !video.paused,
+                currentTime: video.currentTime,
+                playing: !video.paused,
             };
             ipcRenderer.send('playback-state-change', playbackState);
-        }
-        );
+        });
     }
 
     await prom;
 
     if (loopFile) {
-        video.setAttribute("loop", true);
+        video.setAttribute("loop", loopFile);
     }
-    video.addEventListener("ended", function () {
-        close();
-    });
 
-    if (liveStreamMode) {
-        h.attachMedia(video);
-    }
+    video.onended = () => close();
 
     if (!liveStreamMode) {
         sendRemainingTime(video);
         video.addEventListener('pause', (event) => {
-            if (video.duration-video.currentTime < 0.1) {
+            if (video.duration - video.currentTime < 0.1) {
                 video.currentTime = video.duration;
             }
-        })
+        });
+    } else {
+        h.attachMedia(video);
     }
 }
 
