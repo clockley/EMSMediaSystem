@@ -952,7 +952,6 @@ function installPreviewEventHandlers() {
                 pidSeeking = false;
                 e.preventDefault();
             }
-            resetPIDOnSeek();
             if (video.src === window.location.href) {
                 e.preventDefault();
                 return;
@@ -965,7 +964,6 @@ function installPreviewEventHandlers() {
             if (e.target.isConnected) {
                 ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                 ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
-                resetPIDOnSeek();
             }
         });
 
@@ -974,7 +972,6 @@ function installPreviewEventHandlers() {
                 pidSeeking = false;
                 e.preventDefault();
             }
-            resetPIDOnSeek();
             if (dontSyncRemote === true) {
                 return;
             }
@@ -983,7 +980,6 @@ function installPreviewEventHandlers() {
                 ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
                 ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
             }
-            resetPIDOnSeek();
         });
 
         video.addEventListener('ended', (e) => {
