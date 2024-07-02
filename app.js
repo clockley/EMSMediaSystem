@@ -1250,11 +1250,11 @@ async function createMediaWindow() {
         webPreferences: {
             backgroundThrottling: false,
             additionalArguments: [
-                '--start-time=' + startTime,
-                '--start-vol=' + strtVl,
-                '--mediafile-ems=' + encodeURIComponent(mediaFile),
-                document.getElementById("mdLpCtlr") != undefined ? '--media-loop=' + document.getElementById("mdLpCtlr").checked : "",
-                '--live-stream=' + liveStreamMode, isImgFile ? "--isImg" : ""
+                '__mediafile-ems=' + encodeURIComponent(mediaFile),
+                startTime != 0 ? '__start-time=' + startTime : "",
+                strtVl != 1 ? '__start-vol=' + strtVl : "",
+                document.getElementById("mdLpCtlr") != undefined ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true':'') : "",
+                liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : ""
             ],
             preload: path.join(__dirname, 'media_preload.js')
         }
