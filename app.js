@@ -1,4 +1,5 @@
 "use strict";
+//console.time("start");
 //Project Alchemy
 //Copyright 2019 - 2024 Christian Lockley
 const { ipcRenderer, path, __dirname } = window.electron;
@@ -109,7 +110,7 @@ async function installIPCHandler() {
         // Measure DOM update time and add to IPC delay
         let domUpdateTimeStart = now;
         let timeStamp = message[0];
-        if (opMode == MEDIAPLAYER) {
+        if (opMode === MEDIAPLAYER) {
             requestAnimationFrame(() => {
                 if (mediaCntDnEle != null) {
                     mediaCntDnEle.textContent = timeStamp;
@@ -127,7 +128,7 @@ async function installIPCHandler() {
 
 
         if (now - lastUpdateTime > .5) {
-            if (opMode == MEDIAPLAYER) {
+            if (opMode === MEDIAPLAYER) {
                 if (!video.paused && video != null && !video.seeking) {
                     hybridSync(targetTime);
                     lastUpdateTime = now;
@@ -339,9 +340,9 @@ function isImg(pathname) {
 function saveRestoreAlrmFrm(divId, op) {
     if (typeof saveRestoreAlrmFrm.alrmForm == 'undefined') {
         saveRestoreAlrmFrm.alrmForm = document.getElementById(divId).cloneNode(true);
-    } else if (op == "save") {
+    } else if (op === "save") {
         saveRestoreAlrmFrm.alrmForm = document.getElementById(divId).cloneNode(true);
-    } else if (op == "restore" && typeof saveRestoreAlrmFrm.alrmForm != 'undefined') {
+    } else if (op === "restore" && typeof saveRestoreAlrmFrm.alrmForm != 'undefined') {
         document.getElementById(divId).innerHTML = saveRestoreAlrmFrm.alrmForm.innerHTML;
     }
 }
@@ -359,7 +360,7 @@ async function pauseMedia(e) {
         await ipcRenderer.send('play-ctl', 'pause');
         return;
     }
-    if (video.src == window.location.href || video.readyState == 0) {
+    if (video.src === window.location.href || video.readyState === 0) {
         return;
     }
 
@@ -375,7 +376,7 @@ async function unPauseMedia(e) {
         await ipcRenderer.send('play-ctl', 'play');
         return;
     }
-    if (video.src == window.location.href || video.readyState == 0) {
+    if (video.src === window.location.href || video.readyState === 0) {
         return;
     }
 
@@ -389,7 +390,7 @@ async function unPauseMedia(e) {
 }
 
 function pauseButton(e) {
-    if (video.src == window.location.href) {
+    if (video.src === window.location.href) {
         return;
     }
     if (video != null) {
@@ -433,7 +434,7 @@ function waitForMetadata() {
 }
 
 function playMedia(e) {
-    if (!e && audioOnlyFile && opMode == MEDIAPLAYER) {
+    if (!e && audioOnlyFile && opMode === MEDIAPLAYER) {
         e = {};
         e.target = document.getElementById("mediaWindowPlayButton");
     }
@@ -442,8 +443,8 @@ function playMedia(e) {
         saveMediaFile();
     }
 
-    if (document.getElementById("mdFile").value == "" && !playingMediaAudioOnly) {
-        if (e.target.textContent == "⏹️") {
+    if (document.getElementById("mdFile").value === "" && !playingMediaAudioOnly) {
+        if (e.target.textContent === "⏹️") {
             ipcRenderer.send('close-media-window', 0);
             saveMediaFile();
             video.currentTime = 0;
@@ -454,10 +455,10 @@ function playMedia(e) {
         return;
     }
 
-    if (e.target.textContent == "▶️") {
+    if (e.target.textContent === "▶️") {
         e.target.textContent = "⏹️";
         ipcRenderer.send('disable-powersave');
-        if (opMode == MEDIAPLAYER) {
+        if (opMode === MEDIAPLAYER) {
             if (isImg(mediaFile)) {
                 createMediaWindow();
                 video.currentTime = 0;
@@ -467,7 +468,7 @@ function playMedia(e) {
             }
         }
         let mdly = document.getElementById("mdDelay");
-        audioOnlyFile = opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
+        audioOnlyFile = opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
         if (audioOnlyFile) {
             video.muted = false;
             video.loop = document.getElementById("mdLpCtlr").checked;
@@ -483,7 +484,7 @@ function playMedia(e) {
         }
 
         currentMediaFile = document.getElementById("mdFile").files;
-        if (opMode == MEDIAPLAYER && document.getElementById("malrm1").value != "") {
+        if (opMode === MEDIAPLAYER && document.getElementById("malrm1").value != "") {
             var deadlinestr = "";
             var deadlinestrarr = String(new Date()).split(" ");
             deadlinestrarr[4] = document.getElementById("malrm1").value;
@@ -497,13 +498,13 @@ function playMedia(e) {
             createMediaWindow();
         }
         dontSyncRemote = false;
-    } else if (e.target.textContent = "⏹️") {
+    } else if (e.target.textContent === "⏹️") {
         ipcRenderer.send('close-media-window', 0);
         ipcRenderer.send('enable-powersave');
         playingMediaAudioOnly = false;
         dontSyncRemote = true;
         clearTimeout(mediaPlayDelay);
-        if (opMode == MEDIAPLAYER)
+        if (opMode === MEDIAPLAYER)
             document.getElementById('mediaCntDn').textContent = "00:00:00:000";
         if (!audioOnlyFile)
             activeLiveStream = true;
@@ -513,7 +514,7 @@ function playMedia(e) {
         if (audioOnlyFile) {
             activeLiveStream = false;
             saveMediaFile();
-            if (opMode == MEDIAPLAYER)
+            if (opMode === MEDIAPLAYER)
                 document.getElementById('mediaCntDn').textContent = "00:00:00:000";
             if (video) {
                 video.muted = true;
@@ -530,7 +531,7 @@ function playMedia(e) {
 }
 
 function setSBFormYouTubeMediaPlayer() {
-    if (opMode == MEDIAPLAYERYT) {
+    if (opMode === MEDIAPLAYERYT) {
         return;
     }
     opMode = MEDIAPLAYERYT;
@@ -572,7 +573,7 @@ function setSBFormYouTubeMediaPlayer() {
 
             if (dspSelct.options.length > 2) {
                 dspSelct.selectedIndex = 2; // Hardcode 2nd option
-            } else if (dspSelct.options.length == 2) {
+            } else if (dspSelct.options.length === 2) {
                 dspSelct.selectedIndex = 1;
             }
         }
@@ -598,13 +599,13 @@ function setSBFormYouTubeMediaPlayer() {
 }
 
 function setSBFormMediaPlayer() {
-    if (opMode == MEDIAPLAYER) {
+    if (opMode === MEDIAPLAYER) {
         return;
     }
     opMode = MEDIAPLAYER;
     ipcRenderer.send('set-mode', opMode);
 
-    if (osName == "Linux") {
+    if (osName === "Linux") {
         dyneForm.innerHTML =
             `
             <form>
@@ -690,7 +691,7 @@ function setSBFormMediaPlayer() {
 
             if (dspSelct.options.length > 2) {
                 dspSelct.selectedIndex = 2; // Hardcode 2nd option
-            } else if (dspSelct.options.length == 2) {
+            } else if (dspSelct.options.length === 2) {
                 dspSelct.selectedIndex = 1;
             }
         }
@@ -776,9 +777,10 @@ function setSBFormMediaPlayer() {
             return;
         }
     }
-    if (encodeURI(mediaFile) != removeFileProtocol(video.src)) {
+    if (encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
         saveMediaFile();
     }
+    //console.timeEnd("start");
 }
 
 function removeFileProtocol(filePath) {
@@ -795,8 +797,8 @@ function saveMediaFile() {
         return;
     }
 
-    if (playingMediaAudioOnly && opMode == MEDIAPLAYER) {
-        if (mdfileElement.files[0].length == 0) {
+    if (playingMediaAudioOnly && opMode === MEDIAPLAYER) {
+        if (mdfileElement.files[0].length === 0) {
             return;
         }
         mediaFile = mdfileElement.files[0].path;
@@ -806,7 +808,7 @@ function saveMediaFile() {
     if (mdfileElement != null && mdfileElement != 'undefined') {
         if (mdfileElement.files != null && mdfileElement.files.length == 0) {
             return;
-        } else if (mdfileElement.value == "") {
+        } else if (mdfileElement.value === "") {
             return;
         }
         if (opMode != MEDIAPLAYER && dontSyncRemote != true)
@@ -819,7 +821,7 @@ function saveMediaFile() {
         return;
     }
 
-    mediaFile = opMode == MEDIAPLAYERYT ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
 
     let imgEle = null;
     if (imgEle = document.querySelector('img')) {
@@ -881,7 +883,7 @@ function saveMediaFile() {
             }
         }
     }
-    if (opMode == MEDIAPLAYER && mediaFile != null) {
+    if (opMode === MEDIAPLAYER && mediaFile != null) {
         dontSyncRemote = false;
     }
 }
@@ -902,7 +904,7 @@ function installSidebarFormEvents() {
 
     document.querySelector('form').addEventListener('change', function (event) {
         if (event.target.type === 'radio') {
-            if (event.target.value == 'Media Player') {
+            if (event.target.value === 'Media Player') {
                 installPreviewEventHandlers();
                 dontSyncRemote = true;
                 if (video && !activeLiveStream && isActiveMediaWindow()) {
@@ -934,13 +936,13 @@ function playAudioFileAfterDelay() {
 function installPreviewEventHandlers() {
     if (!installPreviewEventHandlers.installedVideoEventListener) {
         video.addEventListener('loadstart', function (event) {
-            if (video.src == window.location.href) {
+            if (video.src === window.location.href) {
                 event.preventDefault();
                 return;
             }
         });
         video.addEventListener('loadedmetadata', function (event) {
-            if (video.src == window.location.href || isImg(video.src)) {
+            if (video.src === window.location.href || isImg(video.src)) {
                 return;
             }
             audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
@@ -951,11 +953,11 @@ function installPreviewEventHandlers() {
                 e.preventDefault();
             }
             resetPIDOnSeek();
-            if (video.src == window.location.href) {
+            if (video.src === window.location.href) {
                 e.preventDefault();
                 return;
             }
-            if (dontSyncRemote == true) {
+            if (dontSyncRemote === true) {
                 dontSyncRemote = false;
                 return;
             }
@@ -973,7 +975,7 @@ function installPreviewEventHandlers() {
                 e.preventDefault();
             }
             resetPIDOnSeek();
-            if (dontSyncRemote == true) {
+            if (dontSyncRemote === true) {
                 return;
             }
             updateTimestamp(true);
@@ -1178,10 +1180,10 @@ function isLiveStream(mediaFile) {
 }
 
 async function createMediaWindow() {
-    mediaFile = opMode == MEDIAPLAYERYT ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
     var liveStreamMode = isLiveStream(mediaFile);
 
-    if (liveStreamMode == false && video != null) {
+    if (liveStreamMode === false && video != null) {
         startTime = video.currentTime;
     }
 
@@ -1191,7 +1193,7 @@ async function createMediaWindow() {
     var externalDisplay = null;
     externalDisplay = displays[document.getElementById("dspSelct").selectedIndex - 1];
     activeLiveStream = liveStreamMode;
-    if (liveStreamMode == false) {
+    if (liveStreamMode === false) {
         if (video == null) {
             video = document.getElementById("preview");
         }
@@ -1297,7 +1299,7 @@ function loadPlatformCSS(mode) {
     }
 }
 
-if (document.readyState == 'interactive') {
+if (document.readyState === 'interactive') {
     loadPlatformCSS(navigator.platform.split(" ")[0].toLowerCase());
 } else {
     document.addEventListener('DOMContentLoaded', () => {

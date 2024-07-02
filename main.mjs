@@ -1,5 +1,4 @@
 "use strict";
-//console.time("start");
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker } from 'electron';
 import settings from 'electron-settings';
 import path from 'path';
@@ -96,7 +95,6 @@ async function createWindow() {
     });
   });
   await ipcInitPromise;
-  //console.timeEnd("start");
 }
 
 function disablePowerSave() {
