@@ -239,9 +239,9 @@ function adjustPlaybackRate(targetTime) {
     let playbackRate;
     let minRate = 0.8;
     let maxRate = 1.2;
-
+    const timeDifferenceAbs = Math.abs(timeDifference);
     // Dynamic clamping based on time difference
-    if (Math.abs(timeDifference) > .5) {
+    if (timeDifferenceAbs > .5) {
         integral = 0;
         // Loosen the clamp when the difference is more than .5 second
         minRate = 0.5;
@@ -249,7 +249,7 @@ function adjustPlaybackRate(targetTime) {
     }
 
     // Immediate synchronization for very large discrepancies
-    if (Math.abs(timeDifference) > 1 || timeDifference < -1) {
+    if (timeDifferenceAbs > 1 || timeDifference < -1) {
         // Directly jump to the target time if difference is more than 1 second
         pidSeeking = true;
         video.currentTime = targetTime;
@@ -266,7 +266,7 @@ function adjustPlaybackRate(targetTime) {
     }
 
     // Adjust control parameters dynamically based on synchronization accuracy
-    if (Math.abs(timeDifference) <= synchronizationThreshold) {
+    if (timeDifferenceAbs <= synchronizationThreshold) {
         video.playbackRate = 1.0; // Reset playback rate if within the tight synchronization threshold
     }
 }
@@ -283,15 +283,16 @@ function dynamicPIDTuning() {
     let numberOfCrossings = 0;
     let accumulatedPeriod = 0;
     let significantErrorThreshold = 0.1; // Threshold to consider error significant for zero-crossing
-    let decayFactor = 0.9; // Decay factor for accumulated period and crossings
+    const decayFactor = 0.9; // Decay factor for accumulated period and crossings
     let maxAllowedPeriod = 5000; // Max period in ms to wait before forcing parameter update
 
     return function adjustPID(currentError) {
         const now = performance.now();
         const period = now - lastCrossing;
+        const absError = Math.abs(currentError);
 
         // Check if the error sign has changed (zero-crossing point)
-        if (Math.abs(currentError) < significantErrorThreshold && currentError * lastTimeDifference < 0) {
+        if (absError < significantErrorThreshold && currentError * lastTimeDifference < 0) {
             if (isOscillating) {
                 accumulatedPeriod = accumulatedPeriod * decayFactor + period * (1 - decayFactor);
                 numberOfCrossings = numberOfCrossings * decayFactor + 1;
@@ -317,7 +318,7 @@ function dynamicPIDTuning() {
         } else {
             // Increment kP to induce oscillation if not already oscillating
             if (!isOscillating) {
-                kP += 0.01 * (Math.abs(currentError) > 1 ? 2 : 1);  // More aggressive if error is large
+                kP += 0.01 * (absError > 1 ? 2 : 1);  // More aggressive if error is large
                 isOscillating = true;
             }
         }
