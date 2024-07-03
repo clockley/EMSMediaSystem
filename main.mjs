@@ -6,6 +6,9 @@ import path from 'path';
 let mediaWindow = null;
 let powerSaveBlockerId = null;
 
+const referenceHrTime = process.hrtime.bigint(); // High-resolution reference time in nanoseconds
+const referenceTimeMs = Number(referenceHrTime) / 1000000;
+
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
 let win = null;
@@ -119,6 +122,10 @@ function enablePowersave() {
 
 async function initializeIPC() {
   return new Promise((resolve) => {
+    ipcMain.handle('get-reference-time', () => {
+      return referenceTimeMs;
+    });
+
     ipcMain.handle('get-all-displays', () => {
       return screen.getAllDisplays();
     });
@@ -155,7 +162,7 @@ async function initializeIPC() {
 
     ipcMain.on('play-ctl', (event, cmd, id) => {
       if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-          mediaWindow.send('play-ctl', cmd);
+        mediaWindow.send('play-ctl', cmd);
       }
     });
 

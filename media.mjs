@@ -32,13 +32,13 @@ for (let i = argv.length - 1; i > 0; --i) {
 async function installICPHandlers() {
     if (!liveStreamMode) {
         ipcRenderer.on('timeGoto-message', function (evt, message) {
-            const localTs = performance.now();
+            const localTs = window.electron.getSynchronizedTime();
             const now = Date.now();
             const travelTime = now - message.timestamp;
 
             const adjustedTime = message.currentTime + (travelTime * .001);
             requestAnimationFrame(() => {
-                video.currentTime = adjustedTime + ((performance.now() - localTs) * .001);
+                video.currentTime = adjustedTime + ((window.electron.getSynchronizedTime() - localTs) * .001);
             });
         });
     }
@@ -61,10 +61,10 @@ function sendRemainingTime(video) {
     const interval = 1000 / 30;  // Set the interval for 30 updates per second
 
     const send = () => {
-        const currentTime = performance.now();
+        const currentTime = window.electron.getSynchronizedTime();
         // Update only if at least 33.33 milliseconds have passed
         if (currentTime - lastTime > interval && !video.paused) {
-            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, Date.now() + (currentTime - performance.now())]);
+            ipcRenderer.send('timeRemaining-message', [video.duration, video.currentTime, Date.now() + (currentTime - window.electron.getSynchronizedTime())]);
             lastTime = currentTime;
         }
         requestAnimationFrame(send);

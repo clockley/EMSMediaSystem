@@ -279,7 +279,7 @@ function hybridSync(targetTime) {
 }
 function dynamicPIDTuning() {
     let isOscillating = false;
-    let lastCrossing = performance.now();
+    let lastCrossing = window.electron.getSynchronizedTime();
     let numberOfCrossings = 0;
     let accumulatedPeriod = 0;
     let significantErrorThreshold = 0.1; // Threshold to consider error significant for zero-crossing
@@ -287,7 +287,7 @@ function dynamicPIDTuning() {
     let maxAllowedPeriod = 5000; // Max period in ms to wait before forcing parameter update
 
     return function adjustPID(currentError) {
-        const now = performance.now();
+        const now = window.electron.getSynchronizedTime();
         const period = now - lastCrossing;
         const absError = Math.abs(currentError);
 
@@ -1247,6 +1247,7 @@ async function createMediaWindow() {
         fullscreen: true,
         frame: false,
         webPreferences: {
+            nodeIntegration: true,
             backgroundThrottling: false,
             additionalArguments: [
                 '__mediafile-ems=' + encodeURIComponent(mediaFile),
