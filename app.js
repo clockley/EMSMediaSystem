@@ -174,7 +174,7 @@ async function installIPCHandler() {
         let isImgFile = isImg(mediaFile);
         if (!isImgFile) {
             if (video.src != window.location.href) {
-                waitForMetadata().then(() => { audioOnlyFile = (opMode == MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0) });
+                waitForMetadata().then(() => { audioOnlyFile = (opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0) });
             }
             video.src = mediaFile;
         }
@@ -339,7 +339,7 @@ function isImg(pathname) {
 }
 
 function saveRestoreAlrmFrm(divId, op) {
-    if (typeof saveRestoreAlrmFrm.alrmForm == 'undefined') {
+    if (typeof saveRestoreAlrmFrm.alrmForm === 'undefined') {
         saveRestoreAlrmFrm.alrmForm = document.getElementById(divId).cloneNode(true);
     } else if (op === "save") {
         saveRestoreAlrmFrm.alrmForm = document.getElementById(divId).cloneNode(true);
@@ -698,7 +698,7 @@ function setSBFormMediaPlayer() {
         }
     });
 
-    if (video == null) {
+    if (video === null) {
         video = document.getElementById('preview');
     }
 
@@ -743,12 +743,12 @@ function setSBFormMediaPlayer() {
                     if (!mdFile.value.includes("fake")) {
                         mediaFile = mdFile.value;
                     } else {
-                        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked == true ? mdFile.value : mdFile.files[0].path;
+                        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked === true ? mdFile.value : mdFile.files[0].path;
                     }
                 }
                 const isImgFile = isImg(mediaFile);
                 if (isActiveMW && mediaFile != null && !isLiveStream(mediaFile)) {
-                    if (video == null) {
+                    if (video === null) {
                         video = document.getElementById("preview");
                         saveMediaFile();
                     }
@@ -794,7 +794,7 @@ function saveMediaFile() {
         return;
     }
 
-    if (mdfileElement.files != null && mdfileElement.files.length != 0 && encodeURI(mdfileElement.files[0].path) == removeFileProtocol(video.src)) {
+    if (mdfileElement.files !== null && mdfileElement.files.length !== 0 && encodeURI(mdfileElement.files[0].path) === removeFileProtocol(video.src)) {
         return;
     }
 
@@ -807,7 +807,7 @@ function saveMediaFile() {
     }
 
     if (mdfileElement != null && mdfileElement != 'undefined') {
-        if (mdfileElement.files != null && mdfileElement.files.length == 0) {
+        if (mdfileElement.files !== null && mdfileElement.files.length === 0) {
             return;
         } else if (mdfileElement.value === "") {
             return;
@@ -857,7 +857,7 @@ function saveMediaFile() {
     let liveStream = isLiveStream(mediaFile);
     if ((mdfileElement != null && (!isActiveMW && mdfileElement != null &&
         !(liveStream))) || (isActiveMW && mdfileElement != null && liveStream) || activeLiveStream && isActiveMW) {
-        if (video == null) {
+        if (video === null) {
             video = document.getElementById('preview');
         }
         if (video) {
@@ -1035,7 +1035,7 @@ function installPreviewEventHandlers() {
                 return;
             }
             if (!event.target.isConnected) {
-                if ((!isActiveMediaWindow()) && playingMediaAudioOnly == false) {
+                if ((!isActiveMediaWindow()) && playingMediaAudioOnly === false) {
                     return;
                 }
                 event.preventDefault();
@@ -1048,19 +1048,19 @@ function installPreviewEventHandlers() {
                 masterPauseState = false;
                 return;
             }
-            if (event.target.clientHeight == 0) {
+            if (event.target.clientHeight === 0) {
                 event.preventDefault();
                 event.target.play(); //continue to play even if detached
                 return;
             }
-            if (video.src == window.location.href) {
+            if (video.src === window.location.href) {
                 event.preventDefault();
                 return;
             }
             if (activeLiveStream) {
                 return;
             }
-            if (video.currentTime - video.duration == 0) {
+            if (video.currentTime - video.duration === 0) {
                 return;
             }
             if (event.target.parentNode != null) {
@@ -1093,7 +1093,7 @@ function installPreviewEventHandlers() {
             }
             let mediaScrnPlyBtn = document.getElementById("mediaWindowPlayButton");
             if (mediaScrnPlyBtn && audioOnlyFile) {
-                if (mediaScrnPlyBtn.textContent == '▶️') {
+                if (mediaScrnPlyBtn.textContent === '▶️') {
                     fileEnded = false;
                     video.muted = false;
                     ipcRenderer.send('disable-powersave');
@@ -1110,7 +1110,7 @@ function installPreviewEventHandlers() {
             if (isImg(video.src)) {
                 return;
             }
-            if (video.src == window.location.href) {
+            if (video.src === window.location.href) {
                 event.preventDefault();
                 return;
             }
@@ -1191,10 +1191,10 @@ async function createMediaWindow() {
     externalDisplay = displays[document.getElementById("dspSelct").selectedIndex - 1];
     activeLiveStream = liveStreamMode;
     if (liveStreamMode === false) {
-        if (video == null) {
+        if (video === null) {
             video = document.getElementById("preview");
         }
-        if (video == null) {
+        if (video === null) {
             video.muted = true;
             video.setAttribute("src", mediaFile);
             video.id = "preview";
