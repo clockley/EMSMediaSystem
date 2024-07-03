@@ -14,15 +14,15 @@ for (let i = argv.length - 1; i > 0; --i) {
     if (argv[i].charCodeAt(0) === 45) {
         break;
     }
-    if (argv[i].startsWith('__mediafile-ems=')) {
+    if (argv[i].startsWith('__mediaf')) {
         mediaFile = decodeURIComponent(argv[i].substring(16));
     } else if (argv[i] === '__isImg') {
         isImg = true;
     } else if (argv[i] === '__live-stream=true') {
         liveStreamMode = true;
-    } else if (argv[i].startsWith('__start-time=')) {
+    } else if (argv[i].startsWith('__start-t')) {
         strtTm = parseFloat(argv[i].substring(13));
-    } else if (argv[i].startsWith('__start-vol=')) {
+    } else if (argv[i].startsWith('__start-v')) {
         strtvl = parseFloat(argv[i].substring(12));
     } else if (argv[i] === '__media-loop=true') {
         loopFile = true;
