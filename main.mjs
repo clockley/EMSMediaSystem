@@ -1,5 +1,5 @@
 "use strict";
-import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
 import settings from 'electron-settings';
 import path from 'path';
 
@@ -12,6 +12,7 @@ let win = null;
 let ipcInitPromise = null;
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
+Menu.setApplicationMenu(null)
 
 const padStart = (num, targetLength, padString) => {
   const numStr = num.toString();
@@ -78,7 +79,7 @@ async function createWindow() {
     }, 300);
 
     win.on('resize', saveWindowBounds);
-    win.setMenu(null);
+
     // and load the index.html of the app.
     win.loadFile('index.html');
     // Open the DevTools.
