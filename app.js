@@ -381,7 +381,7 @@ async function unPauseMedia(e) {
         return;
     }
 
-    if (!playingMediaAudioOnly && e !== null && e.target.isConnected) {
+    if (!playingMediaAudioOnly && e !== null && e !== undefined && e.target.isConnected) {
         resetPIDOnSeek();
         await ipcRenderer.send('play-ctl', 'play');
     }
