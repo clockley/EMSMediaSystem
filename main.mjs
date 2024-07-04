@@ -4,7 +4,6 @@ import settings from 'electron-settings';
 import path from 'path';
 
 let mediaWindow = null;
-let powerSaveBlockerId = null;
 let windowBounds;
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -96,20 +95,20 @@ async function createWindow() {
   await ipcInitPromise;
 }
 
-function disablePowerSave() {
-  if (powerSaveBlockerId === null) {
-    powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
-    console.log('Power Save Blocker started:', powerSaveBlockerId);
+function enablePowersave() {
+  if (typeof enablePowersave.powerSaveBlockerId === 'undefined') {
+    enablePowersave.powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+    console.log('Power Save Blocker started:', enablePowersave.powerSaveBlockerId);
   } else {
-    console.log('Power Save Blocker is already active:', powerSaveBlockerId);
+    console.log('Power Save Blocker is already active:', enablePowersave.powerSaveBlockerId);
   }
 }
 
-function enablePowersave() {
-  if (powerSaveBlockerId !== null) {
-    powerSaveBlocker.stop(powerSaveBlockerId);
-    console.log('Power Save Blocker stopped:', powerSaveBlockerId);
-    powerSaveBlockerId = null;
+function disablePowerSave() {
+  if (typeof enablePowersave.powerSaveBlockerId !== 'undefined') {
+    powerSaveBlocker.stop(enablePowersave.powerSaveBlockerId);
+    console.log('Power Save Blocker stopped:', enablePowersave.powerSaveBlockerId);
+    enablePowersave.powerSaveBlockerId = undefined;
   } else {
     console.log('No active Power Save Blocker to stop.');
   }
