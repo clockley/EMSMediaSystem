@@ -43,6 +43,7 @@ function debounce(func, delay) {
 }
 
 async function createWindow() {
+  windowBounds = await windowBounds;
   ipcMain.on('set-mode', (event, arg) => {
     settings.set('operating-mode', arg)
       .catch(error => {
@@ -205,7 +206,7 @@ app.on('web-contents-created', (event, contents) => {
   });
 });
 
-await settings.get('windowBounds').then(w => { windowBounds = w});
+windowBounds = settings.get('windowBounds');
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
