@@ -5,7 +5,7 @@ import path from 'path';
 
 let mediaWindow = null;
 let powerSaveBlockerId = null;
-
+let windowBounds;
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
 let win = null;
@@ -54,46 +54,44 @@ async function createWindow() {
     return settings.get(setting);
   });
 
-  settings.get('windowBounds').then(windowBounds => {
-    win = new BrowserWindow({
-      width: windowBounds ? windowBounds.width : 1068,
-      height: windowBounds ? windowBounds.height : 660,
-      minWidth: 1096,
-      minHeight: 681,
-      autoHideMenuBar: true,
-      webPreferences: {
-        nodeIntegration: true,
-        userGesture: true,
-        webSecurity: true,
-        backgroundThrottling: false,
-        autoplayPolicy: 'no-user-gesture-required',
-        preload: path.join(app.getAppPath(), 'app_preload.mjs')
-      }
-    })
-    win.setAspectRatio(1.618);
-    const saveWindowBounds = debounce(() => {
-      settings.set('windowBounds', win.getBounds())
-        .catch(error => {
-          console.error('Error saving window bounds:', error);
-        });
-    }, 300);
+  win = new BrowserWindow({
+    width: windowBounds ? windowBounds.width : 1068,
+    height: windowBounds ? windowBounds.height : 660,
+    minWidth: 1096,
+    minHeight: 681,
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: true,
+      userGesture: true,
+      webSecurity: true,
+      backgroundThrottling: false,
+      autoplayPolicy: 'no-user-gesture-required',
+      preload: path.join(app.getAppPath(), 'app_preload.mjs')
+    }
+  })
+  win.setAspectRatio(1.618);
+  const saveWindowBounds = debounce(() => {
+    settings.set('windowBounds', win.getBounds())
+      .catch(error => {
+        console.error('Error saving window bounds:', error);
+      });
+  }, 300);
 
-    win.on('resize', saveWindowBounds);
+  win.on('resize', saveWindowBounds);
 
-    // and load the index.html of the app.
-    win.loadFile('index.html');
-    // Open the DevTools.
-    //win.webContents.openDevTools()
+  // and load the index.html of the app.
+  win.loadFile('index.html');
+  // Open the DevTools.
+  //win.webContents.openDevTools()
 
-    // Emitted when the window is closed.
-    win.on('closed', () => {
-      // Dereference the window object, usually you would store windows
-      // in an array if your app supports multi windows, this is the time
-      // when you should delete the corresponding element.
-      win = null;
-      app.quit();
+  // Emitted when the window is closed.
+  win.on('closed', () => {
+    // Dereference the window object, usually you would store windows
+    // in an array if your app supports multi windows, this is the time
+    // when you should delete the corresponding element.
+    win = null;
+    app.quit();
 
-    });
   });
   await ipcInitPromise;
 }
@@ -206,6 +204,8 @@ app.on('web-contents-created', (event, contents) => {
     event.preventDefault();
   });
 });
+
+await settings.get('windowBounds').then(w => { windowBounds = w});
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
