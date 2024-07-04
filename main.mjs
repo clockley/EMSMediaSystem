@@ -156,7 +156,7 @@ async function initializeIPC() {
 
     ipcMain.on('play-ctl', (event, cmd, id) => {
       if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-          mediaWindow.send('play-ctl', cmd);
+        mediaWindow.send('play-ctl', cmd);
       }
     });
 
@@ -201,10 +201,16 @@ app.on('will-finish-launching', async () => {
   ipcInitPromise = initializeIPC();
 });
 
+app.on('web-contents-created', (event, contents) => {
+  contents.on('will-navigate', (event) => {
+    event.preventDefault();
+  });
+});
+
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.on('ready', createWindow)
+app.on('ready', createWindow);
 
 // Quit when all windows are closed.
 app.on('window-all-closed', () => {
