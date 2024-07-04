@@ -10,7 +10,6 @@ let windowBounds;
 // be closed automatically when the JavaScript object is garbage collected.
 let win = null;
 let ipcInitPromise = null;
-app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
 Menu.setApplicationMenu(null)
 
@@ -197,14 +196,7 @@ app.on('will-finish-launching', async () => {
   ipcInitPromise = initializeIPC();
 });
 
-app.on('web-contents-created', (event, contents) => {
-  contents.on('will-navigate', (event) => {
-    event.preventDefault();
-  });
-});
-
 windowBounds = settings.get('windowBounds');
-
 
 app.whenReady().then(() => {
   createWindow();
