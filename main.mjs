@@ -60,28 +60,28 @@ async function createWindow() {
     height: windowBounds ? windowBounds.height : 660,
     minWidth: 1096,
     minHeight: 681,
-    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: true,
       userGesture: true,
-      webSecurity: true,
       backgroundThrottling: false,
       autoplayPolicy: 'no-user-gesture-required',
       preload: path.join(app.getAppPath(), 'app_preload.mjs')
     }
   })
   win.setAspectRatio(1.618);
-  const saveWindowBounds = debounce(() => {
-    settings.set('windowBounds', win.getBounds())
-      .catch(error => {
-        console.error('Error saving window bounds:', error);
-      });
-  }, 300);
-
-  win.on('resize', saveWindowBounds);
-
-  // and load the index.html of the app.
   win.loadFile('index.html');
+
+  win.webContents.on('did-finish-load', async () => {
+    const saveWindowBounds = debounce(() => {
+      settings.set('windowBounds', win.getBounds())
+        .catch(error => {
+          console.error('Error saving window bounds:', error);
+        });
+    }, 300);
+
+    win.on('resize', saveWindowBounds);
+  });
+
   // Open the DevTools.
   //win.webContents.openDevTools()
 
@@ -118,82 +118,79 @@ function enablePowersave() {
 
 
 async function initializeIPC() {
-  return new Promise((resolve) => {
-    ipcMain.handle('get-all-displays', () => {
-      return screen.getAllDisplays();
-    });
-
-    ipcMain.handle('create-media-window', (event, windowOptions) => {
-      mediaWindow = new BrowserWindow(windowOptions);
-      mediaWindow.loadFile("media.html");
-      mediaWindow.on('closed', () => {
-        if (win)
-          win.webContents.send('media-window-closed', mediaWindow.id);
-      });
-      return mediaWindow.id;
-    });
-
-    ipcMain.on('disable-powersave', () => {
-      disablePowerSave();
-    });
-
-    ipcMain.on('enable-powersave', () => {
-      enablePowersave();
-    });
-
-    ipcMain.on('vlcl', (event, v, id) => {
-      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-        mediaWindow.send('vlcl', v);
-      }
-    });
-
-    ipcMain.on('timeGoto-message', (event, arg) => {
-      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-        mediaWindow.send('timeGoto-message', arg);
-      }
-    });
-
-    ipcMain.on('play-ctl', (event, cmd, id) => {
-      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-        mediaWindow.send('play-ctl', cmd);
-      }
-    });
-
-    ipcMain.handle('get-media-current-time', async () => {
-      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-        return await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
-      }
-    });
-
-    ipcMain.on('close-media-window', (event, id) => {
-      if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-        mediaWindow.hide();
-        mediaWindow.close();
-      }
-    });
-
-    ipcMain.on('timeRemaining-message', (event, arg) => {
-      if (win) {
-        win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]]);
-      }
-    });
-
-    ipcMain.on('mediasession-pause', () => {
-      win.webContents.send('mediasession-pause');
-    });
-
-    ipcMain.on('mediasession-play', () => {
-      win.webContents.send('mediasession-play');
-    });
-
-    ipcMain.on('playback-state-change', (event, playbackState) => {
-      if (win) {
-        win.webContents.send('update-playback-state', playbackState);
-      }
-    });
-
-    resolve();
+  ipcMain.handle('get-all-displays', () => {
+    return screen.getAllDisplays();
   });
+
+  ipcMain.handle('create-media-window', (event, windowOptions) => {
+    mediaWindow = new BrowserWindow(windowOptions);
+    mediaWindow.loadFile("media.html");
+    mediaWindow.on('closed', () => {
+      if (win)
+        win.webContents.send('media-window-closed', mediaWindow.id);
+    });
+    return mediaWindow.id;
+  });
+
+  ipcMain.on('disable-powersave', () => {
+    disablePowerSave();
+  });
+
+  ipcMain.on('enable-powersave', () => {
+    enablePowersave();
+  });
+
+  ipcMain.on('vlcl', (event, v, id) => {
+    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+      mediaWindow.send('vlcl', v);
+    }
+  });
+
+  ipcMain.on('timeGoto-message', (event, arg) => {
+    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+      mediaWindow.send('timeGoto-message', arg);
+    }
+  });
+
+  ipcMain.on('play-ctl', (event, cmd, id) => {
+    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+      mediaWindow.send('play-ctl', cmd);
+    }
+  });
+
+  ipcMain.handle('get-media-current-time', async () => {
+    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+      return await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+    }
+  });
+
+  ipcMain.on('close-media-window', (event, id) => {
+    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+      mediaWindow.hide();
+      mediaWindow.close();
+    }
+  });
+
+  ipcMain.on('timeRemaining-message', (event, arg) => {
+    if (win) {
+      win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]]);
+    }
+  });
+
+  ipcMain.on('mediasession-pause', () => {
+    win.webContents.send('mediasession-pause');
+  });
+
+  ipcMain.on('mediasession-play', () => {
+    win.webContents.send('mediasession-play');
+  });
+
+  ipcMain.on('playback-state-change', (event, playbackState) => {
+    if (win) {
+      win.webContents.send('update-playback-state', playbackState);
+    }
+  });
+
 }
 
 app.on('will-finish-launching', async () => {
@@ -208,11 +205,10 @@ app.on('web-contents-created', (event, contents) => {
 
 windowBounds = settings.get('windowBounds');
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
-app.on('ready', createWindow);
 
+app.whenReady().then(() => {
+  createWindow();
+});
 // Quit when all windows are closed.
 app.on('window-all-closed', () => {
   // On macOS it is common for applications and their menu bar
