@@ -2,7 +2,7 @@
 //console.time("start");
 //Project Alchemy
 //Copyright 2019 - 2024 Christian Lockley
-const { ipcRenderer, path, __dirname } = window.electron;
+const { ipcRenderer, path, __dirname, bibleAPI } = window.electron;
 
 var dontSyncRemote = false;
 var pidSeeking = false;
