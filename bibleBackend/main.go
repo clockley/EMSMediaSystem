@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"syscall/js"
 
@@ -67,6 +68,9 @@ func init() {
 	js.Global().Set("_getVersions", js.FuncOf(getVersions))
 	js.Global().Set("_getBooks", js.FuncOf(getBooks))
 	js.Global().Set("_getText", js.FuncOf(getText))
+	js.Global().Set("_getBookInfo", js.FuncOf(getBookInfo))
+	js.Global().Set("_getChapterInfo", js.FuncOf(getChapterInfo))
+
 }
 
 func fetchVersions(db *sql.DB) (map[string]Version, error) {
@@ -146,6 +150,75 @@ func getText(this js.Value, p []js.Value) interface{} {
 	}
 
 	return text
+}
+
+func getChapterInfo(this js.Value, p []js.Value) interface{} {
+	if len(p) < 2 {
+		return returnError("Invalid arguments: Requires version abbreviation and chapter reference (e.g., 'Acts 1')")
+	}
+
+	versionKey := p[0].String() // Version abbreviation
+	chapterRef := p[1].String() // Chapter reference, e.g., "Acts 1"
+
+	parts := strings.SplitN(chapterRef, " ", 2)
+	if len(parts) != 2 {
+		return returnError("Invalid chapter reference format. Expected format: 'BookName ChapterNumber'")
+	}
+
+	bookName := parts[0]
+	chapterNumber, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return returnError("Invalid chapter number: " + err.Error())
+	}
+
+	// Retrieve version info using the version key
+	versionInfo, ok := cachedVersions[versionKey]
+	if !ok {
+		return returnError("Version key not found")
+	}
+
+	bookID, ok := cachedBooks[bookName]
+	if !ok {
+		return returnError("Book not found")
+	}
+
+	query := fmt.Sprintf("SELECT COUNT(v) FROM %s WHERE b = ? AND c = ?", versionInfo.TableName)
+	row := db.QueryRow(query, bookID, chapterNumber)
+	var verseCount int
+	if err := row.Scan(&verseCount); err != nil {
+		return returnError("Failed to fetch verse count: " + err.Error())
+	}
+
+	return js.ValueOf(verseCount)
+}
+
+func getBookInfo(this js.Value, p []js.Value) interface{} {
+	if len(p) < 2 {
+		return returnError("Invalid arguments: Requires version abbreviation and book name")
+	}
+
+	versionKey := p[0].String() // Use versionKey to align with your context
+	bookName := p[1].String()
+
+	// Retrieve version info using the version key
+	versionInfo, ok := cachedVersions[versionKey] // Make sure 'cachedVersions' is the map containing version info
+	if !ok {
+		return returnError("Version key not found")
+	}
+
+	bookID, ok := cachedBooks[bookName]
+	if !ok {
+		return returnError("Book not found")
+	}
+
+	query := fmt.Sprintf("SELECT COUNT(DISTINCT c) FROM %s WHERE b = ?", versionInfo.TableName)
+	row := db.QueryRow(query, bookID)
+	var chapterCount int
+	if err := row.Scan(&chapterCount); err != nil {
+		return returnError("Failed to fetch chapter count: " + err.Error())
+	}
+
+	return js.ValueOf(chapterCount)
 }
 
 func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterVerse string) (string, error) {
