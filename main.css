@@ -291,6 +291,26 @@ input[type="radio"]:checked + label.tab {
     display: none;
 }
 
+#suggestions {
+    background-color: #fff; /* Ensure background color is white */
+    border: 1px solid #ccc; /* Add a border to the suggestions list */
+    padding: 0; /* Remove default padding */
+    margin-top: 0; /* Remove default margin */
+    position: absolute; /* Ensure the list is positioned correctly */
+    z-index: 1000; /* Ensure the list is above other elements */
+    width: width 100vw; /* Match the width of the input field */
+}
+
+#suggestions li {
+    padding: 8px;
+    cursor: pointer;
+}
+
+#suggestions li:hover, #suggestions li.highlight {
+    background-color: #f0f0f0;
+}
+
+
 @media (prefers-color-scheme: dark) {
     /*
     label.tab {

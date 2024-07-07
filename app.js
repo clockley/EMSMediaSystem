@@ -29,6 +29,7 @@ var mediaSessionPause = false;
 const MEDIAPLAYER = 0;
 const MEDIAPLAYERYT = 1;
 const BULKMEDIAPLAYER = 5;
+const TEXTPLAYER = 6;
 const imageExtensions = new Set(["bmp", "gif", "jpg", "jpeg", "png", "webp", "svg", "ico"]);
 let lastUpdateTime = 0;
 let lastTimeDifference = 0; // Last time difference for derivative calculation
@@ -599,6 +600,129 @@ function setSBFormYouTubeMediaPlayer() {
     }
 }
 
+function setSBFormTextPlayer() {
+    if (opMode === TEXTPLAYER) {
+        return;
+    }
+    opMode = TEXTPLAYER;
+    ipcRenderer.send('set-mode', opMode);
+ 
+
+    dyneForm.innerHTML =
+    `
+        <form>
+            <input spellcheck="false" type="text" name="scrpInpt" id="scrpInpt" placeholder="Enter book, chapter, and verse">
+            <ul id="suggestions" style="list-style-type: none; padding: 0; margin: 0;"></ul>
+        </form>
+    `;
+
+    const input = document.getElementById('scrpInpt');
+    const suggestions = document.getElementById('suggestions');
+
+    // Fetch the books directly
+    const books = bibleAPI.getBooks();
+
+    // Convert string to title case
+    const toTitleCase = (str) => {
+        return str.replace(/\b\w+/g, function(txt) {
+            return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
+        });
+    };
+
+    // Extract book name, chapter, and verse from the input
+    const parseInput = (input) => {
+        const regex = /^([\d\s\w]+)\s*(\d*)?:?(\d*)?$/;
+        const match = input.match(regex);
+        if (match) {
+            return {
+                book: toTitleCase(match[1].trim()),
+                chapter: match[2] || '',
+                verse: match[3] || ''
+            };
+        }
+        return null;
+    };
+
+    let filteredBooks = [];
+    let selectedIndex = -1; // Index to keep track of the currently selected suggestion
+
+    input.addEventListener('input', () => {
+        const query = input.value.trim();
+        suggestions.innerHTML = ''; // Clear previous suggestions
+        selectedIndex = -1; // Reset the selected index
+
+        if (query.length > 0) {
+            const parsed = parseInput(query);
+            if (parsed) {
+                // Filter books based on the parsed book name
+                filteredBooks = books
+                    .filter(book => book.name.toLowerCase().startsWith(parsed.book.toLowerCase()))
+                    .sort((a, b) => a.name.localeCompare(b.name)); // Sort alphabetically
+
+                if (filteredBooks.length === 1 && query.toLowerCase() === filteredBooks[0].name.toLowerCase()) {
+                    // If there is only one suggestion and it matches the query exactly, auto-fill the input
+                    input.value = filteredBooks[0].name + ' ';
+                    suggestions.innerHTML = ''; // Clear suggestions
+                } else {
+                    filteredBooks.forEach((book, index) => {
+                        const li = document.createElement('li');
+                        li.textContent = book.name;
+                        li.dataset.index = index; // Store the index as a data attribute
+                        li.addEventListener('mousedown', () => {
+                            input.value = book.name + ' '; // Add a space after the book name for user to continue entering chapter and verse
+                            suggestions.innerHTML = ''; // Clear suggestions
+                        });
+                        suggestions.appendChild(li);
+                    });
+                }
+            }
+        }
+    });
+
+    input.addEventListener('keydown', (event) => {
+        const suggestionItems = suggestions.getElementsByTagName('li');
+
+        if (event.key === 'ArrowDown') {
+            if (selectedIndex < suggestionItems.length - 1) {
+                selectedIndex++;
+                updateSuggestionsHighlight();
+            }
+            event.preventDefault();
+        } else if (event.key === 'ArrowUp') {
+            if (selectedIndex > 0) {
+                selectedIndex--;
+                updateSuggestionsHighlight();
+            }
+            event.preventDefault();
+        } else if (event.key === 'Enter' || event.key === 'Tab') {
+            if (selectedIndex >= 0 && suggestionItems[selectedIndex]) {
+                input.value = suggestionItems[selectedIndex].textContent + ' '; // Set the input value to the selected suggestion
+                suggestions.innerHTML = ''; // Clear suggestions
+                event.preventDefault();
+            } else if (filteredBooks.length === 1 && event.key === 'Tab') {
+                input.value = filteredBooks[0].name + ' '; // Auto-fill the input field with the only option and add a space
+                suggestions.innerHTML = ''; // Clear suggestions
+                event.preventDefault();
+            }
+        }
+    });
+
+    input.addEventListener('blur', () => {
+        suggestions.innerHTML = ''; // Clear suggestions when input loses focus
+    });
+
+    function updateSuggestionsHighlight() {
+        const suggestionItems = suggestions.getElementsByTagName('li');
+        for (let i = 0; i < suggestionItems.length; i++) {
+            if (i === selectedIndex) {
+                suggestionItems[i].classList.add('highlight');
+            } else {
+                suggestionItems[i].classList.remove('highlight');
+            }
+        }
+    }
+}
+
 function setSBFormMediaPlayer() {
     if (opMode === MEDIAPLAYER) {
         return;
@@ -890,8 +1014,8 @@ function saveMediaFile() {
 }
 
 function restoreMediaFile() {
-    if (saveMediaFile.fileInpt !== null && document.getElementById("mdFile") !== null) {
-        if (document.getElementById("YtPlyrRBtnFrmID") !== null && document.getElementById("YtPlyrRBtnFrmID").checked) {
+    if (saveMediaFile.fileInpt != null && document.getElementById("mdFile") != null) {
+        if (document.getElementById("YtPlyrRBtnFrmID") != null && document.getElementById("YtPlyrRBtnFrmID").checked) {
             document.getElementById("mdFile").value = saveMediaFile.urlInpt;
         } else {
             document.getElementById("mdFile").files = saveMediaFile.fileInpt;
@@ -902,6 +1026,7 @@ function restoreMediaFile() {
 function installSidebarFormEvents() {
     document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
+    document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
 
     document.querySelector('form').addEventListener('change', function (event) {
         if (event.target.type === 'radio') {
@@ -1172,6 +1297,9 @@ window.addEventListener("load", async (event) => {
 });
 
 function isLiveStream(mediaFile) {
+    if (mediaFile === undefined || mediaFile === null) {
+        return false;
+    }
     return mediaFile.includes("m3u8") || mediaFile.includes("mpd") ||
         mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback") || mediaFile.includes("youtu.be");
 }
