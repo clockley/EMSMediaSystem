@@ -15,7 +15,9 @@ const bible = new Bible();
 const bibleAPI = {
     getBooks: () => bible.getBooks(),
     getVersions: () => bible.getVersions(),
-    getText: (version, book, verse) => bible.getText(version, book, verse)
+    getText: (version, book, verse) => bible.getText(version, book, verse),
+    getBookInfo: (version, name) => bible.getBookInfo(version, name),
+    getChapterInfo: (version, name, chapterNumber) => bible.getChapterInfo(version, name, chapterNumber)
 };
 
 contextBridge.exposeInMainWorld('electron', {
