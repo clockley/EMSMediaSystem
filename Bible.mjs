@@ -1,4 +1,3 @@
-// Bible.js
 export class Bible {
     constructor() {
           const go = new Go();
@@ -17,5 +16,13 @@ export class Bible {
 
     getText(version, book, verse) {
         return JSON.parse(_getText(version, book, verse));
+    }
+
+    getBookInfo(version, name) {
+        return JSON.parse(_getBookInfo(version, name));
+    }
+
+    getChapterInfo(version, name, verse) {
+        return JSON.parse(_getChapterInfo(version, name, verse));
     }
 }
