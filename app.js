@@ -619,7 +619,7 @@ function setSBFormTextPlayer() {
             <label for="scriptureInput">Scripture:</label>
             <input type="text" id="scriptureInput" class="input-field" placeholder="e.g., Genesis 1:1">
             <ul id="bookSuggestions" style="list-style-type: none; padding: 0; margin-top: 5px; border: 1px solid #ccc; background-color: white; width: 200px; position: absolute; display: none; max-height: 200px; overflow-y: auto;"></ul>
-            <div id="versesDisplay" style="height: 200px; overflow-y: scroll; background-color: #f8f8f8; padding: 10px;"></div>
+            <div id="versesDisplay" style="width: 1200px;height: 200px; overflow-y: scroll; background-color: #f8f8f8; padding: 10px;"></div>
         </form>
     `;
 
@@ -660,7 +660,6 @@ function setSBFormTextPlayer() {
 
         return normalizedParts.join(' ');
     }
-
 
     function parseScriptureReference(input) {
         let tokens = input.split(/\s+/);
