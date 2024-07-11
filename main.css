@@ -301,12 +301,25 @@ input[type="radio"]:checked + label.tab {
     width: width 100vw; /* Match the width of the input field */
 }
 
-#suggestions li {
-    padding: 8px;
-    cursor: pointer;
+#scrpInpt {
+    width: 25vw;
+    max-width: 400px;
 }
 
-#suggestions li:hover, #suggestions li.highlight {
+#suggestions {
+    width: 200px;
+    margin-top: 5px;
+    border: 1px solid #ccc;
+    background: #fff;
+    list-style: none;
+    padding: 5px;
+    display: none; /* Initially hidden */
+}
+#suggestions li {
+    padding: 5px;
+    cursor: pointer;
+}
+#suggestions li:hover {
     background-color: #f0f0f0;
 }
 
