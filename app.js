@@ -630,9 +630,9 @@ function setSBFormTextPlayer() {
 
     let lastHighlighted = null;
 
-    scriptureInput.addEventListener('input', function () {
+    scriptureInput.addEventListener('input', function (event) {
         const value = this.value.trim();
-        updateBookSuggestions(value);
+        updateBookSuggestions(value, event);
     });
 
     scriptureInput.addEventListener('keydown', function (event) {
@@ -686,13 +686,40 @@ function setSBFormTextPlayer() {
         return { book, chapter, verse };
     }
 
-    function updateBookSuggestions(input) {
-        const parts = input.split(/[\s:]+/);
-        let bookPart = parts[0];
-        bookSuggestions.innerHTML = '';
-        const filteredBooks = books.filter(book => book.name.toLowerCase().startsWith(bookPart.toLowerCase()));
+    function splitOnLastSpace(input) {
+        let lastIndex = input.lastIndexOf(' ');
 
+        if (lastIndex === -1) {
+            return [input]; // Return the whole string as an array if no space found
+        }
+
+        let firstPart = input.substring(0, lastIndex);
+        let lastPart = input.substring(lastIndex + 1);
+
+        return [firstPart, lastPart];
+    }
+
+    function updateBookSuggestions(input, event) {
+        let parts = input.split(/[\s:]+/);
+        let bookPart = input.match(/^\d?\s?[a-zA-Z]+/); // Matches any leading number followed by book names
+        bookPart = bookPart ? bookPart[0].trim() : ""; // Ensure the match is not null and trim it
+        bookSuggestions.innerHTML = '';
+        const filteredBooks = books.filter(book =>
+            book.name.toLowerCase().startsWith(bookPart.toLowerCase())
+        );
         if (filteredBooks.length) {
+
+            if (filteredBooks.length === 1) {
+                if (splitOnLastSpace(scriptureInput.value)[0] === filteredBooks[0].name) {
+                    return;
+                }
+
+                if (event.inputType === 'insertText') {
+                    scriptureInput.value = filteredBooks[0].name + " ";/*  */
+                    bookSuggestions.style.display = 'none';
+                    return;
+                }
+            }
             bookSuggestions.style.display = 'block';
             filteredBooks.forEach(book => {
                 const li = document.createElement('li');
