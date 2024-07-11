@@ -547,7 +547,7 @@ function setSBFormYouTubeMediaPlayer() {
 
     dyneForm.innerHTML =
         `
-        <form>
+        <form onsubmit="return false;">
         <input type="url" name="mdFile" id="mdFile" placeholder="Paste your video URL here..." style="width: 80%; padding: 15px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; outline: none;" onfocus="this.style.borderColor='#0056b3';" onblur="this.style.borderColor='#ddd';" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
         <br>
         <br>
@@ -561,6 +561,12 @@ function setSBFormYouTubeMediaPlayer() {
         </form>
         <br>
     `;
+
+    document.getElementById('mdFile').addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();  // Prevent form submission and page reload
+        }
+    });
 
     if (mediaFile !== null && isLiveStream(mediaFile)) {
         document.getElementById("mdFile").value = mediaFile;
@@ -600,128 +606,157 @@ function setSBFormYouTubeMediaPlayer() {
     }
 }
 
+
 function setSBFormTextPlayer() {
     if (opMode === TEXTPLAYER) {
         return;
     }
     opMode = TEXTPLAYER;
     ipcRenderer.send('set-mode', opMode);
- 
 
-    dyneForm.innerHTML =
-    `
-        <form>
-            <input spellcheck="false" type="text" name="scrpInpt" id="scrpInpt" placeholder="Enter book, chapter, and verse">
-            <ul id="suggestions" style="list-style-type: none; padding: 0; margin: 0;"></ul>
+    dyneForm.innerHTML = `
+        <form onsubmit="return false;">
+            <label for="scriptureInput">Scripture:</label>
+            <input type="text" id="scriptureInput" class="input-field" placeholder="e.g., Genesis 1:1">
+            <ul id="bookSuggestions" style="list-style-type: none; padding: 0; margin-top: 5px; border: 1px solid #ccc; background-color: white; width: 200px; position: absolute; display: none; max-height: 200px; overflow-y: auto;"></ul>
+            <div id="versesDisplay" style="height: 200px; overflow-y: scroll; background-color: #f8f8f8; padding: 10px;"></div>
         </form>
     `;
 
-    const input = document.getElementById('scrpInpt');
-    const suggestions = document.getElementById('suggestions');
+    const scriptureInput = document.getElementById('scriptureInput');
+    const versesDisplay = document.getElementById('versesDisplay');
+    const bookSuggestions = document.getElementById('bookSuggestions');
+    const books = bibleAPI.getBooks().sort((a, b) => a.name.localeCompare(b.name));
 
-    // Fetch the books directly
-    const books = bibleAPI.getBooks();
+    let lastHighlighted = null;
 
-    // Convert string to title case
-    const toTitleCase = (str) => {
-        return str.replace(/\b\w+/g, function(txt) {
-            return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
-        });
-    };
+    scriptureInput.addEventListener('input', function () {
+        const value = this.value.trim();
+        updateBookSuggestions(value);
+    });
 
-    // Extract book name, chapter, and verse from the input
-    const parseInput = (input) => {
-        const regex = /^([\d\s\w]+)\s*(\d*)?:?(\d*)?$/;
-        const match = input.match(regex);
-        if (match) {
-            return {
-                book: toTitleCase(match[1].trim()),
-                chapter: match[2] || '',
-                verse: match[3] || ''
-            };
-        }
-        return null;
-    };
-
-    let filteredBooks = [];
-    let selectedIndex = -1; // Index to keep track of the currently selected suggestion
-
-    input.addEventListener('input', () => {
-        const query = input.value.trim();
-        suggestions.innerHTML = ''; // Clear previous suggestions
-        selectedIndex = -1; // Reset the selected index
-
-        if (query.length > 0) {
-            const parsed = parseInput(query);
-            if (parsed) {
-                // Filter books based on the parsed book name
-                filteredBooks = books
-                    .filter(book => book.name.toLowerCase().startsWith(parsed.book.toLowerCase()))
-                    .sort((a, b) => a.name.localeCompare(b.name)); // Sort alphabetically
-
-                if (filteredBooks.length === 1 && query.toLowerCase() === filteredBooks[0].name.toLowerCase()) {
-                    // If there is only one suggestion and it matches the query exactly, auto-fill the input
-                    input.value = filteredBooks[0].name + ' ';
-                    suggestions.innerHTML = ''; // Clear suggestions
-                } else {
-                    filteredBooks.forEach((book, index) => {
-                        const li = document.createElement('li');
-                        li.textContent = book.name;
-                        li.dataset.index = index; // Store the index as a data attribute
-                        li.addEventListener('mousedown', () => {
-                            input.value = book.name + ' '; // Add a space after the book name for user to continue entering chapter and verse
-                            suggestions.innerHTML = ''; // Clear suggestions
-                        });
-                        suggestions.appendChild(li);
-                    });
-                }
-            }
+    scriptureInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+            scriptureInput.value = normalizeScriptureReference(scriptureInput.value)
+            event.preventDefault(); // Prevent the default form submission
+            updateVersesDisplay();
         }
     });
 
-    input.addEventListener('keydown', (event) => {
-        const suggestionItems = suggestions.getElementsByTagName('li');
+    function normalizeScriptureReference(input) {
+        let parts = input.split(' ');
+        let normalizedParts = [];
 
-        if (event.key === 'ArrowDown') {
-            if (selectedIndex < suggestionItems.length - 1) {
-                selectedIndex++;
-                updateSuggestionsHighlight();
-            }
-            event.preventDefault();
-        } else if (event.key === 'ArrowUp') {
-            if (selectedIndex > 0) {
-                selectedIndex--;
-                updateSuggestionsHighlight();
-            }
-            event.preventDefault();
-        } else if (event.key === 'Enter' || event.key === 'Tab') {
-            if (selectedIndex >= 0 && suggestionItems[selectedIndex]) {
-                input.value = suggestionItems[selectedIndex].textContent + ' '; // Set the input value to the selected suggestion
-                suggestions.innerHTML = ''; // Clear suggestions
-                event.preventDefault();
-            } else if (filteredBooks.length === 1 && event.key === 'Tab') {
-                input.value = filteredBooks[0].name + ' '; // Auto-fill the input field with the only option and add a space
-                suggestions.innerHTML = ''; // Clear suggestions
-                event.preventDefault();
-            }
-        }
-    });
-
-    input.addEventListener('blur', () => {
-        suggestions.innerHTML = ''; // Clear suggestions when input loses focus
-    });
-
-    function updateSuggestionsHighlight() {
-        const suggestionItems = suggestions.getElementsByTagName('li');
-        for (let i = 0; i < suggestionItems.length; i++) {
-            if (i === selectedIndex) {
-                suggestionItems[i].classList.add('highlight');
+        for (let i = 0; i < parts.length; ++i) {
+            let part = parts[i];
+            if (part.includes(':')) {
+                let subParts = part.split(':');
+                subParts = subParts.filter(Boolean);
+                normalizedParts.push(subParts.join(':'));
             } else {
-                suggestionItems[i].classList.remove('highlight');
+                normalizedParts.push(part);
             }
+        }
+
+        return normalizedParts.join(' ');
+    }
+
+
+    function parseScriptureReference(input) {
+        let tokens = input.split(/\s+/);
+        let book = "";
+        let chapter = undefined;
+        let verse = undefined;
+
+        // Process each token and determine if it's a number or part of a book name
+        tokens.forEach((token, index) => {
+            if (token.includes(":")) {
+                // Handle chapter and verse notation
+                const parts = token.split(":");
+                chapter = parseInt(parts[0], 10);  // Assume the part before ':' is chapter
+                verse = parseInt(parts[1], 10);    // Assume the part after ':' is verse
+            } else if (!isNaN(parseInt(token)) && index === tokens.length - 1) {
+                // Last token is a number and no verse has been defined, assume it's a chapter
+                chapter = parseInt(token, 10);
+            } else {
+                // Append to book name
+                book = book ? `${book} ${token}` : token;
+            }
+        });
+
+        return { book, chapter, verse };
+    }
+
+    function updateBookSuggestions(input) {
+        const parts = input.split(/[\s:]+/);
+        let bookPart = parts[0];
+        bookSuggestions.innerHTML = '';
+        const filteredBooks = books.filter(book => book.name.toLowerCase().startsWith(bookPart.toLowerCase()));
+
+        if (filteredBooks.length) {
+            bookSuggestions.style.display = 'block';
+            filteredBooks.forEach(book => {
+                const li = document.createElement('li');
+                li.textContent = book.name;
+                li.onclick = () => {
+                    scriptureInput.value = book.name + (parts.length > 1 ? " " + parts.slice(1).join(" ") : " ");
+                    bookSuggestions.style.display = 'none';
+                    scriptureInput.focus(); // Refocus on input after selection
+                    updateVersesDisplay();
+                };
+                bookSuggestions.appendChild(li);
+            });
+        } else {
+            bookSuggestions.style.display = 'none';
         }
     }
+
+    function updateVersesDisplay() {
+        scriptureInput.value = normalizeScriptureReference(scriptureInput.value);
+        const { book, chapter, verse } = parseScriptureReference(scriptureInput.value);
+
+        fetchVerses(book, chapter + "", verse + "");
+    }
+
+    function fetchVerses(book, chapter, verse) {
+        versesDisplay.innerHTML = ''; // Clear previous verses
+        const textData = bibleAPI.getText("KJV", book, chapter);
+        if (textData && textData.verses) {
+            textData.verses.forEach((verseText, index) => {
+                const verseNumber = index + 1;
+                const p = document.createElement('p');
+                p.innerHTML = `<strong>${chapter}:${verseNumber}</strong> ${verseText}`;
+                p.style.cursor = 'pointer';
+                p.addEventListener('dblclick', () => {
+                    highlightVerse(p);
+                    scriptureInput.value = `${book} ${chapter}:${verseNumber}`;
+                });
+                versesDisplay.appendChild(p);
+                if (verse && parseInt(verse) === verseNumber) {
+                    highlightVerse(p, true); // Pass true to indicate scrolling is needed
+                }
+            });
+        }
+    }
+
+    function highlightVerse(p, scrollToView = false) {
+        if (lastHighlighted) {
+            lastHighlighted.style.background = ''; // Remove previous highlight
+        }
+        p.style.background = 'yellow'; // Highlight the new verse
+        lastHighlighted = p;
+        if (scrollToView) {
+            p.scrollIntoView({ behavior: 'smooth', block: 'center' }); // Scroll to make the highlighted verse centered
+        }
+    }
+
+    document.addEventListener('click', function (event) {
+        if (!bookSuggestions.contains(event.target) && event.target !== scriptureInput) {
+            bookSuggestions.style.display = 'none';
+        }
+    });
 }
+
 
 function setSBFormMediaPlayer() {
     if (opMode === MEDIAPLAYER) {
@@ -1380,7 +1415,7 @@ async function createMediaWindow() {
                 '__mediafile-ems=' + encodeURIComponent(mediaFile),
                 startTime !== 0 ? '__start-time=' + startTime : "",
                 strtVl !== 1 ? '__start-vol=' + strtVl : "",
-                document.getElementById("mdLpCtlr") !== undefined ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true':'') : "",
+                document.getElementById("mdLpCtlr") !== undefined ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true' : '') : "",
                 liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : ""
             ],
             preload: path.join(__dirname, 'media_preload.js')
