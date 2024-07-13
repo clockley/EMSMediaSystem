@@ -17,7 +17,8 @@ const bibleAPI = {
     getVersions: () => bible.getVersions(),
     getText: (version, book, verse) => bible.getText(version, book, verse),
     getBookInfo: (version, name) => bible.getBookInfo(version, name),
-    getChapterInfo: (version, name, chapterNumber) => bible.getChapterInfo(version, name, chapterNumber)
+    getChapterInfo: (version, name, chapterNumber) => bible.getChapterInfo(version, name, chapterNumber),
+    init: () => bible.init()
 };
 
 contextBridge.exposeInMainWorld('electron', {
