@@ -627,6 +627,49 @@ function setSBFormTextPlayer() {
     const versesDisplay = document.getElementById('versesDisplay');
     const bookSuggestions = document.getElementById('bookSuggestions');
     const books = bibleAPI.getBooks().sort((a, b) => a.name.localeCompare(b.name));
+    const booksById = bibleAPI.getBooks().sort((a, b) => a.id - b.id);
+
+    let selectedIndex = -1;
+
+    scriptureInput.addEventListener('input', function (event) {
+        const value = this.value.trim();
+        updateBookSuggestions(value);
+    });
+
+    scriptureInput.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+            event.preventDefault(); // Prevent form submission
+            if (selectedIndex >= 0 && bookSuggestions.children[selectedIndex]) {
+                bookSuggestions.children[selectedIndex].click();
+            } else {
+                scriptureInput.value = normalizeScriptureReference(scriptureInput.value);
+                updateVersesDisplay();
+            }
+        } else if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            if (selectedIndex < bookSuggestions.children.length - 1) {
+                selectedIndex++; // Increment to move down in the list
+                updateSuggestionsHighlight();
+            }
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            if (selectedIndex > 0) {
+                selectedIndex--; // Decrement to move up in the list
+                updateSuggestionsHighlight();
+            }
+        }
+    });
+
+    function updateSuggestionsHighlight() {
+        Array.from(bookSuggestions.children).forEach((item, index) => {
+            if (index === selectedIndex) {
+                item.classList.add('highlight');
+                item.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); // Ensure the highlighted item is visible
+            } else {
+                item.classList.remove('highlight');
+            }
+        });
+    }
 
     let lastHighlighted = null;
 
@@ -708,14 +751,13 @@ function setSBFormTextPlayer() {
             book.name.toLowerCase().startsWith(bookPart.toLowerCase())
         );
         if (filteredBooks.length) {
-
             if (filteredBooks.length === 1) {
                 if (splitOnLastSpace(scriptureInput.value)[0] === filteredBooks[0].name) {
                     return;
                 }
 
-                if (event.inputType === 'insertText') {
-                    scriptureInput.value = filteredBooks[0].name + " ";/*  */
+                if (event != null && event.inputType === 'insertText') {
+                    scriptureInput.value = filteredBooks[0].name + " ";
                     bookSuggestions.style.display = 'none';
                     return;
                 }
@@ -771,7 +813,7 @@ function setSBFormTextPlayer() {
         }
         p.style.background = 'yellow'; // Highlight the new verse
         lastHighlighted = p;
-        if (scrollToView) {
+        if ([scrollToView]) {
             p.scrollIntoView({ behavior: 'smooth', block: 'center' }); // Scroll to make the highlighted verse centered
         }
     }
@@ -782,7 +824,6 @@ function setSBFormTextPlayer() {
         }
     });
 }
-
 
 function setSBFormMediaPlayer() {
     if (opMode === MEDIAPLAYER) {
@@ -1339,6 +1380,10 @@ function initPlayer() {
             case MEDIAPLAYERYT:
                 document.getElementById("YtPlyrRBtnFrmID").checked = true;
                 setSBFormYouTubeMediaPlayer();
+                break;
+            case TEXTPLAYER:
+                document.getElementById("TxtPlyrRBtnFrmID").checked = true;
+                setSBFormTextPlayer();
                 break;
             default:
                 document.getElementById("MdPlyrRBtnFrmID").checked = true;

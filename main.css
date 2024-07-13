@@ -323,6 +323,10 @@ input[type="radio"]:checked + label.tab {
     background-color: #f0f0f0;
 }
 
+.highlight {
+    background-color: #f0f0f0; /* Light grey background for highlighted item */
+    color: #333; /* Darker text color for better contrast */
+}
 
 @media (prefers-color-scheme: dark) {
     /*
