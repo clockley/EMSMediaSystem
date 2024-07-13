@@ -607,13 +607,13 @@ function setSBFormYouTubeMediaPlayer() {
 }
 
 
-function setSBFormTextPlayer() {
+async function setSBFormTextPlayer() {
     if (opMode === TEXTPLAYER) {
         return;
     }
     opMode = TEXTPLAYER;
     ipcRenderer.send('set-mode', opMode);
-
+    await await bibleAPI.init();
     dyneForm.innerHTML = `
         <form onsubmit="return false;">
             <label for="scriptureInput">Scripture:</label>

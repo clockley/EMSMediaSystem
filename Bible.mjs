@@ -1,9 +1,20 @@
 export class Bible {
     constructor() {
-          const go = new Go();
-        WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((result) => {
-            go.run(result.instance);
-        });
+        this.initialized = false;
+    }
+
+    async init() {
+        const go = new Go();
+        const result = await WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject);
+        go.run(result.instance);
+        this.initialized = true;
+        await this.ensureInitialized();
+    }
+
+    async ensureInitialized() {
+        if (!this.initialized) {
+            await this.initPromise;
+        }
     }
 
     getBooks() {
