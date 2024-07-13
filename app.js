@@ -613,7 +613,10 @@ async function setSBFormTextPlayer() {
     }
     opMode = TEXTPLAYER;
     ipcRenderer.send('set-mode', opMode);
-    await await bibleAPI.init();
+    if (setSBFormTextPlayer.bibleAPIInit == undefined) {
+        await bibleAPI.init();
+        setSBFormTextPlayer.bibleAPIInit = true;
+    }
     dyneForm.innerHTML = `
         <form onsubmit="return false;">
             <label for="scriptureInput">Scripture:</label>
