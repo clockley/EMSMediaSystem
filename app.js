@@ -613,10 +613,7 @@ async function setSBFormTextPlayer() {
     }
     opMode = TEXTPLAYER;
     ipcRenderer.send('set-mode', opMode);
-    if (setSBFormTextPlayer.bibleAPIInit == undefined) {
-        await bibleAPI.init();
-        setSBFormTextPlayer.bibleAPIInit = true;
-    }
+
     dyneForm.innerHTML = `
         <form onsubmit="return false;">
             <label for="scriptureInput">Scripture:</label>
@@ -629,6 +626,10 @@ async function setSBFormTextPlayer() {
     const scriptureInput = document.getElementById('scriptureInput');
     const versesDisplay = document.getElementById('versesDisplay');
     const bookSuggestions = document.getElementById('bookSuggestions');
+    if (setSBFormTextPlayer.bibleAPIInit == undefined) {
+        await bibleAPI.init();
+        setSBFormTextPlayer.bibleAPIInit = true;
+    }
     const books = bibleAPI.getBooks().sort((a, b) => a.name.localeCompare(b.name));
     const booksById = bibleAPI.getBooks().sort((a, b) => a.id - b.id);
 
