@@ -53,6 +53,10 @@ async function createWindow() {
     return settings.get(setting);
   });
 
+  ipcMain.handle('get-app-path', () => {
+    return app.getAppPath();
+  })
+
   win = new BrowserWindow({
     width: windowBounds ? windowBounds.width : 1068,
     height: windowBounds ? windowBounds.height : 660,

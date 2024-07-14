@@ -1,12 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { Bible } from './Bible.mjs';
 import vm from 'vm';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = await ipcRenderer.invoke('get-app-path');
 
 const wasmExecPath = path.join(__dirname, 'wasm_exec.js');
 const wasmExecScript = fs.readFileSync(wasmExecPath, 'utf8');
