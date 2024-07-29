@@ -87,7 +87,6 @@ async function createWindow() {
   win.on('closed', () => {
     win = null;
     app.quit();
-
   });
   await ipcInitPromise;
 }
@@ -111,7 +110,6 @@ function disablePowerSave() {
   }
 }
 
-
 async function initializeIPC() {
   ipcMain.handle('get-all-displays', () => {
     return screen.getAllDisplays();
@@ -125,14 +123,6 @@ async function initializeIPC() {
         win.webContents.send('media-window-closed', mediaWindow.id);
     });
     return mediaWindow.id;
-  });
-
-  ipcMain.on('disable-powersave', () => {
-    disablePowerSave();
-  });
-
-  ipcMain.on('enable-powersave', () => {
-    enablePowersave();
   });
 
   ipcMain.on('vlcl', (event, v, id) => {
@@ -150,6 +140,7 @@ async function initializeIPC() {
   ipcMain.on('play-ctl', (event, cmd, id) => {
     if (mediaWindow != null && !mediaWindow.isDestroyed()) {
       mediaWindow.send('play-ctl', cmd);
+      enablePowersave();
     }
   });
 
@@ -163,6 +154,7 @@ async function initializeIPC() {
     if (mediaWindow != null && !mediaWindow.isDestroyed()) {
       mediaWindow.hide();
       mediaWindow.close();
+      disablePowerSave();
     }
   });
 
@@ -186,6 +178,17 @@ async function initializeIPC() {
     }
   });
 
+  ipcMain.on('disable-powersave', () => {
+    if (mediaWindow == null || mediaWindow.isDestroyed() === true) {
+      disablePowerSave();
+    }
+  });
+
+  ipcMain.on('enable-powersave', () => {
+    if (mediaWindow == null || mediaWindow.isDestroyed() === true) {
+      enablePowersave();
+    }
+  });
 }
 
 app.on('will-finish-launching', async () => {
