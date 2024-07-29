@@ -502,7 +502,7 @@ function playMedia(e) {
         dontSyncRemote = false;
     } else if (e.target.textContent === "⏹️") {
         ipcRenderer.send('close-media-window', 0);
-        ipcRenderer.send('enable-powersave');
+        ipcRenderer.send('disable-powersave');
         playingMediaAudioOnly = false;
         dontSyncRemote = true;
         clearTimeout(mediaPlayDelay);
@@ -1209,7 +1209,7 @@ function installPreviewEventHandlers() {
         });
 
         video.addEventListener('ended', (e) => {
-            ipcRenderer.send('enable-powersave');
+            ipcRenderer.send('disable-powersave');
             audioOnlyFile = false;
             if (document.getElementById("mediaWindowPlayButton")) {
                 document.getElementById("mediaWindowPlayButton").textContent = "▶️";
@@ -1321,7 +1321,7 @@ function installPreviewEventHandlers() {
                 if (mediaScrnPlyBtn.textContent === '▶️') {
                     fileEnded = false;
                     video.muted = false;
-                    ipcRenderer.send('disable-powersave');
+                    ipcRenderer.send('enable-powersave');
                     if (document.getElementById("mdLpCtlr")) {
                         video.loop = document.getElementById("mdLpCtlr").checked;
                     }
@@ -1346,7 +1346,7 @@ function installPreviewEventHandlers() {
             } else {
                 if (audioOnlyFile) {
                     video.muted = false;
-                    ipcRenderer.send('disable-powersave');
+                    ipcRenderer.send('enable-powersave');
                     if (document.getElementById("mdLpCtlr")) {
                         video.loop = document.getElementById("mdLpCtlr").checked;
                     }
