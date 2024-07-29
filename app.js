@@ -562,12 +562,6 @@ function setSBFormYouTubeMediaPlayer() {
         <br>
     `;
 
-    document.getElementById('mdFile').addEventListener('keydown', function (event) {
-        if (event.key === 'Enter') {
-            event.preventDefault();  // Prevent form submission and page reload
-        }
-    });
-
     if (mediaFile !== null && isLiveStream(mediaFile)) {
         document.getElementById("mdFile").value = mediaFile;
     }
@@ -839,7 +833,7 @@ function setSBFormMediaPlayer() {
     if (osName === "Linux") {
         dyneForm.innerHTML =
             `
-            <form>
+            <form onsubmit="return false;">
                 <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
 
                 <br>
@@ -876,7 +870,7 @@ function setSBFormMediaPlayer() {
     } else {
         dyneForm.innerHTML =
             `
-        <form>
+        <form onsubmit="return false;">
             <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
 
             <br>
@@ -1490,7 +1484,7 @@ async function createMediaWindow() {
                 '__mediafile-ems=' + encodeURIComponent(mediaFile),
                 startTime !== 0 ? '__start-time=' + startTime : "",
                 strtVl !== 1 ? '__start-vol=' + strtVl : "",
-                document.getElementById("mdLpCtlr") !== undefined ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true' : '') : "",
+                document.getElementById("mdLpCtlr") !== null ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true' : '') : "",
                 liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : ""
             ],
             preload: path.join(__dirname, 'media_preload.js')
