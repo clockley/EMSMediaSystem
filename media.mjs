@@ -10,10 +10,9 @@ var strtTm = 0;
 var liveStreamMode = false;
 var prom = null;
 var isImg = false;
-for (let i = argv.length - 1; i > 0; --i) {
-    if (argv[i].charCodeAt(0) === 45) {
-        break;
-    }
+let i = argv.length - 1;
+
+do {
     if (argv[i].startsWith('__mediaf')) {
         mediaFile = decodeURIComponent(argv[i].substring(16));
     } else if (argv[i] === '__isImg') {
@@ -27,7 +26,8 @@ for (let i = argv.length - 1; i > 0; --i) {
     } else if (argv[i] === '__media-loop=true') {
         loopFile = true;
     }
-}
+    --i;
+} while (i >= 0 && argv[i][0] !== '-');
 
 async function installICPHandlers() {
     if (!liveStreamMode) {
