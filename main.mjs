@@ -127,32 +127,32 @@ async function initializeIPC() {
   });
 
   ipcMain.on('vlcl', (event, v, id) => {
-    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+    if (mediaWindow !== null && !mediaWindow.isDestroyed()) {
       mediaWindow.send('vlcl', v);
     }
   });
 
   ipcMain.on('timeGoto-message', (event, arg) => {
-    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+    if (mediaWindow !== null && !mediaWindow.isDestroyed()) {
       mediaWindow.send('timeGoto-message', arg);
     }
   });
 
   ipcMain.on('play-ctl', (event, cmd, id) => {
-    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+    if (mediaWindow !== null && !mediaWindow.isDestroyed()) {
       mediaWindow.send('play-ctl', cmd);
       enablePowersave();
     }
   });
 
   ipcMain.handle('get-media-current-time', async () => {
-    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+    if (mediaWindow !== null && !mediaWindow.isDestroyed()) {
       return await mediaWindow.webContents.executeJavaScript(`window.api.video.currentTime`);
     }
   });
 
   ipcMain.on('close-media-window', (event, id) => {
-    if (mediaWindow != null && !mediaWindow.isDestroyed()) {
+    if (mediaWindow !== null && !mediaWindow.isDestroyed()) {
       mediaWindow.hide();
       mediaWindow.close();
       disablePowerSave();
@@ -180,13 +180,13 @@ async function initializeIPC() {
   });
 
   ipcMain.on('disable-powersave', () => {
-    if (mediaWindow == null || mediaWindow.isDestroyed() === true) {
+    if (mediaWindow === null || mediaWindow.isDestroyed() === true) {
       disablePowerSave();
     }
   });
 
   ipcMain.on('enable-powersave', () => {
-    if (mediaWindow == null || mediaWindow.isDestroyed() === true) {
+    if (mediaWindow === null || mediaWindow.isDestroyed() === true) {
       enablePowersave();
     }
   });
