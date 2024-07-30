@@ -1,185 +1,117 @@
+/* Grid layout */
 .index-grid-container {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: repeat(6, auto);
+    grid-template-columns: repeat(2, 1fr);
     grid-template-areas:
-        "main main sideBar1"
-        "main main sideBar1"
-        "footerBar footerBar footerBar";
+        "main main"
+        "main main"
+        "footerBar footerBar";
+}
+
+/* Base styles */
+body {
+    font-family: Arial, sans-serif;
+    user-select: none;
 }
 
 body.windows {
-    /* Windows-specific styles */
     font-family: "Segoe UI", sans-serif;
     color: #333;
     background-color: #fff;
 }
 
 body.linux {
-    /* Linux-specific styles */
     font-family: Cantarell, Arial, sans-serif;
     color: #2e3436;
     background-color: #edecec;
 }
 
+/* Common form element styles */
+button,
+input,
+textarea {
+    font-size: 14px;
+}
+
 body.linux button,
 body.linux input,
 body.linux textarea {
-    background-color: #fff;
     border: 1px solid #c7c7c7;
     padding: 8px 16px;
-    font-size: 14px;
-    border-radius: 6px; /* rounded corners for buttons and inputs */
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); /* subtle shadow for depth */
-}
-
-body.linux button:hover {
-    background-color: #d3d7cf;
-    border-color: #b1b1b1; /* slightly darker border on hover */
-}
-
-body.linux button:active {
-    background-color: #babdb6; /* darker background when clicked */
-    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2); /* inner shadow for pressed effect */
-}
-
-body.linux input:focus,
-body.linux textarea:focus {
-    border-color: #4a90d9; /* focus color similar to Adwaita blue */
-    outline: none;
-}
-
-.adwaita-slider {
-    -webkit-appearance: none; /* Removes default browser styling */
-    appearance: none;
-    width: calc(100% - 40px); /* Adjust width to allow thumb to reach ends */
-    height: 2px; /* Slider thickness */
-    background: #b3b3b3; /* Default track color for light mode */
-    margin: 10px 20px; /* Adds margin to the left and right */
-    position: relative;
-    transition: background-color 0.3s; /* Smooth transition for background color */
-}
-
-.adwaita-slider:hover {
-    opacity: 1; /* Slider fully opaque on hover */
-}
-
-.adwaita-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    height: 16px;
-    width: 16px;
-    background: #4a90d9; /* Adwaita blue for the slider thumb */
-    cursor: pointer;
-    border-radius: 50%;
-    margin-top: -9px; /* Centers the thumb over the track */
-    transition: background-color 0.3s; /* Smooth transition for color changes */
-    box-shadow: 0 0 1px 1px rgba(0, 0, 0, 0.2); /* subtle shadow for the thumb */
-}
-
-.adwaita-slider::-webkit-slider-runnable-track {
-    width: 100%;
-    height: 2px;
-    cursor: pointer;
-}
-
-/* Media query for dark mode preferences */
-@media (prefers-color-scheme: dark) {
-    .adwaita-slider {
-        background: #555; /* Darker track color for dark mode */
-    }
-
-    .adwaita-slider::-webkit-slider-thumb {
-        background: #eee; /* Light thumb for dark theme */
-    }
-
-    .adwaita-slider:hover {
-        background-color: #666; /* Darker hover effect for dark mode */
-    }
-}
-
-body.linux .slider:hover::-webkit-slider-thumb {
-    background: #729fcf; /* lighter blue on hover */
-}
-
-body.linux .slider:active::-webkit-slider-thumb {
-    background: #3465a4; /* darker blue when active */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 body.windows button,
 body.windows input,
 body.windows textarea {
-    background-color: #fff;
     border: 1px solid #ccc;
     padding: 6px 12px;
-    font-size: 14px;
 }
 
-body.windows button:hover {
+/* Button states */
+button:hover {
     background-color: #eaeaea;
 }
 
-.WinStyle-slider {
-    -webkit-appearance: none; /* Removes default browser styling */
-    appearance: none;
-    width: calc(100% - 40px); /* Adjust width to allow thumb to reach ends */
-    height: 2px; /* Slider thickness */
-    background: #ccc; /* Default track color for light mode */
-    margin: 10px 20px; /* Adds margin to the left and right */
-    position: relative;
-    transition: background-color 0.3s; /* Smooth transition for background color */
+body.linux button:hover {
+    background-color: #d3d7cf;
+    border-color: #b1b1b1;
 }
 
-.WinStyle-slider:hover {
-    opacity: 1; /* Slider fully opaque on hover */
+body.linux button:active {
+    background-color: #babdb6;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+/* Input focus states */
+input:focus,
+textarea:focus {
+    outline: none;
+}
+
+body.linux input:focus,
+body.linux textarea:focus {
+    border-color: #4a90d9;
+}
+
+/* Slider styles */
+.adwaita-slider,
+.WinStyle-slider {
+    appearance: none;
+    width: calc(100% - 40px);
+    height: 2px;
+    margin: 10px 20px;
+    transition: background-color 0.3s;
+}
+
+.adwaita-slider {
+    background: #b3b3b3;
+}
+
+.WinStyle-slider {
+    background: #ccc;
+}
+
+.adwaita-slider::-webkit-slider-thumb,
+.WinStyle-slider::-webkit-slider-thumb {
+    appearance: none;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+    margin-top: -7px;
+    box-shadow: 0 0 1px 1px rgba(0, 0, 0, 0.2);
 }
 
 .WinStyle-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
     width: 20px;
     height: 20px;
-    background: #0078D7; /* Windows 10 accent color */
-    cursor: pointer;
-    margin-top: -9px; /* Centers the thumb over the track */
-    transition: background-color 0.3s; /* Smooth transition for color changes */
+    background: #0078D7;
+    margin-top: -9px;
 }
 
-.WinStyle-slider::-webkit-slider-runnable-track {
-    width: 100%;
-    height: 2px;
-    cursor: pointer;
-}
-
-/* Media query for dark mode preferences */
-@media (prefers-color-scheme: dark) {
-    body.windows {
-        background-color: #2c2c2c;
-        color: #fff;
-    }
-
-    body.windows button,
-    body.windows input,
-    body.windows textarea {
-        background-color: #333;
-        border: 1px solid #444;
-    }
-
-    body.windows button:hover {
-        background-color: #3a3a3a;
-    }
-
-    .WinStyle-slider {
-        background: #666; /* Darker track color for dark mode */
-    }
-
-    .WinStyle-slider::-webkit-slider-thumb {
-        background: #ccc; /* Light thumb for dark theme */
-    }
-
-    .WinStyle-slider:hover {
-        background-color: #777; /* Darker hover effect for dark mode */
-    }
-}
-
+/* Layout elements */
 main {
     grid-area: main;
 }
@@ -188,14 +120,9 @@ footer {
     grid-area: footerBar;
 }
 
-.sideBar1 {
-    grid-area: sideBar1;
-}
-
 #playlist {
     overflow-y: scroll;
     max-height: 25vh;
-    display: block;
     min-height: 5vh;
 }
 
@@ -206,11 +133,9 @@ footer {
 .plEntry {
     margin: 0;
     padding: 0;
-    display: block;
 }
 
 [draggable] {
-    user-select: none; /* Required to make elements draggable in old WebKit */
     -webkit-user-drag: element;
 }
 
@@ -230,6 +155,7 @@ footer {
     width: 32px;
 }
 
+/* Media controls */
 video::-webkit-media-controls-volume-slider,
 video::-webkit-media-controls-mute-button {
     display: none !important;
@@ -240,16 +166,11 @@ video::-webkit-media-controls-mute-button {
     opacity: 1 !important;
 }
 
-/* Style for the volume slider */
 #volumeControl {
-    width: 150px; /* Adjust the width of the slider for better reachability */
+    width: 150px;
 }
 
-body {
-    font-family: Arial, sans-serif;
-    user-select: none;
-}
-
+/* Tab styles */
 input[type="radio"] {
     display: none;
 }
@@ -263,14 +184,13 @@ label.tab {
     margin-bottom: -1px;
     background-color: #f1f1f1;
     color: #000;
-    user-select: none;
 }
 
 label.tab:hover {
     background-color: #e1e1e1;
 }
 
-input[type="radio"]:checked + label.tab {
+input[type="radio"]:checked+label.tab {
     background-color: white;
     border-bottom: 1px solid white;
     position: relative;
@@ -283,6 +203,7 @@ input[type="radio"]:checked + label.tab {
     padding: 20px;
 }
 
+/* Form visibility */
 #dyneFormWeekly,
 #dyneFormSpecial,
 #dyneFormAlarms,
@@ -291,14 +212,17 @@ input[type="radio"]:checked + label.tab {
     display: none;
 }
 
+/* Suggestions styles */
 #suggestions {
-    background-color: #fff; /* Ensure background color is white */
-    border: 1px solid #ccc; /* Add a border to the suggestions list */
-    padding: 0; /* Remove default padding */
-    margin-top: 0; /* Remove default margin */
-    position: absolute; /* Ensure the list is positioned correctly */
-    z-index: 1000; /* Ensure the list is above other elements */
-    width: width 100vw; /* Match the width of the input field */
+    background-color: #fff;
+    border: 1px solid #ccc;
+    padding: 0;
+    margin-top: 5px;
+    position: absolute;
+    z-index: 1000;
+    width: 200px;
+    list-style: none;
+    display: none;
 }
 
 #scrpInpt {
@@ -306,46 +230,47 @@ input[type="radio"]:checked + label.tab {
     max-width: 400px;
 }
 
-#suggestions {
-    width: 200px;
-    margin-top: 5px;
-    border: 1px solid #ccc;
-    background: #fff;
-    list-style: none;
-    padding: 5px;
-    display: none; /* Initially hidden */
-}
 #suggestions li {
     padding: 5px;
     cursor: pointer;
 }
-#suggestions li:hover {
-    background-color: #f0f0f0;
-}
 
+#suggestions li:hover,
 .highlight {
-    background-color: #f0f0f0; /* Light grey background for highlighted item */
-    color: #333; /* Darker text color for better contrast */
+    background-color: #f0f0f0;
+    color: #333;
 }
 
+/* Dark mode styles */
 @media (prefers-color-scheme: dark) {
-    /*
-    label.tab {
-        background-color: #333;
+    body.windows {
+        background-color: #2c2c2c;
         color: #fff;
     }
 
-    label.tab:hover {
-        background-color: #444;
+    body.windows button,
+    body.windows input,
+    body.windows textarea {
+        background-color: #333;
+        border-color: #444;
     }
 
-    input[type="radio"]:checked + label.tab {
-        background-color: #555;
-        border-bottom: 1px solid #555;
+    body.windows button:hover {
+        background-color: #3a3a3a;
     }
 
-    .tab-content {
-        background-color: #444;
-        border-color: #666;
-    }*/
+    .adwaita-slider,
+    .WinStyle-slider {
+        background: #555;
+    }
+
+    .adwaita-slider::-webkit-slider-thumb,
+    .WinStyle-slider::-webkit-slider-thumb {
+        background: #eee;
+    }
+
+    .adwaita-slider:hover,
+    .WinStyle-slider:hover {
+        background-color: #666;
+    }
 }
