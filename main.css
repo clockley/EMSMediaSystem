@@ -120,19 +120,8 @@ footer {
     grid-area: footerBar;
 }
 
-#playlist {
-    overflow-y: scroll;
-    max-height: 25vh;
-    min-height: 5vh;
-}
-
 #cntdndiv {
     text-align: center;
-}
-
-.plEntry {
-    margin: 0;
-    padding: 0;
 }
 
 [draggable] {
@@ -203,15 +192,6 @@ input[type="radio"]:checked+label.tab {
     padding: 20px;
 }
 
-/* Form visibility */
-#dyneFormWeekly,
-#dyneFormSpecial,
-#dyneFormAlarms,
-#dyneFormMedia,
-#dyneFormYouTube {
-    display: none;
-}
-
 /* Suggestions styles */
 #suggestions {
     background-color: #fff;
@@ -223,11 +203,6 @@ input[type="radio"]:checked+label.tab {
     width: 200px;
     list-style: none;
     display: none;
-}
-
-#scrpInpt {
-    width: 25vw;
-    max-width: 400px;
 }
 
 #suggestions li {
