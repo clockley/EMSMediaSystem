@@ -1,7 +1,6 @@
-const { ipcRenderer, argv } = window.electron;
+const { ipcRenderer, argv} = window.electron;
+const { video } = window.api;
 import hls from './node_modules/hls.js/dist/hls.mjs';
-
-var video = null;
 var img = null;
 var mediaFile;
 var loopFile = false;
@@ -94,7 +93,6 @@ async function loadMedia() {
         return;
     } else {
         prom = installICPHandlers();
-        video = document.getElementById("bigPlayer");
     }
     video.volume = strtvl;
     video.src = mediaFile;

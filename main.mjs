@@ -117,6 +117,7 @@ async function initializeIPC() {
 
   ipcMain.handle('create-media-window', (event, windowOptions) => {
     mediaWindow = new BrowserWindow(windowOptions);
+    //mediaWindow.openDevTools()
     mediaWindow.loadFile("media.html");
     mediaWindow.on('closed', () => {
       if (win)
@@ -146,7 +147,7 @@ async function initializeIPC() {
 
   ipcMain.handle('get-media-current-time', async () => {
     if (mediaWindow != null && !mediaWindow.isDestroyed()) {
-      return await mediaWindow.webContents.executeJavaScript('document.querySelector("video").currentTime');
+      return await mediaWindow.webContents.executeJavaScript(`window.api.video.currentTime`);
     }
   });
 
