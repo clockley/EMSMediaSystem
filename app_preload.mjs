@@ -4,7 +4,7 @@ import fs from 'fs';
 import { Bible } from './Bible.mjs';
 import vm from 'vm';
 
-const __dirname = await ipcRenderer.invoke('get-app-path');
+const dirname = ipcRenderer.invoke('get-app-path');
 
 const wasmExecPath = path.join(__dirname, 'wasm_exec.js');
 const wasmExecScript = fs.readFileSync(wasmExecPath, 'utf8');
@@ -26,6 +26,6 @@ contextBridge.exposeInMainWorld('electron', {
         invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
     },
     path: path,
-    __dirname: __dirname,
+    __dirname: await dirname,
     bibleAPI: bibleAPI
 });
