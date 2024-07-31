@@ -1,5 +1,5 @@
 "use strict";
-import { app, BrowserWindow, BaseWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
 import settings from 'electron-settings';
 import path from 'path';
 
@@ -223,7 +223,7 @@ app.on('will-finish-launching', async () => {
 });
 
 windowBounds = measurePerformance('Getting initial window bounds', () => settings.get('windowBounds'));
-const win2 = new BaseWindow({ width: 800, height: 600 })
+
 app.whenReady().then(() => measurePerformanceAsync('Creating window', createWindow));
 
 app.on('window-all-closed', () => {
