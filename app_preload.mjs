@@ -1,14 +1,17 @@
+"use strict";
 import { contextBridge, ipcRenderer } from 'electron';
 import path from 'path';
-import fs from 'fs';
+import fs from 'fs/promises';
 import { Bible } from './Bible.mjs';
 import vm from 'vm';
 
-const dirname = ipcRenderer.invoke('get-app-path');
+const [wasmExecScript] = await Promise.all([
+    fs.readFile(path.join(__dirname, 'wasm_exec.js'), 'utf8')
+]);
 
-const wasmExecPath = path.join(__dirname, 'wasm_exec.js');
-const wasmExecScript = fs.readFileSync(wasmExecPath, 'utf8');
-vm.runInThisContext(wasmExecScript);
+const script = new vm.Script(wasmExecScript);
+script.runInThisContext();
+
 const bible = new Bible();
 const bibleAPI = {
     getBooks: () => bible.getBooks(),
@@ -26,6 +29,7 @@ contextBridge.exposeInMainWorld('electron', {
         invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
     },
     path: path,
-    __dirname: await dirname,
+    __dirname: __dirname,
     bibleAPI: bibleAPI
 });
+
