@@ -25,7 +25,7 @@ let mediaWindow = null;
 let windowBounds = measurePerformanceAsync('Getting window bounds', () => settings.get('windowBounds'));
 let win = null;
 let ipcInitPromise = null;
-app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
+
 Menu.setApplicationMenu(null);
 
 const padStart = (num, targetLength, padString) => {
@@ -45,47 +45,25 @@ const toHHMMSS = (secs) => {
   return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
 };
 
-function debounce(func, delay) {
+const saveWindowBounds = (function() {
   let timeoutId = null;
-  const boundFunc = func.bind(this);
-  return (...args) => {
-    if (timeoutId !== null) {
-      clearTimeout(timeoutId);
-    }
-    timeoutId = setTimeout(() => boundFunc(...args), delay);
-  };
-}
 
-async function createWindow() {
-  measurePerformance('Setting up IPC handlers', setupIPCHandlers);
-
-  windowBounds = await windowBounds;
-
-  win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow({
-    width: windowBounds ? windowBounds.width : 1068,
-    height: windowBounds ? windowBounds.height : 660,
-    minWidth: 1096,
-    minHeight: 681,
-    webPreferences: {
-      nodeIntegration: true,
-      userGesture: true,
-      backgroundThrottling: false,
-      autoplayPolicy: 'no-user-gesture-required',
-      preload: path.join(app.getAppPath(), 'app_preload.mjs')
-    }
-  }));
-  win.setProgressBar(.5);
-  measurePerformanceAsync('Loading index.html', () => win.loadFile('index.html'));
-
-  win.webContents.on('did-finish-load', () => {
-    measurePerformance('Setting window aspect ratio', () => win.setAspectRatio(1.618));
-    const saveWindowBounds = debounce(() => {
+  return function() {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => {
       settings.set('windowBounds', win.getBounds())
         .catch(error => {
           console.error('Error saving window bounds:', error);
         });
     }, 300);
+  };
+})();
 
+async function createWindow() {
+  win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
+  //win.openDevTools()
+  win.webContents.on('did-finish-load', () => {
+    measurePerformance('Setting window aspect ratio', () => win.setAspectRatio(1.618));
     win.on('resize', saveWindowBounds);
   });
 
@@ -93,6 +71,8 @@ async function createWindow() {
     win = null;
     app.quit();
   });
+
+  measurePerformanceAsync('Loading index.html', () => win.loadFile('index.html'));
 
   await measurePerformanceAsync('Initializing IPC', () => ipcInitPromise);
 }
@@ -120,12 +100,7 @@ function disablePowerSave() {
   });
 }
 
-let ipcHandlersSet = false; // Flag to ensure IPC handlers are set only once
-
-function setupIPCHandlers() {
-  if (ipcHandlersSet) return; // Check if handlers are already set
-  ipcHandlersSet = true; // Set the flag to true
-
+async function setupIPCHandlers() {
   ipcMain.on('set-mode', (event, arg) => {
     settings.set('operating-mode', arg)
       .catch(error => {
@@ -218,13 +193,10 @@ function setupIPCHandlers() {
   });
 }
 
+app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
 app.on('will-finish-launching', async () => {
   ipcInitPromise = measurePerformanceAsync('Initializing IPC', setupIPCHandlers);
 });
-
-windowBounds = measurePerformance('Getting initial window bounds', () => settings.get('windowBounds'));
-
-app.whenReady().then(() => measurePerformanceAsync('Creating window', createWindow));
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -239,6 +211,21 @@ app.on('activate', () => {
 });
 
 app.on('ready', () => {
+  measurePerformanceAsync('Creating window', createWindow)
   const appReadyTime = performance.now();
   console.log(`Application ready in ${(appReadyTime - appStartTime).toFixed(2)} ms`);
 });
+windowBounds = await windowBounds;
+const mainWindowOptions = {
+  width: windowBounds ? windowBounds.width : 1068,
+  height: windowBounds ? windowBounds.height : 660,
+  minWidth: 1096,
+  minHeight: 681,
+  webPreferences: {
+    nodeIntegration: true,
+    userGesture: true,
+    backgroundThrottling: false,
+    autoplayPolicy: 'no-user-gesture-required',
+    preload: path.join(app.getAppPath(), 'app_preload.mjs')
+  }
+};
