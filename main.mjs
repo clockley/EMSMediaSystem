@@ -224,6 +224,7 @@ const mainWindowOptions = {
   webPreferences: {
     sandbox: false,
     nodeIntegration: true,
+    contextIsolation: false,
     userGesture: true,
     backgroundThrottling: false,
     autoplayPolicy: 'no-user-gesture-required',
