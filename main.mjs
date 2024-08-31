@@ -222,6 +222,7 @@ const mainWindowOptions = {
   minWidth: 1096,
   minHeight: 681,
   webPreferences: {
+    sandbox: false,
     nodeIntegration: true,
     userGesture: true,
     backgroundThrottling: false,
