@@ -337,16 +337,6 @@ function isImg(pathname) {
     return imageExtensions.has(pathname.substring((pathname.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase());
 }
 
-function saveRestoreAlrmFrm(divId, op) {
-    if (typeof saveRestoreAlrmFrm.alrmForm === 'undefined') {
-        saveRestoreAlrmFrm.alrmForm = document.getElementById(divId).cloneNode(true);
-    } else if (op === "save") {
-        saveRestoreAlrmFrm.alrmForm = document.getElementById(divId).cloneNode(true);
-    } else if (op === "restore" && typeof saveRestoreAlrmFrm.alrmForm !== 'undefined') {
-        document.getElementById(divId).innerHTML = saveRestoreAlrmFrm.alrmForm.innerHTML;
-    }
-}
-
 function vlCtl(v) {
     if (!audioOnlyFile) {
         ipcRenderer.send('vlcl', v, 0);
@@ -821,89 +811,57 @@ async function setSBFormTextPlayer() {
     });
 }
 
+const isLinux = osName === "Linux";
+const sliderClass = isLinux ? 'adwaita-slider' : 'WinStyle-slider';
+const lineHeight = isLinux ? '1' : '1.2';
+
+const MEDIA_FORM_HTML = `
+  <form onsubmit="return false;">
+    <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
+    <br>
+    <input type="number" min="0" max="60" step="1" value="0" name="mdTimeout" id="mdDelay">
+    <label for="mdTimeout">Start Delay</label>
+    <input name="malrm1" id="malrm1" type="time">
+    <label for="malrm1"> Schedule </label>
+    <select name="dspSelct" id="dspSelct">
+      <option value="" disabled>--Select Display Device--</option>
+    </select>
+    <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
+    <label for="mdLpCtlr">Loop</label>
+    <label for="volumeControl">🎧</label>
+    <input type="range" class="${sliderClass}" id="volumeControl" min="0" max="1" step="0.01" value="1">
+    <br><br>
+    <button id="mediaWindowPlayButton" type="button">▶️</button>
+    <button id="mediaWindowPauseButton" type="button">⏸️</button>
+    <br>
+  </form>
+  <br><br>
+  <center><video disablePictureInPicture controls id="preview"></video></center>
+  <div id="cntdndiv">
+    <span id="mediaCntDn" style="
+      contain: layout style;
+      transform: translateX(50px);
+      will-change: transform;
+      top: 80%;
+      transform: translate(-50%, -50%);
+      color: red;
+      font-weight: bold;
+      font-family: 'Courier New', monospace;
+      text-align: center;
+      overflow: hidden;
+      user-select: none;
+      font-size: calc(1vw + 80%);
+      line-height: ${lineHeight};">00:00:00:000</span>
+  </div>
+`;
+
 function setSBFormMediaPlayer() {
     if (opMode === MEDIAPLAYER) {
         return;
     }
     opMode = MEDIAPLAYER;
     ipcRenderer.send('set-mode', opMode);
-
-    if (osName === "Linux") {
-        dyneForm.innerHTML =
-            `
-            <form onsubmit="return false;">
-                <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
-
-                <br>
-
-                <input type="number" min="0" max="60" step="1" value="0" name="mdTimeout" id="mdDelay">
-                <label for="mdTimeout">Start Delay</label>
-    
-                <input name="malrm1" id="malrm1" type="time">
-                <label for="malrm1"> Schedule </label>
-                <select name="dspSelct" id="dspSelct">
-                    <option value="" disabled>--Select Display Device--</option>
-                </select>
-                <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
-                <label for=""mdLpCtlr>Loop</label>
-
-                <label for="volumeControl">🎧</label>
-                <input type="range" class="adwaita-slider" id="volumeControl" min="0" max="1" step="0.01" value="1"
-
-                <br>
-                <br>
-
-                <button id="mediaWindowPlayButton" type="button">▶️</button>
-                <button id="mediaWindowPauseButton" type="button">⏸️</button>
-                <br>
-
-            </form>
-            <br>
-            <br>
-            <center><video disablePictureInPicture controls id="preview"></video></center>
-            <div id=cntdndiv>
-            <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: calc(1vw + 80%);line-height: 1;" id="mediaCntDn">00:00:00:000<span>
-            </div>
-        `;
-    } else {
-        dyneForm.innerHTML =
-            `
-        <form onsubmit="return false;">
-            <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
-
-            <br>
-
-            <input type="number" min="0" max="60" step="1" value="0" name="mdTimeout" id="mdDelay">
-            <label for="mdTimeout">Start Delay</label>
-
-            <input name="malrm1" id="malrm1" type="time">
-            <label for="malrm1"> Schedule </label>
-            <select name="dspSelct" id="dspSelct">
-                <option value="" disabled>--Select Display Device--</option>
-            </select>
-
-            <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
-            <label for=""mdLpCtlr>Loop</label>
-
-            <label for="volumeControl">🎧</label>
-            <input type="range" class="WinStyle-slider" id="volumeControl" min="0" max="1" step="0.01" value="1"
-
-            <br>
-            <br>
-
-            <button id="mediaWindowPlayButton" type="button">▶️</button>
-            <button id="mediaWindowPauseButton" type="button">⏸️</button>
-            <br>
-
-        </form>
-        <br>
-        <br>
-        <center><video disablePictureInPicture controls id="preview"></video></center>
-        <div id=cntdndiv>
-        <span style="contain: layout style;transform: translateX(50px);will-change: transform;top:80%;transform: translate(-50%, -50%);color:red;font-weight: bold;font-family: 'Courier New', monospace;text-align: center;overflow: hidden;user-select: none;font-size: calc(1vw + 80%);line-height: 1.2;" id="mediaCntDn">00:00:00:000<span>
-        </div>
-    `;
-    }
+    dyneForm.innerHTML = MEDIA_FORM_HTML;
 
     ipcRenderer.invoke('get-all-displays').then(displays => {
         for (let i = 0; i < displays.length; i++) {
