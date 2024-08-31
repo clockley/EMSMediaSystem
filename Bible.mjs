@@ -1,3 +1,6 @@
+import fs from 'fs/promises';
+import path from 'path';
+
 export class Bible {
     constructor() {
         this.initialized = false;
@@ -5,7 +8,7 @@ export class Bible {
 
     async init() {
         const go = new Go();
-        const result = await WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject);
+        const result = await WebAssembly.instantiate(await fs.readFile(path.join(__dirname, 'main.wasm')), go.importObject);
         go.run(result.instance);
         this.initialized = true;
         await this.ensureInitialized();

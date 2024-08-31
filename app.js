@@ -27,10 +27,7 @@ var currentMediaFile;
 var fileEnded = false;
 var dyneForm = null;
 var mediaSessionPause = false;
-const MEDIAPLAYER = 0;
-const MEDIAPLAYERYT = 1;
-const BULKMEDIAPLAYER = 5;
-const TEXTPLAYER = 6;
+const MEDIAPLAYER = 0, MEDIAPLAYERYT = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
 const imageExtensions = new Set(["bmp", "gif", "jpg", "jpeg", "png", "webp", "svg", "ico"]);
 let lastUpdateTime = 0;
 let lastTimeDifference = 0; // Last time difference for derivative calculation
