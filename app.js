@@ -1082,7 +1082,7 @@ function restoreMediaFile() {
 function installSidebarFormEvents() {
     document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
-    //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
+    document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
 
     document.querySelector('form').addEventListener('change', function (event) {
         if (event.target.type === 'radio') {
