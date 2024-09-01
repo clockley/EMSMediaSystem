@@ -74,7 +74,7 @@ async function createWindow() {
 
   measurePerformanceAsync('Loading index.html', () => win.loadFile('index.html'));
 
-  await measurePerformanceAsync('Initializing IPC', () => ipcInitPromise);
+  await ipcInitPromise;
 }
 
 function enablePowersave() {
