@@ -38,7 +38,7 @@ let kD = 0.003; // Derivative gain
 let synchronizationThreshold = 0.01; // Threshold to keep local video within .01 second of remote
 let isActiveMediaWindowCache = false;
 
-const padStart = (num, targetLength, padString) => {
+function padStart(num, targetLength, padString) {
     const numStr = num.toString();
     let paddingNeeded = targetLength - numStr.length;
     let padding = '';
@@ -50,8 +50,8 @@ const padStart = (num, targetLength, padString) => {
 
     return padding + numStr;
 }
-
-const toHHMMSS = (secs) => {
+.
+function toHHMMSS(secs) {
     return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
 };
 
