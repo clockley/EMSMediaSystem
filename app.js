@@ -1082,7 +1082,7 @@ function restoreMediaFile() {
 function installSidebarFormEvents() {
     document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
-    document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
+    //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
 
     document.querySelector('form').addEventListener('change', function (event) {
         if (event.target.type === 'radio') {
@@ -1461,33 +1461,30 @@ async function createMediaWindow() {
     }
 }
 
-function loadPlatformCSS(mode) {
-    const bodyClass = document.body.classList;
-    switch (mode) {
-        case 'win32':
-            osName = 'Windows';
-            bodyClass.add('WinStyle');
-            break;
-        case 'darwin':
-            break;
-        case 'linux':
-            osName = 'Linux';
-            /*const slider = document.getElementById('adwaita-slider');
-            const updateSlider = (event) => {
-                const value = (event.target.value - event.target.min) / (event.target.max - event.target.min);
-                event.target.style.background = `linear-gradient(to right, #4a90d9 0%, #4a90d9 ${value * 100}%, #b3b3b3 ${value * 100}%, #b3b3b3 100%)`;
-            };
-            slider.addEventListener('input', updateSlider);
-            updateSlider({target: slider});*/
-            bodyClass.add('WinStyle');
-            break;
+const PLATFORM = {
+    WIN32: 'win32',
+    DARWIN: 'darwin',
+    LINUX: 'linux'
+};
+
+const CSS_CLASSES = {
+    [PLATFORM.WIN32]: 'WinStyle',
+    [PLATFORM.LINUX]: 'WinStyle'
+};
+
+function loadPlatformCSS() {
+    const platform = navigator.platform.toLowerCase();
+    const cssClass = CSS_CLASSES[platform] || '';
+    if (cssClass) {
+        document.body.classList.add(cssClass);
     }
+    osName = platform === PLATFORM.WIN32 ? 'Windows' : (platform === PLATFORM.LINUX ? 'Linux' : '');
 }
 
 if (document.readyState === 'interactive') {
-    loadPlatformCSS(navigator.platform.split(" ")[0].toLowerCase());
+    loadPlatformCSS();
 } else {
     document.addEventListener('DOMContentLoaded', () => {
-        loadPlatformCSS(navigator.platform.split(" ")[0].toLowerCase());
+        loadPlatformCSS();
     });
 }
