@@ -100,7 +100,7 @@ function updateTimestamp(oneShot) {
     }
 }
 
-async function installIPCHandler() {
+function installIPCHandler() {
     ipcRenderer.on('timeRemaining-message', function (evt, message) {
         var now = Date.now();
         const sendTime = message[3];
@@ -1348,14 +1348,6 @@ function initPlayer() {
     });
 }
 
-var ipcprom = installIPCHandler();
-
-window.addEventListener("load", async (event) => {
-    initPlayer();
-    installEvents();
-    await ipcprom;
-});
-
 function isLiveStream(mediaFile) {
     if (mediaFile === undefined || mediaFile === null) {
         return false;
@@ -1482,10 +1474,7 @@ function loadPlatformCSS() {
     osName = platform === PLATFORM.WIN32 ? 'Windows' : (platform === PLATFORM.LINUX ? 'Linux' : '');
 }
 
-if (document.readyState === 'interactive') {
-    loadPlatformCSS();
-} else {
-    document.addEventListener('DOMContentLoaded', () => {
-        loadPlatformCSS();
-    });
-}
+installIPCHandler();
+initPlayer();
+installEvents();
+loadPlatformCSS();
