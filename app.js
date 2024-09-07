@@ -1473,7 +1473,8 @@ const CSS_CLASSES = {
 };
 
 function loadPlatformCSS() {
-    const platform = navigator.platform.toLowerCase();
+    const pstrtmp = navigator.platform.toLowerCase();
+    const platform = pstrtmp.substring(0, pstrtmp.indexOf(" "));
     const cssClass = CSS_CLASSES[platform] || '';
     if (cssClass) {
         document.body.classList.add(cssClass);
