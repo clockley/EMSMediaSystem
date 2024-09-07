@@ -1320,26 +1320,18 @@ function installPreviewEventHandlers() {
 function initPlayer() {
     ipcRenderer.invoke('get-setting', "operating-mode").then(mode => {
         dyneForm = document.getElementById("dyneForm");
-        switch (mode) {
-            case MEDIAPLAYER:
-                document.getElementById("MdPlyrRBtnFrmID").checked = true;
-                setSBFormMediaPlayer();
-                installPreviewEventHandlers();
-                mediaCntDnEle = document.getElementById('mediaCntDn');
-                break;
-            case MEDIAPLAYERYT:
-                document.getElementById("YtPlyrRBtnFrmID").checked = true;
-                setSBFormYouTubeMediaPlayer();
-                break;
-            case TEXTPLAYER:
-                document.getElementById("TxtPlyrRBtnFrmID").checked = true;
-                setSBFormTextPlayer();
-                break;
-            default:
-                document.getElementById("MdPlyrRBtnFrmID").checked = true;
-                setSBFormMediaPlayer();
-                installPreviewEventHandlers();
-                mediaCntDnEle = document.getElementById('mediaCntDn');
+        
+        if (mode === MEDIAPLAYERYT) {
+            document.getElementById("YtPlyrRBtnFrmID").checked = true;
+            setSBFormYouTubeMediaPlayer();
+        } else if (mode === TEXTPLAYER) {
+            document.getElementById("TxtPlyrRBtnFrmID").checked = true;
+            setSBFormTextPlayer();
+        } else {
+            document.getElementById("MdPlyrRBtnFrmID").checked = true;
+            setSBFormMediaPlayer();
+            installPreviewEventHandlers();
+            mediaCntDnEle = document.getElementById('mediaCntDn');
         }
     });
 }
@@ -1449,22 +1441,18 @@ async function createMediaWindow() {
     }
 }
 
-const PLATFORM = {
-    WIN32: 'win32',
-    DARWIN: 'darwin',
-    LINUX: 'linux'
-};
-
-const CSS_CLASSES = {
-    [PLATFORM.WIN32]: 'WinStyle',
-    [PLATFORM.LINUX]: 'WinStyle'
-};
+const WIN32 = 'Windows';
+const LINUX = 'Linux';
+const WIN_STYLE = 'WinStyle'
 
 function loadPlatformCSS() {
-    const pstrtmp = navigator.platform.toLowerCase();
-    const platform = pstrtmp.substring(0, pstrtmp.indexOf(" "));
-    document.body.classList.add(CSS_CLASSES[platform] || '');
-    osName = platform === PLATFORM.WIN32 ? 'Windows' : (platform === PLATFORM.LINUX ? 'Linux' : '');
+    const platform = navigator.userAgentData.platform;
+
+    if (platform === WIN32 || platform === LINUX) {
+        document.body.classList.add(WIN_STYLE);
+    }
+    
+    osName = platform === WIN32 ? WIN32 : (platform === LINUX ? LINUX : '');
 }
 
 initPlayer();
