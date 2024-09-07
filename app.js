@@ -1470,7 +1470,7 @@ function loadPlatformCSS() {
     osName = platform === PLATFORM.WIN32 ? 'Windows' : (platform === PLATFORM.LINUX ? 'Linux' : '');
 }
 
+initPlayer();
 loadPlatformCSS();
 installIPCHandler();
-initPlayer();
 installEvents();
