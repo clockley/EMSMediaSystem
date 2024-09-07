@@ -1463,10 +1463,7 @@ const CSS_CLASSES = {
 function loadPlatformCSS() {
     const pstrtmp = navigator.platform.toLowerCase();
     const platform = pstrtmp.substring(0, pstrtmp.indexOf(" "));
-    const cssClass = CSS_CLASSES[platform] || '';
-    if (cssClass) {
-        document.body.classList.add(cssClass);
-    }
+    document.body.classList.add(CSS_CLASSES[platform] || '');
     osName = platform === PLATFORM.WIN32 ? 'Windows' : (platform === PLATFORM.LINUX ? 'Linux' : '');
 }
 
