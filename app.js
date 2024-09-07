@@ -50,7 +50,7 @@ function padStart(num, targetLength, padString) {
 
     return padding + numStr;
 }
-.
+
 function toHHMMSS(secs) {
     return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
 };
