@@ -1079,7 +1079,7 @@ function restoreMediaFile() {
     }
 }
 
-function installSidebarFormEvents() {
+function installEvents() {
     document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
     //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
@@ -1104,10 +1104,6 @@ function installSidebarFormEvents() {
             }
         }
     });
-}
-
-function installEvents() {
-    installSidebarFormEvents();
 }
 
 function playAudioFileAfterDelay() {
@@ -1474,7 +1470,7 @@ function loadPlatformCSS() {
     osName = platform === PLATFORM.WIN32 ? 'Windows' : (platform === PLATFORM.LINUX ? 'Linux' : '');
 }
 
+loadPlatformCSS();
 installIPCHandler();
 initPlayer();
 installEvents();
-loadPlatformCSS();
