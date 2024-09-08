@@ -158,4 +158,10 @@ async function loadMedia() {
     }
 }
 
-loadMedia();
+if (document.readyState == 'interactive') {
+    loadMedia();
+} else {
+    document.addEventListener('DOMContentLoaded', function () {
+        loadMedia();
+    });
+}
