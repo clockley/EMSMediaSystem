@@ -1,11 +1,7 @@
 /* Grid layout */
 .index-grid-container {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    grid-template-areas:
-        "main main"
-        "main main"
-        "footerBar footerBar";
+    grid-template: "main main" auto "main main" auto "footerBar footerBar" auto / 1fr 1fr;
 }
 
 /* Base styles */
@@ -26,24 +22,18 @@ body.linux {
     background-color: #edecec;
 }
 
-/* Common form element styles */
-button,
-input,
-textarea {
+/* Form elements */
+button, input, textarea {
     font-size: 14px;
 }
 
-body.linux button,
-body.linux input,
-body.linux textarea {
+body.linux button, body.linux input, body.linux textarea {
     border: 1px solid #c7c7c7;
     padding: 8px 16px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-body.windows button,
-body.windows input,
-body.windows textarea {
+body.windows button, body.windows input, body.windows textarea {
     border: 1px solid #ccc;
     padding: 6px 12px;
 }
@@ -63,28 +53,22 @@ body.linux button:active {
     box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2);
 }
 
-/* Input focus states */
-input:focus,
-textarea:focus {
+/* Input focus */
+input:focus, textarea:focus {
     outline: none;
 }
 
-body.linux input:focus,
-body.linux textarea:focus {
+body.linux input:focus, body.linux textarea:focus {
     border-color: #4a90d9;
 }
 
 /* Slider styles */
-.adwaita-slider,
-.WinStyle-slider {
+.adwaita-slider, .WinStyle-slider {
     appearance: none;
     width: calc(100% - 40px);
     height: 2px;
     margin: 10px 20px;
     transition: background-color 0.3s;
-}
-
-.adwaita-slider {
     background: #b3b3b3;
 }
 
@@ -92,16 +76,15 @@ body.linux textarea:focus {
     background: #ccc;
 }
 
-.adwaita-slider::-webkit-slider-thumb,
-.WinStyle-slider::-webkit-slider-thumb {
+.adwaita-slider::-webkit-slider-thumb, .WinStyle-slider::-webkit-slider-thumb {
     appearance: none;
     cursor: pointer;
-    transition: background-color 0.3s;
     height: 16px;
     width: 16px;
     border-radius: 50%;
     margin-top: -7px;
     box-shadow: 0 0 1px 1px rgba(0, 0, 0, 0.2);
+    transition: background-color 0.3s;
 }
 
 .WinStyle-slider::-webkit-slider-thumb {
@@ -112,21 +95,11 @@ body.linux textarea:focus {
 }
 
 /* Layout elements */
-main {
-    grid-area: main;
-}
+main { grid-area: main; }
+footer { grid-area: footerBar; }
+#cntdndiv { text-align: center; }
 
-footer {
-    grid-area: footerBar;
-}
-
-#cntdndiv {
-    text-align: center;
-}
-
-[draggable] {
-    -webkit-user-drag: element;
-}
+[draggable] { user-drag: element; }
 
 #preview {
     width: 70vw;
@@ -137,9 +110,7 @@ footer {
     max-height: 100vh;
 }
 
-.setTimerButton,
-#mediaWindowPlayButton,
-#mediaWindowPauseButton {
+.setTimerButton, #mediaWindowPlayButton, #mediaWindowPauseButton {
     height: 32px;
     width: 32px;
 }
@@ -155,14 +126,10 @@ video::-webkit-media-controls-mute-button {
     opacity: 1 !important;
 }
 
-#volumeControl {
-    width: 150px;
-}
+#volumeControl { width: 150px; }
 
 /* Tab styles */
-input[type="radio"] {
-    display: none;
-}
+input[type="radio"] { display: none; }
 
 label.tab {
     padding: 10px 20px;
@@ -175,11 +142,9 @@ label.tab {
     color: #000;
 }
 
-label.tab:hover {
-    background-color: #e1e1e1;
-}
+label.tab:hover { background-color: #e1e1e1; }
 
-input[type="radio"]:checked+label.tab {
+input[type="radio"]:checked + label.tab {
     background-color: white;
     border-bottom: 1px solid white;
     position: relative;
@@ -210,8 +175,7 @@ input[type="radio"]:checked+label.tab {
     cursor: pointer;
 }
 
-#suggestions li:hover,
-.highlight {
+#suggestions li:hover, .highlight {
     background-color: #f0f0f0;
     color: #333;
 }
@@ -223,19 +187,14 @@ input[type="radio"]:checked+label.tab {
         color: #fff;
     }
 
-    body.windows button,
-    body.windows input,
-    body.windows textarea {
+    body.windows button, body.windows input, body.windows textarea {
         background-color: #333;
         border-color: #444;
     }
 
-    body.windows button:hover {
-        background-color: #3a3a3a;
-    }
+    body.windows button:hover { background-color: #3a3a3a; }
 
-    .adwaita-slider,
-    .WinStyle-slider {
+    .adwaita-slider, .WinStyle-slider {
         background: #555;
     }
 
@@ -244,8 +203,7 @@ input[type="radio"]:checked+label.tab {
         background: #eee;
     }
 
-    .adwaita-slider:hover,
-    .WinStyle-slider:hover {
+    .adwaita-slider:hover, .WinStyle-slider:hover {
         background-color: #666;
     }
 }
