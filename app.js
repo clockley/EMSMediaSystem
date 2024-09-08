@@ -20,7 +20,7 @@ var audioOnlyFile = false;
 var mediaCntDnEle = null;
 var CrVL = 1;
 var opMode = -1;
-var osName = '';
+var osName = navigator.userAgentData.platform;
 var localTimeStampUpdateIsRunning = false;
 var mediaFile;
 var currentMediaFile;
@@ -1448,13 +1448,7 @@ const LINUX = 'Linux';
 const WIN_STYLE = 'WinStyle'
 
 function loadPlatformCSS() {
-    const platform = navigator.userAgentData.platform;
-
-    if (platform === WIN32 || platform === LINUX) {
-        document.body.classList.add(WIN_STYLE);
-    }
-    
-    osName = platform === WIN32 ? WIN32 : (platform === LINUX ? LINUX : '');
+    document.body.classList.add(WIN_STYLE); 
 }
 
 initPlayer();
