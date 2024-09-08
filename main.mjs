@@ -1,7 +1,6 @@
 "use strict";
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
 import settings from 'electron-settings';
-import path from 'path';
 
 function measurePerformance(operation, func) {
   const start = performance.now();
@@ -226,6 +225,6 @@ const mainWindowOptions = {
     userGesture: true,
     backgroundThrottling: false,
     autoplayPolicy: 'no-user-gesture-required',
-    preload: path.join(app.getAppPath(), 'app_preload.mjs')
+    preload: `${app.getAppPath()}/app_preload.mjs`
   }
 };
