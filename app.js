@@ -102,7 +102,7 @@ function updateTimestamp(oneShot) {
 
 function installIPCHandler() {
     ipcRenderer.on('timeRemaining-message', function (evt, message) {
-        var now = Date.now();
+        const now = Date.now();
         const sendTime = message[3];
         const ipcDelay = now - sendTime; // Compute the IPC delay
 
