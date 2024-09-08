@@ -3,7 +3,7 @@
 //Project Alchemy
 //Copyright 2019 - 2024 Christian Lockley
 
-const { ipcRenderer, path, __dirname, bibleAPI } = window.electron;
+const { ipcRenderer, __dirname, bibleAPI } = window.electron;
 
 var dontSyncRemote = false;
 var pidSeeking = false;
@@ -1423,7 +1423,7 @@ async function createMediaWindow() {
                 document.getElementById("mdLpCtlr") !== null ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true' : '') : "",
                 liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : ""
             ],
-            preload: path.join(__dirname, 'media_preload.js')
+            preload: `${__dirname}/media_preload.mjs`
         }
     };
 
