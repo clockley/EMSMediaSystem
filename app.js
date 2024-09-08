@@ -30,13 +30,109 @@ var mediaSessionPause = false;
 const MEDIAPLAYER = 0, MEDIAPLAYERYT = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
 const imageExtensions = new Set(["bmp", "gif", "jpg", "jpeg", "png", "webp", "svg", "ico"]);
 let lastUpdateTime = 0;
-let lastTimeDifference = 0; // Last time difference for derivative calculation
-let integral = 0; // Integral sum for error accumulation
-let kP = 0.005; // Proportional gain
-let kI = 0.001; // Integral gain
-let kD = 0.003; // Derivative gain
-let synchronizationThreshold = 0.01; // Threshold to keep local video within .01 second of remote
 let isActiveMediaWindowCache = false;
+
+class PIDController {
+    constructor(video) {
+        this.video = video;
+        this.isOscillating = false;
+        this.lastCrossing = 0;
+        this.numberOfCrossings = 0;
+        this.accumulatedPeriod = 0;
+        this.significantErrorThreshold = 0.1;
+        this.decayFactor = 0.9;
+        this.maxAllowedPeriod = 5000;
+        this.lastError = 0;
+        this.integral = 0;
+        this.lastTimeDifference = 0;
+        this.kP = 0.005; // Proportional gain
+        this.kI = 0.001; // Integral gain
+        this.kD = 0.003; // Derivative gain
+        this.synchronizationThreshold = 0.01;
+    }
+
+    adjustPlaybackRate(targetTime) {
+        const currentTime = this.video.currentTime;
+        const timeDifference = targetTime - currentTime;
+        const derivative = timeDifference - this.lastTimeDifference;
+        this.integral += timeDifference; // Accumulate the error
+        this.lastTimeDifference = timeDifference;
+
+        let playbackRate;
+        let minRate = 0.8;
+        let maxRate = 1.2;
+        const timeDifferenceAbs = Math.abs(timeDifference);
+        
+        if (timeDifferenceAbs > 0.5) {
+            this.integral = 0;
+            minRate = 0.5;
+            maxRate = 1.5;
+        }
+
+        if (timeDifferenceAbs > 1 || timeDifference < -1) {
+            pidSeeking = true;
+            this.video.currentTime = targetTime;
+            playbackRate = 1.0;
+            this.adjustPID(timeDifference);
+        } else {
+            playbackRate = this.video.playbackRate + (this.kP * timeDifference) + (this.kI * this.integral) + (this.kD * derivative);
+            playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
+        }
+
+        if (!isNaN(playbackRate)) {
+            this.video.playbackRate = playbackRate;
+        }
+
+        if (timeDifferenceAbs <= this.synchronizationThreshold) {
+            this.video.playbackRate = 1.0;
+        }
+
+        return timeDifference;
+    }
+
+    adjustPID(currentError) {
+        const now = performance.now();
+        const period = now - this.lastCrossing;
+        const absError = Math.abs(currentError);
+
+        if (absError < this.significantErrorThreshold && currentError * this.lastError < 0) {
+            if (this.isOscillating) {
+                this.accumulatedPeriod = this.accumulatedPeriod * this.decayFactor + period * (1 - this.decayFactor);
+                this.numberOfCrossings = this.numberOfCrossings * this.decayFactor + 1;
+                this.lastCrossing = now;
+
+                if (this.numberOfCrossings >= 5) {
+                    const averagePeriod = this.accumulatedPeriod / this.numberOfCrossings;
+                    const Tu = averagePeriod;
+                    const Ku = this.kP;
+
+                    this.kP = this.kP * (1 - 0.1) + 0.1 * (0.6 * Ku);
+                    this.kI = this.kI * (1 - 0.1) + 0.1 * (2 * this.kP / Tu);
+                    this.kD = this.kD * (1 - 0.1) + 0.1 * (this.kP * Tu / 8);
+
+                    this.isOscillating = false;
+                    this.numberOfCrossings = 0;
+                    this.accumulatedPeriod = 0;
+                }
+            }
+        } else {
+            if (!this.isOscillating) {
+                this.kP += 0.01 * (absError > 1 ? 2 : 1);
+                this.isOscillating = true;
+            }
+        }
+
+        if (this.numberOfCrossings < 5 && period > this.maxAllowedPeriod) {
+            this.kP += 0.05;
+            this.lastCrossing = now;
+            this.isOscillating = true;
+        }
+
+        this.lastError = currentError;
+    }
+}
+
+let pidController;
 
 function padStart(num, targetLength, padString) {
     const numStr = num.toString();
@@ -75,9 +171,7 @@ function updateTimestamp(oneShot) {
         localTimeStampUpdateIsRunning = true;
     let lastUpdateTimeLocalPlayer = 0;
 
-    // Function to update the timestamp text
     const update = (time) => {
-        // Update at most 30 times per second
         if (time - lastUpdateTimeLocalPlayer >= 33.33) {
             if (mediaCntDnEle && audioOnlyFile) {
                 mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
@@ -104,9 +198,8 @@ function installIPCHandler() {
     ipcRenderer.on('timeRemaining-message', function (evt, message) {
         const now = Date.now();
         const sendTime = message[3];
-        const ipcDelay = now - sendTime; // Compute the IPC delay
+        const ipcDelay = now - sendTime;
 
-        // Measure DOM update time and add to IPC delay
         let domUpdateTimeStart = now;
         let timeStamp = message[0];
         if (opMode === MEDIAPLAYER) {
@@ -119,21 +212,15 @@ function installIPCHandler() {
         }
         let domUpdateTime = Date.now() - domUpdateTimeStart;
 
-        let adjustedIpcDelay = ipcDelay + domUpdateTime; // Adjust IPC delay by adding DOM update time
+        let adjustedIpcDelay = ipcDelay + domUpdateTime;
 
-        targetTime = message[2] - (adjustedIpcDelay * .001); // Adjust target time considering the modified IPC delay
-        //const intervalReductionFactor = Math.max(0.5, Math.min(1, (message[2] - message[3]) * .1));
-        //const syncInterval = 1000 * intervalReductionFactor; // Reduced sync interval to 1 second
-
+        targetTime = message[2] - (adjustedIpcDelay * .001);
 
         if (now - lastUpdateTime > .5) {
             if (opMode === MEDIAPLAYER) {
                 if (!video.paused && video !== null && !video.seeking) {
                     hybridSync(targetTime);
                     lastUpdateTime = now;
-                    if (!audioOnlyFile && !video.paused && !activeLiveStream) {
-                        dynamicPIDTuning();
-                    }
                 }
             }
         }
@@ -141,7 +228,6 @@ function installIPCHandler() {
     });
 
     ipcRenderer.on('update-playback-state', async (event, playbackState) => {
-        // Handle play/pause state
         if (!video) {
             return;
         }
@@ -153,7 +239,7 @@ function installIPCHandler() {
         } else if (!playbackState.playing && !video.paused) {
             masterPauseState = true;
             if (video) {
-                video.currentTime = playbackState.currentTime; //sync on pause
+                video.currentTime = playbackState.currentTime;
                 await video.pause();
             }
         }
@@ -220,115 +306,19 @@ function installIPCHandler() {
 }
 
 function resetPIDOnSeek() {
-    integral = 0; // Reset integral
-    lastTimeDifference = 0; // Reset last time difference
-}
-
-function adjustPlaybackRate(targetTime) {
-    const currentTime = video.currentTime;
-    const timeDifference = targetTime - currentTime;
-    const derivative = timeDifference - lastTimeDifference;
-    integral += timeDifference; // Accumulate the error
-    lastTimeDifference = timeDifference;
-
-    let playbackRate;
-    let minRate = 0.8;
-    let maxRate = 1.2;
-    const timeDifferenceAbs = Math.abs(timeDifference);
-    // Dynamic clamping based on time difference
-    if (timeDifferenceAbs > .5) {
-        integral = 0;
-        // Loosen the clamp when the difference is more than .5 second
-        minRate = 0.5;
-        maxRate = 1.5;
-    }
-
-    // Immediate synchronization for very large discrepancies
-    if (timeDifferenceAbs > 1 || timeDifference < -1) {
-        // Directly jump to the target time if difference is more than 1 second
-        pidSeeking = true;
-        video.currentTime = targetTime;
-        playbackRate = 1.0; // Reset playback rate
-        dynamicPIDTuning();
-    } else {
-        // Calculate new playback rate within dynamically adjusted bounds
-        playbackRate = video.playbackRate + (kP * timeDifference) + (kI * integral) + (kD * derivative);
-        playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
-    }
-
-    if (!isNaN(playbackRate)) {
-        video.playbackRate = playbackRate;
-    }
-
-    // Adjust control parameters dynamically based on synchronization accuracy
-    if (timeDifferenceAbs <= synchronizationThreshold) {
-        video.playbackRate = 1.0; // Reset playback rate if within the tight synchronization threshold
+    if (pidController) {
+        pidController.integral = 0;
+        pidController.lastTimeDifference = 0;
     }
 }
 
 function hybridSync(targetTime) {
-    if (audioOnlyFile)
-        return;
-    // Adjust using a smooth transition algorithm
-    adjustPlaybackRate(targetTime);
+    if (audioOnlyFile) return;
+    const timeDifference = pidController.adjustPlaybackRate(targetTime);
+    if (!audioOnlyFile && !video.paused && !activeLiveStream) {
+        pidController.adjustPID(timeDifference);
+    }
 }
-function dynamicPIDTuning() {
-    let isOscillating = false;
-    let lastCrossing = performance.now();
-    let numberOfCrossings = 0;
-    let accumulatedPeriod = 0;
-    let significantErrorThreshold = 0.1; // Threshold to consider error significant for zero-crossing
-    const decayFactor = 0.9; // Decay factor for accumulated period and crossings
-    let maxAllowedPeriod = 5000; // Max period in ms to wait before forcing parameter update
-
-    return function adjustPID(currentError) {
-        const now = performance.now();
-        const period = now - lastCrossing;
-        const absError = Math.abs(currentError);
-
-        // Check if the error sign has changed (zero-crossing point)
-        if (absError < significantErrorThreshold && currentError * lastTimeDifference < 0) {
-            if (isOscillating) {
-                accumulatedPeriod = accumulatedPeriod * decayFactor + period * (1 - decayFactor);
-                numberOfCrossings = numberOfCrossings * decayFactor + 1;
-                lastCrossing = now;
-
-                // After a few cycles, calculate Tu and adjust Ku
-                if (numberOfCrossings >= 5) {
-                    let averagePeriod = accumulatedPeriod / numberOfCrossings;
-                    let Tu = averagePeriod;
-                    let Ku = kP; // Assuming current kP is inducing oscillation
-
-                    // Smooth transition for PID parameters
-                    kP = kP * (1 - 0.1) + 0.1 * (0.6 * Ku);
-                    kI = kI * (1 - 0.1) + 0.1 * (2 * kP / Tu);
-                    kD = kD * (1 - 0.1) + 0.1 * (kP * Tu / 8);
-
-                    // Reset for next tuning phase
-                    isOscillating = false;
-                    numberOfCrossings = 0;
-                    accumulatedPeriod = 0;
-                }
-            }
-        } else {
-            // Increment kP to induce oscillation if not already oscillating
-            if (!isOscillating) {
-                kP += 0.01 * (absError > 1 ? 2 : 1);  // More aggressive if error is large
-                isOscillating = true;
-            }
-        }
-
-        // Ensure adjustments even in non-oscillating conditions
-        if (numberOfCrossings < 5 && period > maxAllowedPeriod) {
-            kP += 0.05;  // More aggressive increment
-            lastCrossing = now;
-            isOscillating = true;  // Assume we need to force oscillation
-        }
-
-        lastTimeDifference = currentError;
-    };
-}
-
 function isImg(pathname) {
     return imageExtensions.has(pathname.substring((pathname.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase());
 }
@@ -1310,7 +1300,7 @@ function installPreviewEventHandlers() {
             }
         });
 
-
+        pidController = new PIDController(video);
         installPreviewEventHandlers.installedVideoEventListener = true;
     }
 }
