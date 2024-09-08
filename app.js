@@ -1423,7 +1423,7 @@ async function createMediaWindow() {
                 document.getElementById("mdLpCtlr") !== null ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true' : '') : "",
                 liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : ""
             ],
-            preload: `${__dirname}/media_preload.mjs`
+            preload: `${__dirname}/media_preload.js`
         }
     };
 
