@@ -52,7 +52,7 @@ const padStart = (num, targetLength, padString) => {
   return padding + numStr;
 };
 
-const toHHMMSS = (secs) => {
+function toHHMMSS(secs) {
   return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
 };
 
@@ -180,12 +180,8 @@ async function setupIPCHandlers() {
     }
   });
 
-  ipcMain.on('mediasession-pause', () => {
-    win.webContents.send('mediasession-pause');
-  });
-
-  ipcMain.on('mediasession-play', () => {
-    win.webContents.send('mediasession-play');
+  ipcMain.on('remoteplaypause', (_, arg) => {
+      win.webContents.send('remoteplaypause', arg);
   });
 
   ipcMain.on('playback-state-change', (event, playbackState) => {

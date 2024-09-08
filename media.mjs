@@ -72,12 +72,12 @@ function sendRemainingTime(video) {
 }
 
 function pauseMediaSessionHandler() {
-    ipcRenderer.send('mediasession-pause');;
+    ipcRenderer.send('remoteplaypause', true);
     video.pause()
 }
 
 function playMediaSessionHandler() {
-    ipcRenderer.send('mediasession-play');
+    ipcRenderer.send('remoteplaypause', false);
     video.play()
 }
 
