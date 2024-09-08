@@ -159,12 +159,8 @@ function installIPCHandler() {
         }
     });
 
-    ipcRenderer.on('mediasession-pause', () => {
-        mediaSessionPause = true;
-    });
-
-    ipcRenderer.on('mediasession-play', () => {
-        mediaSessionPause = false;
+    ipcRenderer.on('remoteplaypause', (_, arg) => {
+        mediaSessionPause = arg;
     });
 
     ipcRenderer.on('media-window-closed', async (event, id) => {
