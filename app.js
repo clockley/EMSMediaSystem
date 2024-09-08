@@ -51,6 +51,16 @@ class PIDController {
         this.synchronizationThreshold = 0.01;
     }
 
+    reset() {
+        this.isOscillating = false;
+        this.lastCrossing = 0;
+        this.numberOfCrossings = 0;
+        this.accumulatedPeriod = 0;
+        this.lastError = 0;
+        this.integral = 0;
+        this.lastTimeDifference = 0;
+    }
+
     adjustPlaybackRate(targetTime) {
         const currentTime = this.video.currentTime;
         const timeDifference = targetTime - currentTime;
@@ -1102,6 +1112,9 @@ function playAudioFileAfterDelay() {
 function installPreviewEventHandlers() {
     if (!installPreviewEventHandlers.installedVideoEventListener) {
         video.addEventListener('loadstart', function (event) {
+            if (pidController) {
+                pidController.reset();
+            }
             if (video.src === window.location.href) {
                 event.preventDefault();
                 return;
