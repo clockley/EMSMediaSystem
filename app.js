@@ -458,7 +458,9 @@ function playMedia(e) {
             }
         }
         let mdly = document.getElementById("mdDelay");
-        audioOnlyFile = opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
+        waitForMetadata().then(() => {
+            audioOnlyFile = opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
+        });
         if (audioOnlyFile) {
             video.muted = false;
             video.loop = document.getElementById("mdLpCtlr").checked;
