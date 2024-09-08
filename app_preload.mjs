@@ -1,9 +1,8 @@
 "use strict";
 import { contextBridge, ipcRenderer } from 'electron';
-import path from 'path';
-import fs from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { Bible } from './Bible.mjs';
-import vm from 'vm';
+import { Script } from 'vm';
 
 async function initializeBible() {
   const bible = new Bible();
@@ -21,9 +20,8 @@ async function initializeBible() {
 
 // Function to read and execute WASM script
 async function executeWasmScript() {
-  const wasmExecScript = await fs.readFile(path.join(__dirname, 'wasm_exec.js'), 'utf8');
-  
-  new vm.Script(wasmExecScript).runInThisContext();
+  const wasmExecScript = await readFile(`${__dirname}/wasm_exec.js`, 'utf8');
+  new Script(wasmExecScript).runInThisContext();
 }
 
 // Execute WASM script and initialize Bible in parallel
