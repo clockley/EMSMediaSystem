@@ -179,31 +179,3 @@ input[type="radio"]:checked + label.tab {
     background-color: #f0f0f0;
     color: #333;
 }
-
-/* Dark mode styles */
-@media (prefers-color-scheme: dark) {
-    body.windows {
-        background-color: #2c2c2c;
-        color: #fff;
-    }
-
-    body.windows button, body.windows input, body.windows textarea {
-        background-color: #333;
-        border-color: #444;
-    }
-
-    body.windows button:hover { background-color: #3a3a3a; }
-
-    .adwaita-slider, .WinStyle-slider {
-        background: #555;
-    }
-
-    .adwaita-slider::-webkit-slider-thumb,
-    .WinStyle-slider::-webkit-slider-thumb {
-        background: #eee;
-    }
-
-    .adwaita-slider:hover, .WinStyle-slider:hover {
-        background-color: #666;
-    }
-}
