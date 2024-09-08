@@ -1,6 +1,6 @@
 "use strict";
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
-import settings from 'electron-settings';
+const settings = import('electron-settings');
 const isDevMode = process.env.ems_dev === 'true';
 
 function measurePerformance(operation, func) {
@@ -31,7 +31,7 @@ const appStartTime = isDevMode ? performance.now() : null;
 
 let mediaWindow = null;
 let windowBounds = measurePerformanceAsync('Getting window bounds', async () => {
-  const settingsModule = await settings;
+  const settingsModule = await import('electron-settings');
   return settingsModule.get('windowBounds');
 });
 let win = null;
