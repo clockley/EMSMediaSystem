@@ -1158,7 +1158,7 @@ function installPreviewEventHandlers() {
             }
         });
 
-        video.addEventListener('ended', (e) => {
+        video.addEventListener('ended', () => {
             ipcRenderer.send('disable-powersave');
             audioOnlyFile = false;
             if (document.getElementById("mediaWindowPlayButton")) {
