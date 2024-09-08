@@ -1,27 +1,39 @@
 "use strict";
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
 import settings from 'electron-settings';
+const isDevMode = process.env.ems_dev === 'true';
 
 function measurePerformance(operation, func) {
-  const start = performance.now();
-  const result = func();
-  const end = performance.now();
-  console.log(`${operation} took ${(end - start).toFixed(2)} ms`);
-  return result;
+  if (isDevMode) {
+    const start = performance.now();
+    const result = func();
+    const end = performance.now();
+    console.log(`${operation} took ${(end - start).toFixed(2)} ms`);
+    return result;
+  } else {
+    return func();
+  }
 }
 
 async function measurePerformanceAsync(operation, func) {
-  const start = performance.now();
-  const result = await func();
-  const end = performance.now();
-  console.log(`${operation} took ${(end - start).toFixed(2)} ms`);
-  return result;
+  if (isDevMode) {
+    const start = performance.now();
+    const result = await func();
+    const end = performance.now();
+    console.log(`${operation} took ${(end - start).toFixed(2)} ms`);
+    return result;
+  } else {
+    return func();
+  }
 }
 
-const appStartTime = performance.now();
+const appStartTime = isDevMode ? performance.now() : null;
 
 let mediaWindow = null;
-let windowBounds = measurePerformanceAsync('Getting window bounds', () => settings.get('windowBounds'));
+let windowBounds = measurePerformanceAsync('Getting window bounds', async () => {
+  const settingsModule = await settings;
+  return settingsModule.get('windowBounds');
+});
 let win = null;
 let ipcInitPromise = null;
 
@@ -47,10 +59,11 @@ const toHHMMSS = (secs) => {
 const saveWindowBounds = (function() {
   let timeoutId = null;
 
-  return function() {
+  return async function() {
     clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => {
-      settings.set('windowBounds', win.getBounds())
+    timeoutId = setTimeout(async () => {
+      const settingsModule = await settings;
+      settingsModule.set('windowBounds', win.getBounds())
         .catch(error => {
           console.error('Error saving window bounds:', error);
         });
@@ -100,15 +113,17 @@ function disablePowerSave() {
 }
 
 async function setupIPCHandlers() {
+  const settingsModule = await settings;
+
   ipcMain.on('set-mode', (event, arg) => {
-    settings.set('operating-mode', arg)
+    settingsModule.set('operating-mode', arg)
       .catch(error => {
         console.error('Error saving window bounds:', error);
       });
   });
 
   ipcMain.handle('get-setting', async (event, setting) => {
-    return settings.get(setting);
+    return settingsModule.get(setting);
   });
 
   ipcMain.handle('get-all-displays', () => {
@@ -209,11 +224,14 @@ app.on('activate', () => {
   }
 });
 
-app.on('ready', () => {
-  measurePerformanceAsync('Creating window', createWindow)
-  const appReadyTime = performance.now();
-  console.log(`Application ready in ${(appReadyTime - appStartTime).toFixed(2)} ms`);
+app.on('ready', async () => {
+  await measurePerformanceAsync('Creating window', createWindow);
+  if (isDevMode) {
+    const appReadyTime = performance.now();
+    console.log(`Application ready in ${(appReadyTime - appStartTime).toFixed(2)} ms`);
+  }
 });
+
 windowBounds = await windowBounds;
 const mainWindowOptions = {
   width: windowBounds ? windowBounds.width : 1068,
