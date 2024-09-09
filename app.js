@@ -848,6 +848,11 @@ const MEDIA_FORM_HTML = `
   </div>
 `;
 
+function handleVolumeChange(event) {
+    vlCtl(event.target.value);
+    CrVL = event.target.value;
+}
+
 function setSBFormMediaPlayer() {
     if (opMode === MEDIAPLAYER) {
         return;
@@ -857,12 +862,12 @@ function setSBFormMediaPlayer() {
     dyneForm.innerHTML = MEDIA_FORM_HTML;
 
     ipcRenderer.invoke('get-all-displays').then(displays => {
+        const dspSelct = document.getElementById("dspSelct");
         for (let i = 0; i < displays.length; i++) {
-            var el = document.createElement("option");
-            let dspSelct = document.getElementById("dspSelct");
+            const el = document.createElement("option"); 
             el.textContent = `Display ${i + 1} ${displays[i].bounds.width}x${displays[i].bounds.height}`;
             dspSelct.appendChild(el);
-
+    
             if (dspSelct.options.length > 2) {
                 dspSelct.selectedIndex = 2; // Hardcode 2nd option
             } else if (dspSelct.options.length === 2) {
@@ -870,6 +875,7 @@ function setSBFormMediaPlayer() {
             }
         }
     });
+    
 
     if (video === null) {
         video = document.getElementById('preview');
@@ -878,10 +884,7 @@ function setSBFormMediaPlayer() {
     restoreMediaFile();
     updateTimestamp(false);
     const vc = document.getElementById('volumeControl');
-    vc.addEventListener('input', function () {
-        vlCtl(this.value);
-        CrVL = this.value;
-    });
+    vc.addEventListener('input', handleVolumeChange);
     vc.value = CrVL;
     const mdFile = document.getElementById("mdFile");
     mdFile.addEventListener("change", saveMediaFile);
