@@ -239,6 +239,6 @@ const mainWindowOptions = {
     userGesture: true,
     backgroundThrottling: false,
     autoplayPolicy: 'no-user-gesture-required',
-    preload: `${app.getAppPath()}/app_preload.mjs`
+    preload: `${import.meta.dirname}/app_preload.mjs`
   }
 };
