@@ -1450,7 +1450,10 @@ function loadPlatformCSS() {
     document.body.classList.add(WIN_STYLE); 
 }
 
-initPlayer();
 loadPlatformCSS();
 installIPCHandler();
 installEvents();
+
+ipcRenderer.on('ready', () => {
+    initPlayer();
+});

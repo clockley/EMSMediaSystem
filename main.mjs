@@ -35,31 +35,32 @@ let windowBounds = measurePerformanceAsync('Getting window bounds', async () => 
   return settingsModule.get('windowBounds');
 });
 let win = null;
-let ipcInitPromise = null;
+var apiReady = false;
 
 Menu.setApplicationMenu(null);
 
-const padStart = (num, targetLength, padString) => {
+function padStart(num, targetLength, padString) {
   const numStr = num.toString();
   let paddingNeeded = targetLength - numStr.length;
   let padding = '';
 
   while (paddingNeeded > 0) {
-    padding += padString;
-    paddingNeeded--;
+      padding += padString;
+      paddingNeeded--;
   }
 
   return padding + numStr;
-};
+}
 
 function toHHMMSS(secs) {
   return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
 };
 
-const saveWindowBounds = (function() {
+
+const saveWindowBounds = (function () {
   let timeoutId = null;
 
-  return async function() {
+  return async function () {
     clearTimeout(timeoutId);
     timeoutId = setTimeout(async () => {
       const settingsModule = await settings;
@@ -71,10 +72,11 @@ const saveWindowBounds = (function() {
   };
 })();
 
-async function createWindow() {
+function createWindow() {
   win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
   //win.openDevTools()
   win.webContents.on('did-finish-load', () => {
+    win.webContents.send('ready');
     measurePerformance('Setting window aspect ratio', () => win.setAspectRatio(1.618));
     win.on('resize', saveWindowBounds);
   });
@@ -85,8 +87,6 @@ async function createWindow() {
   });
 
   measurePerformanceAsync('Loading index.html', () => win.loadFile('index.html'));
-
-  await ipcInitPromise;
 }
 
 function enablePowersave() {
@@ -112,7 +112,9 @@ function disablePowerSave() {
   });
 }
 
-async function setupIPCHandlers() {
+app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
+
+app.once('browser-window-created', async () => {
   const settingsModule = await settings;
 
   ipcMain.on('set-mode', (event, arg) => {
@@ -130,33 +132,25 @@ async function setupIPCHandlers() {
     return screen.getAllDisplays();
   });
 
-  ipcMain.handle('create-media-window', (event, windowOptions) => {
-    return measurePerformance('Creating media window', () => {
-      mediaWindow = new BrowserWindow(windowOptions);
-      mediaWindow.loadFile("media.html");
-      mediaWindow.on('closed', () => {
-        if (win) win.webContents.send('media-window-closed', mediaWindow.id);
-      });
-      return mediaWindow.id;
-    });
-  });
-
-  ipcMain.on('vlcl', (event, v, id) => {
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.send('vlcl', v);
+  ipcMain.on('disable-powersave', () => {
+    if (!mediaWindow || mediaWindow.isDestroyed()) {
+      disablePowerSave();
     }
   });
 
-  ipcMain.on('timeGoto-message', (event, arg) => {
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.send('timeGoto-message', arg);
-    }
-  });
-
-  ipcMain.on('play-ctl', (event, cmd, id) => {
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.send('play-ctl', cmd);
+  ipcMain.on('enable-powersave', () => {
+    if (!mediaWindow || mediaWindow.isDestroyed()) {
       enablePowersave();
+    }
+  });
+
+  ipcMain.on('remoteplaypause', (_, arg) => {
+    win.webContents.send('remoteplaypause', arg);
+  });
+
+  ipcMain.on('playback-state-change', (event, playbackState) => {
+    if (win) {
+      win.webContents.send('update-playback-state', playbackState);
     }
   });
 
@@ -180,32 +174,35 @@ async function setupIPCHandlers() {
     }
   });
 
-  ipcMain.on('remoteplaypause', (_, arg) => {
-      win.webContents.send('remoteplaypause', arg);
-  });
-
-  ipcMain.on('playback-state-change', (event, playbackState) => {
-    if (win) {
-      win.webContents.send('update-playback-state', playbackState);
+  ipcMain.on('vlcl', (event, v, id) => {
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+      mediaWindow.send('vlcl', v);
     }
   });
 
-  ipcMain.on('disable-powersave', () => {
-    if (!mediaWindow || mediaWindow.isDestroyed()) {
-      disablePowerSave();
+  ipcMain.handle('create-media-window', (event, windowOptions) => {
+    return measurePerformance('Creating media window', () => {
+      mediaWindow = new BrowserWindow(windowOptions);
+      mediaWindow.loadFile("media.html");
+      mediaWindow.on('closed', () => {
+        if (win) win.webContents.send('media-window-closed', mediaWindow.id);
+      });
+      return mediaWindow.id;
+    });
+  });
+
+  ipcMain.on('timeGoto-message', (event, arg) => {
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+      mediaWindow.send('timeGoto-message', arg);
     }
   });
 
-  ipcMain.on('enable-powersave', () => {
-    if (!mediaWindow || mediaWindow.isDestroyed()) {
+  ipcMain.on('play-ctl', (event, cmd, id) => {
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+      mediaWindow.send('play-ctl', cmd);
       enablePowersave();
     }
   });
-}
-
-app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
-app.on('will-finish-launching', async () => {
-  ipcInitPromise = measurePerformanceAsync('Initializing IPC', setupIPCHandlers);
 });
 
 app.on('window-all-closed', () => {
@@ -216,12 +213,12 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (!win) {
-    measurePerformanceAsync('Creating window on activate', createWindow);
+    measurePerformance('Creating window on activate', createWindow);
   }
 });
 
-app.on('ready', async () => {
-  await measurePerformanceAsync('Creating window', createWindow);
+app.whenReady().then(async () => {
+  measurePerformance('Creating window', createWindow);
   if (isDevMode) {
     const appReadyTime = performance.now();
     console.log(`Application ready in ${(appReadyTime - appStartTime).toFixed(2)} ms`);
