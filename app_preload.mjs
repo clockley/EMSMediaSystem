@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
     send: (channel, data) => ipcRenderer.send(channel, data),
     on: (channel, callback) => ipcRenderer.on(channel, (event, ...args) => callback(event, ...args)),
+    once: (channel, callback) => ipcRenderer.on(channel, (event, ...args) => callback(event, ...args)),
     invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   },
   __dirname: import.meta.dirname,
