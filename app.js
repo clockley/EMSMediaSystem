@@ -62,8 +62,7 @@ class PIDController {
     }
 
     adjustPlaybackRate(targetTime) {
-        const currentTime = this.video.currentTime;
-        const timeDifference = targetTime - currentTime;
+        const timeDifference = targetTime - this.video.currentTime;
         const derivative = timeDifference - this.lastTimeDifference;
         this.integral += timeDifference; // Accumulate the error
         this.lastTimeDifference = timeDifference;
