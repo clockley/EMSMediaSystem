@@ -36,8 +36,9 @@ let windowBounds = measurePerformanceAsync('Getting window bounds', async () => 
 });
 let win = null;
 
-Menu.setApplicationMenu(null);
-
+if (isDevMode === false) {
+  Menu.setApplicationMenu(null);
+}
 function padStart(num, targetLength, padString) {
   const numStr = num.toString();
   let paddingNeeded = targetLength - numStr.length;
