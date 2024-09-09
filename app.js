@@ -165,38 +165,18 @@ function isActiveMediaWindow() {
     return isActiveMediaWindowCache;
 }
 
-function updateTimestamp(oneShot) {
-    if (oneShot && mediaCntDnEle) {
-        mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
-        return;
-    }
-    if (localTimeStampUpdateIsRunning) {
-        return;
-    }
-    if (!mediaCntDnEle) {
-        localTimeStampUpdateIsRunning = false;
-        return;
-    }
-    if (playingMediaAudioOnly || !video.paused)
-        localTimeStampUpdateIsRunning = true;
-    let lastUpdateTimeLocalPlayer = 0;
+let lastUpdateTimeLocalPlayer = 0;
 
-    const update = (time) => {
-        if (time - lastUpdateTimeLocalPlayer >= 33.33) {
-            if (mediaCntDnEle && audioOnlyFile) {
-                mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
-            } else {
-                localTimeStampUpdateIsRunning = false;
-                return;
-            }
-            lastUpdateTimeLocalPlayer = time;
-        }
-        if (!video.paused) {
-            requestAnimationFrame(update);
+function update(time) {
+    if (time - lastUpdateTimeLocalPlayer >= 33.33) {
+        if (mediaCntDnEle && audioOnlyFile) {
+            mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
         } else {
             localTimeStampUpdateIsRunning = false;
+            return;
         }
-    };
+        lastUpdateTimeLocalPlayer = time;
+    }
     if (!video.paused) {
         requestAnimationFrame(update);
     } else {
@@ -204,38 +184,55 @@ function updateTimestamp(oneShot) {
     }
 }
 
-function installIPCHandler() {
-    ipcRenderer.on('timeRemaining-message', function (evt, message) {
-        const now = Date.now();
-        const sendTime = message[3];
-        const ipcDelay = now - sendTime;
+function updateTimestamp(oneShot) {
+    if (oneShot && mediaCntDnEle) {
+        mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
+        return;
+    }
 
-        let domUpdateTimeStart = now;
-        let timeStamp = message[0];
-        if (opMode === MEDIAPLAYER) {
-            requestAnimationFrame(() => {
-                if (mediaCntDnEle !== null) {
-                    mediaCntDnEle.textContent = timeStamp;
-                }
-                timeStamp = null;
-            });
+    if (localTimeStampUpdateIsRunning) {
+        return;
+    }
+
+    if (!mediaCntDnEle) {
+        localTimeStampUpdateIsRunning = false;
+        return;
+    }
+
+    if (playingMediaAudioOnly || !video.paused) {
+        localTimeStampUpdateIsRunning = true;
+        if (!video.paused) {
+            requestAnimationFrame(update);
+        } else {
+            localTimeStampUpdateIsRunning = false;
         }
-        let domUpdateTime = Date.now() - domUpdateTimeStart;
+    }
+}
 
-        let adjustedIpcDelay = ipcDelay + domUpdateTime;
+function handleTimeMessage(_, message) {
+    const now = Date.now();
 
-        targetTime = message[2] - (adjustedIpcDelay * .001);
+    if (opMode === MEDIAPLAYER) {
+        requestAnimationFrame(() => {
+            if (mediaCntDnEle !== null) {
+                mediaCntDnEle.textContent = message[0];
+            }
+        });
+    }
+    targetTime = message[2] - (((now - message[3]) + (Date.now() - now)) * .001);
 
-        if (now - lastUpdateTime > .5) {
-            if (opMode === MEDIAPLAYER) {
-                if (!video.paused && video !== null && !video.seeking) {
-                    hybridSync(targetTime);
-                    lastUpdateTime = now;
-                }
+    if (now - lastUpdateTime > .5) {
+        if (opMode === MEDIAPLAYER) {
+            if (!video.paused && video !== null && !video.seeking) {
+                hybridSync(targetTime);
+                lastUpdateTime = now;
             }
         }
-        message = null;
-    });
+    }
+}
+
+function installIPCHandler() {
+    ipcRenderer.on('timeRemaining-message', handleTimeMessage);
 
     ipcRenderer.on('update-playback-state', async (event, playbackState) => {
         if (!video) {
@@ -324,9 +321,8 @@ function resetPIDOnSeek() {
 
 function hybridSync(targetTime) {
     if (audioOnlyFile) return;
-    const timeDifference = pidController.adjustPlaybackRate(targetTime);
     if (!audioOnlyFile && !video.paused && !activeLiveStream) {
-        pidController.adjustPID(timeDifference);
+        pidController.adjustPID(pidController.adjustPlaybackRate(targetTime));
     }
 }
 function isImg(pathname) {

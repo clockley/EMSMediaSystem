@@ -1,4 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
+
+function handleIpcOn(channel, callback) {
+    return (event, ...args) => callback(event, ...args);
+}
+
 window.addEventListener('DOMContentLoaded', () => {
     const video = document.getElementById('bigPlayer');
 
@@ -6,10 +11,11 @@ window.addEventListener('DOMContentLoaded', () => {
         video
     });
 });
+
 contextBridge.exposeInMainWorld('electron', {
     ipcRenderer: {
-        send: (channel, data) => ipcRenderer.send(channel, data),
-        on: (channel, callback) => ipcRenderer.on(channel, (event, ...args) => callback(event, ...args)),
+        send: ipcRenderer.send.bind(ipcRenderer),
+        on: ipcRenderer.on.bind(ipcRenderer),
     },
     argv: process.argv,
 });
