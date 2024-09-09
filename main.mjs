@@ -1,6 +1,6 @@
 "use strict";
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
-const settings = import('electron-settings');
+var settingsModule = null;
 const isDevMode = process.env.ems_dev === 'true';
 
 function measurePerformance(operation, func) {
@@ -31,11 +31,10 @@ const appStartTime = isDevMode ? performance.now() : null;
 
 let mediaWindow = null;
 let windowBounds = measurePerformanceAsync('Getting window bounds', async () => {
-  const settingsModule = await import('electron-settings');
+  settingsModule = await import('electron-settings');
   return settingsModule.get('windowBounds');
 });
 let win = null;
-var apiReady = false;
 
 Menu.setApplicationMenu(null);
 
@@ -63,7 +62,6 @@ const saveWindowBounds = (function () {
   return async function () {
     clearTimeout(timeoutId);
     timeoutId = setTimeout(async () => {
-      const settingsModule = await settings;
       settingsModule.set('windowBounds', win.getBounds())
         .catch(error => {
           console.error('Error saving window bounds:', error);
@@ -115,8 +113,6 @@ function disablePowerSave() {
 app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
 
 app.once('browser-window-created', async () => {
-  const settingsModule = await settings;
-
   ipcMain.on('set-mode', (event, arg) => {
     settingsModule.set('operating-mode', arg)
       .catch(error => {
