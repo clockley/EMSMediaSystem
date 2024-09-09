@@ -26,7 +26,7 @@ do {
         loopFile = true;
     }
     --i;
-} while (i >= 0 && argv[i][0] !== '-');
+} while (argv[i][0] !== '-');
 
 async function installICPHandlers() {
     if (!liveStreamMode) {
