@@ -85,6 +85,7 @@ body.linux input:focus, body.linux textarea:focus {
     margin-top: -7px;
     box-shadow: 0 0 1px 1px rgba(0, 0, 0, 0.2);
     transition: background-color 0.3s;
+    background: #0078D7;
 }
 
 .WinStyle-slider::-webkit-slider-thumb {
