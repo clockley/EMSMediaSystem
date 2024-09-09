@@ -18,7 +18,6 @@ async function initializeBible() {
   return bibleAPI;
 }
 
-// Function to read and execute WASM script
 async function executeWasmScript() {
   const wasmExecScript = await readFile(`${import.meta.dirname}/wasm_exec.js`, 'utf8');
   new Script(wasmExecScript).runInThisContext();
@@ -29,13 +28,12 @@ const [bibleAPI] = await Promise.all([
   executeWasmScript().then(() => initializeBible())
 ]);
 
-// Expose APIs to the main world
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
-    send: (channel, data) => ipcRenderer.send(channel, data),
-    on: (channel, callback) => ipcRenderer.on(channel, (event, ...args) => callback(event, ...args)),
-    once: (channel, callback) => ipcRenderer.on(channel, (event, ...args) => callback(event, ...args)),
-    invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+    send: ipcRenderer.send.bind(ipcRenderer),
+    on: ipcRenderer.on.bind(ipcRenderer),
+    once: ipcRenderer.once.bind(ipcRenderer),
+    invoke: ipcRenderer.invoke.bind(ipcRenderer),
   },
   __dirname: import.meta.dirname,
   bibleAPI: bibleAPI
