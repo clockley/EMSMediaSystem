@@ -40,15 +40,17 @@ if (isDevMode === false) {
   Menu.setApplicationMenu(null);
 }
 
-function secondsToTime(seconds) {
-  const wholeSecs = seconds | 0;
-  const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
-  const h = (wholeSecs * 0.0002777777777777778) | 0;  // 1/3600
-  const t = h * 3600;
-  const m = ((wholeSecs - t) * 0.016666666666666666) | 0;  // 1/60
-  const s = wholeSecs - (t + m * 60);
+const pad = (n) => (n < 10 ? '0' : '') + n;
+const padMs = (n) => (n < 10 ? '00' : n < 100 ? '0' : '') + n;
 
-  return ((h < 10 ? '0' : '') + h) + ':' + ((m < 10 ? '0' : '') + m) + ':' + ((s < 10 ? '0' : '') + s) + ':' + (ms < 100 ? '0' : '') + (ms < 10 ? '0' : '') + ms;
+function secondsToTime(seconds) {
+    const wholeSecs = seconds | 0;
+    const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
+    const h = (wholeSecs / 3600) | 0;
+    const m = ((wholeSecs / 60) | 0) % 60;
+    const s = wholeSecs % 60;
+
+    return `${pad(h)}:${pad(m)}:${pad(s)}:${padMs(ms)}`;
 }
 
 const saveWindowBounds = (function () {
@@ -117,26 +119,26 @@ async function getSetting(_, setting) {
 
 function handleCloseMediaWindow(event, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.close();
-      disablePowerSave();
+    mediaWindow.close();
+    disablePowerSave();
   }
 }
 
 function handleCreateMediaWindow(event, windowOptions) {
   return measurePerformance('Creating media window', () => {
-      mediaWindow = new BrowserWindow(windowOptions);
-      mediaWindow.loadFile("media.html");
-      mediaWindow.on('closed', () => {
-          if (win) win.webContents.send('media-window-closed', mediaWindow.id);
-      });
-      return mediaWindow.id;
+    mediaWindow = new BrowserWindow(windowOptions);
+    mediaWindow.loadFile("media.html");
+    mediaWindow.on('closed', () => {
+      if (win) win.webContents.send('media-window-closed', mediaWindow.id);
+    });
+    return mediaWindow.id;
   });
 }
 
 function handlePlayCtl(event, cmd, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.send('play-ctl', cmd);
-      enablePowersave();
+    mediaWindow.send('play-ctl', cmd);
+    enablePowersave();
   }
 }
 
@@ -146,13 +148,13 @@ function handleRemotePlayPause(_, arg) {
 
 function handlePlaybackStateChange(event, playbackState) {
   if (win) {
-      win.webContents.send('update-playback-state', playbackState);
+    win.webContents.send('update-playback-state', playbackState);
   }
 }
 
 async function handleGetMediaCurrentTime() {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-      return await mediaWindow.webContents.executeJavaScript('window.api.video.currentTime');
+    return await mediaWindow.webContents.executeJavaScript('window.api.video.currentTime');
   }
 }
 
@@ -165,25 +167,25 @@ function handleSetMode(event, arg) {
 
 function handleDisablePowerSave() {
   if (!mediaWindow || mediaWindow.isDestroyed()) {
-      disablePowerSave();
+    disablePowerSave();
   }
 }
 
 function handleEnablePowerSave() {
   if (!mediaWindow || mediaWindow.isDestroyed()) {
-      enablePowersave();
+    enablePowersave();
   }
 }
 
 function handleTimeGotoMessage(event, arg) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.send('timeGoto-message', arg);
+    mediaWindow.send('timeGoto-message', arg);
   }
 }
 
 function handleVlcl(event, v, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.send('vlcl', v);
+    mediaWindow.send('vlcl', v);
   }
 }
 
