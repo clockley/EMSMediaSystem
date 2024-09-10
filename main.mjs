@@ -111,89 +111,97 @@ function sendRemainingTime(event, arg) {
 
 app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
 
-app.once('browser-window-created', async () => {
-  ipcMain.on('set-mode', (event, arg) => {
-    settingsModule.set('operating-mode', arg)
-      .catch(error => {
-        console.error('Error saving window bounds:', error);
-      });
-  });
+async function getSetting(_, setting) {
+  return settingsModule.get(setting);
+}
 
-  ipcMain.handle('get-setting', async (event, setting) => {
-    return settingsModule.get(setting);
-  });
-
-  ipcMain.handle('get-all-displays', () => {
-    return screen.getAllDisplays();
-  });
-
-  ipcMain.on('disable-powersave', () => {
-    if (!mediaWindow || mediaWindow.isDestroyed()) {
-      disablePowerSave();
-    }
-  });
-
-  ipcMain.on('enable-powersave', () => {
-    if (!mediaWindow || mediaWindow.isDestroyed()) {
-      enablePowersave();
-    }
-  });
-
-  ipcMain.on('remoteplaypause', (_, arg) => {
-    win.webContents.send('remoteplaypause', arg);
-  });
-
-  ipcMain.on('playback-state-change', (event, playbackState) => {
-    if (win) {
-      win.webContents.send('update-playback-state', playbackState);
-    }
-  });
-
-  ipcMain.handle('get-media-current-time', async () => {
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
-      return await mediaWindow.webContents.executeJavaScript('window.api.video.currentTime');
-    }
-  });
-
-  ipcMain.on('close-media-window', (event, id) => {
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.hide();
+function handleCloseMediaWindow(event, id) {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
       mediaWindow.close();
       disablePowerSave();
-    }
-  });
+  }
+}
 
-  ipcMain.on('timeRemaining-message', sendRemainingTime);
-
-  ipcMain.on('vlcl', (event, v, id) => {
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.send('vlcl', v);
-    }
-  });
-
-  ipcMain.handle('create-media-window', (event, windowOptions) => {
-    return measurePerformance('Creating media window', () => {
+function handleCreateMediaWindow(event, windowOptions) {
+  return measurePerformance('Creating media window', () => {
       mediaWindow = new BrowserWindow(windowOptions);
       mediaWindow.loadFile("media.html");
       mediaWindow.on('closed', () => {
-        if (win) win.webContents.send('media-window-closed', mediaWindow.id);
+          if (win) win.webContents.send('media-window-closed', mediaWindow.id);
       });
       return mediaWindow.id;
-    });
   });
+}
 
-  ipcMain.on('timeGoto-message', (event, arg) => {
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.send('timeGoto-message', arg);
-    }
-  });
-
-  ipcMain.on('play-ctl', (event, cmd, id) => {
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
+function handlePlayCtl(event, cmd, id) {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
       mediaWindow.send('play-ctl', cmd);
       enablePowersave();
-    }
-  });
+  }
+}
+
+function handleRemotePlayPause(_, arg) {
+  win.webContents.send('remoteplaypause', arg);
+}
+
+function handlePlaybackStateChange(event, playbackState) {
+  if (win) {
+      win.webContents.send('update-playback-state', playbackState);
+  }
+}
+
+async function handleGetMediaCurrentTime() {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+      return await mediaWindow.webContents.executeJavaScript('window.api.video.currentTime');
+  }
+}
+
+function handleSetMode(event, arg) {
+  settingsModule.set('operating-mode', arg)
+    .catch(error => {
+      console.error('Error saving window bounds:', error);
+    });
+}
+
+function handleDisablePowerSave() {
+  if (!mediaWindow || mediaWindow.isDestroyed()) {
+      disablePowerSave();
+  }
+}
+
+function handleEnablePowerSave() {
+  if (!mediaWindow || mediaWindow.isDestroyed()) {
+      enablePowersave();
+  }
+}
+
+function handleTimeGotoMessage(event, arg) {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+      mediaWindow.send('timeGoto-message', arg);
+  }
+}
+
+function handleVlcl(event, v, id) {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+      mediaWindow.send('vlcl', v);
+  }
+}
+
+app.once('browser-window-created', async () => {
+  ipcMain.on('set-mode', handleSetMode);
+  ipcMain.handle('get-setting', getSetting);
+  ipcMain.handle('get-all-displays', screen.getAllDisplays.bind(screen));
+  ipcMain.on('disable-powersave', handleDisablePowerSave);
+  ipcMain.on('enable-powersave', handleEnablePowerSave);
+  ipcMain.on('remoteplaypause', handleRemotePlayPause);
+  ipcMain.on('playback-state-change', handlePlaybackStateChange);
+  ipcMain.handle('get-media-current-time', handleGetMediaCurrentTime);
+  ipcMain.on('close-media-window', handleCloseMediaWindow);
+  ipcMain.on('timeRemaining-message', sendRemainingTime);
+  ipcMain.on('vlcl', handleVlcl);
+  ipcMain.handle('create-media-window', handleCreateMediaWindow);
+  ipcMain.on('timeGoto-message', handleTimeGotoMessage);
+  ipcMain.on('play-ctl', handlePlayCtl);
 });
 
 app.on('window-all-closed', () => {

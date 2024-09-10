@@ -1101,210 +1101,220 @@ function playAudioFileAfterDelay() {
     updateTimestamp(false);
 }
 
+function playLocalMedia(event) {
+    let mdly = document.getElementById("mdDelay");
+    if (audioOnlyFile && mdly !== null && mdly.value > 0) {
+        event.preventDefault();
+        mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
+        mdly.value = 0;
+        document.getElementById('mediaWindowPlayButton').textContent = "⏹️";
+        video.pause();
+        return;
+    }
+    mediaSessionPause = false;
+    if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
+        audioOnlyFile = true;
+    }
+    if (audioOnlyFile) {
+        updateTimestamp(false);
+    }
+    if (isActiveMediaWindow()) {
+        unPauseMedia(event);
+        return;
+    }
+    let mediaScrnPlyBtn = document.getElementById("mediaWindowPlayButton");
+    if (mediaScrnPlyBtn && audioOnlyFile) {
+        if (mediaScrnPlyBtn.textContent === '▶️') {
+            fileEnded = false;
+            video.muted = false;
+            ipcRenderer.send('enable-powersave');
+            if (document.getElementById("mdLpCtlr")) {
+                video.loop = document.getElementById("mdLpCtlr").checked;
+            }
+            mediaScrnPlyBtn.textContent = '⏹️';
+            audioOnlyFile = true;
+            playingMediaAudioOnly = true;
+            updateTimestamp(false);
+            return;
+        }
+    }
+    if (isImg(video.src)) {
+        return;
+    }
+    if (video.src === window.location.href) {
+        event.preventDefault();
+        return;
+    }
+    masterPauseState = false;
+    if (isImg(video.src)) {
+        audioOnlyFile = false;
+        playingMediaAudioOnly = false;
+    } else {
+        if (audioOnlyFile) {
+            video.muted = false;
+            ipcRenderer.send('enable-powersave');
+            if (document.getElementById("mdLpCtlr")) {
+                video.loop = document.getElementById("mdLpCtlr").checked;
+            }
+            if (document.getElementById('volumeControl')) {
+                video.volume = document.getElementById('volumeControl').value;
+            }
+            playingMediaAudioOnly = true;
+            updateTimestamp(false);
+            return;
+        }
+    }
+}
+
+function loadLocalMediaHandler(event) {
+    if (pidController) {
+        pidController.reset();
+    }
+    if (video.src === window.location.href) {
+        event.preventDefault();
+        return;
+    }
+}
+
+function loadedmetadataHandler(e) {
+    if (video.src === window.location.href || isImg(video.src)) {
+        return;
+    }
+    audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
+}
+
+function seekLocalMedia(e) {
+    if (pidSeeking) {
+        pidSeeking = false;
+        e.preventDefault();
+    }
+    if (video.src === window.location.href) {
+        e.preventDefault();
+        return;
+    }
+    if (dontSyncRemote === true) {
+        dontSyncRemote = false;
+        return;
+    }
+    updateTimestamp(true);
+    if (e.target.isConnected) {
+        ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+        ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
+    }
+}
+
+function seekingLocalMedia(e) {
+    if (pidSeeking) {
+        pidSeeking = false;
+        e.preventDefault();
+    }
+    if (dontSyncRemote === true) {
+        return;
+    }
+    updateTimestamp(true);
+    if (e.target.isConnected) {
+        ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+        ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
+    }
+}
+
+function endLocalMedia() {
+    ipcRenderer.send('disable-powersave');
+    audioOnlyFile = false;
+    if (document.getElementById("mediaWindowPlayButton")) {
+        document.getElementById("mediaWindowPlayButton").textContent = "▶️";
+    }
+    if (playingMediaAudioOnly) {
+        video.src = '';
+        playingMediaAudioOnly = false;
+        if (document.getElementById('mediaCntDn'))
+            document.getElementById('mediaCntDn').textContent = "00:00:00:000";
+        if (video) {
+            video.muted = true;
+        }
+        if (video !== null) {
+            video.currentTime = 0;
+        }
+        if (document.getElementById("mediaCntDn") !== null) {
+            document.getElementById("mediaCntDn").innerText = "00:00:00:000";
+        }
+
+        if (document.getElementById("mediaWindowPlayButton") !== null) {
+            document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+        } else {
+            document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
+                document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+            }, { once: true });
+        }
+        masterPauseState = false;
+        saveMediaFile();
+    }
+    targetTime = 0;
+    fileEnded = true;
+    video.pause();
+    masterPauseState = false;
+    resetPIDOnSeek();
+    if (video) {
+        video.muted = true;
+    }
+    localTimeStampUpdateIsRunning = false;
+}
+
+function pauseLocalMedia(event) {
+    if (mediaSessionPause) {
+        ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
+        return;
+    }
+    if (fileEnded) {
+        fileEnded = false;
+        return;
+    }
+    if (!event.target.isConnected) {
+        if ((!isActiveMediaWindow()) && playingMediaAudioOnly === false) {
+            return;
+        }
+        event.preventDefault();
+        video.play().then(() => {
+            ;
+        }).catch(error => {
+            playingMediaAudioOnly = false;
+        });
+
+        masterPauseState = false;
+        return;
+    }
+    if (event.target.clientHeight === 0) {
+        event.preventDefault();
+        event.target.play(); //continue to play even if detached
+        return;
+    }
+    if (video.src === window.location.href) {
+        event.preventDefault();
+        return;
+    }
+    if (activeLiveStream) {
+        return;
+    }
+    if (video.currentTime - video.duration === 0) {
+        return;
+    }
+    if (event.target.parentNode !== null) {
+        if (isActiveMediaWindow()) {
+            pauseMedia();
+            masterPauseState = true;
+        }
+    }
+}
+
 function installPreviewEventHandlers() {
     if (!installPreviewEventHandlers.installedVideoEventListener) {
-        video.addEventListener('loadstart', function (event) {
-            if (pidController) {
-                pidController.reset();
-            }
-            if (video.src === window.location.href) {
-                event.preventDefault();
-                return;
-            }
-        });
-        video.addEventListener('loadedmetadata', function (event) {
-            if (video.src === window.location.href || isImg(video.src)) {
-                return;
-            }
-            audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
-        });
-        video.addEventListener('seeked', (e) => {
-            if (pidSeeking) {
-                pidSeeking = false;
-                e.preventDefault();
-            }
-            if (video.src === window.location.href) {
-                e.preventDefault();
-                return;
-            }
-            if (dontSyncRemote === true) {
-                dontSyncRemote = false;
-                return;
-            }
-            updateTimestamp(true);
-            if (e.target.isConnected) {
-                ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-                ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
-            }
-        });
-
-        video.addEventListener('seeking', (e) => {
-            if (pidSeeking) {
-                pidSeeking = false;
-                e.preventDefault();
-            }
-            if (dontSyncRemote === true) {
-                return;
-            }
-            updateTimestamp(true);
-            if (e.target.isConnected) {
-                ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-                ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
-            }
-        });
-
-        video.addEventListener('ended', () => {
-            ipcRenderer.send('disable-powersave');
-            audioOnlyFile = false;
-            if (document.getElementById("mediaWindowPlayButton")) {
-                document.getElementById("mediaWindowPlayButton").textContent = "▶️";
-            }
-            if (playingMediaAudioOnly) {
-                video.src = '';
-                playingMediaAudioOnly = false;
-                if (document.getElementById('mediaCntDn'))
-                    document.getElementById('mediaCntDn').textContent = "00:00:00:000";
-                if (video) {
-                    video.muted = true;
-                }
-                if (video !== null) {
-                    video.currentTime = 0;
-                }
-                if (document.getElementById("mediaCntDn") !== null) {
-                    document.getElementById("mediaCntDn").innerText = "00:00:00:000";
-                }
-
-                if (document.getElementById("mediaWindowPlayButton") !== null) {
-                    document.getElementById("mediaWindowPlayButton").innerText = "▶️";
-                } else {
-                    document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
-                        document.getElementById("mediaWindowPlayButton").innerText = "▶️";
-                    }, { once: true });
-                }
-                masterPauseState = false;
-                saveMediaFile();
-            }
-            targetTime = 0;
-            fileEnded = true;
-            video.pause();
-            masterPauseState = false;
-            resetPIDOnSeek();
-            if (video) {
-                video.muted = true;
-            }
-            localTimeStampUpdateIsRunning = false;
-        });
-
-        video.addEventListener('pause', (event) => {
-            if (mediaSessionPause) {
-                ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
-                return;
-            }
-            if (fileEnded) {
-                fileEnded = false;
-                return;
-            }
-            if (!event.target.isConnected) {
-                if ((!isActiveMediaWindow()) && playingMediaAudioOnly === false) {
-                    return;
-                }
-                event.preventDefault();
-                video.play().then(() => {
-                    ;
-                }).catch(error => {
-                    playingMediaAudioOnly = false;
-                });
-
-                masterPauseState = false;
-                return;
-            }
-            if (event.target.clientHeight === 0) {
-                event.preventDefault();
-                event.target.play(); //continue to play even if detached
-                return;
-            }
-            if (video.src === window.location.href) {
-                event.preventDefault();
-                return;
-            }
-            if (activeLiveStream) {
-                return;
-            }
-            if (video.currentTime - video.duration === 0) {
-                return;
-            }
-            if (event.target.parentNode !== null) {
-                if (isActiveMediaWindow()) {
-                    pauseMedia();
-                    masterPauseState = true;
-                }
-            }
-        });
-        video.addEventListener('play', (event) => {
-            let mdly = document.getElementById("mdDelay");
-            if (audioOnlyFile && mdly !== null && mdly.value > 0) {
-                event.preventDefault();
-                mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
-                mdly.value = 0;
-                document.getElementById('mediaWindowPlayButton').textContent = "⏹️";
-                video.pause();
-                return;
-            }
-            mediaSessionPause = false;
-            if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
-                audioOnlyFile = true;
-            }
-            if (audioOnlyFile) {
-                updateTimestamp(false);
-            }
-            if (isActiveMediaWindow()) {
-                unPauseMedia(event);
-                return;
-            }
-            let mediaScrnPlyBtn = document.getElementById("mediaWindowPlayButton");
-            if (mediaScrnPlyBtn && audioOnlyFile) {
-                if (mediaScrnPlyBtn.textContent === '▶️') {
-                    fileEnded = false;
-                    video.muted = false;
-                    ipcRenderer.send('enable-powersave');
-                    if (document.getElementById("mdLpCtlr")) {
-                        video.loop = document.getElementById("mdLpCtlr").checked;
-                    }
-                    mediaScrnPlyBtn.textContent = '⏹️';
-                    audioOnlyFile = true;
-                    playingMediaAudioOnly = true;
-                    updateTimestamp(false);
-                    return;
-                }
-            }
-            if (isImg(video.src)) {
-                return;
-            }
-            if (video.src === window.location.href) {
-                event.preventDefault();
-                return;
-            }
-            masterPauseState = false;
-            if (isImg(video.src)) {
-                audioOnlyFile = false;
-                playingMediaAudioOnly = false;
-            } else {
-                if (audioOnlyFile) {
-                    video.muted = false;
-                    ipcRenderer.send('enable-powersave');
-                    if (document.getElementById("mdLpCtlr")) {
-                        video.loop = document.getElementById("mdLpCtlr").checked;
-                    }
-                    if (document.getElementById('volumeControl')) {
-                        video.volume = document.getElementById('volumeControl').value;
-                    }
-                    playingMediaAudioOnly = true;
-                    updateTimestamp(false);
-                    return;
-                }
-            }
-        });
-
+        video.addEventListener('loadstart', loadLocalMediaHandler);
+        video.addEventListener('loadedmetadata', loadedmetadataHandler);
+        video.addEventListener('seeked', seekLocalMedia);
+        video.addEventListener('seeking', seekingLocalMedia);
+        video.addEventListener('ended', endLocalMedia);
+        video.addEventListener('pause', pauseLocalMedia);
+        video.addEventListener('play', playLocalMedia);
         pidController = new PIDController(video);
         installPreviewEventHandlers.installedVideoEventListener = true;
     }
