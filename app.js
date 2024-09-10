@@ -63,15 +63,14 @@ class PIDController {
 
     adjustPlaybackRate(targetTime) {
         const timeDifference = targetTime - this.video.currentTime;
-        const derivative = timeDifference - this.lastTimeDifference;
         this.integral += timeDifference; // Accumulate the error
         this.lastTimeDifference = timeDifference;
 
         let playbackRate;
         let minRate = 0.8;
         let maxRate = 1.2;
-        const timeDifferenceAbs = Math.abs(timeDifference);
-        
+        const timeDifferenceAbs = timeDifference < 0 ? -timeDifference : timeDifference;
+
         if (timeDifferenceAbs > 0.5) {
             this.integral = 0;
             minRate = 0.5;
@@ -84,8 +83,9 @@ class PIDController {
             playbackRate = 1.0;
             this.adjustPID(timeDifference);
         } else {
-            playbackRate = this.video.playbackRate + (this.kP * timeDifference) + (this.kI * this.integral) + (this.kD * derivative);
-            playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
+            playbackRate = this.video.playbackRate + (this.kP * timeDifference) + (this.kI * this.integral) + (this.kD * (timeDifference - this.lastTimeDifference));
+            playbackRate = playbackRate < minRate ? minRate : playbackRate;
+            playbackRate = playbackRate > maxRate ? maxRate : playbackRate;
         }
 
         if (!isNaN(playbackRate)) {
@@ -102,7 +102,7 @@ class PIDController {
     adjustPID(currentError) {
         const now = performance.now();
         const period = now - this.lastCrossing;
-        const absError = Math.abs(currentError);
+        const absError = currentError < 0 ? -currentError : currentError;
 
         if (absError < this.significantErrorThreshold && currentError * this.lastError < 0) {
             if (this.isOscillating) {
@@ -143,22 +143,16 @@ class PIDController {
 
 let pidController;
 
-function padStart(num, targetLength, padString) {
-    const numStr = num.toString();
-    let paddingNeeded = targetLength - numStr.length;
-    let padding = '';
-
-    while (paddingNeeded > 0) {
-        padding += padString;
-        paddingNeeded--;
-    }
-
-    return padding + numStr;
+function secondsToTime(seconds) {
+    const wholeSecs = seconds | 0;
+    const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
+    const h = (wholeSecs * 0.0002777777777777778) | 0;  // 1/3600
+    const t = h * 3600;
+    const m = ((wholeSecs - t) * 0.016666666666666666) | 0;  // 1/60
+    const s = wholeSecs - (t + m * 60);
+  
+    return ((h < 10 ? '0' : '') + h) + ':' + ((m < 10 ? '0' : '') + m) + ':' + ((s < 10 ? '0' : '') + s) + ':' + (ms < 100 ? '0' : '') + (ms < 10 ? '0' : '') + ms;
 }
-
-function toHHMMSS(secs) {
-    return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
-};
 
 function isActiveMediaWindow() {
     return isActiveMediaWindowCache;
@@ -169,7 +163,7 @@ let lastUpdateTimeLocalPlayer = 0;
 function update(time) {
     if (time - lastUpdateTimeLocalPlayer >= 33.33) {
         if (mediaCntDnEle && audioOnlyFile) {
-            mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
+            mediaCntDnEle.textContent = secondsToTime(video.duration - video.currentTime);
         } else {
             localTimeStampUpdateIsRunning = false;
             return;
@@ -185,7 +179,7 @@ function update(time) {
 
 function updateTimestamp(oneShot) {
     if (oneShot && mediaCntDnEle) {
-        mediaCntDnEle.textContent = toHHMMSS(video.duration - video.currentTime);
+        mediaCntDnEle.textContent = secondsToTime(video.duration - video.currentTime);
         return;
     }
 
@@ -320,7 +314,7 @@ function resetPIDOnSeek() {
 
 function hybridSync(targetTime) {
     if (audioOnlyFile) return;
-    if (!audioOnlyFile && !video.paused && !activeLiveStream) {
+    if (!activeLiveStream) {
         pidController.adjustPID(pidController.adjustPlaybackRate(targetTime));
     }
 }
@@ -864,10 +858,10 @@ function setSBFormMediaPlayer() {
     ipcRenderer.invoke('get-all-displays').then(displays => {
         const dspSelct = document.getElementById("dspSelct");
         for (let i = 0; i < displays.length; i++) {
-            const el = document.createElement("option"); 
+            const el = document.createElement("option");
             el.textContent = `Display ${i + 1} ${displays[i].bounds.width}x${displays[i].bounds.height}`;
             dspSelct.appendChild(el);
-    
+
             if (dspSelct.options.length > 2) {
                 dspSelct.selectedIndex = 2; // Hardcode 2nd option
             } else if (dspSelct.options.length === 2) {
@@ -875,7 +869,7 @@ function setSBFormMediaPlayer() {
             }
         }
     });
-    
+
 
     if (video === null) {
         video = document.getElementById('preview');
@@ -1319,7 +1313,7 @@ function installPreviewEventHandlers() {
 function initPlayer() {
     ipcRenderer.invoke('get-setting', "operating-mode").then(mode => {
         dyneForm = document.getElementById("dyneForm");
-        
+
         if (mode === MEDIAPLAYERYT) {
             document.getElementById("YtPlyrRBtnFrmID").checked = true;
             setSBFormYouTubeMediaPlayer();
@@ -1445,7 +1439,7 @@ const LINUX = 'Linux';
 const WIN_STYLE = 'WinStyle'
 
 function loadPlatformCSS() {
-    document.body.classList.add(WIN_STYLE); 
+    document.body.classList.add(WIN_STYLE);
 }
 
 loadPlatformCSS();
