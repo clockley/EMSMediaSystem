@@ -39,23 +39,17 @@ let win = null;
 if (isDevMode === false) {
   Menu.setApplicationMenu(null);
 }
-function padStart(num, targetLength, padString) {
-  const numStr = num.toString();
-  let paddingNeeded = targetLength - numStr.length;
-  let padding = '';
 
-  while (paddingNeeded > 0) {
-      padding += padString;
-      paddingNeeded--;
-  }
+function secondsToTime(seconds) {
+  const wholeSecs = seconds | 0;
+  const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
+  const h = (wholeSecs * 0.0002777777777777778) | 0;  // 1/3600
+  const t = h * 3600;
+  const m = ((wholeSecs - t) * 0.016666666666666666) | 0;  // 1/60
+  const s = wholeSecs - (t + m * 60);
 
-  return padding + numStr;
+  return ((h < 10 ? '0' : '') + h) + ':' + ((m < 10 ? '0' : '') + m) + ':' + ((s < 10 ? '0' : '') + s) + ':' + (ms < 100 ? '0' : '') + (ms < 10 ? '0' : '') + ms;
 }
-
-function toHHMMSS(secs) {
-  return `${padStart((secs / 3600) | 0, 2, '0')}:${padStart(((secs % 3600) / 60) | 0, 2, '0')}:${padStart((secs % 60) | 0, 2, '0')}:${padStart(((secs * 1000) % 1000) | 0, 3, '0')}`;
-};
-
 
 const saveWindowBounds = (function () {
   let timeoutId = null;
@@ -109,6 +103,10 @@ function disablePowerSave() {
       console.log('No active Power Save Blocker to stop.');
     }
   });
+}
+
+function sendRemainingTime(event, arg) {
+  win?.webContents.send('timeRemaining-message', [secondsToTime(arg[0] - arg[1]), arg[0], arg[1], arg[2]]);
 }
 
 app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
@@ -165,11 +163,7 @@ app.once('browser-window-created', async () => {
     }
   });
 
-  ipcMain.on('timeRemaining-message', (event, arg) => {
-    if (win) {
-      win.webContents.send('timeRemaining-message', [toHHMMSS(arg[0] - arg[1]), arg[0], arg[1], arg[2]]);
-    }
-  });
+  ipcMain.on('timeRemaining-message', sendRemainingTime);
 
   ipcMain.on('vlcl', (event, v, id) => {
     if (mediaWindow && !mediaWindow.isDestroyed()) {
