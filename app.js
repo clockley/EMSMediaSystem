@@ -143,15 +143,17 @@ class PIDController {
 
 let pidController;
 
+const pad = (n) => (n < 10 ? '0' : '') + n;
+const padMs = (n) => (n < 10 ? '00' : n < 100 ? '0' : '') + n;
+
 function secondsToTime(seconds) {
     const wholeSecs = seconds | 0;
     const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
-    const h = (wholeSecs * 0.0002777777777777778) | 0;  // 1/3600
-    const t = h * 3600;
-    const m = ((wholeSecs - t) * 0.016666666666666666) | 0;  // 1/60
-    const s = wholeSecs - (t + m * 60);
-  
-    return ((h < 10 ? '0' : '') + h) + ':' + ((m < 10 ? '0' : '') + m) + ':' + ((s < 10 ? '0' : '') + s) + ':' + (ms < 100 ? '0' : '') + (ms < 10 ? '0' : '') + ms;
+    const h = (wholeSecs / 3600) | 0;
+    const m = ((wholeSecs / 60) | 0) % 60;
+    const s = wholeSecs % 60;
+
+    return `${pad(h)}:${pad(m)}:${pad(s)}:${padMs(ms)}`;
 }
 
 function isActiveMediaWindow() {
