@@ -2,6 +2,10 @@
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
 var settingsModule = null;
 const isDevMode = process.env.ems_dev === 'true';
+if (isDevMode) {
+  console.log(`Node version: ${process.versions.node}`);
+  console.log(`Electron version: ${process.versions.electron}`);
+}
 
 function measurePerformance(operation, func) {
   if (isDevMode) {
