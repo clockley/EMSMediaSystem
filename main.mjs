@@ -84,23 +84,23 @@ function createWindow() {
   measurePerformanceAsync('Loading index.html', () => win.loadFile('index.html'));
 }
 
-function enablePowersave() {
+function startMediaPlaybackPowerHint() {
   measurePerformance('Enabling power save blocker', () => {
-    if (typeof enablePowersave.powerSaveBlockerId === 'undefined') {
-      enablePowersave.powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
-      console.log(`Power Save Blocker started: ${enablePowersave.powerSaveBlockerId}`);
+    if (typeof startMediaPlaybackPowerHint.powerSaveBlockerId === 'undefined') {
+      startMediaPlaybackPowerHint.powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+      console.log(`Power Save Blocker started: ${startMediaPlaybackPowerHint.powerSaveBlockerId}`);
     } else {
-      console.log(`Power Save Blocker is already active: ${enablePowersave.powerSaveBlockerId}`);
+      console.log(`Power Save Blocker is already active: ${startMediaPlaybackPowerHint.powerSaveBlockerId}`);
     }
   });
 }
 
-function disablePowerSave() {
+function stopMediaPlaybackPowerHint() {
   measurePerformance('Disabling power save blocker', () => {
-    if (typeof enablePowersave.powerSaveBlockerId !== 'undefined') {
-      powerSaveBlocker.stop(enablePowersave.powerSaveBlockerId);
-      console.log(`Power Save Blocker stopped: ${enablePowersave.powerSaveBlockerId}`);
-      enablePowersave.powerSaveBlockerId = undefined;
+    if (typeof startMediaPlaybackPowerHint.powerSaveBlockerId !== 'undefined') {
+      powerSaveBlocker.stop(startMediaPlaybackPowerHint.powerSaveBlockerId);
+      console.log(`Power Save Blocker stopped: ${startMediaPlaybackPowerHint.powerSaveBlockerId}`);
+      startMediaPlaybackPowerHint.powerSaveBlockerId = undefined;
     } else {
       console.log('No active Power Save Blocker to stop.');
     }
@@ -120,7 +120,17 @@ async function getSetting(_, setting) {
 function handleCloseMediaWindow(event, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     mediaWindow.close();
-    disablePowerSave();
+  }
+}
+
+function localMediaStateUpdate(event, id, state) {
+  switch (state) {
+    case "play":
+      startMediaPlaybackPowerHint();
+    break;
+    case "stop":
+      stopMediaPlaybackPowerHint();
+    break;
   }
 }
 
@@ -130,6 +140,7 @@ function handleCreateMediaWindow(event, windowOptions) {
     mediaWindow.loadFile("media.html");
     mediaWindow.on('closed', () => {
       if (win) win.webContents.send('media-window-closed', mediaWindow.id);
+      stopMediaPlaybackPowerHint();
     });
     return mediaWindow.id;
   });
@@ -138,7 +149,7 @@ function handleCreateMediaWindow(event, windowOptions) {
 function handlePlayCtl(event, cmd, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     mediaWindow.send('play-ctl', cmd);
-    enablePowersave();
+    startMediaPlaybackPowerHint();
   }
 }
 
@@ -165,17 +176,6 @@ function handleSetMode(event, arg) {
     });
 }
 
-function handleDisablePowerSave() {
-  if (!mediaWindow || mediaWindow.isDestroyed()) {
-    disablePowerSave();
-  }
-}
-
-function handleEnablePowerSave() {
-  if (!mediaWindow || mediaWindow.isDestroyed()) {
-    enablePowersave();
-  }
-}
 
 function handleTimeGotoMessage(event, arg) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
@@ -193,9 +193,8 @@ app.once('browser-window-created', async () => {
   ipcMain.on('set-mode', handleSetMode);
   ipcMain.handle('get-setting', getSetting);
   ipcMain.handle('get-all-displays', screen.getAllDisplays.bind(screen));
-  ipcMain.on('disable-powersave', handleDisablePowerSave);
-  ipcMain.on('enable-powersave', handleEnablePowerSave);
   ipcMain.on('remoteplaypause', handleRemotePlayPause);
+  ipcMain.on('localMediaState', localMediaStateUpdate);
   ipcMain.on('playback-state-change', handlePlaybackStateChange);
   ipcMain.handle('get-media-current-time', handleGetMediaCurrentTime);
   ipcMain.on('close-media-window', handleCloseMediaWindow);
