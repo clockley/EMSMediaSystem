@@ -416,7 +416,7 @@ function playMedia(e) {
         e.target = document.getElementById("mediaWindowPlayButton");
     }
     fileEnded = false;
-    if (video !== null && encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
+    if (encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
         saveMediaFile();
     }
 
@@ -1356,6 +1356,8 @@ async function createMediaWindow() {
     if (liveStreamMode === false && video !== null) {
         startTime = video.currentTime;
     }
+
+    saveMediaFile();
 
     var displays = await ipcRenderer.invoke('get-all-displays');
     var externalDisplay = null;
