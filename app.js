@@ -28,7 +28,7 @@ var fileEnded = false;
 var dyneForm = null;
 var mediaSessionPause = false;
 const MEDIAPLAYER = 0, MEDIAPLAYERYT = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
-const imageExtensions = new Set(["bmp", "gif", "jpg", "jpeg", "png", "webp", "svg", "ico"]);
+const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 let lastUpdateTime = 0;
 let isActiveMediaWindowCache = false;
 
@@ -320,8 +320,9 @@ function hybridSync(targetTime) {
         pidController.adjustPID(pidController.adjustPlaybackRate(targetTime));
     }
 }
+
 function isImg(pathname) {
-    return imageExtensions.has(pathname.substring((pathname.lastIndexOf(".") - 1 >>> 0) + 2).toLowerCase());
+    return imageRegex.test(pathname);
 }
 
 function vlCtl(v) {
@@ -1370,8 +1371,6 @@ async function createMediaWindow() {
     if (liveStreamMode === false && video !== null) {
         startTime = video.currentTime;
     }
-
-    saveMediaFile();
 
     var displays = await ipcRenderer.invoke('get-all-displays');
     var externalDisplay = null;
