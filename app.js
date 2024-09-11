@@ -428,8 +428,17 @@ function playMedia(e) {
             video.pause();
             e.target.textContent = "▶️";
             localTimeStampUpdateIsRunning = false;
+        } else if (e.target.textContent === "▶️" && video.src !== null && video.src != '' && saveMediaFile.fileInpt != null) {
+            let t1 = encodeURI(saveMediaFile.fileInpt[0].name);
+            let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
+            if (t1 == null || t2 == null || t1 !== t2) {
+                return;
+            } else {
+                document.getElementById("mdFile").files=saveMediaFile.fileInpt;
+            }
+        } else {
+            return;
         }
-        return;
     }
 
     if (e.target.textContent === "▶️") {
