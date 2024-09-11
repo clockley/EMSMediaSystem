@@ -434,7 +434,6 @@ function playMedia(e) {
 
     if (e.target.textContent === "▶️") {
         e.target.textContent = "⏹️";
-        ipcRenderer.send('disable-powersave');
         if (opMode === MEDIAPLAYER) {
             if (isImg(mediaFile)) {
                 createMediaWindow();
@@ -449,6 +448,7 @@ function playMedia(e) {
         audioOnlyFile = opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
 
         if (audioOnlyFile) {
+            ipcRenderer.send("localMediaState", 0, "play");
             video.muted = false;
             video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
@@ -479,7 +479,6 @@ function playMedia(e) {
         dontSyncRemote = false;
     } else if (e.target.textContent === "⏹️") {
         ipcRenderer.send('close-media-window', 0);
-        ipcRenderer.send('disable-powersave');
         playingMediaAudioOnly = false;
         dontSyncRemote = true;
         clearTimeout(mediaPlayDelay);
@@ -491,6 +490,7 @@ function playMedia(e) {
         video.pause();
         video.currentTime = 0;
         if (audioOnlyFile) {
+            ipcRenderer.send("localMediaState", 0, "stop");
             activeLiveStream = false;
             saveMediaFile();
             if (opMode === MEDIAPLAYER)
@@ -1118,6 +1118,7 @@ function playLocalMedia(event) {
         audioOnlyFile = true;
     }
     if (audioOnlyFile) {
+        ipcRenderer.send("localMediaState", 0, "play");
         updateTimestamp(false);
     }
     if (isActiveMediaWindow()) {
@@ -1129,7 +1130,6 @@ function playLocalMedia(event) {
         if (mediaScrnPlyBtn.textContent === '▶️') {
             fileEnded = false;
             video.muted = false;
-            ipcRenderer.send('enable-powersave');
             if (document.getElementById("mdLpCtlr")) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
             }
@@ -1154,7 +1154,6 @@ function playLocalMedia(event) {
     } else {
         if (audioOnlyFile) {
             video.muted = false;
-            ipcRenderer.send('enable-powersave');
             if (document.getElementById("mdLpCtlr")) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
             }
@@ -1221,7 +1220,6 @@ function seekingLocalMedia(e) {
 }
 
 function endLocalMedia() {
-    ipcRenderer.send('disable-powersave');
     audioOnlyFile = false;
     if (document.getElementById("mediaWindowPlayButton")) {
         document.getElementById("mediaWindowPlayButton").textContent = "▶️";
@@ -1253,6 +1251,7 @@ function endLocalMedia() {
     }
     targetTime = 0;
     fileEnded = true;
+    ipcRenderer.send("localMediaState", 0, "stop");
     video.pause();
     masterPauseState = false;
     resetPIDOnSeek();
