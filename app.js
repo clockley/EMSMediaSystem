@@ -1128,7 +1128,13 @@ function playLocalMedia(event) {
     }
     if (audioOnlyFile) {
         ipcRenderer.send("localMediaState", 0, "play");
+
         updateTimestamp(false);
+        let t1 = encodeURI(saveMediaFile.fileInpt[0].name);
+        let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
+        if (t1 != null && t2 != null && t1 === t2) {
+            document.getElementById("mdFile").files = saveMediaFile.fileInpt;
+        }
     }
     if (isActiveMediaWindow()) {
         unPauseMedia(event);
