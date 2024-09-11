@@ -445,9 +445,9 @@ function playMedia(e) {
             }
         }
         let mdly = document.getElementById("mdDelay");
-        waitForMetadata().then(() => {
-            audioOnlyFile = opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
-        });
+
+        audioOnlyFile = opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
+
         if (audioOnlyFile) {
             video.muted = false;
             video.loop = document.getElementById("mdLpCtlr").checked;
@@ -1356,8 +1356,6 @@ async function createMediaWindow() {
     if (liveStreamMode === false && video !== null) {
         startTime = video.currentTime;
     }
-
-    saveMediaFile();
 
     var displays = await ipcRenderer.invoke('get-all-displays');
     var externalDisplay = null;
