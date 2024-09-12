@@ -538,8 +538,6 @@ function setSBFormYouTubeMediaPlayer() {
         <input type="url" name="mdFile" id="mdFile" placeholder="Paste your video URL here..." style="width: 80%; padding: 15px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; outline: none;" onfocus="this.style.borderColor='#0056b3';" onblur="this.style.borderColor='#ddd';" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
         <br>
             <button id="mediaWindowPlayButton" type="button">▶️</button>
-            <label for="volumeControl">🎧</label>
-            <input type="range" class="${sliderClass}" id="volumeControl" min="0" max="1" step="0.01" value="1">
         <br>
             <select name="dspSelct" id="dspSelct">
                 <option value="" disabled>--Select Display Device--</option>
@@ -550,9 +548,9 @@ function setSBFormYouTubeMediaPlayer() {
         <br>
     `;
 
-    const vc = document.getElementById('volumeControl');
+    /*const vc = document.getElementById('volumeControl');
     vc.addEventListener('input', handleVolumeChange);
-    vc.value = CrVL;
+    vc.value = CrVL;*/
 
     if (mediaFile !== null && isLiveStream(mediaFile)) {
         document.getElementById("mdFile").value = mediaFile;
@@ -832,8 +830,6 @@ const MEDIA_FORM_HTML = `
     </select>
     <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
     <label for="mdLpCtlr">Loop</label>
-    <label for="volumeControl">🎧</label>
-    <input type="range" class="${sliderClass}" id="volumeControl" min="0" max="1" step="0.01" value="1">
     <br><br>
     <button id="mediaWindowPlayButton" type="button">▶️</button>
     <button id="mediaWindowPauseButton" type="button">⏸️</button>
@@ -1401,17 +1397,17 @@ async function createMediaWindow() {
             video.src = '';
     }
 
-    var strtVl = 1;
+   /* var strtVl = 1;
     if (document.getElementById('volumeControl') !== null) {
         strtVl = document.getElementById('volumeControl').value;
-    }
+    }*/
 
     const isImgFile = isImg(mediaFile);
 
     if (audioOnlyFile && !isActiveMediaWindow()) {
         video.muted = false;
         video.loop = document.getElementById("mdLpCtlr").checked;
-        video.volume = document.getElementById('volumeControl').value;
+        //video.volume = document.getElementById('volumeControl').value;
         if (!isImgFile) {
             await video.play();
         } else {
