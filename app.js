@@ -890,9 +890,9 @@ function setSBFormMediaPlayer() {
 
     restoreMediaFile();
     updateTimestamp(false);
-    const vc = document.getElementById('volumeControl');
+    /*const vc = document.getElementById('volumeControl');
     vc.addEventListener('input', handleVolumeChange);
-    vc.value = CrVL;
+    vc.value = CrVL;*/
     const mdFile = document.getElementById("mdFile");
     mdFile.addEventListener("change", saveMediaFile);
     const isActiveMW = isActiveMediaWindow();
@@ -1425,7 +1425,7 @@ async function createMediaWindow() {
             video.muted = true;
         }
     }
-
+    let strtVl = 1;
     const windowOptions = {
         backgroundColor: '#00000000',
         transparent: true,
