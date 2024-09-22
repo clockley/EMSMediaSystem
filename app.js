@@ -154,7 +154,7 @@ function secondsToTime(seconds) {
     const m = ((wholeSecs / 60) | 0) % 60;
     const s = wholeSecs % 60;
 
-    return `${pad(h)}:${pad(m)}:${pad(s)}:${padMs(ms)}`;
+    return `${pad(h)}:${pad(m)}:${pad(s)}.${padMs(ms)}`;
 }
 
 function isActiveMediaWindow() {
@@ -294,7 +294,7 @@ function installIPCHandler() {
             targetTime = 0;
         }
         if (document.getElementById("mediaCntDn") !== null) {
-            document.getElementById("mediaCntDn").innerText = "00:00:00:000";
+            document.getElementById("mediaCntDn").innerText = "00:00:00.000";
         }
         if (document.getElementById("mediaWindowPlayButton") !== null) {
             updatePlayButtonUI();
@@ -486,7 +486,7 @@ function playMedia(e) {
         dontSyncRemote = true;
         clearTimeout(mediaPlayDelay);
         if (opMode === MEDIAPLAYER)
-            document.getElementById('mediaCntDn').textContent = "00:00:00:000";
+            document.getElementById('mediaCntDn').textContent = "00:00:00.000";
         if (!audioOnlyFile)
             activeLiveStream = true;
         video.pause();
@@ -496,7 +496,7 @@ function playMedia(e) {
             activeLiveStream = false;
             saveMediaFile();
             if (opMode === MEDIAPLAYER)
-                document.getElementById('mediaCntDn').textContent = "00:00:00:000";
+                document.getElementById('mediaCntDn').textContent = "00:00:00.000";
             if (video) {
                 video.muted = true;
             }
@@ -528,7 +528,7 @@ function setSBFormYouTubeMediaPlayer() {
 
     if (!isActiveMediaWindow()) {
         if (document.getElementById("mediaCntDn") !== null) {
-            document.getElementById("mediaCntDn").textContent = "00:00:00:000";
+            document.getElementById("mediaCntDn").textContent = "00:00:00.000";
         }
     }
 
@@ -852,7 +852,7 @@ const MEDIA_FORM_HTML = `
       overflow: hidden;
       user-select: none;
       font-size: calc(1vw + 80%);
-      line-height: ${lineHeight};">00:00:00:000</span>
+      line-height: ${lineHeight};">00:00:00.000</span>
   </div>
 `;
 
@@ -900,10 +900,10 @@ function setSBFormMediaPlayer() {
     let plyBtn = document.getElementById("mediaWindowPlayButton");
     if (!isActiveMW && !playingMediaAudioOnly) {
         isPlaying = false;
-        document.getElementById("mediaCntDn").textContent = "00:00:00:000";
+        document.getElementById("mediaCntDn").textContent = "00:00:00.000";
     } else {
         isPlaying = true;
-        document.getElementById('mediaCntDn').textContent = "00:00:00:000";
+        document.getElementById('mediaCntDn').textContent = "00:00:00.000";
         if (typeof currentMediaFile === 'undefined') {
             currentMediaFile = mdFile.files
         } else {
@@ -1248,7 +1248,7 @@ function endLocalMedia() {
         video.src = '';
         playingMediaAudioOnly = false;
         if (document.getElementById('mediaCntDn'))
-            document.getElementById('mediaCntDn').textContent = "00:00:00:000";
+            document.getElementById('mediaCntDn').textContent = "00:00:00.000";
         if (video) {
             video.muted = true;
         }
@@ -1256,7 +1256,7 @@ function endLocalMedia() {
             video.currentTime = 0;
         }
         if (document.getElementById("mediaCntDn") !== null) {
-            document.getElementById("mediaCntDn").innerText = "00:00:00:000";
+            document.getElementById("mediaCntDn").innerText = "00:00:00.000";
         }
 
         if (document.getElementById("mediaWindowPlayButton") !== null) {
@@ -1424,7 +1424,7 @@ async function createMediaWindow() {
     } else {
         playingMediaAudioOnly = false;
         if (document.getElementById('mediaCntDn'))
-            document.getElementById('mediaCntDn').textContent = "00:00:00:000";
+            document.getElementById('mediaCntDn').textContent = "00:00:00.000";
         if (video) {
             video.muted = true;
         }
