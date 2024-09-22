@@ -1,6 +1,7 @@
 "use strict";
 //console.time("start");
 //Project Alchemy
+//Devel
 //Copyright 2019 - 2024 Christian Lockley
 
 const { ipcRenderer, __dirname, bibleAPI } = window.electron;
@@ -404,7 +405,7 @@ function playMedia(e) {
         e.target = document.getElementById("mediaWindowPlayButton");
     }
     fileEnded = false;
-    if (opMode ==  MEDIAPLAYER && encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
+    if (opMode == MEDIAPLAYER && encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
         saveMediaFile();
     }
 
@@ -859,6 +860,18 @@ const MEDIA_FORM_HTML = `
 function handleVolumeChange(event) {
     vlCtl(event.target.value);
     CrVL = event.target.value;
+}
+
+function openFileDialog() {
+    ipcRenderer.invoke('open-file-dialog')
+        .then(filePath => {
+            if (filePath) {
+                console.log('File selected:', filePath);
+            }
+        })
+        .catch(error => {
+            console.error('Error opening file dialog:', error);
+        });
 }
 
 function setSBFormMediaPlayer() {
@@ -1403,10 +1416,10 @@ async function createMediaWindow() {
             video.src = '';
     }
 
-   /* var strtVl = 1;
-    if (document.getElementById('volumeControl') !== null) {
-        strtVl = document.getElementById('volumeControl').value;
-    }*/
+    /* var strtVl = 1;
+     if (document.getElementById('volumeControl') !== null) {
+         strtVl = document.getElementById('volumeControl').value;
+     }*/
 
     const isImgFile = isImg(mediaFile);
 
