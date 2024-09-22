@@ -1247,8 +1247,9 @@ function endLocalMedia() {
     if (playingMediaAudioOnly) {
         video.src = '';
         playingMediaAudioOnly = false;
-        if (document.getElementById('mediaCntDn'))
+        if (opMode === MEDIAPLAYER) {
             document.getElementById('mediaCntDn').textContent = "00:00:00.000";
+        }
         if (video) {
             video.muted = true;
         }
