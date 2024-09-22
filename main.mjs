@@ -1,10 +1,28 @@
 "use strict";
-import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu, dialog } from 'electron';
 var settingsModule = null;
 const isDevMode = process.env.ems_dev === 'true';
 if (isDevMode) {
   console.log(`Node version: ${process.versions.node}`);
   console.log(`Electron version: ${process.versions.electron}`);
+}
+
+async function openFileDialog(event) {
+  try {
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openFile'],
+      filters: [
+        { name: 'Media Files', extensions: ['mp4', 'avi', 'mkv', 'mov', 'mp3', 'wav', 'jpg', 'jpeg', 'png', 'gif'] }
+      ]
+    });
+
+    if (!result.canceled && result.filePaths.length > 0) {
+      return result.filePaths[0];
+    }
+  } catch (err) {
+    console.error('Error opening file dialog:', err);
+  }
+  return null;
 }
 
 function measurePerformance(operation, func) {
@@ -194,6 +212,7 @@ function handleVlcl(event, v, id) {
 }
 
 app.once('browser-window-created', async () => {
+  ipcMain.handle('open-file-dialog', openFileDialog);
   ipcMain.on('set-mode', handleSetMode);
   ipcMain.handle('get-setting', getSetting);
   ipcMain.handle('get-all-displays', screen.getAllDisplays.bind(screen));
