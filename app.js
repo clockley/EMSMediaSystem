@@ -451,6 +451,7 @@ function playMedia(e) {
 
         if (audioOnlyFile) {
             ipcRenderer.send("localMediaState", 0, "play");
+            isPlaying = true;
             video.muted = false;
             video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
@@ -1165,7 +1166,6 @@ function playLocalMedia(event) {
             if (document.getElementById("mdLpCtlr")) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
             }
-            isPlaying = false;
             audioOnlyFile = true;
             playingMediaAudioOnly = true;
             updateTimestamp(false);
