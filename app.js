@@ -1131,7 +1131,8 @@ function playLocalMedia(event) {
     }
     if (audioOnlyFile) {
         ipcRenderer.send("localMediaState", 0, "play");
-
+        isPlaying = true;
+        updatePlayButtonUI();
         updateTimestamp(false);
         let t1 = encodeURI(saveMediaFile.fileInpt[0].name);
         let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
