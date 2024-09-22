@@ -54,7 +54,7 @@ function secondsToTime(seconds) {
     const m = ((wholeSecs / 60) | 0) % 60;
     const s = wholeSecs % 60;
 
-    return `${pad(h)}:${pad(m)}:${pad(s)}:${padMs(ms)}`;
+    return `${pad(h)}:${pad(m)}:${pad(s)}.${padMs(ms)}`;
 }
 
 const saveWindowBounds = (function () {
