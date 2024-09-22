@@ -111,7 +111,7 @@ footer { grid-area: footerBar; }
     max-height: 100vh;
 }
 
-.setTimerButton, #mediaWindowPlayButton, #mediaWindowPauseButton {
+.setTimerButton, #mediaWindowPlayButton {
     height: 32px;
     width: 256px;
 }
