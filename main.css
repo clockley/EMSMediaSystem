@@ -113,7 +113,7 @@ footer { grid-area: footerBar; }
 
 .setTimerButton, #mediaWindowPlayButton, #mediaWindowPauseButton {
     height: 32px;
-    width: 32px;
+    width: 256px;
 }
 
 /* Media controls */

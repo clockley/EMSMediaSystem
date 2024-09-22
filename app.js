@@ -27,6 +27,7 @@ var currentMediaFile;
 var fileEnded = false;
 var dyneForm = null;
 var mediaSessionPause = false;
+let isPlaying = false;
 const MEDIAPLAYER = 0, MEDIAPLAYERYT = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
 const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 let lastUpdateTime = 0;
@@ -296,10 +297,10 @@ function installIPCHandler() {
             document.getElementById("mediaCntDn").innerText = "00:00:00:000";
         }
         if (document.getElementById("mediaWindowPlayButton") !== null) {
-            document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+            updatePlayButtonUI();
         } else {
             document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
-                document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+                updatePlayButtonUI();
             }, { once: true });
         }
         masterPauseState = false;
@@ -363,7 +364,7 @@ async function unPauseMedia(e) {
         await ipcRenderer.send('play-ctl', 'play');
     }
     if (playingMediaAudioOnly && document.getElementById("mediaWindowPlayButton")) {
-        document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
+        updatePlayButtonUI();
     }
 }
 
@@ -422,28 +423,32 @@ function playMedia(e) {
     }
 
     if (document.getElementById("mdFile").value === "" && !playingMediaAudioOnly) {
-        if (e.target.textContent === "⏹️") {
+        if (isPlaying) {
+            isPlaying = false;
             ipcRenderer.send('close-media-window', 0);
             saveMediaFile();
             video.currentTime = 0;
             video.pause();
-            e.target.textContent = "▶️";
+            isPlaying = false;
+            updatePlayButtonUI();
             localTimeStampUpdateIsRunning = false;
-        } else if (e.target.textContent === "▶️" && video.src !== null && video.src != '' && saveMediaFile.fileInpt != null) {
+            return;
+        } else if (!isPlaying && video.src !== null && video.src != '' && saveMediaFile.fileInpt != null) {
             let t1 = encodeURI(saveMediaFile.fileInpt[0].name);
             let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
             if (t1 == null || t2 == null || t1 !== t2) {
                 return;
             } else {
-                document.getElementById("mdFile").files=saveMediaFile.fileInpt;
+                document.getElementById("mdFile").files = saveMediaFile.fileInpt;
             }
         } else {
             return;
         }
     }
 
-    if (e.target.textContent === "▶️") {
-        e.target.textContent = "⏹️";
+    if (!isPlaying) {
+        isPlaying = true;
+        updatePlayButtonUI()
         if (opMode === MEDIAPLAYER) {
             if (isImg(mediaFile)) {
                 createMediaWindow();
@@ -487,7 +492,9 @@ function playMedia(e) {
             createMediaWindow();
         }
         dontSyncRemote = false;
-    } else if (e.target.textContent === "⏹️") {
+    } else {
+        isPlaying = false;
+        updatePlayButtonUI();
         ipcRenderer.send('close-media-window', 0);
         playingMediaAudioOnly = false;
         dontSyncRemote = true;
@@ -496,7 +503,6 @@ function playMedia(e) {
             document.getElementById('mediaCntDn').textContent = "00:00:00:000";
         if (!audioOnlyFile)
             activeLiveStream = true;
-        e.target.textContent = "▶️";
         video.pause();
         video.currentTime = 0;
         if (audioOnlyFile) {
@@ -516,6 +522,14 @@ function playMedia(e) {
         }).catch((error) => {
             saveMediaFile();
         });
+    }
+    updatePlayButtonUI();
+}
+
+function updatePlayButtonUI() {
+    const playButton = document.getElementById("mediaWindowPlayButton");
+    if (playButton) {
+        playButton.textContent = isPlaying ? "Stop Presentation" : "Start Presentation";
     }
 }
 
@@ -574,7 +588,8 @@ function setSBFormYouTubeMediaPlayer() {
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
 
     if (playingMediaAudioOnly) {
-        document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
+        isPlaying = true;
+        updatePlayButtonUI();
         return;
     }
     restoreMediaFile();
@@ -584,10 +599,11 @@ function setSBFormYouTubeMediaPlayer() {
     }
 
     if (!isActiveMediaWindow()) {
-        document.getElementById("mediaWindowPlayButton").textContent = "▶️";
+        isPlaying = false;
     } else {
-        document.getElementById("mediaWindowPlayButton").textContent = "⏹️";
+        isPlaying = true;
     }
+    updatePlayButtonUI();
 }
 
 
@@ -831,8 +847,8 @@ const MEDIA_FORM_HTML = `
     <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
     <label for="mdLpCtlr">Loop</label>
     <br><br>
-    <button id="mediaWindowPlayButton" type="button">▶️</button>
-    <button id="mediaWindowPauseButton" type="button">⏸️</button>
+    <button id="mediaWindowPlayButton" type="button">Start Presentation</button>
+    <button id="mediaWindowPauseButton" type="button">Pause</button>
     <br>
   </form>
   <br><br>
@@ -898,10 +914,10 @@ function setSBFormMediaPlayer() {
     const isActiveMW = isActiveMediaWindow();
     let plyBtn = document.getElementById("mediaWindowPlayButton");
     if (!isActiveMW && !playingMediaAudioOnly) {
-        plyBtn.textContent = "▶️";
+        isPlaying = false;
         document.getElementById("mediaCntDn").textContent = "00:00:00:000";
     } else {
-        plyBtn.textContent = "⏹️";
+        isPlaying = true;
         document.getElementById('mediaCntDn').textContent = "00:00:00:000";
         if (typeof currentMediaFile === 'undefined') {
             currentMediaFile = mdFile.files
@@ -909,6 +925,7 @@ function setSBFormMediaPlayer() {
             mdFile.files = currentMediaFile;
         }
     }
+    updatePlayButtonUI();
     plyBtn.addEventListener("click", playMedia);
     dontSyncRemote = true;
     document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseButton);
@@ -1120,7 +1137,7 @@ function playLocalMedia(event) {
         event.preventDefault();
         mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
         mdly.value = 0;
-        document.getElementById('mediaWindowPlayButton').textContent = "⏹️";
+        updatePlayButtonUI();
         video.pause();
         return;
     }
@@ -1144,13 +1161,13 @@ function playLocalMedia(event) {
     }
     let mediaScrnPlyBtn = document.getElementById("mediaWindowPlayButton");
     if (mediaScrnPlyBtn && audioOnlyFile) {
-        if (mediaScrnPlyBtn.textContent === '▶️') {
+        if (isPlaying) {
             fileEnded = false;
             video.muted = false;
             if (document.getElementById("mdLpCtlr")) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
             }
-            mediaScrnPlyBtn.textContent = '⏹️';
+            isPlaying = false;
             audioOnlyFile = true;
             playingMediaAudioOnly = true;
             updateTimestamp(false);
@@ -1237,9 +1254,11 @@ function seekingLocalMedia(e) {
 }
 
 function endLocalMedia() {
+    isPlaying = false;
+    updatePlayButtonUI();
     audioOnlyFile = false;
     if (document.getElementById("mediaWindowPlayButton")) {
-        document.getElementById("mediaWindowPlayButton").textContent = "▶️";
+        updatePlayButtonUI();
     }
     if (playingMediaAudioOnly) {
         video.src = '';
@@ -1257,10 +1276,10 @@ function endLocalMedia() {
         }
 
         if (document.getElementById("mediaWindowPlayButton") !== null) {
-            document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+            updatePlayButtonUI();
         } else {
             document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
-                document.getElementById("mediaWindowPlayButton").innerText = "▶️";
+                updatePlayButtonUI();
             }, { once: true });
         }
         masterPauseState = false;
@@ -1293,7 +1312,8 @@ function pauseLocalMedia(event) {
         }
         event.preventDefault();
         video.play().then(() => {
-            ;
+            isPlaying = true;
+            updatePlayButtonUI();
         }).catch(error => {
             playingMediaAudioOnly = false;
         });
