@@ -368,20 +368,6 @@ async function unPauseMedia(e) {
     }
 }
 
-function pauseButton(e) {
-    if (video.src === window.location.href) {
-        return;
-    }
-    if (video !== null) {
-        if (!video.paused) {
-            video.pause();
-        } else {
-            unPauseMedia();
-            video.play();
-        }
-    }
-}
-
 function waitForMetadata() {
     if (!video || !video.src || video.src === window.location.href || isLiveStream(video.src) || isImg(video.src)) {
         playingMediaAudioOnly = false;
@@ -848,7 +834,6 @@ const MEDIA_FORM_HTML = `
     <label for="mdLpCtlr">Loop</label>
     <br><br>
     <button id="mediaWindowPlayButton" type="button">Start Presentation</button>
-    <button id="mediaWindowPauseButton" type="button">Pause</button>
     <br>
   </form>
   <br><br>
@@ -928,7 +913,6 @@ function setSBFormMediaPlayer() {
     updatePlayButtonUI();
     plyBtn.addEventListener("click", playMedia);
     dontSyncRemote = true;
-    document.getElementById("mediaWindowPauseButton").addEventListener("click", pauseButton);
     let isImgFile;
     if (mdFile !== null) {
         if (document.getElementById("preview").parentNode !== null) {
