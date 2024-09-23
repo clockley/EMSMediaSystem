@@ -1493,6 +1493,4 @@ loadPlatformCSS();
 installIPCHandler();
 installEvents();
 
-ipcRenderer.once('ready', () => {
-    initPlayer();
-});
+ipcRenderer.once('ready', initPlayer);
