@@ -252,6 +252,8 @@ function installIPCHandler() {
     });
 
     ipcRenderer.on('media-window-closed', async (event, id) => {
+        isPlaying = false;
+        updatePlayButtonUI();
         isActiveMediaWindowCache = false;
         saveMediaFile();
         let isImgFile = isImg(mediaFile);
