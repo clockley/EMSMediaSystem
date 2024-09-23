@@ -367,6 +367,21 @@ async function unPauseMedia(e) {
     }
 }
 
+function handleCanPlayThrough(e, resolve) {
+    if (video.src === window.location.href) {
+        e.preventDefault();
+        resolve(video);
+        return;
+    }
+    video.currentTime = 0;
+    audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
+    resolve(video);
+}
+
+function handleError(e, reject) {
+    reject(e);
+}
+
 function waitForMetadata() {
     if (!video || !video.src || video.src === window.location.href || isLiveStream(video.src) || isImg(video.src)) {
         playingMediaAudioOnly = false;
@@ -375,20 +390,8 @@ function waitForMetadata() {
     }
 
     return new Promise((resolve, reject) => {
-        const onCanPlayThrough = (e) => {
-            if (video.src === window.location.href) {
-                e.preventDefault();
-                resolve(video);
-                return;
-            }
-            video.currentTime = 0;
-            audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
-            resolve(video);
-        };
-
-        const onError = (e) => {
-            reject(e);
-        };
+        const onCanPlayThrough = (e) => handleCanPlayThrough(e, resolve);
+        const onError = (e) => handleError(e, reject);
 
         video.addEventListener('canplaythrough', onCanPlayThrough, { once: true });
         video.addEventListener('error', onError, { once: true });
