@@ -7,7 +7,7 @@ if (isDevMode) {
   console.log(`Electron version: ${process.versions.electron}`);
 }
 
-async function openFileDialog(event) {
+async function openFileDialog() {
   try {
     const result = await dialog.showOpenDialog(win, {
       properties: ['openFile'],
@@ -212,7 +212,7 @@ function handleVlcl(event, v, id) {
 }
 
 app.once('browser-window-created', async () => {
-  ipcMain.handle('open-file-dialog', openFileDialog);
+  ipcMain.on('open-file-dialog', openFileDialog);
   ipcMain.on('set-mode', handleSetMode);
   ipcMain.handle('get-setting', getSetting);
   ipcMain.handle('get-all-displays', screen.getAllDisplays.bind(screen));

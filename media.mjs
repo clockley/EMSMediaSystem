@@ -81,6 +81,18 @@ function playMediaSessionHandler() {
     video.play()
 }
 
+function isLiveStream(mediaFile) {
+    if (mediaFile === undefined || mediaFile === null) {
+        return false;
+    }
+    return /(?:m3u8|mpd|youtube\.com|videoplayback|youtu\.be)/i.test(mediaFile);
+}
+
+function matchYouTubeUrl(url) {
+    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$/i;
+    return youtubeRegex.test(url);
+}
+
 async function loadMedia() {
     let h = null;
 
@@ -97,7 +109,7 @@ async function loadMedia() {
     video.volume = strtvl;
     video.src = mediaFile;
     if (liveStreamMode) {
-        if (mediaFile.includes("youtu")) {
+        if (matchYouTubeUrl(mediaFile)) {
             const response = await fetch(mediaFile);
             const body = await response.text();
             const regex = /"hlsManifestUrl":"([^"]+)"/;
