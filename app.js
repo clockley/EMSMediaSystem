@@ -1381,8 +1381,7 @@ function isLiveStream(mediaFile) {
     if (mediaFile === undefined || mediaFile === null) {
         return false;
     }
-    return mediaFile.includes("m3u8") || mediaFile.includes("mpd") ||
-        mediaFile.includes("youtube.com") || mediaFile.includes("videoplayback") || mediaFile.includes("youtu.be");
+    return /(?:m3u8|mpd|youtube\.com|videoplayback|youtu\.be)/i.test(mediaFile);
 }
 
 async function createMediaWindow() {
