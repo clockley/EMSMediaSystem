@@ -545,11 +545,7 @@ function playMedia(e) {
             audioOnlyFile = false;
         }
         localTimeStampUpdateIsRunning = false;
-        waitForMetadata().then(() => {
-            saveMediaFile();
-        }).catch((error) => {
-            saveMediaFile();
-        });
+        waitForMetadata().then(saveMediaFile);
     }
     updatePlayButtonUI();
 }
