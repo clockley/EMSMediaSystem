@@ -31,7 +31,6 @@ var mediaSessionPause = false;
 let isPlaying = false;
 const MEDIAPLAYER = 0, MEDIAPLAYERYT = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
 const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
-let lastUpdateTime = 0;
 let isActiveMediaWindowCache = false;
 
 class PIDController {
@@ -51,6 +50,7 @@ class PIDController {
         this.kI = 0.001; // Integral gain
         this.kD = 0.003; // Derivative gain
         this.synchronizationThreshold = 0.01;
+        this.lastUpdateTime = 0;
     }
 
     reset() {
@@ -209,9 +209,8 @@ function updateTimestamp(oneShot) {
 let currentMessage = null;
 
 function updateTimestampUI() {
-    if (mediaCntDnEle !== null) {
-        mediaCntDnEle.textContent = currentMessage;
-    }
+    mediaCntDnEle.textContent = currentMessage;
+    currentMessage = null;
 }
 
 const boundUpdateTimestampUI = updateTimestampUI.bind(null);
@@ -225,11 +224,11 @@ function handleTimeMessage(_, message) {
     }
 
     targetTime = message[2] - (((now - message[3]) + (Date.now() - now)) * .001);
-
-    if (now - lastUpdateTime > 0.5) {
+    message = null;
+    if (now - this.lastUpdateTime > 0.5) {
         if (!video.paused && video !== null && !video.seeking) {
             hybridSync(targetTime);
-            lastUpdateTime = now;
+            this.lastUpdateTime = now;
         }
     }
 }
@@ -445,6 +444,10 @@ function playMedia(e) {
     fileEnded = false;
     if (opMode == MEDIAPLAYER && encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
         saveMediaFile();
+    }
+
+    if (isPlaying === false && document.getElementById("mdFile").value === "" && opMode !== MEDIAPLAYER) {
+        return;
     }
 
     if (document.getElementById("mdFile").value === "" && !playingMediaAudioOnly) {
