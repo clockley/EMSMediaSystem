@@ -160,7 +160,7 @@ function handleCreateMediaWindow(event, windowOptions) {
   return measurePerformance('Creating media window', () => {
     mediaWindow = new BrowserWindow(windowOptions);
     mediaWindow.loadFile("media.html");
-    mediaWindow.on('close', () => {
+    mediaWindow.on('closed', () => {
       if (win) win.webContents.send('media-window-closed', mediaWindow.id);
       stopMediaPlaybackPowerHint();
     });
