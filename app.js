@@ -213,7 +213,7 @@ function updateTimestampUI() {
     currentMessage = null;
 }
 
-const boundUpdateTimestampUI = updateTimestampUI.bind(null);
+const boundUpdateTimestampUI = updateTimestampUI.bind();
 
 function handleTimeMessage(_, message) {
     const now = Date.now();
