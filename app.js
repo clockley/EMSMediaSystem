@@ -265,7 +265,6 @@ function handleMediaWindowClosed(event, id) {
     isPlaying = false;
     updatePlayButtonUI();
     isActiveMediaWindowCache = false;
-    saveMediaFile();
 
     let isImgFile = isImg(mediaFile);
     handleMediaPlayback(isImgFile);
