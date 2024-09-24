@@ -227,11 +227,9 @@ function handleTimeMessage(_, message) {
     targetTime = message[2] - (((now - message[3]) + (Date.now() - now)) * .001);
 
     if (now - lastUpdateTime > 0.5) {
-        if (opMode === MEDIAPLAYER) {
-            if (!video.paused && video !== null && !video.seeking) {
-                hybridSync(targetTime);
-                lastUpdateTime = now;
-            }
+        if (!video.paused && video !== null && !video.seeking) {
+            hybridSync(targetTime);
+            lastUpdateTime = now;
         }
     }
 }
