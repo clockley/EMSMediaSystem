@@ -164,6 +164,24 @@ function isActiveMediaWindow() {
 
 let lastUpdateTimeLocalPlayer = 0;
 
+const basename = (input) => {
+    const match = input.match(/^(?:https?:\/\/)?(?:www\.)?([^/]+)/);
+
+    if (match) {
+        return match[1];
+    } else {
+        return input.split(/[/\\]/).pop();
+    }
+};
+
+function addFilenameToTitlebar(path) {
+    document.title = basename(path) + " - EJaxMediaSystem";
+}
+
+function removeFilenameFromTitlebar() {
+    document.title = "EJaxMediaSystem";
+}
+
 function update(time) {
     if (time - lastUpdateTimeLocalPlayer >= 33.33) {
         if (mediaCntDnEle && audioOnlyFile) {
@@ -278,6 +296,7 @@ function handleMediaWindowClosed(event, id) {
     updatePlayButtonOnMediaWindow();
     masterPauseState = false;
     saveMediaFile();
+    removeFilenameFromTitlebar();
 }
 
 function handleMediaPlayback(isImgFile) {
@@ -491,6 +510,7 @@ function playMedia(e) {
 
         if (audioOnlyFile) {
             ipcRenderer.send("localMediaState", 0, "play");
+            addFilenameToTitlebar(mediaFile);
             isPlaying = true;
             video.muted = false;
             video.loop = document.getElementById("mdLpCtlr").checked;
@@ -535,6 +555,7 @@ function playMedia(e) {
         video.currentTime = 0;
         if (audioOnlyFile) {
             ipcRenderer.send("localMediaState", 0, "stop");
+            removeFilenameFromTitlebar();
             activeLiveStream = false;
             saveMediaFile();
             if (opMode === MEDIAPLAYER)
@@ -1181,6 +1202,7 @@ function playLocalMedia(event) {
     }
     if (audioOnlyFile) {
         ipcRenderer.send("localMediaState", 0, "play");
+        addFilenameToTitlebar(mediaFile);
         isPlaying = true;
         updatePlayButtonUI();
         updateTimestamp(false);
@@ -1323,6 +1345,7 @@ function endLocalMedia() {
     targetTime = 0;
     fileEnded = true;
     ipcRenderer.send("localMediaState", 0, "stop");
+    removeFilenameFromTitlebar();
     video.pause();
     masterPauseState = false;
     resetPIDOnSeek();
@@ -1512,6 +1535,7 @@ async function createMediaWindow() {
             await video.play();
         }
     }
+    addFilenameToTitlebar(mediaFile);
 }
 
 const WIN32 = 'Windows';
