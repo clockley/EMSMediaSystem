@@ -206,22 +206,32 @@ function updateTimestamp(oneShot) {
     }
 }
 
+let currentMessage = null;
+
+function updateTimestampUI() {
+    if (mediaCntDnEle !== null) {
+        mediaCntDnEle.textContent = currentMessage;
+    }
+}
+
+const boundUpdateTimestampUI = updateTimestampUI.bind(null);
+
 function handleTimeMessage(_, message) {
     const now = Date.now();
 
     if (opMode === MEDIAPLAYER) {
-        requestAnimationFrame(() => {
-            if (mediaCntDnEle !== null) {
-                mediaCntDnEle.textContent = message[0];
-            }
-        });
+        currentMessage = message[0];
+        requestAnimationFrame(boundUpdateTimestampUI);
     }
+
     targetTime = message[2] - (((now - message[3]) + (Date.now() - now)) * .001);
 
-    if (now - lastUpdateTime > .5) {
-        if (!video.paused && video !== null && !video.seeking) {
-            hybridSync(targetTime);
-            lastUpdateTime = now;
+    if (now - lastUpdateTime > 0.5) {
+        if (opMode === MEDIAPLAYER) {
+            if (!video.paused && video !== null && !video.seeking) {
+                hybridSync(targetTime);
+                lastUpdateTime = now;
+            }
         }
     }
 }
@@ -251,62 +261,89 @@ function installIPCHandler() {
         mediaSessionPause = arg;
     });
 
-    ipcRenderer.on('media-window-closed', async (event, id) => {
-        isPlaying = false;
-        updatePlayButtonUI();
-        isActiveMediaWindowCache = false;
-        saveMediaFile();
-        let isImgFile = isImg(mediaFile);
-        if (!isImgFile) {
-            if (video.src !== window.location.href) {
-                waitForMetadata().then(() => { audioOnlyFile = (opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0) });
-            }
-            video.src = mediaFile;
-        }
+    ipcRenderer.on('media-window-closed', handleMediaWindowClosed);
+}
 
-        let imgEle = null;
-        if (imgEle = document.querySelector('img') && !isImgFile) {
-            imgEle.remove();
-            document.getElementById("preview").style.display = '';
-            document.getElementById("cntdndiv").style.display = '';
-        } else if (isImgFile) {
-            if (imgEle) {
-                imgEle.src = mediaFile;
-            } else {
-                let imgEle = null;
-                if ((imgEle = document.querySelector('img')) !== null) {
-                    imgEle.remove();
-                    document.getElementById("cntdndiv").style.display = '';
-                }
-                video.src = '';
-                img = document.createElement('img');
-                img.src = mediaFile;
-                img.setAttribute("id", "preview");
-                if (!document.getElementById("preview"))
-                    document.getElementById("preview").style.display = 'none';
-                document.getElementById("preview").parentNode.appendChild(img);
-                document.getElementById("cntdndiv").style.display = 'none';
-            }
+function handleMediaWindowClosed(event, id) {
+    isPlaying = false;
+    updatePlayButtonUI();
+    isActiveMediaWindowCache = false;
+    saveMediaFile();
+
+    let isImgFile = isImg(mediaFile);
+    handleMediaPlayback(isImgFile);
+
+    let imgEle = document.querySelector('img');
+    handleImageDisplay(isImgFile, imgEle);
+
+    resetVideoState();
+    resetMediaCountdown();
+
+    updatePlayButtonOnMediaWindow();
+    masterPauseState = false;
+    saveMediaFile();
+}
+
+function handleMediaPlayback(isImgFile) {
+    if (!isImgFile) {
+        if (video.src !== window.location.href) {
+            waitForMetadata().then(() => {
+                audioOnlyFile = (opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0);
+            });
         }
-        if (video !== null) {
-            video.muted = true;
-            video.pause();
-            video.currentTime = 0;
-            targetTime = 0;
-        }
-        if (document.getElementById("mediaCntDn") !== null) {
-            document.getElementById("mediaCntDn").innerText = "00:00:00.000";
-        }
-        if (document.getElementById("mediaWindowPlayButton") !== null) {
-            updatePlayButtonUI();
+        video.src = mediaFile;
+    }
+}
+
+function handleImageDisplay(isImgFile, imgEle) {
+    if (imgEle && !isImgFile) {
+        imgEle.remove();
+        document.getElementById("preview").style.display = '';
+        document.getElementById("cntdndiv").style.display = '';
+    } else if (isImgFile) {
+        if (imgEle) {
+            imgEle.src = mediaFile;
         } else {
-            document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", function () {
-                updatePlayButtonUI();
-            }, { once: true });
+            if ((imgEle = document.querySelector('img')) !== null) {
+                imgEle.remove();
+                document.getElementById("cntdndiv").style.display = '';
+            }
+            video.src = '';
+            img = document.createElement('img');
+            img.src = mediaFile;
+            img.setAttribute("id", "preview");
+            if (!document.getElementById("preview")) {
+                document.getElementById("preview").style.display = 'none';
+            }
+            document.getElementById("preview").parentNode.appendChild(img);
+            document.getElementById("cntdndiv").style.display = 'none';
         }
-        masterPauseState = false;
-        saveMediaFile();
-    });
+    }
+}
+
+function resetVideoState() {
+    if (video !== null) {
+        video.muted = true;
+        video.pause();
+        video.currentTime = 0;
+        targetTime = 0;
+    }
+}
+
+function resetMediaCountdown() {
+    const mediaCntDn = document.getElementById("mediaCntDn");
+    if (mediaCntDn !== null) {
+        mediaCntDn.innerText = "00:00:00.000";
+    }
+}
+
+function updatePlayButtonOnMediaWindow() {
+    const playButton = document.getElementById("mediaWindowPlayButton");
+    if (playButton !== null) {
+        updatePlayButtonUI();
+    } else {
+        document.getElementById("MdPlyrRBtnFrmID").addEventListener("click", updatePlayButtonUI, { once: true });
+    }
 }
 
 function resetPIDOnSeek() {
