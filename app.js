@@ -90,7 +90,7 @@ class PIDController {
             playbackRate = playbackRate > maxRate ? maxRate : playbackRate;
         }
 
-        if (!isNaN(playbackRate)) {
+        if (playbackRate === playbackRate) {
             this.video.playbackRate = playbackRate;
         }
 
