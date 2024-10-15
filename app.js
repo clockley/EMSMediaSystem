@@ -1159,6 +1159,15 @@ function installEvents() {
     document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
     //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
 
+    document.addEventListener('keydown', (event) => {
+
+        if ((event.ctrlKey || event.metaKey) && event.key === 'o') {
+            if (document.getElementById("mdFile")){
+                document.getElementById("mdFile").click();
+            }
+        }
+    });
+
     document.querySelector('form').addEventListener('change', function (event) {
         if (event.target.type === 'radio') {
             if (event.target.value === 'Media Player') {
