@@ -506,24 +506,25 @@ function playMedia(e) {
         }
         let mdly = document.getElementById("mdDelay");
 
-        audioOnlyFile = opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
-
-        if (audioOnlyFile) {
-            ipcRenderer.send("localMediaState", 0, "play");
-            addFilenameToTitlebar(mediaFile);
-            isPlaying = true;
-            video.muted = false;
-            video.loop = document.getElementById("mdLpCtlr").checked;
-            playingMediaAudioOnly = true;
-            currentMediaFile = document.getElementById("mdFile").files;
-            if (audioOnlyFile && mdly !== null && mdly.value > 0) {
-                mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
+        waitForMetadata().then(() => {
+            if (audioOnlyFile) {
+                ipcRenderer.send("localMediaState", 0, "play");
+                addFilenameToTitlebar(mediaFile);
+                isPlaying = true;
+                video.muted = false;
+                video.loop = document.getElementById("mdLpCtlr").checked;
+                playingMediaAudioOnly = true;
+                currentMediaFile = document.getElementById("mdFile").files;
+                if (audioOnlyFile && mdly !== null && mdly.value > 0) {
+                    mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
+                    return;
+                }
+                video.play();
+                updateTimestamp(false);
                 return;
             }
-            video.play();
-            updateTimestamp(false);
-            return;
         }
+        );
 
         currentMediaFile = document.getElementById("mdFile").files;
         if (opMode === MEDIAPLAYER && document.getElementById("malrm1").value !== "") {
@@ -1162,7 +1163,7 @@ function installEvents() {
     document.addEventListener('keydown', (event) => {
 
         if ((event.ctrlKey || event.metaKey) && event.key === 'o') {
-            if (document.getElementById("mdFile")){
+            if (document.getElementById("mdFile")) {
                 document.getElementById("mdFile").click();
             }
         }
