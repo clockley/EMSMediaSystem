@@ -1,5 +1,5 @@
 "use strict";
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { readFile } from 'fs/promises';
 import { Bible } from './Bible.mjs';
 import { Script } from 'vm';
@@ -36,5 +36,6 @@ contextBridge.exposeInMainWorld('electron', {
     invoke: ipcRenderer.invoke.bind(ipcRenderer),
   },
   __dirname: import.meta.dirname,
-  bibleAPI: bibleAPI
+  bibleAPI: bibleAPI,
+  webUtils: webUtils
 });
