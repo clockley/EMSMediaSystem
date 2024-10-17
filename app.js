@@ -4,7 +4,7 @@
 //Devel
 //Copyright 2019 - 2024 Christian Lockley
 
-const { ipcRenderer, __dirname, bibleAPI } = window.electron;
+const { ipcRenderer, __dirname, bibleAPI, webUtils } = window.electron;
 
 var dontSyncRemote = false;
 var pidSeeking = false;
@@ -998,7 +998,7 @@ function setSBFormMediaPlayer() {
                     if (!mdFile.value.includes("fake")) {
                         mediaFile = mdFile.value;
                     } else {
-                        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked === true ? mdFile.value : mdFile.files[0].path;
+                        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked === true ? mdFile.value : webUtils.getPathForFile(mdFile.files[0]);
                     }
                 }
                 const isImgFile = isImg(mediaFile);
@@ -1049,7 +1049,7 @@ function saveMediaFile() {
         return;
     }
 
-    if (mdfileElement.files !== null && mdfileElement.files.length !== 0 && encodeURI(mdfileElement.files[0].path) === removeFileProtocol(video.src)) {
+    if (mdfileElement.files !== null && mdfileElement.files.length !== 0 && encodeURI(webUtils.getPathForFile(mdfileElement.files[0])) === removeFileProtocol(video.src)) {
         return;
     }
 
@@ -1057,7 +1057,7 @@ function saveMediaFile() {
         if (mdfileElement.files[0].length === 0) {
             return;
         }
-        mediaFile = mdfileElement.files[0].path;
+        mediaFile = webUtils.getPathForFile(mdfileElement.files[0]);
         return;
     }
 
@@ -1077,7 +1077,7 @@ function saveMediaFile() {
         return;
     }
 
-    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : webUtils.getPathForFile(document.getElementById("mdFile").files[0]);
 
     let imgEle = null;
     if (imgEle = document.querySelector('img')) {
@@ -1118,14 +1118,14 @@ function saveMediaFile() {
         if (video) {
             if (!audioOnlyFile)
                 video.muted = true;
-            if (mdfileElement !== null && mdfileElement.files && prePathname !== mdfileElement.files[0].path) {
-                prePathname = mdfileElement.files[0].path;
+            if (mdfileElement !== null && mdfileElement.files && prePathname !== webUtils.getPathForFile(mdfileElement.files[0])) {
+                prePathname = webUtils.getPathForFile(mdfileElement.files[0]);
                 startTime = 0;
             }
             if (!playingMediaAudioOnly && mdfileElement.files) {
                 let uncachedLoad;
-                if ((uncachedLoad = encodeURI(mdfileElement.files[0].path) !== removeFileProtocol(video.src))) {
-                    video.setAttribute("src", mdfileElement.files[0].path);
+                if ((uncachedLoad = encodeURI(webUtils.getPathForFile(mdfileElement.files[0])) !== removeFileProtocol(video.src))) {
+                    video.setAttribute("src", webUtils.getPathForFile(mdfileElement.files[0]));
                 }
                 video.id = "preview";
                 video.currentTime = startTime;
@@ -1452,7 +1452,7 @@ function isLiveStream(mediaFile) {
 }
 
 async function createMediaWindow() {
-    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : document.getElementById("mdFile").files[0].path;
+    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : webUtils.getPathForFile(document.getElementById("mdFile").files[0]);
     var liveStreamMode = isLiveStream(mediaFile);
 
     if (liveStreamMode === false && video !== null) {
