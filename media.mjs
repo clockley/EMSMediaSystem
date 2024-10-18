@@ -81,13 +81,6 @@ function playMediaSessionHandler() {
     video.play()
 }
 
-function isLiveStream(mediaFile) {
-    if (mediaFile === undefined || mediaFile === null) {
-        return false;
-    }
-    return /(?:m3u8|mpd|youtube\.com|videoplayback|youtu\.be)/i.test(mediaFile);
-}
-
 function matchYouTubeUrl(url) {
     const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$/i;
     return youtubeRegex.test(url);
