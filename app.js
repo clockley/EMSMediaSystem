@@ -1158,7 +1158,7 @@ function installEvents() {
 
     document.addEventListener('keydown', (event) => {
 
-        if ((event.ctrlKey || event.metaKey) && event.key === 'o') {
+        if ((event.ctrlKey || event.metaKey) && (event.key === 'o' || event.key === 'O')) {
             if (document.getElementById("mdFile")) {
                 document.getElementById("mdFile").click();
             }
