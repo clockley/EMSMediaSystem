@@ -1,6 +1,6 @@
 "use strict";
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu, dialog } from 'electron';
-var settingsModule = null;
+import settings from 'electron-settings';
 const isDevMode = process.env.ems_dev === 'true';
 if (isDevMode) {
   console.log(`Node version: ${process.versions.node}`);
@@ -51,11 +51,12 @@ async function measurePerformanceAsync(operation, func) {
 
 const appStartTime = isDevMode ? performance.now() : null;
 
+function getWindowBounds() {
+  return settings.get('windowBounds');
+}
+
 let mediaWindow = null;
-let windowBounds = measurePerformanceAsync('Getting window bounds', async () => {
-  settingsModule = await import('electron-settings');
-  return settingsModule.get('windowBounds');
-});
+let windowBounds = measurePerformanceAsync('Getting window bounds', getWindowBounds);
 let win = null;
 
 if (isDevMode === false) {
@@ -81,7 +82,7 @@ const saveWindowBounds = (function () {
   return async function () {
     clearTimeout(timeoutId);
     timeoutId = setTimeout(async () => {
-      settingsModule.set('windowBounds', win.getBounds())
+      settings.set('windowBounds', win.getBounds())
         .catch(error => {
           console.error('Error saving window bounds:', error);
         });
@@ -136,7 +137,7 @@ function sendRemainingTime(event, arg) {
 app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
 
 async function getSetting(_, setting) {
-  return settingsModule.get(setting);
+  return settings.get(setting);
 }
 
 function handleCloseMediaWindow(event, id) {
@@ -192,7 +193,7 @@ async function handleGetMediaCurrentTime() {
 }
 
 function handleSetMode(event, arg) {
-  settingsModule.set('operating-mode', arg)
+  settings.set('operating-mode', arg)
     .catch(error => {
       console.error('Error saving window bounds:', error);
     });
@@ -259,6 +260,6 @@ const mainWindowOptions = {
     userGesture: true,
     backgroundThrottling: false,
     autoplayPolicy: 'no-user-gesture-required',
-    preload: `${import.meta.dirname}/app_preload.mjs`
+    preload: `${import.meta.dirname}/app_preload.mjs`,
   }
 };
