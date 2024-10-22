@@ -917,18 +917,6 @@ function handleVolumeChange(event) {
     CrVL = event.target.value;
 }
 
-function openFileDialog() {
-    ipcRenderer.invoke('open-file-dialog')
-        .then(filePath => {
-            if (filePath) {
-                console.log('File selected:', filePath);
-            }
-        })
-        .catch(error => {
-            console.error('Error opening file dialog:', error);
-        });
-}
-
 function setSBFormMediaPlayer() {
     if (opMode === MEDIAPLAYER) {
         return;
