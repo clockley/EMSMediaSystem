@@ -90,21 +90,23 @@ const saveWindowBounds = (function () {
   };
 })();
 
+function lateInit() {
+  win.webContents.send('ready');
+  measurePerformance('Setting window aspect ratio', win.setAspectRatio.bind(win, 1.618));
+  win.on('resize', saveWindowBounds);
+}
+
 function createWindow() {
   win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
   //win.openDevTools()
-  win.webContents.on('did-finish-load', () => {
-    win.webContents.send('ready');
-    measurePerformance('Setting window aspect ratio', () => win.setAspectRatio(1.618));
-    win.on('resize', saveWindowBounds);
-  });
+  win.webContents.on('did-finish-load', lateInit);
 
   win.on('closed', () => {
     win = null;
     app.quit();
   });
 
-  measurePerformanceAsync('Loading index.html', () => win.loadFile('index.html'));
+  measurePerformanceAsync('Loading index.html', win.loadFile.bind(win, 'index.html'));
 }
 
 function startMediaPlaybackPowerHint() {
