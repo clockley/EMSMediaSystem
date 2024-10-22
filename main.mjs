@@ -7,24 +7,6 @@ if (isDevMode) {
   console.log(`Electron version: ${process.versions.electron}`);
 }
 
-async function openFileDialog() {
-  try {
-    const result = await dialog.showOpenDialog(win, {
-      properties: ['openFile'],
-      filters: [
-        { name: 'Media Files', extensions: ['mp4', 'avi', 'mkv', 'mov', 'mp3', 'wav', 'jpg', 'jpeg', 'png', 'gif'] }
-      ]
-    });
-
-    if (!result.canceled && result.filePaths.length > 0) {
-      return result.filePaths[0];
-    }
-  } catch (err) {
-    console.error('Error opening file dialog:', err);
-  }
-  return null;
-}
-
 function measurePerformance(operation, func) {
   if (isDevMode) {
     const start = performance.now();
@@ -215,7 +197,6 @@ function handleVlcl(event, v, id) {
 }
 
 app.once('browser-window-created', async () => {
-  ipcMain.on('open-file-dialog', openFileDialog);
   ipcMain.on('set-mode', handleSetMode);
   ipcMain.handle('get-setting', getSetting);
   ipcMain.handle('get-all-displays', screen.getAllDisplays.bind(screen));
