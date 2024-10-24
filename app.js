@@ -450,25 +450,29 @@ function waitForMetadata() {
         video.addEventListener('canplaythrough', onCanPlayThrough, { once: true });
         video.addEventListener('error', onError, { once: true });
 
-        video.load();
+        if (video.readyState === 0) {
+            video.load();
+        }
     });
 }
 
 function playMedia(e) {
-    if (!e && audioOnlyFile && opMode === MEDIAPLAYER) {
+    if (e === undefined && audioOnlyFile && opMode === MEDIAPLAYER) {
         e = {};
         e.target = document.getElementById("mediaWindowPlayButton");
     }
     fileEnded = false;
-    if (opMode == MEDIAPLAYER && encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
+    if (opMode === MEDIAPLAYER && encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
         saveMediaFile();
     }
 
-    if (isPlaying === false && document.getElementById("mdFile").value === "" && opMode !== MEDIAPLAYER) {
+    const mdFIle = document.getElementById("mdFile");
+
+    if (isPlaying === false && mdFIle.value === "" && opMode !== MEDIAPLAYER) {
         return;
     }
 
-    if (document.getElementById("mdFile").value === "" && !playingMediaAudioOnly) {
+    if (mdFIle.value === "" && !playingMediaAudioOnly) {
         if (isPlaying) {
             isPlaying = false;
             ipcRenderer.send('close-media-window', 0);
@@ -479,13 +483,13 @@ function playMedia(e) {
             updatePlayButtonUI();
             localTimeStampUpdateIsRunning = false;
             return;
-        } else if (!isPlaying && video.src !== null && video.src != '' && saveMediaFile.fileInpt != null) {
+        } else if (!isPlaying && video.src !== null && video.src !== '' && saveMediaFile.fileInpt != null) {
             let t1 = encodeURI(saveMediaFile.fileInpt[0].name);
             let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
             if (t1 == null || t2 == null || t1 !== t2) {
                 return;
             } else {
-                document.getElementById("mdFile").files = saveMediaFile.fileInpt;
+                mdFIle.files = saveMediaFile.fileInpt;
             }
         } else {
             return;
@@ -512,7 +516,7 @@ function playMedia(e) {
             video.muted = false;
             video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
-            currentMediaFile = document.getElementById("mdFile").files;
+            currentMediaFile = mdFIle.files;
             if (audioOnlyFile && mdly !== null && mdly.value > 0) {
                 mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
                 return;
@@ -522,12 +526,12 @@ function playMedia(e) {
             return;
         }
 
-        currentMediaFile = document.getElementById("mdFile").files;
+        currentMediaFile = mdFIle.files;
         if (opMode === MEDIAPLAYER && document.getElementById("malrm1").value !== "") {
             var deadlinestr = "";
             var deadlinestrarr = String(new Date()).split(" ");
             deadlinestrarr[4] = document.getElementById("malrm1").value;
-            for (i = 0; i < deadlinestrarr.length; ++i) { deadlinestr += (deadlinestrarr[i] + " ") }
+            for (let i = 0; i < deadlinestrarr.length; ++i) { deadlinestr += (deadlinestrarr[i] + " ") }
             deadline = new Date(deadlinestr);
             mdly.value = ((deadline.getTime() - new Date().getTime()) / 1000);
         }
@@ -1029,7 +1033,7 @@ function removeFileProtocol(filePath) {
 }
 
 function saveMediaFile() {
-    var mdfileElement = document.getElementById("mdFile");
+    const mdfileElement = document.getElementById("mdFile");
     if (!mdfileElement) {
         return;
     }
@@ -1103,14 +1107,14 @@ function saveMediaFile() {
         if (video) {
             if (!audioOnlyFile)
                 video.muted = true;
-            if (mdfileElement !== null && mdfileElement.files && prePathname !== webUtils.getPathForFile(mdfileElement.files[0])) {
-                prePathname = webUtils.getPathForFile(mdfileElement.files[0]);
+            if (mdfileElement !== null && mdfileElement.files && prePathname !== mediaFile) {
+                prePathname = mediaFile;
                 startTime = 0;
             }
             if (!playingMediaAudioOnly && mdfileElement.files) {
                 let uncachedLoad;
-                if ((uncachedLoad = encodeURI(webUtils.getPathForFile(mdfileElement.files[0])) !== removeFileProtocol(video.src))) {
-                    video.setAttribute("src", webUtils.getPathForFile(mdfileElement.files[0]));
+                if (uncachedLoad = encodeURI(mediaFile !== removeFileProtocol(video.src))) {
+                    video.setAttribute("src", mediaFile);
                 }
                 video.id = "preview";
                 video.currentTime = startTime;
