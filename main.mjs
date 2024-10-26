@@ -141,9 +141,20 @@ function localMediaStateUpdate(event, id, state) {
   }
 }
 
-function handleCreateMediaWindow(event, windowOptions) {
+function handleCreateMediaWindow(event, windowOptions, displayIndex) {
   return measurePerformance('Creating media window', () => {
-    mediaWindow = new BrowserWindow(windowOptions);
+    // Get all displays and find the target display
+    const displays = screen.getAllDisplays();
+    const targetDisplay = displays[displayIndex] || displays[0]; // Fallback to primary display if index is invalid
+    
+    // Add width and height from the target display to window options
+    const finalWindowOptions = {
+      ...windowOptions,
+      width: targetDisplay.bounds.width,
+      height: targetDisplay.bounds.height
+    };
+
+    mediaWindow = new BrowserWindow(finalWindowOptions);
     mediaWindow.loadFile("media.html");
     mediaWindow.on('closed', () => {
       if (win) win.webContents.send('media-window-closed', mediaWindow.id);

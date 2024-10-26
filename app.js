@@ -1448,10 +1448,9 @@ async function createMediaWindow() {
         startTime = video.currentTime;
     }
 
-    var displays = await ipcRenderer.invoke('get-all-displays');
-    var externalDisplay = null;
-    externalDisplay = displays[document.getElementById("dspSelct").selectedIndex - 1];
+    var selectedIndex = document.getElementById("dspSelct").selectedIndex - 1;
     activeLiveStream = liveStreamMode;
+
     if (liveStreamMode === false) {
         if (video === null) {
             video = document.getElementById("preview");
@@ -1472,17 +1471,11 @@ async function createMediaWindow() {
             video.src = '';
     }
 
-    /* var strtVl = 1;
-     if (document.getElementById('volumeControl') !== null) {
-         strtVl = document.getElementById('volumeControl').value;
-     }*/
-
     const isImgFile = isImg(mediaFile);
 
     if (audioOnlyFile && !isActiveMediaWindow()) {
         video.muted = false;
         video.loop = document.getElementById("mdLpCtlr").checked;
-        //video.volume = document.getElementById('volumeControl').value;
         if (!isImgFile) {
             await video.play();
         } else {
@@ -1500,12 +1493,11 @@ async function createMediaWindow() {
             video.muted = true;
         }
     }
+    
     let strtVl = 1;
     const windowOptions = {
         backgroundColor: '#00000000',
         transparent: true,
-        width: externalDisplay.width,
-        height: externalDisplay.height,
         fullscreen: true,
         frame: false,
         webPreferences: {
@@ -1521,10 +1513,7 @@ async function createMediaWindow() {
         }
     };
 
-    windowOptions.x = externalDisplay.bounds.x + 50;
-    windowOptions.y = externalDisplay.bounds.y + 50;
-
-    await ipcRenderer.invoke('create-media-window', windowOptions);
+    await ipcRenderer.invoke('create-media-window', windowOptions, selectedIndex);
     isActiveMediaWindowCache = true;
 
     unPauseMedia();
