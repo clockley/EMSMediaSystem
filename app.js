@@ -1493,7 +1493,7 @@ async function createMediaWindow() {
             video.muted = true;
         }
     }
-    
+
     let strtVl = 1;
     const windowOptions = {
         backgroundColor: '#00000000',
