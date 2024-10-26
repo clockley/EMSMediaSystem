@@ -579,6 +579,35 @@ function updatePlayButtonUI() {
     }
 }
 
+async function populateDisplaySelect() {
+    const displaySelect = document.getElementById("dspSelct");
+    if (!displaySelect) return;
+
+    try {
+        const displayOptions = await ipcRenderer.invoke('get-all-displays');
+
+        const fragment = document.createDocumentFragment();
+
+        displayOptions.forEach(({ value, label }) => {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = label;
+            fragment.appendChild(option);
+        });
+
+        displaySelect.appendChild(fragment);
+
+        // Select first secondary display if available, otherwise primary
+        const defaultDisplay = displayOptions.find(opt => opt.isSecondary) || displayOptions[0];
+        if (defaultDisplay) {
+            displaySelect.value = defaultDisplay.value;
+        }
+
+    } catch (error) {
+        console.error('Failed to populate display select:', error);
+    }
+}
+
 function setSBFormYouTubeMediaPlayer() {
     if (opMode === MEDIAPLAYERYT) {
         return;
@@ -616,20 +645,7 @@ function setSBFormYouTubeMediaPlayer() {
         document.getElementById("mdFile").value = mediaFile;
     }
 
-    ipcRenderer.invoke('get-all-displays').then(displays => {
-        for (let i = 0; i < displays.length; i++) {
-            var el = document.createElement("option");
-            let dspSelct = document.getElementById("dspSelct");
-            el.textContent = `Display ${i + 1} ${displays[i].bounds.width}x${displays[i].bounds.height}`;
-            dspSelct.appendChild(el);
-
-            if (dspSelct.options.length > 2) {
-                dspSelct.selectedIndex = 2; // Hardcode 2nd option
-            } else if (dspSelct.options.length === 2) {
-                dspSelct.selectedIndex = 1;
-            }
-        }
-    });
+    populateDisplaySelect();
 
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
 
@@ -929,21 +945,7 @@ function setSBFormMediaPlayer() {
     ipcRenderer.send('set-mode', opMode);
     dyneForm.innerHTML = MEDIA_FORM_HTML;
 
-    ipcRenderer.invoke('get-all-displays').then(displays => {
-        const dspSelct = document.getElementById("dspSelct");
-        for (let i = 0; i < displays.length; i++) {
-            const el = document.createElement("option");
-            el.textContent = `Display ${i + 1} ${displays[i].bounds.width}x${displays[i].bounds.height}`;
-            dspSelct.appendChild(el);
-
-            if (dspSelct.options.length > 2) {
-                dspSelct.selectedIndex = 2; // Hardcode 2nd option
-            } else if (dspSelct.options.length === 2) {
-                dspSelct.selectedIndex = 1;
-            }
-        }
-    });
-
+    populateDisplaySelect();
 
     if (video === null) {
         video = document.getElementById('preview');

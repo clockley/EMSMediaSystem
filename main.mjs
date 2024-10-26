@@ -49,13 +49,13 @@ const pad = (n) => (n < 10 ? '0' : '') + n;
 const padMs = (n) => (n < 10 ? '00' : n < 100 ? '0' : '') + n;
 
 function secondsToTime(seconds) {
-    const wholeSecs = seconds | 0;
-    const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
-    const h = (wholeSecs / 3600) | 0;
-    const m = ((wholeSecs / 60) | 0) % 60;
-    const s = wholeSecs % 60;
+  const wholeSecs = seconds | 0;
+  const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
+  const h = (wholeSecs / 3600) | 0;
+  const m = ((wholeSecs / 60) | 0) % 60;
+  const s = wholeSecs % 60;
 
-    return `${pad(h)}:${pad(m)}:${pad(s)}.${padMs(ms)}`;
+  return `${pad(h)}:${pad(m)}:${pad(s)}.${padMs(ms)}`;
 }
 
 const saveWindowBounds = (function () {
@@ -134,10 +134,10 @@ function localMediaStateUpdate(event, id, state) {
   switch (state) {
     case "play":
       startMediaPlaybackPowerHint();
-    break;
+      break;
     case "stop":
       stopMediaPlaybackPowerHint();
-    break;
+      break;
   }
 }
 
@@ -146,7 +146,7 @@ function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     // Get all displays and find the target display
     const displays = screen.getAllDisplays();
     const targetDisplay = displays[displayIndex] || displays[0]; // Fallback to primary display if index is invalid
-    
+
     // Add width and height from the target display to window options
     const finalWindowOptions = {
       ...windowOptions,
@@ -207,10 +207,18 @@ function handleVlcl(event, v, id) {
   }
 }
 
+function handleGetAllDisplays() {
+  return screen.getAllDisplays().map((display, index) => ({
+    value: index,
+    label: `Display ${index + 1} (${display.bounds.width}x${display.bounds.height})`,
+    isSecondary: index > 0
+  }));
+}
+
 app.once('browser-window-created', async () => {
   ipcMain.on('set-mode', handleSetMode);
   ipcMain.handle('get-setting', getSetting);
-  ipcMain.handle('get-all-displays', screen.getAllDisplays.bind(screen));
+  ipcMain.handle('get-all-displays', handleGetAllDisplays);
   ipcMain.on('remoteplaypause', handleRemotePlayPause);
   ipcMain.on('localMediaState', localMediaStateUpdate);
   ipcMain.on('playback-state-change', handlePlaybackStateChange);
