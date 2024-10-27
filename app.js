@@ -1498,12 +1498,7 @@ async function createMediaWindow() {
 
     let strtVl = 1;
     const windowOptions = {
-        backgroundColor: '#00000000',
-        transparent: true,
-        fullscreen: true,
-        frame: false,
         webPreferences: {
-            backgroundThrottling: false,
             additionalArguments: [
                 '__mediafile-ems=' + encodeURIComponent(mediaFile),
                 startTime !== 0 ? '__start-time=' + startTime : "",

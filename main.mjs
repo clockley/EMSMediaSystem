@@ -150,6 +150,11 @@ function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     // Add width and height from the target display to window options
     const finalWindowOptions = {
       ...windowOptions,
+      backgroundThrottling: false,
+      backgroundColor: '#00000000',
+      transparent: true,
+      fullscreen: true,
+      frame: false,
       width: targetDisplay.bounds.width,
       height: targetDisplay.bounds.height
     };
