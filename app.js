@@ -584,11 +584,15 @@ async function populateDisplaySelect() {
     if (!displaySelect) return;
 
     try {
-        const displayOptions = await ipcRenderer.invoke('get-all-displays');
+        const { displays, defaultDisplayIndex } = await ipcRenderer.invoke('get-all-displays');
+        const currentSelection = displaySelect.value;
+
+        while (displaySelect.options.length > 1) {
+            displaySelect.remove(1);
+        }
 
         const fragment = document.createDocumentFragment();
-
-        displayOptions.forEach(({ value, label }) => {
+        displays.forEach(({ value, label }) => {
             const option = document.createElement("option");
             option.value = value;
             option.textContent = label;
@@ -597,12 +601,12 @@ async function populateDisplaySelect() {
 
         displaySelect.appendChild(fragment);
 
-        // Select first secondary display if available, otherwise primary
-        const defaultDisplay = displayOptions.find(opt => opt.isSecondary) || displayOptions[0];
-        if (defaultDisplay) {
-            displaySelect.value = defaultDisplay.value;
+        // If there was a previous selection and it's still valid, keep it
+        if (currentSelection && displays.some(d => d.value.toString() === currentSelection)) {
+            displaySelect.value = currentSelection;
+        } else {
+            displaySelect.value = defaultDisplayIndex;
         }
-
     } catch (error) {
         console.error('Failed to populate display select:', error);
     }
@@ -645,6 +649,7 @@ function setSBFormYouTubeMediaPlayer() {
         document.getElementById("mdFile").value = mediaFile;
     }
 
+    installDisplayChangeHandler();
     populateDisplaySelect();
 
     document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
@@ -937,6 +942,16 @@ function handleVolumeChange(event) {
     CrVL = event.target.value;
 }
 
+function installDisplayChangeHandler() {
+    if (installDisplayChangeHandler.initialized) return;
+    
+    ipcRenderer.on('display-changed', async () => {
+        await populateDisplaySelect();
+    });
+
+    installDisplayChangeHandler.initialized = true;
+}
+
 function setSBFormMediaPlayer() {
     if (opMode === MEDIAPLAYER) {
         return;
@@ -945,6 +960,7 @@ function setSBFormMediaPlayer() {
     ipcRenderer.send('set-mode', opMode);
     dyneForm.innerHTML = MEDIA_FORM_HTML;
 
+    installDisplayChangeHandler();
     populateDisplaySelect();
 
     if (video === null) {

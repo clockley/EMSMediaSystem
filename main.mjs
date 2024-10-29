@@ -424,45 +424,59 @@ async function getConnectedDisplays() {
   }
 }
 
-async function handleGetAllDisplays() {
+async function getDisplaysWithDefault() {
   const displays = screen.getAllDisplays();
   let edidDisplayInfo = [];
 
-  if (process.platform === 'linux') {
-      edidDisplayInfo = await getConnectedDisplays();
+  // Only Linux needs EDID info for display names
+  if (process.platform === 'linux' || isDevMode) {
+      try {
+          edidDisplayInfo = await getConnectedDisplays();
+      } catch (error) {
+          console.error('Failed to get EDID info:', error);
+      }
   }
 
   if (isDevMode) {
-    console.log('Electron displays:', displays);
-    console.log('EDID info:', edidDisplayInfo);
+      console.log('Platform:', process.platform);
+      console.log('Electron displays:', displays);
+      console.log('EDID info:', edidDisplayInfo);
   }
 
-  return displays.map((display, index) => {
+  const displayOptions = displays.map((display, index) => {
       let name;
       
-      if (process.platform === 'linux') {
-          // Match based on the display bounds/resolution
-          const edidDisplay = edidDisplayInfo.find(info => {
-              return display.bounds.width === 2520 && display.bounds.height === 1680 ?
-                  info.connector.includes('eDP') :  // Main display
-                  info.connector.includes('HDMI');  // TV/External display
-          });
+      switch (process.platform) {
+          case 'linux':
+              // Linux needs EDID info as Electron label is empty
+              const edidDisplay = edidDisplayInfo.find(info => {
+                  return display.bounds.width === 2520 && display.bounds.height === 1680 ?
+                      info.connector.includes('eDP') :
+                      info.connector.includes('HDMI');
+              });
 
-          if (edidDisplay) {
-              // If name contains manufacturer already, use just the name
-              if (edidDisplay.name.includes(edidDisplay.manufacturer)) {
-                  name = edidDisplay.name;
-              } else {
-                  // If manufacturer exists and adds value, prefix it
-                  const manufacturerPrefix = edidDisplay.manufacturer ? `${edidDisplay.manufacturer} ` : '';
-                  name = manufacturerPrefix ? `${manufacturerPrefix}${edidDisplay.name}` : edidDisplay.name;
+              if (edidDisplay) {
+                  if (edidDisplay.name.includes(edidDisplay.manufacturer)) {
+                      name = edidDisplay.name;
+                  } else {
+                      const manufacturerPrefix = edidDisplay.manufacturer ? `${edidDisplay.manufacturer} ` : '';
+                      name = manufacturerPrefix ? `${manufacturerPrefix}${edidDisplay.name}` : edidDisplay.name;
+                  }
               }
-          }
-      } else {
-          name = display.label;
+              break;
+
+          case 'win32':
+          case 'darwin':
+              // Windows and macOS have reliable display.label
+              name = display.label;
+              break;
+
+          default:
+              console.warn('Unsupported platform:', process.platform);
+              name = display.label || 'Display';
       }
 
-      // Fallback name if no match found
+      // Fallback name if nothing else worked
       name = name || (display.internal ? 'Internal Display' : 'External Display');
 
       return {
@@ -480,6 +494,19 @@ async function handleGetAllDisplays() {
           }
       };
   });
+
+  // Find default display (prefer secondary if available)
+  const defaultDisplay = displayOptions.find(opt => opt.isSecondary) || displayOptions[0];
+  const defaultDisplayIndex = defaultDisplay ? defaultDisplay.value : 0;
+
+  return {
+      displays: displayOptions,
+      defaultDisplayIndex
+  };
+}
+
+async function handleGetAllDisplays() {
+  return getDisplaysWithDefault();
 }
 app.once('browser-window-created', async () => {
   ipcMain.on('set-mode', handleSetMode);
@@ -509,12 +536,21 @@ app.on('activate', () => {
   }
 });
 
+function handleDisplayChange() {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('display-changed');
+  }
+}
+
 app.whenReady().then(async () => {
   measurePerformance('Creating window', createWindow);
   if (isDevMode) {
     const appReadyTime = performance.now();
     console.log(`Application ready in ${(appReadyTime - appStartTime).toFixed(2)} ms`);
   }
+  screen.on('display-added', handleDisplayChange);
+  screen.on('display-removed', handleDisplayChange);
+  screen.on('display-metrics-changed', handleDisplayChange);
 });
 
 windowBounds = await windowBounds;
