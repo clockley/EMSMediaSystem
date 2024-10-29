@@ -4,6 +4,9 @@ import settings from 'electron-settings';
 import { readdir, readFile } from 'fs/promises';
 import path from 'path';
 const isDevMode = process.env.ems_dev === 'true';
+let lastKnownDisplayState = null;
+let wasDisplayDisconnected = false;
+
 if (isDevMode) {
   console.log(`Node version: ${process.versions.node}`);
   console.log(`Electron version: ${process.versions.electron}`);
@@ -182,28 +185,67 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
   });
 }
 
-// Update handleDisplayChange to store the current media window position
 async function handleDisplayChange() {
+  const currentDisplays = screen.getAllDisplays();
+  
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-    const bounds = mediaWindow.getBounds();
-    await settings.set('lastMediaWindowBounds', bounds).catch(error => {
-      console.error('Error saving media window bounds:', error);
-    });
-    // Also save the current display index
-    const displays = screen.getAllDisplays();
-    const currentDisplayIndex = displays.findIndex(display => {
-      const centerX = bounds.x + (bounds.width / 2);
-      const centerY = bounds.y + (bounds.height / 2);
-      return centerX >= display.bounds.x &&
-        centerX < display.bounds.x + display.bounds.width &&
-        centerY >= display.bounds.y &&
-        centerY < display.bounds.y + display.bounds.height;
-    });
-    if (currentDisplayIndex !== -1) {
-      await settings.set('last-display-index', currentDisplayIndex);
+    const currentBounds = mediaWindow.getBounds();
+    const currentDisplayIndex = await settings.get('lastDisplayIndex');
+    
+    // Save current state if we haven't yet
+    if (!lastKnownDisplayState) {
+      lastKnownDisplayState = {
+        bounds: currentBounds,
+        displayIndex: currentDisplayIndex
+      };
+    }
+
+    // Check if the display the window was on is still available
+    const isOnValidDisplay = currentDisplays.some(display => 
+      currentBounds.x >= display.bounds.x &&
+      currentBounds.y >= display.bounds.y &&
+      currentBounds.x < display.bounds.x + display.bounds.width &&
+      currentBounds.y < display.bounds.y + display.bounds.height
+    );
+
+    if (!isOnValidDisplay) {
+      // Display was disconnected - move window to primary display
+      wasDisplayDisconnected = true;
+      const primaryDisplay = screen.getPrimaryDisplay();
+      mediaWindow.setBounds({
+        x: primaryDisplay.bounds.x,
+        y: primaryDisplay.bounds.y,
+        width: primaryDisplay.bounds.width,
+        height: primaryDisplay.bounds.height
+      });
+      
+      // Save the last known good state if we haven't already
+      await settings.set('lastMediaWindowBounds', lastKnownDisplayState.bounds);
+      await settings.set('lastDisplayIndex', lastKnownDisplayState.displayIndex);
+    } else if (wasDisplayDisconnected) {
+      // Check if the original display is back
+      const savedBounds = await settings.get('lastMediaWindowBounds');
+      const savedDisplayIndex = await settings.get('lastDisplayIndex');
+      
+      if (savedBounds && savedDisplayIndex !== undefined) {
+        const targetDisplay = currentDisplays[savedDisplayIndex];
+        
+        // If the original display is back, restore the window
+        if (targetDisplay && findDisplayByBounds(currentDisplays, targetDisplay.bounds)) {
+          mediaWindow.setBounds({
+            x: targetDisplay.bounds.x,
+            y: targetDisplay.bounds.y,
+            width: targetDisplay.bounds.width,
+            height: targetDisplay.bounds.height
+          });
+          wasDisplayDisconnected = false;
+          lastKnownDisplayState = null;
+        }
+      }
     }
   }
 
+  // Notify renderer about display change
   if (win && !win.isDestroyed()) {
     win.webContents.send('display-changed');
   }
