@@ -583,10 +583,14 @@ async function populateDisplaySelect() {
     const displaySelect = document.getElementById("dspSelct");
     if (!displaySelect) return;
 
+    displaySelect.addEventListener('change', (event) => {
+        ipcRenderer.send('set-display-index', parseInt(event.target.value));
+    });
+
     try {
         const { displays, defaultDisplayIndex } = await ipcRenderer.invoke('get-all-displays');
-        const currentSelection = displaySelect.value;
 
+        // Clear existing options except the first disabled one
         while (displaySelect.options.length > 1) {
             displaySelect.remove(1);
         }
@@ -600,13 +604,8 @@ async function populateDisplaySelect() {
         });
 
         displaySelect.appendChild(fragment);
+        displaySelect.value = defaultDisplayIndex;
 
-        // If there was a previous selection and it's still valid, keep it
-        if (currentSelection && displays.some(d => d.value.toString() === currentSelection)) {
-            displaySelect.value = currentSelection;
-        } else {
-            displaySelect.value = defaultDisplayIndex;
-        }
     } catch (error) {
         console.error('Failed to populate display select:', error);
     }

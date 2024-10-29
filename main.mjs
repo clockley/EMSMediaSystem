@@ -143,13 +143,21 @@ function localMediaStateUpdate(event, id, state) {
   }
 }
 
-function handleCreateMediaWindow(event, windowOptions, displayIndex) {
-  return measurePerformance('Creating media window', () => {
-    // Get all displays and find the target display
-    const displays = screen.getAllDisplays();
-    const targetDisplay = displays[displayIndex] || displays[0]; // Fallback to primary display if index is invalid
 
-    // Add width and height from the target display to window options
+async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
+  return measurePerformance('Creating media window', async () => {
+    const displays = screen.getAllDisplays();
+
+    // Save the selected display index
+    await settings.set('lastDisplayIndex', displayIndex).catch(error => {
+      console.error('Error saving display preference:', error);
+    });
+
+    // Use selected display or fall back
+    const targetDisplay = displays[displayIndex] ||
+      displays.find(d => d.bounds.x !== 0 || d.bounds.y !== 0) ||
+      displays[0];
+
     const finalWindowOptions = {
       ...windowOptions,
       backgroundThrottling: false,
@@ -169,8 +177,36 @@ function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       if (win) win.webContents.send('media-window-closed', mediaWindow.id);
       stopMediaPlaybackPowerHint();
     });
+
     return mediaWindow.id;
   });
+}
+
+// Update handleDisplayChange to store the current media window position
+async function handleDisplayChange() {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+    const bounds = mediaWindow.getBounds();
+    await settings.set('lastMediaWindowBounds', bounds).catch(error => {
+      console.error('Error saving media window bounds:', error);
+    });
+    // Also save the current display index
+    const displays = screen.getAllDisplays();
+    const currentDisplayIndex = displays.findIndex(display => {
+      const centerX = bounds.x + (bounds.width / 2);
+      const centerY = bounds.y + (bounds.height / 2);
+      return centerX >= display.bounds.x &&
+        centerX < display.bounds.x + display.bounds.width &&
+        centerY >= display.bounds.y &&
+        centerY < display.bounds.y + display.bounds.height;
+    });
+    if (currentDisplayIndex !== -1) {
+      await settings.set('last-display-index', currentDisplayIndex);
+    }
+  }
+
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('display-changed');
+  }
 }
 
 function handlePlayCtl(event, cmd, id) {
@@ -219,295 +255,319 @@ function handleVlcl(event, v, id) {
 const DRM_PATH = '/sys/class/drm';
 
 function parseManufacturerId(edidBuffer) {
-    try {
-        const manBytes = edidBuffer.readUInt16BE(8);
-        if (manBytes === 0 || manBytes === 0xFFFF) return null;
+  try {
+    const manBytes = edidBuffer.readUInt16BE(8);
+    if (manBytes === 0 || manBytes === 0xFFFF) return null;
 
-        // Calculate ASCII codes and verify they're valid uppercase letters
-        const char1 = ((manBytes >> 10) & 0x1F) + 64;
-        const char2 = ((manBytes >> 5) & 0x1F) + 64;
-        const char3 = (manBytes & 0x1F) + 64;
+    // Calculate ASCII codes and verify they're valid uppercase letters
+    const char1 = ((manBytes >> 10) & 0x1F) + 64;
+    const char2 = ((manBytes >> 5) & 0x1F) + 64;
+    const char3 = (manBytes & 0x1F) + 64;
 
-        // Verify each character is a valid uppercase letter
-        if (char1 < 65 || char1 > 90 || 
-            char2 < 65 || char2 > 90 || 
-            char3 < 65 || char3 > 90) {
-            return null;
-        }
-
-        return String.fromCharCode(char1, char2, char3);
-    } catch {
-        return null;
+    // Verify each character is a valid uppercase letter
+    if (char1 < 65 || char1 > 90 ||
+      char2 < 65 || char2 > 90 ||
+      char3 < 65 || char3 > 90) {
+      return null;
     }
+
+    return String.fromCharCode(char1, char2, char3);
+  } catch {
+    return null;
+  }
 }
 
 function parseDescriptorBlock(edidBuffer, blockStart) {
-    try {
-        // Validate block header
-        if (edidBuffer[blockStart] !== 0 || edidBuffer[blockStart + 1] !== 0) {
-            return null;
-        }
-
-        // Get descriptor type
-        const descriptorType = edidBuffer[blockStart + 3];
-
-        // Parse text fields
-        if (descriptorType === 0xFC || descriptorType === 0xFF) { // Monitor name or Serial
-            let text = '';
-            for (let i = 0; i < 13; i++) {
-                const charCode = edidBuffer[blockStart + 5 + i];
-                // Stop at terminator or invalid characters
-                if (charCode === 0x0A || charCode === 0x00 || charCode > 127) break;
-                // Only accept printable ASCII
-                if (charCode >= 32) {
-                    text += String.fromCharCode(charCode);
-                }
-            }
-            return {
-                type: descriptorType,
-                text: text.trim()
-            };
-        }
-        return null;
-    } catch {
-        return null;
+  try {
+    // Validate block header
+    if (edidBuffer[blockStart] !== 0 || edidBuffer[blockStart + 1] !== 0) {
+      return null;
     }
+
+    // Get descriptor type
+    const descriptorType = edidBuffer[blockStart + 3];
+
+    // Parse text fields
+    if (descriptorType === 0xFC || descriptorType === 0xFF) { // Monitor name or Serial
+      let text = '';
+      for (let i = 0; i < 13; i++) {
+        const charCode = edidBuffer[blockStart + 5 + i];
+        // Stop at terminator or invalid characters
+        if (charCode === 0x0A || charCode === 0x00 || charCode > 127) break;
+        // Only accept printable ASCII
+        if (charCode >= 32) {
+          text += String.fromCharCode(charCode);
+        }
+      }
+      return {
+        type: descriptorType,
+        text: text.trim()
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function validateResolution(width, height) {
-    // Sanity check for reasonable resolution values
-    return width >= 640 && width <= 7680 && 
-           height >= 480 && height <= 4320;
+  // Sanity check for reasonable resolution values
+  return width >= 640 && width <= 7680 &&
+    height >= 480 && height <= 4320;
 }
 
 function parseEdid(edidBuffer) {
-    try {
-        // Verify buffer size
-        if (!edidBuffer || edidBuffer.length < 128) {
-            throw new Error('EDID data too short');
-        }
-
-        // Verify EDID header
-        const header = Buffer.from([0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]);
-        if (!edidBuffer.subarray(0, 8).equals(header)) {
-            throw new Error('Invalid EDID header');
-        }
-
-        // Parse with fallbacks for each section
-        const result = {
-            manufacturer: null,
-            modelName: null,
-            serialNumber: null,
-            year: null,
-            week: null,
-            resolution: null
-        };
-
-        // Manufacturer ID
-        result.manufacturer = parseManufacturerId(edidBuffer);
-
-        // Parse descriptor blocks
-        for (let i = 54; i <= 108; i += 18) {
-            try {
-                const block = parseDescriptorBlock(edidBuffer, i);
-                if (block) {
-                    if (block.type === 0xFC && !result.modelName) {
-                        result.modelName = block.text;
-                    } else if (block.type === 0xFF && !result.serialNumber) {
-                        result.serialNumber = block.text;
-                    }
-                }
-            } catch {
-                continue; // Skip invalid blocks
-            }
-        }
-
-        // Manufacturing date
-        try {
-            const week = edidBuffer[16];
-            const year = edidBuffer[17] + 1990;
-            
-            // Validate date is reasonable
-            if (week >= 1 && week <= 53 && year >= 1990 && year <= new Date().getFullYear()) {
-                result.week = week;
-                result.year = year;
-            }
-        } catch {
-            // Keep null values if date parsing fails
-        }
-
-        // Resolution
-        try {
-            const hPixels = ((edidBuffer[4] >> 4) & 0x0F) * 16 + edidBuffer[2];
-            const vPixels = ((edidBuffer[7] >> 4) & 0x0F) * 16 + edidBuffer[5];
-
-            if (validateResolution(hPixels, vPixels)) {
-                result.resolution = {
-                    width: hPixels,
-                    height: vPixels
-                };
-            }
-        } catch {
-            // Keep null resolution if parsing fails
-        }
-
-        // Generate display name with fallbacks
-        let displayName = '';
-        if (result.manufacturer) displayName += result.manufacturer + ' ';
-        if (result.modelName) {
-            displayName += result.modelName;
-        } else {
-            displayName += 'Display';
-        }
-
-        return {
-            ...result,
-            displayName: displayName.trim()
-        };
-    } catch (error) {
-        console.error('EDID parse error:', error);
-        return null;
+  try {
+    // Verify buffer size
+    if (!edidBuffer || edidBuffer.length < 128) {
+      throw new Error('EDID data too short');
     }
+
+    // Verify EDID header
+    const header = Buffer.from([0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]);
+    if (!edidBuffer.subarray(0, 8).equals(header)) {
+      throw new Error('Invalid EDID header');
+    }
+
+    // Parse with fallbacks for each section
+    const result = {
+      manufacturer: null,
+      modelName: null,
+      serialNumber: null,
+      year: null,
+      week: null,
+      resolution: null
+    };
+
+    // Manufacturer ID
+    result.manufacturer = parseManufacturerId(edidBuffer);
+
+    // Parse descriptor blocks
+    for (let i = 54; i <= 108; i += 18) {
+      try {
+        const block = parseDescriptorBlock(edidBuffer, i);
+        if (block) {
+          if (block.type === 0xFC && !result.modelName) {
+            result.modelName = block.text;
+          } else if (block.type === 0xFF && !result.serialNumber) {
+            result.serialNumber = block.text;
+          }
+        }
+      } catch {
+        continue; // Skip invalid blocks
+      }
+    }
+
+    // Manufacturing date
+    try {
+      const week = edidBuffer[16];
+      const year = edidBuffer[17] + 1990;
+
+      // Validate date is reasonable
+      if (week >= 1 && week <= 53 && year >= 1990 && year <= new Date().getFullYear()) {
+        result.week = week;
+        result.year = year;
+      }
+    } catch {
+      // Keep null values if date parsing fails
+    }
+
+    // Resolution
+    try {
+      const hPixels = ((edidBuffer[4] >> 4) & 0x0F) * 16 + edidBuffer[2];
+      const vPixels = ((edidBuffer[7] >> 4) & 0x0F) * 16 + edidBuffer[5];
+
+      if (validateResolution(hPixels, vPixels)) {
+        result.resolution = {
+          width: hPixels,
+          height: vPixels
+        };
+      }
+    } catch {
+      // Keep null resolution if parsing fails
+    }
+
+    // Generate display name with fallbacks
+    let displayName = '';
+    if (result.manufacturer) displayName += result.manufacturer + ' ';
+    if (result.modelName) {
+      displayName += result.modelName;
+    } else {
+      displayName += 'Display';
+    }
+
+    return {
+      ...result,
+      displayName: displayName.trim()
+    };
+  } catch (error) {
+    console.error('EDID parse error:', error);
+    return null;
+  }
 }
 
 async function getConnectedDisplays() {
   try {
-      const entries = await readdir(DRM_PATH);   
-      const displays = await Promise.all(entries.map(async (entry) => {
-          if (!entry.match(/card\d+[-\w]+/)) return null;
+    const entries = await readdir(DRM_PATH);
+    const displays = await Promise.all(entries.map(async (entry) => {
+      if (!entry.match(/card\d+[-\w]+/)) return null;
 
-          const displayPath = path.join(DRM_PATH, entry);
-          try {
-              // Check if display is connected
-              const statusPath = path.join(displayPath, 'status');
-              const status = await readFile(statusPath, 'utf8').catch(() => 'disconnected');
-              if (status.trim() !== 'connected') return null;
-
-              // Try to read EDID
-              const edidPath = path.join(displayPath, 'edid');
-              let edidInfo = null;
-              
-              try {
-                  const edidBuffer = await readFile(edidPath);
-                  edidInfo = parseEdid(edidBuffer);
-              } catch (edidError) {
-                  console.debug(`Failed to read EDID for ${entry}:`, edidError);
-              }
-
-              const isInternalDisplay = entry.includes('eDP');
-              const name = edidInfo?.displayName || entry.replace(/^card\d+-/, '');
-
-              // Return all information without attempting to match displays yet
-              return {
-                  path: displayPath,
-                  name,
-                  manufacturer: edidInfo?.manufacturer || null,
-                  serialNumber: edidInfo?.serialNumber || null,
-                  manufactureDate: edidInfo?.year ? {
-                      year: edidInfo.year,
-                      week: edidInfo.week
-                  } : null,
-                  nativeResolution: edidInfo?.resolution || null,
-                  internal: isInternalDisplay,
-                  connector: entry
-              };
-          } catch (error) {
-              console.debug(`Error processing display ${entry}:`, error);
-              return null;
-          }
-      }));
-
-      return displays.filter(Boolean);
-  } catch (error) {
-      console.error('Failed to get display info:', error);
-      return [];
-  }
-}
-
-async function getDisplaysWithDefault() {
-  const displays = screen.getAllDisplays();
-  let edidDisplayInfo = [];
-
-  // Only Linux needs EDID info for display names
-  if (process.platform === 'linux' || isDevMode) {
+      const displayPath = path.join(DRM_PATH, entry);
       try {
-          edidDisplayInfo = await getConnectedDisplays();
+        // Check if display is connected
+        const statusPath = path.join(displayPath, 'status');
+        const status = await readFile(statusPath, 'utf8').catch(() => 'disconnected');
+        if (status.trim() !== 'connected') return null;
+
+        // Try to read EDID
+        const edidPath = path.join(displayPath, 'edid');
+        let edidInfo = null;
+
+        try {
+          const edidBuffer = await readFile(edidPath);
+          edidInfo = parseEdid(edidBuffer);
+        } catch (edidError) {
+          console.debug(`Failed to read EDID for ${entry}:`, edidError);
+        }
+
+        const isInternalDisplay = entry.includes('eDP');
+        const name = edidInfo?.displayName || entry.replace(/^card\d+-/, '');
+
+        // Return all information without attempting to match displays yet
+        return {
+          path: displayPath,
+          name,
+          manufacturer: edidInfo?.manufacturer || null,
+          serialNumber: edidInfo?.serialNumber || null,
+          manufactureDate: edidInfo?.year ? {
+            year: edidInfo.year,
+            week: edidInfo.week
+          } : null,
+          nativeResolution: edidInfo?.resolution || null,
+          internal: isInternalDisplay,
+          connector: entry
+        };
       } catch (error) {
-          console.error('Failed to get EDID info:', error);
+        console.debug(`Error processing display ${entry}:`, error);
+        return null;
       }
+    }));
+
+    return displays.filter(Boolean);
+  } catch (error) {
+    console.error('Failed to get display info:', error);
+    return [];
   }
-
-  if (isDevMode) {
-      console.log('Platform:', process.platform);
-      console.log('Electron displays:', displays);
-      console.log('EDID info:', edidDisplayInfo);
-  }
-
-  const displayOptions = displays.map((display, index) => {
-      let name;
-      
-      switch (process.platform) {
-          case 'linux':
-              // Linux needs EDID info as Electron label is empty
-              const edidDisplay = edidDisplayInfo.find(info => {
-                  return display.bounds.width === 2520 && display.bounds.height === 1680 ?
-                      info.connector.includes('eDP') :
-                      info.connector.includes('HDMI');
-              });
-
-              if (edidDisplay) {
-                  if (edidDisplay.name.includes(edidDisplay.manufacturer)) {
-                      name = edidDisplay.name;
-                  } else {
-                      const manufacturerPrefix = edidDisplay.manufacturer ? `${edidDisplay.manufacturer} ` : '';
-                      name = manufacturerPrefix ? `${manufacturerPrefix}${edidDisplay.name}` : edidDisplay.name;
-                  }
-              }
-              break;
-
-          case 'win32':
-          case 'darwin':
-              // Windows and macOS have reliable display.label
-              name = display.label;
-              break;
-
-          default:
-              console.warn('Unsupported platform:', process.platform);
-              name = display.label || 'Display';
-      }
-
-      // Fallback name if nothing else worked
-      name = name || (display.internal ? 'Internal Display' : 'External Display');
-
-      return {
-          value: index,
-          label: `${name} ${display.bounds.width}x${display.bounds.height}`,
-          isSecondary: display.bounds.x !== 0 || display.bounds.y !== 0,
-          x: display.bounds.x,
-          y: display.bounds.y,
-          internal: display.internal,
-          bounds: {
-              x: display.bounds.x,
-              y: display.bounds.y,
-              width: display.bounds.width,
-              height: display.bounds.height
-          }
-      };
-  });
-
-  // Find default display (prefer secondary if available)
-  const defaultDisplay = displayOptions.find(opt => opt.isSecondary) || displayOptions[0];
-  const defaultDisplayIndex = defaultDisplay ? defaultDisplay.value : 0;
-
-  return {
-      displays: displayOptions,
-      defaultDisplayIndex
-  };
 }
 
 async function handleGetAllDisplays() {
-  return getDisplaysWithDefault();
+  const displays = screen.getAllDisplays();
+  let edidDisplayInfo = [];
+
+  // Get saved display preference from electron-settings
+  const savedDisplayIndex = await settings.get('lastDisplayIndex');
+  let defaultDisplayIndex;
+
+  if (savedDisplayIndex !== undefined && displays[savedDisplayIndex]) {
+    // Use saved preference if it exists and is valid
+    defaultDisplayIndex = savedDisplayIndex;
+  } else {
+    // No saved preference or invalid - fall back to secondary display
+    defaultDisplayIndex = displays.findIndex(d => d.bounds.x !== 0 || d.bounds.y !== 0);
+    if (defaultDisplayIndex === -1) defaultDisplayIndex = 0;
+  }
+
+  // Only Linux needs EDID info for display names
+  if (process.platform === 'linux') {
+    try {
+      edidDisplayInfo = await getConnectedDisplays();
+    } catch (error) {
+      console.error('Failed to get EDID info:', error);
+    }
+  }
+
+  if (isDevMode) {
+    console.log('Saved display index:', savedDisplayIndex);
+    console.log('Default display index:', defaultDisplayIndex);
+    console.log('All displays:', displays);
+  }
+
+  const displayOptions = displays.map((display, index) => {
+    let name;
+
+    switch (process.platform) {
+      case 'linux':
+        const edidDisplay = edidDisplayInfo.find(info => {
+          return display.bounds.width === 2520 && display.bounds.height === 1680 ?
+            info.connector.includes('eDP') :
+            info.connector.includes('HDMI');
+        });
+
+        if (edidDisplay) {
+          if (edidDisplay.name.includes(edidDisplay.manufacturer)) {
+            name = edidDisplay.name;
+          } else {
+            const manufacturerPrefix = edidDisplay.manufacturer ? `${edidDisplay.manufacturer} ` : '';
+            name = manufacturerPrefix ? `${manufacturerPrefix}${edidDisplay.name}` : edidDisplay.name;
+          }
+        }
+        break;
+
+      case 'win32':
+      case 'darwin':
+        name = display.label;
+        break;
+
+      default:
+        name = display.label || 'Display';
+    }
+
+    name = name || (display.internal ? 'Internal Display' : 'External Display');
+
+    return {
+      value: index,
+      label: `${name} ${display.bounds.width}x${display.bounds.height}`,
+      isSecondary: display.bounds.x !== 0 || display.bounds.y !== 0,
+      x: display.bounds.x,
+      y: display.bounds.y,
+      internal: display.internal,
+      bounds: {
+        x: display.bounds.x,
+        y: display.bounds.y,
+        width: display.bounds.width,
+        height: display.bounds.height
+      }
+    };
+  });
+
+  return {
+    displays: displayOptions,
+    defaultDisplayIndex
+  };
 }
+
+function handleSetDisplayIndex(event, index) {
+  settings.set('lastDisplayIndex', index)
+      .catch(error => {
+          console.error('Error saving display index:', error);
+      });
+
+  // If there's an active media window, move it to the new display
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+      const displays = screen.getAllDisplays();
+      const targetDisplay = displays[index] || 
+                          displays.find(d => d.bounds.x !== 0 || d.bounds.y !== 0) || 
+                          displays[0];
+
+      mediaWindow.setBounds({
+          x: targetDisplay.bounds.x,
+          y: targetDisplay.bounds.y,
+          width: targetDisplay.bounds.width,
+          height: targetDisplay.bounds.height
+      });
+  }
+}
+
 app.once('browser-window-created', async () => {
   ipcMain.on('set-mode', handleSetMode);
   ipcMain.handle('get-setting', getSetting);
@@ -522,6 +582,7 @@ app.once('browser-window-created', async () => {
   ipcMain.handle('create-media-window', handleCreateMediaWindow);
   ipcMain.on('timeGoto-message', handleTimeGotoMessage);
   ipcMain.on('play-ctl', handlePlayCtl);
+  ipcMain.on('set-display-index', handleSetDisplayIndex);
 });
 
 app.on('window-all-closed', () => {
@@ -535,12 +596,6 @@ app.on('activate', () => {
     measurePerformance('Creating window on activate', createWindow);
   }
 });
-
-function handleDisplayChange() {
-  if (win && !win.isDestroyed()) {
-    win.webContents.send('display-changed');
-  }
-}
 
 app.whenReady().then(async () => {
   measurePerformance('Creating window', createWindow);
