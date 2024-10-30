@@ -969,6 +969,15 @@ function setSBFormMediaPlayer() {
 
     restoreMediaFile();
     updateTimestamp(false);
+
+    const loopctl = document.getElementById("mdLpCtlr");
+    loopctl.addEventListener('change', (event) => {
+        if (isActiveMediaWindow()) {
+            video.loop = event.target.checked;
+            ipcRenderer.invoke('set-media-loop-status', event.target.checked);
+        }
+    });
+
     /*const vc = document.getElementById('volumeControl');
     vc.addEventListener('input', handleVolumeChange);
     vc.value = CrVL;*/

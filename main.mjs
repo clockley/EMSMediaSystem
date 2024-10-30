@@ -274,6 +274,19 @@ async function handleGetMediaCurrentTime() {
   }
 }
 
+async function handleSetLoopStatus(event, arg) {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+    if (arg !== undefined) {
+      if (arg === true) {
+        await mediaWindow.webContents.executeJavaScript('window.api.video.loop=true');
+      } else {
+        await mediaWindow.webContents.executeJavaScript('window.api.video.loop=false');
+      }
+    }
+    return await mediaWindow.webContents.executeJavaScript('window.api.video.loop');
+  }
+}
+
 function handleSetMode(event, arg) {
   settings.set('operating-mode', arg)
     .catch(error => {
@@ -618,6 +631,7 @@ app.once('browser-window-created', async () => {
   ipcMain.on('localMediaState', localMediaStateUpdate);
   ipcMain.on('playback-state-change', handlePlaybackStateChange);
   ipcMain.handle('get-media-current-time', handleGetMediaCurrentTime);
+  ipcMain.handle('set-media-loop-status', handleSetLoopStatus);
   ipcMain.on('close-media-window', handleCloseMediaWindow);
   ipcMain.on('timeRemaining-message', sendRemainingTime);
   ipcMain.on('vlcl', handleVlcl);
