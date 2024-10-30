@@ -8,7 +8,6 @@ const { ipcRenderer, __dirname, bibleAPI, webUtils } = window.electron;
 
 var dontSyncRemote = false;
 var pidSeeking = false;
-var mediaPlayDelay = null;
 var video = null;
 var masterPauseState = false;
 var activeLiveStream = false;
@@ -228,8 +227,15 @@ function updateTimestamp(oneShot) {
 let currentMessage = null;
 
 function updateTimestampUI() {
-    mediaCntDnEle.textContent = currentMessage;
-    currentMessage = null;
+    if (mediaCntDnEle == null) {
+        return;
+    }
+    try {
+        mediaCntDnEle.textContent = currentMessage;
+        currentMessage = null;
+    } catch (error) {
+        console.error('Error updating timestamp UI:', error);
+    }
 }
 
 const boundUpdateTimestampUI = updateTimestampUI.bind();
@@ -509,7 +515,6 @@ function playMedia(e) {
                 return;
             }
         }
-        let mdly = document.getElementById("mdDelay");
         if (audioOnlyFile) {
             ipcRenderer.send("localMediaState", 0, "play");
             addFilenameToTitlebar(mediaFile);
@@ -518,29 +523,13 @@ function playMedia(e) {
             video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
             currentMediaFile = mdFIle.files;
-            if (audioOnlyFile && mdly !== null && mdly.value > 0) {
-                mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
-                return;
-            }
             video.play();
             updateTimestamp(false);
             return;
         }
 
         currentMediaFile = mdFIle.files;
-        if (opMode === MEDIAPLAYER && document.getElementById("malrm1").value !== "") {
-            var deadlinestr = "";
-            var deadlinestrarr = String(new Date()).split(" ");
-            deadlinestrarr[4] = document.getElementById("malrm1").value;
-            for (let i = 0; i < deadlinestrarr.length; ++i) { deadlinestr += (deadlinestrarr[i] + " ") }
-            deadline = new Date(deadlinestr);
-            mdly.value = ((deadline.getTime() - new Date().getTime()) / 1000);
-        }
-        if (mdly !== null && mdly.value > 0) {
-            mediaPlayDelay = setTimeout(createMediaWindow, mdly.value * 1000);
-        } else {
-            createMediaWindow();
-        }
+        createMediaWindow();
         dontSyncRemote = false;
     } else {
         isPlaying = false;
@@ -548,7 +537,6 @@ function playMedia(e) {
         ipcRenderer.send('close-media-window', 0);
         playingMediaAudioOnly = false;
         dontSyncRemote = true;
-        clearTimeout(mediaPlayDelay);
         if (opMode === MEDIAPLAYER)
             document.getElementById('mediaCntDn').textContent = "00:00:00.000";
         if (!audioOnlyFile)
@@ -579,12 +567,6 @@ function updateDynUI() {
         playButton.textContent = isPlaying ? "Stop Presentation" : "Start Presentation";
     }
     document.getElementById("dspSelct").disabled = (isPlaying && audioOnlyFile);
-    if (document.getElementById("mdDelay")) {
-        document.getElementById("mdDelay").disabled = isPlaying;
-    }
-    if (document.getElementById("malrm1")) {
-        document.getElementById("malrm1").disabled = isPlaying;
-    }
 }
 
 async function populateDisplaySelect() {
@@ -910,11 +892,6 @@ const lineHeight = isLinux ? '1' : '1.2';
 const MEDIA_FORM_HTML = `
   <form onsubmit="return false;">
     <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
-    <br>
-    <input type="number" min="0" max="60" step="1" value="0" name="mdTimeout" id="mdDelay">
-    <label for="mdTimeout">Start Delay</label>
-    <input name="malrm1" id="malrm1" type="time">
-    <label for="malrm1"> Schedule </label>
     <select name="dspSelct" id="dspSelct">
       <option value="" disabled>--Select Display Device--</option>
     </select>
@@ -1219,15 +1196,6 @@ function playAudioFileAfterDelay() {
 }
 
 function playLocalMedia(event) {
-    let mdly = document.getElementById("mdDelay");
-    if (audioOnlyFile && mdly !== null && mdly.value > 0) {
-        event.preventDefault();
-        mediaPlayDelay = setTimeout(playAudioFileAfterDelay, mdly.value * 1000);
-        mdly.value = 0;
-        updateDynUI();
-        video.pause();
-        return;
-    }
     mediaSessionPause = false;
     if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
         audioOnlyFile = true;
