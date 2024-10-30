@@ -29,6 +29,7 @@ var fileEnded = false;
 var dyneForm = null;
 var mediaSessionPause = false;
 let isPlaying = false;
+let img = null;
 const MEDIAPLAYER = 0, MEDIAPLAYERYT = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
 const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 let isActiveMediaWindowCache = false;
