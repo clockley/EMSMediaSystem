@@ -1,24 +1,52 @@
 {
   "name": "EJaxMediaSystem",
   "version": "4.0.0",
-  "description": "This program simplifies weekly music mangment.",
+  "description": "This program simplifies weekly music management.",
   "main": "main.mjs",
   "scripts": {
     "start": "electron .",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build-x86-win": "electron-packager . app --overwrite --platform win32 --arch x64 --out dist/",
-    "build-x86-linux": "electron-packager . app --overwrite --platform linux --arch x64 --out dist/"
+    "dist": "electron-builder",
+    "dist-win": "electron-builder --win",
+    "dist-linux": "electron-builder --linux"
   },
   "author": "Christian Lockley",
   "license": "GPL-3.0-or-later",
   "devDependencies": {
-    "@electron/packager": "^18.3.2",
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "electron-builder": "^24.6.0"
   },
   "dependencies": {
     "atem-connection": "^3.5.0",
     "bonjour": "^3.3.0",
     "electron-settings": "^4.0.4",
     "hls.js": "^1.1.5"
+  },
+  "build": {
+    "appId": "com.ejaxmediasystem.app",
+    "productName": "EJax Media System",
+    "files": [
+      "**/*",
+      "dist/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "build/icon.png",
+      "category": "Audio"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": false
+    }
   }
 }
