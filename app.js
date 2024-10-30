@@ -579,6 +579,12 @@ function updateDynUI() {
         playButton.textContent = isPlaying ? "Stop Presentation" : "Start Presentation";
     }
     document.getElementById("dspSelct").disabled = (isPlaying && audioOnlyFile);
+    if (document.getElementById("mdDelay")) {
+        document.getElementById("mdDelay").disabled = isPlaying;
+    }
+    if (document.getElementById("malrm1")) {
+        document.getElementById("malrm1").disabled = isPlaying;
+    }
 }
 
 async function populateDisplaySelect() {
