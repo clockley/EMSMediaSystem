@@ -192,7 +192,6 @@ async function handleDisplayChange() {
     const currentBounds = mediaWindow.getBounds();
     const currentDisplayIndex = await settings.get('lastDisplayIndex');
     
-    // Save current state if we haven't yet
     if (!lastKnownDisplayState) {
       lastKnownDisplayState = {
         bounds: currentBounds,
@@ -200,7 +199,6 @@ async function handleDisplayChange() {
       };
     }
 
-    // Check if the display the window was on is still available
     const isOnValidDisplay = currentDisplays.some(display => 
       currentBounds.x >= display.bounds.x &&
       currentBounds.y >= display.bounds.y &&
@@ -209,7 +207,6 @@ async function handleDisplayChange() {
     );
 
     if (!isOnValidDisplay) {
-      // Display was disconnected - move window to primary display
       wasDisplayDisconnected = true;
       const primaryDisplay = screen.getPrimaryDisplay();
       mediaWindow.setBounds({
@@ -219,19 +216,16 @@ async function handleDisplayChange() {
         height: primaryDisplay.bounds.height
       });
       
-      // Save the last known good state if we haven't already
       await settings.set('lastMediaWindowBounds', lastKnownDisplayState.bounds);
       await settings.set('lastDisplayIndex', lastKnownDisplayState.displayIndex);
     } else if (wasDisplayDisconnected) {
-      // Check if the original display is back
       const savedBounds = await settings.get('lastMediaWindowBounds');
       const savedDisplayIndex = await settings.get('lastDisplayIndex');
       
       if (savedBounds && savedDisplayIndex !== undefined) {
         const targetDisplay = currentDisplays[savedDisplayIndex];
         
-        // If the original display is back, restore the window
-        if (targetDisplay && findDisplayByBounds(currentDisplays, targetDisplay.bounds)) {
+        if (targetDisplay) {  // Ensure targetDisplay is defined
           mediaWindow.setBounds({
             x: targetDisplay.bounds.x,
             y: targetDisplay.bounds.y,
@@ -245,7 +239,6 @@ async function handleDisplayChange() {
     }
   }
 
-  // Notify renderer about display change
   if (win && !win.isDestroyed()) {
     win.webContents.send('display-changed');
   }
