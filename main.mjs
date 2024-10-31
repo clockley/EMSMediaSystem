@@ -663,6 +663,7 @@ const mainWindowOptions = {
   height: windowBounds ? windowBounds.height : 660,
   minWidth: 1096,
   minHeight: 681,
+  icon: `${import.meta.dirname}/icon.png`,
   webPreferences: {
     nodeIntegration: true,
     userGesture: true,
