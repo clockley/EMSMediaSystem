@@ -168,6 +168,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       transparent: true,
       fullscreen: true,
       frame: false,
+      icon: `${import.meta.dirname}/icon.png`,
       x: targetDisplay.bounds.x,
       y: targetDisplay.bounds.y,
       width: targetDisplay.bounds.width,
