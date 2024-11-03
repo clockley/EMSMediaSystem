@@ -23,7 +23,7 @@
   },
   "build": {
     "appId": "com.ejaxmediasystem.app",
-    "productName": "EJax Media System",
+    "productName": "EMS Media System",
     "files": [
       "**/*",
       "node_modules/**/*"
