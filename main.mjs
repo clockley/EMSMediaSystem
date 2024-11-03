@@ -547,9 +547,7 @@ async function handleGetAllDisplays() {
     switch (process.platform) {
       case 'linux':
         const edidDisplay = edidDisplayInfo.find(info => {
-          return display.bounds.width === 2520 && display.bounds.height === 1680 ?
-            info.connector.includes('eDP') :
-            info.connector.includes('HDMI');
+          return true;
         });
 
         if (edidDisplay) {
