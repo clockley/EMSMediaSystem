@@ -46,9 +46,9 @@ class PIDController {
         this.lastError = 0;
         this.integral = 0;
         this.lastTimeDifference = 0;
-        this.kP = 0.005; // Proportional gain
-        this.kI = 0.001; // Integral gain
-        this.kD = 0.003; // Derivative gain
+        this.kP = 0.015; // Proportional gain
+        this.kI = 0.003; // Integral gain
+        this.kD = 0.008; // Derivative gain
         this.synchronizationThreshold = 0.01;
         this.lastUpdateTime = 0;
     }
