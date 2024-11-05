@@ -50,17 +50,19 @@ if (isDevMode === false) {
   Menu.setApplicationMenu(null);
 }
 
-const pad = (n) => (n < 10 ? '0' : '') + n;
-const padMs = (n) => (n < 10 ? '00' : n < 100 ? '0' : '') + n;
+const PAD = ['00','01','02','03','04','05','06','07','08','09'];
 
 function secondsToTime(seconds) {
-  const wholeSecs = seconds | 0;
-  const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
-  const h = (wholeSecs / 3600) | 0;
-  const m = ((wholeSecs / 60) | 0) % 60;
-  const s = wholeSecs % 60;
-
-  return `${pad(h)}:${pad(m)}:${pad(s)}.${padMs(ms)}`;
+    const wholeSecs = seconds | 0;
+    const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
+    const h = (wholeSecs / 3600) | 0;
+    const m = ((wholeSecs / 60) | 0) % 60;
+    const s = wholeSecs % 60;
+    
+    return (h < 10 ? PAD[h] : h) + ':' +
+           (m < 10 ? PAD[m] : m) + ':' +
+           (s < 10 ? PAD[s] : s) + '.' +
+           (ms < 10 ? '00' : ms < 100 ? '0' : '') + ms;
 }
 
 const saveWindowBounds = (function () {
