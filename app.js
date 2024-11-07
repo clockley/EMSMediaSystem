@@ -621,7 +621,7 @@ function setSBFormYouTubeMediaPlayer() {
         <form onsubmit="return false;">
         <input type="url" name="mdFile" id="mdFile" placeholder="Paste your video URL here..." style="width: 80%; padding: 15px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; outline: none;" onfocus="this.style.borderColor='#0056b3';" onblur="this.style.borderColor='#ddd';" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
         <br>
-            <button id="mediaWindowPlayButton" type="button">▶️</button>
+            <button id="mediaWindowPlayButton" type="button">Start Presentation</button>
         <br>
             <select name="dspSelct" id="dspSelct">
                 <option value="" disabled>--Select Display Device--</option>
