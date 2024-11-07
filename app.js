@@ -1157,8 +1157,8 @@ function restoreMediaFile() {
 }
 
 function installEvents() {
-    document.getElementById("MdPlyrRBtnFrmID").onclick = setSBFormMediaPlayer;
-    document.getElementById("YtPlyrRBtnFrmID").onclick = setSBFormYouTubeMediaPlayer;
+    document.getElementById("MdPlyrRBtnFrmID").addEventListener('click', setSBFormMediaPlayer, { passive: true });
+    document.getElementById("YtPlyrRBtnFrmID").addEventListener('click', setSBFormYouTubeMediaPlayer, { passive: true });
     //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
 
     document.addEventListener('keydown', (event) => {
@@ -1189,7 +1189,7 @@ function installEvents() {
                 mediaCntDnEle = null;
             }
         }
-    });
+    }, { passive: true });
 }
 
 function playAudioFileAfterDelay() {
