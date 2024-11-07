@@ -1,5 +1,5 @@
 "use strict";
-import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
 import settings from 'electron-settings';
 import { readdir, readFile } from 'fs/promises';
 import path from 'path';
@@ -82,6 +82,7 @@ const saveWindowBounds = (function () {
 function lateInit() {
   win.webContents.send('ready');
   measurePerformance('Setting window aspect ratio', win.setAspectRatio.bind(win, 1.618));
+  win.show();
   win.on('resize', saveWindowBounds);
 }
 
@@ -124,8 +125,6 @@ function stopMediaPlaybackPowerHint() {
 function sendRemainingTime(event, arg) {
   win?.webContents.send('timeRemaining-message', [secondsToTime(arg[0] - arg[1]), arg[0], arg[1], arg[2]]);
 }
-
-app.commandLine.appendSwitch('enable-experimental-web-platform-features', 'true');
 
 async function getSetting(_, setting) {
   return settings.get(setting);
@@ -665,10 +664,14 @@ const mainWindowOptions = {
   minWidth: 1096,
   minHeight: 681,
   icon: `${import.meta.dirname}/icon.png`,
+  paintWhenInitiallyHidden: true,
+  show: false,
   webPreferences: {
     nodeIntegration: true,
+    v8CacheOptions: 'code',
     userGesture: true,
     backgroundThrottling: false,
+    experimentalFeatures: true,
     autoplayPolicy: 'no-user-gesture-required',
     preload: `${import.meta.dirname}/app_preload.mjs`,
   }
