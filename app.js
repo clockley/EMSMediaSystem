@@ -1499,6 +1499,10 @@ async function createMediaWindow() {
     await ipcRenderer.invoke('create-media-window', windowOptions, selectedIndex);
     isActiveMediaWindowCache = true;
 
+    if (pidController) {
+        pidController.reset();
+    }
+
     unPauseMedia();
     if (opMode !== MEDIAPLAYERYT) {
         if (video !== null && !isImgFile) {
