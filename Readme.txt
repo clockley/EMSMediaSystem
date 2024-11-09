@@ -1,26 +1,15 @@
-This is a portable application intended to be run on a USB drive to ease media file management.
-This program is not intended for external use though you are welcome to learn from/hack it.
-Below is the filesystem layout that I use:
--------------------------------------------
-[e:\]
- \bin
- \.1
- \.2
- .
- .
- .
- \.52
- [shortcut to ems binary]
--------------------------------------------
-Each folder contains a few songs. The program automatically selects the correct folder from the current date.
-If you want to change what folders the app checks for media files edit the getMediaFilesFolder(), getPlaylistByWeek() and getPlaylistByEvent() functions
--------------------------------------------
-To test/devel:
-npm install
-npm start .
--------------------------------------------
-To package for win ia32:
-electron-packager -p --overwrite . ems --platform=win32 --arch=ia32
--------------------------------------------
-Deploy by copying the files in the ems-win32-ia32 folder to bin folder on the flash drive.
-Then create a shortcut to ems.exe and place it in the drive root.
+EJaxMediaSystem
+EJaxMediaSystem is an Electron-based media presentation tool that provides a dual-window approach to media playback. It allows users to control media presentation from a management window while the content is displayed in a separate presentation window on your selected display.
+
+Key Features
+
+Two-window presentation system: control window and media display window
+Support for local video and audio playback
+Image display capabilities
+YouTube live stream integration
+Display selection for presentation window
+Loop playback option
+Clean, dedicated presentation window for media content
+Cross-platform support (Windows and Linux)
+
+It is perfect for presentations, teaching, or any scenario where you want to manage media playback from one window while presenting clean, distraction-free content on another.
