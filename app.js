@@ -36,113 +36,97 @@ let isActiveMediaWindowCache = false;
 class PIDController {
     constructor(video) {
         this.video = video;
-        this.isOscillating = false;
-        this.lastCrossing = 0;
-        this.numberOfCrossings = 0;
-        this.accumulatedPeriod = 0;
-        this.significantErrorThreshold = 0.1;
-        this.decayFactor = 0.9;
-        this.maxAllowedPeriod = 5000;
-        this.lastError = 0;
-        this.integral = 0;
-        this.lastTimeDifference = 0;
-        this.kP = 0.8; // Proportional gain
-        this.kI = 0.1; // Integral gain
-        this.kD = 0.15; // Derivative gain
+        this.reset();
+        
+        this.kP = 0.8;
+        this.kI = 0.1;
+        this.kD = 0.15;
+        
         this.synchronizationThreshold = 0.01;
-        this.lastUpdateTime = 0;
+        
+        this.maxIntegralError = 1.0;
+        this.fastSyncThreshold = 0.5;
+        this.initialSyncComplete = false;
     }
 
     reset() {
-        this.isOscillating = false;
-        this.lastCrossing = 0;
-        this.numberOfCrossings = 0;
-        this.accumulatedPeriod = 0;
         this.lastError = 0;
         this.integral = 0;
         this.lastTimeDifference = 0;
+        this.initialSyncComplete = false;
+        this.lastUpdateTime = performance.now();
     }
 
     adjustPlaybackRate(targetTime) {
+        const now = performance.now();
+        const deltaTime = (now - this.lastUpdateTime) / 1000;
+        this.lastUpdateTime = now;
+        
         const timeDifference = targetTime - this.video.currentTime;
-        this.integral += timeDifference; // Accumulate the error
+        const timeDifferenceAbs = Math.abs(timeDifference);
+
+        if (!this.initialSyncComplete && timeDifferenceAbs > this.synchronizationThreshold) {
+            this.video.currentTime = targetTime;
+            this.reset();
+            this.initialSyncComplete = true;
+            return timeDifference;
+        }
+
+        if (timeDifferenceAbs > this.fastSyncThreshold) {
+            this.video.currentTime = targetTime;
+            this.reset();
+            return timeDifference;
+        }
+
+        this.integral += timeDifference * deltaTime;
+        this.integral = Math.max(-this.maxIntegralError, 
+                               Math.min(this.maxIntegralError, this.integral));
+
+        const derivative = (timeDifference - this.lastTimeDifference) / deltaTime;
         this.lastTimeDifference = timeDifference;
 
-        let playbackRate;
-        let minRate = 0.8;
-        let maxRate = 1.2;
-        const timeDifferenceAbs = timeDifference < 0 ? -timeDifference : timeDifference;
+        let adjustment = (this.kP * timeDifference) + 
+                        (this.kI * this.integral) + 
+                        (this.kD * derivative);
 
-        if (timeDifferenceAbs > 0.5) {
-            this.integral = 0;
-            minRate = 0.5;
-            maxRate = 1.5;
-        }
+        let minRate = timeDifferenceAbs > 0.2 ? 0.5 : 0.8;
+        let maxRate = timeDifferenceAbs > 0.2 ? 1.5 : 1.2;
 
-        if (timeDifferenceAbs > 1 || timeDifference < -1) {
-            pidSeeking = true;
-            this.video.currentTime = targetTime;
-            playbackRate = 1.0;
-            this.adjustPID(timeDifference);
-        } else {
-            playbackRate = this.video.playbackRate + (this.kP * timeDifference) + (this.kI * this.integral) + (this.kD * (timeDifference - this.lastTimeDifference));
-            playbackRate = playbackRate < minRate ? minRate : playbackRate;
-            playbackRate = playbackRate > maxRate ? maxRate : playbackRate;
-        }
-
-        if (playbackRate === playbackRate) {
-            this.video.playbackRate = playbackRate;
-        }
+        let playbackRate = 1.0 + adjustment;
+        playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
 
         if (timeDifferenceAbs <= this.synchronizationThreshold) {
-            this.video.playbackRate = 1.0;
+            playbackRate = 1.0;
+            this.integral = 0;
+        }
+
+        if (!isNaN(playbackRate)) {
+            this.video.playbackRate = playbackRate;
         }
 
         return timeDifference;
     }
 
-    adjustPID(currentError) {
-        const now = performance.now();
-        const period = now - this.lastCrossing;
-        const absError = currentError < 0 ? -currentError : currentError;
-
-        if (absError < this.significantErrorThreshold && currentError * this.lastError < 0) {
-            if (this.isOscillating) {
-                this.accumulatedPeriod = this.accumulatedPeriod * this.decayFactor + period * (1 - this.decayFactor);
-                this.numberOfCrossings = this.numberOfCrossings * this.decayFactor + 1;
-                this.lastCrossing = now;
-
-                if (this.numberOfCrossings >= 5) {
-                    const averagePeriod = this.accumulatedPeriod / this.numberOfCrossings;
-                    const Tu = averagePeriod;
-                    const Ku = this.kP;
-
-                    this.kP = this.kP * (1 - 0.1) + 0.1 * (0.6 * Ku);
-                    this.kI = this.kI * (1 - 0.1) + 0.1 * (2 * this.kP / Tu);
-                    this.kD = this.kD * (1 - 0.1) + 0.1 * (this.kP * Tu / 8);
-
-                    this.isOscillating = false;
-                    this.numberOfCrossings = 0;
-                    this.accumulatedPeriod = 0;
-                }
-            }
+    // Auto-tuning mechanism for PID parameters
+    adjustPIDGains(timeDifference) {
+        const absError = Math.abs(timeDifference);
+        
+        // Dynamically adjust gains based on error magnitude
+        if (absError > 0.3) {
+            this.kP = 0.8;  // More aggressive for large errors
+            this.kI = 0.1;
+            this.kD = 0.15;
+        } else if (absError > 0.1) {
+            this.kP = 0.5;  // Moderate response for medium errors
+            this.kI = 0.05;
+            this.kD = 0.1;
         } else {
-            if (!this.isOscillating) {
-                this.kP += 0.01 * (absError > 1 ? 2 : 1);
-                this.isOscillating = true;
-            }
+            this.kP = 0.3;  // Gentler response for fine-tuning
+            this.kI = 0.02;
+            this.kD = 0.05;
         }
-
-        if (this.numberOfCrossings < 5 && period > this.maxAllowedPeriod) {
-            this.kP += 0.05;
-            this.lastCrossing = now;
-            this.isOscillating = true;
-        }
-
-        this.lastError = currentError;
     }
 }
-
 let pidController;
 
 const PAD = ['00','01','02','03','04','05','06','07','08','09'];
