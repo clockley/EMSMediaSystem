@@ -19,7 +19,7 @@
     "atem-connection": "^3.5.0",
     "bonjour": "^3.3.0",
     "electron-settings": "^4.0.4",
-    "hls.js": "^1.1.5"
+    "hls.js": "^1.6.0-beta.1"
   },
   "build": {
     "appId": "com.ejaxmediasystem.app",
