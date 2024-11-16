@@ -4,7 +4,7 @@
   "description": "This program simplifies weekly music management.",
   "main": "main.mjs",
   "scripts": {
-    "start": "electron .",
+    "start": "node node_modules/electron-nightly/cli.js .",
     "dist": "electron-builder",
     "dist-win": "electron-builder --win",
     "dist-linux": "electron-builder --linux"
@@ -12,8 +12,8 @@
   "author": "Christian Lockley",
   "license": "GPL-3.0-or-later",
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^24.6.0"
+    "electron-builder": "^24.6.0",
+    "electron-nightly": "^35.0.0-nightly.20241115"
   },
   "dependencies": {
     "atem-connection": "^3.5.0",

@@ -1,11 +1,15 @@
 "use strict";
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
+import module from 'node:module';
+module.enableCompileCache();
 import settings from 'electron-settings';
 import { readdir, readFile } from 'fs/promises';
 import path from 'path';
 const isDevMode = process.env.ems_dev === 'true';
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
+
+module.enableCompileCache();
 
 if (isDevMode) {
   console.log(`Node version: ${process.versions.node}`);
