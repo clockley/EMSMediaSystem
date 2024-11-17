@@ -1,9 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-function handleIpcOn(channel, callback) {
-    return (event, ...args) => callback(event, ...args);
-}
-
 window.addEventListener('DOMContentLoaded', () => {
     const video = document.getElementById('bigPlayer');
 
