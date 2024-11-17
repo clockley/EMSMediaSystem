@@ -1,4 +1,6 @@
 "use strict";
+import module from 'node:module';
+module.enableCompileCache();
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { readFile } from 'fs/promises';
 import { Bible } from './Bible.mjs';
