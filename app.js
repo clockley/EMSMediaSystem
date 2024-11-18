@@ -1203,6 +1203,8 @@ function playLocalMedia(event) {
     if (isActiveMediaWindow()) {
         unPauseMedia(event);
         return;
+    } else {
+        video.muted = false;
     }
     let mediaScrnPlyBtn = document.getElementById("mediaWindowPlayButton");
     if (mediaScrnPlyBtn && audioOnlyFile) {
