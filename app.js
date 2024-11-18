@@ -151,13 +151,13 @@ function isActiveMediaWindow() {
 let lastUpdateTimeLocalPlayer = 0;
 
 const basename = (input) => {
-    const match = input.match(/^(?:https?:\/\/)?(?:www\.)?([^/]+)/);
+    const urlMatch = input.match(/^(?:https?:\/\/)?(?:www\.)?([^/]+)/);
+    if (urlMatch) return urlMatch[1];
 
-    if (match) {
-        return match[1];
-    } else {
-        return input.split(/[/\\]/).pop();
-    }
+    const uncMatch = input.match(/^\\\\[^\\]+\\[^\\]+/);
+    if (uncMatch) return input.split(/[/\\]/).pop();
+
+    return input.replace(/^[A-Z]:/i, '').split(/[/\\]/).pop();
 };
 
 function addFilenameToTitlebar(path) {
