@@ -450,6 +450,7 @@ function waitForMetadata() {
 }
 
 function playMedia(e) {
+    startTime = video.currentTime;
     if (e === undefined && audioOnlyFile && opMode === MEDIAPLAYER) {
         e = {};
         e.target = document.getElementById("mediaWindowPlayButton");
@@ -518,6 +519,7 @@ function playMedia(e) {
         createMediaWindow();
         dontSyncRemote = false;
     } else {
+        startTime = 0;
         isPlaying = false;
         updateDynUI();
         ipcRenderer.send('close-media-window', 0);
