@@ -170,7 +170,7 @@ function removeFilenameFromTitlebar() {
 
 function update(time) {
     if (time - lastUpdateTimeLocalPlayer >= 33.33) {
-        if (mediaCntDnEle && audioOnlyFile) {
+        if (mediaCntDnEle) {
             mediaCntDnEle.textContent = secondsToTime(video.duration - video.currentTime);
         } else {
             localTimeStampUpdateIsRunning = false;
@@ -200,7 +200,7 @@ function updateTimestamp(oneShot) {
         return;
     }
 
-    if (playingMediaAudioOnly || !video.paused) {
+    if (!video.paused) {
         localTimeStampUpdateIsRunning = true;
         if (!video.paused) {
             requestAnimationFrame(update);
@@ -1232,6 +1232,7 @@ function playLocalMedia(event) {
         audioOnlyFile = false;
         playingMediaAudioOnly = false;
     } else {
+        updateTimestamp(false);
         if (audioOnlyFile) {
             video.muted = false;
             if (document.getElementById("mdLpCtlr")) {
@@ -1241,7 +1242,6 @@ function playLocalMedia(event) {
                 video.volume = document.getElementById('volumeControl').value;
             }
             playingMediaAudioOnly = true;
-            updateTimestamp(false);
             return;
         }
     }
