@@ -331,7 +331,6 @@ function handleImageDisplay(isImgFile, imgEle) {
 
 function resetVideoState() {
     if (video !== null) {
-        video.muted = true;
         video.pause();
         video.currentTime = 0;
         targetTime = 0;
@@ -506,7 +505,6 @@ function playMedia(e) {
             ipcRenderer.send("localMediaState", 0, "play");
             addFilenameToTitlebar(mediaFile);
             isPlaying = true;
-            video.muted = false;
             video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
             currentMediaFile = mdFIle.files;
@@ -538,9 +536,7 @@ function playMedia(e) {
             saveMediaFile();
             if (opMode === MEDIAPLAYER)
                 document.getElementById('mediaCntDn').textContent = "00:00:00.000";
-            if (video) {
-                video.muted = true;
-            }
+
             audioOnlyFile = false;
         }
         localTimeStampUpdateIsRunning = false;
@@ -1104,8 +1100,6 @@ function saveMediaFile() {
             video = document.getElementById('preview');
         }
         if (video) {
-            if (!audioOnlyFile)
-                video.muted = true;
             if (mdfileElement !== null && mdfileElement.files && prePathname !== mediaFile) {
                 prePathname = mediaFile;
                 startTime = 0;
@@ -1203,14 +1197,12 @@ function playLocalMedia(event) {
     if (isActiveMediaWindow()) {
         unPauseMedia(event);
         return;
-    } else {
-        video.muted = false;
     }
+
     let mediaScrnPlyBtn = document.getElementById("mediaWindowPlayButton");
     if (mediaScrnPlyBtn && audioOnlyFile) {
         if (isPlaying) {
             fileEnded = false;
-            video.muted = false;
             if (document.getElementById("mdLpCtlr")) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
             }
@@ -1234,7 +1226,6 @@ function playLocalMedia(event) {
     } else {
         updateTimestamp(false);
         if (audioOnlyFile) {
-            video.muted = false;
             if (document.getElementById("mdLpCtlr")) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
             }
@@ -1312,9 +1303,7 @@ function endLocalMedia() {
         if (opMode === MEDIAPLAYER) {
             document.getElementById('mediaCntDn').textContent = "00:00:00.000";
         }
-        if (video) {
-            video.muted = true;
-        }
+
         if (video !== null) {
             video.currentTime = 0;
         }
@@ -1339,9 +1328,6 @@ function endLocalMedia() {
     video.pause();
     masterPauseState = false;
     resetPIDOnSeek();
-    if (video) {
-        video.muted = true;
-    }
     localTimeStampUpdateIsRunning = false;
 }
 
@@ -1449,7 +1435,6 @@ async function createMediaWindow() {
             video = document.getElementById("preview");
         }
         if (video === null) {
-            video.muted = true;
             video.setAttribute("src", mediaFile);
             video.id = "preview";
             video.currentTime = startTime;
@@ -1467,7 +1452,6 @@ async function createMediaWindow() {
     const isImgFile = isImg(mediaFile);
 
     if (audioOnlyFile && !isActiveMediaWindow()) {
-        video.muted = false;
         video.loop = document.getElementById("mdLpCtlr").checked;
         if (!isImgFile) {
             await video.play();
@@ -1482,9 +1466,6 @@ async function createMediaWindow() {
         playingMediaAudioOnly = false;
         if (document.getElementById('mediaCntDn'))
             document.getElementById('mediaCntDn').textContent = "00:00:00.000";
-        if (video) {
-            video.muted = true;
-        }
     }
 
     let strtVl = video.volume;
