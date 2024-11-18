@@ -161,11 +161,11 @@ const basename = (input) => {
 };
 
 function addFilenameToTitlebar(path) {
-    document.title = basename(path) + " - EJaxMediaSystem";
+    document.title = basename(path) + " - EMS Media System";
 }
 
 function removeFilenameFromTitlebar() {
-    document.title = "EJaxMediaSystem";
+    document.title = "EMS Media System";
 }
 
 function update(time) {
