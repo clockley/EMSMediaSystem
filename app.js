@@ -1487,7 +1487,7 @@ async function createMediaWindow() {
         }
     }
 
-    let strtVl = 1;
+    let strtVl = video.volume;
     const windowOptions = {
         webPreferences: {
             additionalArguments: [
