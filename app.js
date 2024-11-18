@@ -1397,6 +1397,7 @@ function installPreviewEventHandlers() {
         video.addEventListener('ended', endLocalMedia);
         video.addEventListener('pause', pauseLocalMedia);
         video.addEventListener('play', playLocalMedia);
+        video.addEventListener('volumechange', (event) => { vlCtl(event.target.volume)});
         pidController = new PIDController(video);
         installPreviewEventHandlers.installedVideoEventListener = true;
     }
@@ -1502,7 +1503,8 @@ async function createMediaWindow() {
     if (pidController) {
         pidController.reset();
     }
-
+    video.audioTracks[0].enabled = false;
+    video.muted=false;
     unPauseMedia();
     if (opMode !== MEDIAPLAYERYT) {
         if (video !== null && !isImgFile) {

@@ -116,11 +116,6 @@ footer { grid-area: footerBar; }
     width: 256px;
 }
 
-/* Media controls */
-video::-webkit-media-controls-volume-slider,
-video::-webkit-media-controls-mute-button {
-    display: none !important;
-}
 
 #preview video::-webkit-media-controls-panel {
     display: flex !important;
