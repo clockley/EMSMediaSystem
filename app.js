@@ -1441,7 +1441,6 @@ function loadLocalMediaHandler(event) {
 }
 
 function loadedmetadataHandler(e) {
-    console.log("RERE")
     if (video.src === window.location.href || isImg(video.src)) {
         return;
     }
