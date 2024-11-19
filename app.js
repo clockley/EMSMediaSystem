@@ -458,6 +458,7 @@ function installIPCHandler() {
 }
 
 async function handleMediaWindowClosed(event, id) {
+    video.audioTracks[0].enabled = true;
     if (video.loop && video.currentTime > 0 && 
         video.duration - video.currentTime < 0.5) {  // Small threshold near end
         video.currentTime = 0;
@@ -733,7 +734,8 @@ function playMedia(e) {
             audioOnlyFile = false;
         }
         localTimeStampUpdateIsRunning = false;
-        waitForMetadata().then(saveMediaFile);
+        if (mediaFile !== decodeURI(removeFileProtocol(video.src)))
+            waitForMetadata().then(saveMediaFile);
     }
     updateDynUI();
 }
@@ -1287,7 +1289,7 @@ function saveMediaFile() {
             }
             if (!playingMediaAudioOnly && mdfileElement.files) {
                 let uncachedLoad;
-                if (uncachedLoad = encodeURI(mediaFile !== removeFileProtocol(video.src))) {
+                if (uncachedLoad = (encodeURI(mediaFile) !== removeFileProtocol(video.src))) {
                     video.setAttribute("src", mediaFile);
                 }
                 video.id = "preview";
@@ -1359,6 +1361,9 @@ function playAudioFileAfterDelay() {
 }
 
 function playLocalMedia(event) {
+    if (!isActiveMediaWindow()) {
+        video.audioTracks[0].enabled = true;
+    }
     mediaSessionPause = false;
     if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
         audioOnlyFile = true;
