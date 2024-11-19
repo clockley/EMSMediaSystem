@@ -272,7 +272,15 @@ function installIPCHandler() {
     ipcRenderer.on('media-window-closed', handleMediaWindowClosed);
 }
 
-function handleMediaWindowClosed(event, id) {
+async function handleMediaWindowClosed(event, id) {
+    if (video.loop && video.currentTime > 0 && 
+        video.duration - video.currentTime < 0.5) {  // Small threshold near end
+        video.currentTime = 0;
+        video.play()
+        await createMediaWindow();
+        return;
+    }
+
     isPlaying = false;
     updateDynUI();
     isActiveMediaWindowCache = false;
@@ -1281,6 +1289,12 @@ function seekingLocalMedia(e) {
 }
 
 function endLocalMedia() {
+    if (video.loop && video.currentTime >= video.duration) {
+        video.currentTime = 0;
+        playLocalMedia();
+        return;
+    }
+
     isPlaying = false;
     updateDynUI();
     audioOnlyFile = false;
