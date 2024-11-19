@@ -1368,6 +1368,10 @@ function pauseLocalMedia(event) {
     }
 }
 
+function handleVolumeChange(event) {
+    event.target.muted ? vlCtl(0) : vlCtl(event.target.volume);
+}
+
 function installPreviewEventHandlers() {
     if (!installPreviewEventHandlers.installedVideoEventListener) {
         video.addEventListener('loadstart', loadLocalMediaHandler);
@@ -1377,7 +1381,7 @@ function installPreviewEventHandlers() {
         video.addEventListener('ended', endLocalMedia);
         video.addEventListener('pause', pauseLocalMedia);
         video.addEventListener('play', playLocalMedia);
-        video.addEventListener('volumechange', (event) => { event.target.muted ? vlCtl(0) : vlCtl(event.target.volume)});
+        video.addEventListener('volumechange', handleVolumeChange);
         pidController = new PIDController(video);
         installPreviewEventHandlers.installedVideoEventListener = true;
     }
