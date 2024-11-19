@@ -1377,7 +1377,7 @@ function installPreviewEventHandlers() {
         video.addEventListener('ended', endLocalMedia);
         video.addEventListener('pause', pauseLocalMedia);
         video.addEventListener('play', playLocalMedia);
-        video.addEventListener('volumechange', (event) => { vlCtl(event.target.volume)});
+        video.addEventListener('volumechange', (event) => { event.target.muted ? vlCtl(0) : vlCtl(event.target.volume)});
         pidController = new PIDController(video);
         installPreviewEventHandlers.installedVideoEventListener = true;
     }
