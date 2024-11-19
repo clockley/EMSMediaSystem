@@ -458,6 +458,8 @@ async function handleMediaWindowClosed(event, id) {
     video.audioTracks[0].enabled = true;
     if (video.loop && video.currentTime > 0 &&
         video.duration - video.currentTime < 0.5) {  // Small threshold near end
+        startTime = 0;
+        targetTime = 0;
         video.currentTime = 0;
         video.play()
         await createMediaWindow();
