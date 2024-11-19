@@ -1172,7 +1172,7 @@ function playLocalMedia(event) {
     }
     if (audioOnlyFile) {
         ipcRenderer.send("localMediaState", 0, "play");
-        addFilenameToTitlebar(mediaFile);
+        addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
         isPlaying = true;
         updateDynUI();
         updateTimestamp(false);
@@ -1486,7 +1486,7 @@ async function createMediaWindow() {
             await video.play();
         }
     }
-    addFilenameToTitlebar(mediaFile);
+    addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
 }
 
 const WIN32 = 'Windows';
