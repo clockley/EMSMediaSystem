@@ -36,14 +36,14 @@ let isActiveMediaWindowCache = false;
 class PIDController {
     constructor(video) {
         this.video = video;
-       
+
         this.kP = 0.6;
         this.kI = 0.08;
         this.kD = 0.12;
-        
+
         this.patterns = {
             STABLE: 'stable',
-            OSCILLATING: 'oscillating', 
+            OSCILLATING: 'oscillating',
             LAGGING: 'lagging',
             SYSTEM_STRESS: 'systemStress'
         };
@@ -66,7 +66,7 @@ class PIDController {
                 maxRate: 1.05, threshold: 0.1
             }
         };
-        
+
         this.performanceHistory = [];
         this.mlHistory = [];
         this.mlEnabled = false;
@@ -75,19 +75,19 @@ class PIDController {
         this.minMLExamples = 50;
         this.weights = new Float32Array(5).fill(0.2);
         this.learningRate = 0.01;
-        
+
         this.systemLag = 0;
         this.overshoots = 0;
         this.avgResponseTime = 0;
         this.currentPattern = this.patterns.STABLE;
-        
+
         this.lastWallTime = null;
         this.maxTimeGap = 1000;
-        
+
         this.synchronizationThreshold = 0.005;
         this.maxIntegralError = 0.5;
         this.fastSyncThreshold = 0.033;
-        
+
         this.maxHistoryLength = 30;
         this.isFirstAdjustment = true;
         this.reset();
@@ -105,7 +105,7 @@ class PIDController {
 
         const prediction = this.predictMLAdjustment(example.features);
         const error = example.result - prediction;
-        
+
         example.features.forEach((feature, i) => {
             this.weights[i] += this.learningRate * error * feature;
         });
@@ -130,7 +130,7 @@ class PIDController {
         const recentHistory = this.performanceHistory.slice(-10);
         const variance = this.calculateVariance(recentHistory.map(p => p.timeDifference));
         const trend = this.calculateTrend(recentHistory.map(p => p.timeDifference));
-        
+
         if (variance > 0.1 && this.overshoots > 3) {
             this.currentPattern = this.patterns.OSCILLATING;
         } else if (trend > 0.05 || this.avgResponseTime > 0.15) {
@@ -153,7 +153,7 @@ class PIDController {
     calculateTrend(values) {
         let trend = 0;
         for (let i = 1; i < values.length; i++) {
-            trend += values[i] - values[i-1];
+            trend += values[i] - values[i - 1];
         }
         return trend / values.length;
     }
@@ -170,7 +170,7 @@ class PIDController {
         this.performanceHistory.push({
             timeDifference,
             timestamp,
-            responseTime: this.performanceHistory.length > 0 ? 
+            responseTime: this.performanceHistory.length > 0 ?
                 timestamp - this.performanceHistory[this.performanceHistory.length - 1].timestamp : 0
         });
 
@@ -186,7 +186,7 @@ class PIDController {
 
             const recentPerformance = this.performanceHistory.slice(-5);
             this.systemLag = recentPerformance.reduce((acc, curr) => acc + curr.responseTime, 0) / 5;
-            this.avgResponseTime = Math.abs(recentPerformance.reduce((acc, curr) => 
+            this.avgResponseTime = Math.abs(recentPerformance.reduce((acc, curr) =>
                 acc + curr.timeDifference, 0)) / 5;
         }
 
@@ -200,9 +200,9 @@ class PIDController {
         const derivative = (timeDifference - this.lastTimeDifference) / deltaTime;
         this.lastTimeDifference = timeDifference;
 
-        return (this.kP * timeDifference) + 
-               (this.kI * this.integral) + 
-               (this.kD * derivative);
+        return (this.kP * timeDifference) +
+            (this.kI * this.integral) +
+            (this.kD * derivative);
     }
 
     adjustPlaybackRate(targetTime) {
@@ -211,7 +211,7 @@ class PIDController {
         if (!this.video || this.video.paused || this.video.seeking) {
             return;
         }
-    
+
         if (this.isFirstAdjustment || this.lastWallTime === null) {
             this.lastWallTime = wallNow;
             this.lastUpdateTime = now;
@@ -220,9 +220,9 @@ class PIDController {
             this.updateSystemMetrics(timeDifference, wallNow);
             return timeDifference;
         }
-    
+
         const wallTimeDelta = wallNow - this.lastWallTime;
-    
+
         if (wallTimeDelta > this.maxTimeGap) {
             pidSeeking = true;
             this.video.currentTime = targetTime;
@@ -232,19 +232,19 @@ class PIDController {
             this.updateSystemMetrics(timeDifference, wallNow);
             return timeDifference;
         }
-    
+
         const deltaTime = (now - this.lastUpdateTime) / 1000;
         this.lastUpdateTime = now;
         this.lastWallTime = wallNow;
-    
+
         const timeDifference = targetTime - this.video.currentTime;
         const timeDifferenceAbs = Math.abs(timeDifference);
-    
+
         this.updateSystemMetrics(timeDifference, wallNow);
-    
+
         const historicalAdjustment = this.calculateHistoricalAdjustment(timeDifference, deltaTime);
         let finalAdjustment = historicalAdjustment;
-    
+
         if (this.mlEnabled) {
             const features = [
                 timeDifference,
@@ -253,33 +253,33 @@ class PIDController {
                 this.overshoots,
                 deltaTime
             ];
-    
+
             const mlAdjustment = this.predictMLAdjustment(features);
             finalAdjustment = (mlAdjustment * this.mlConfidence) +
-                             (historicalAdjustment * this.historicalConfidence);
-    
+                (historicalAdjustment * this.historicalConfidence);
+
             this.trainML({
                 features,
                 result: timeDifference,
                 adjustment: mlAdjustment
             });
         }
-    
+
         const currentSettings = this.performancePatterns[this.currentPattern];
         const maxRate = currentSettings.maxRate;
         const minRate = 2 - maxRate;
         let playbackRate = 1.0 + finalAdjustment;
         playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
-    
+
         if (timeDifferenceAbs <= this.synchronizationThreshold) {
             playbackRate = 1.0;
             this.integral = 0;
         }
-    
+
         if (!isNaN(playbackRate)) {
             this.video.playbackRate = playbackRate;
         }
-    
+
         return timeDifference;
     }
 
@@ -293,7 +293,7 @@ class PIDController {
         this.lastUpdateTime = performance.now();
         this.isFirstAdjustment = true;
         this.lastWallTime = null;
-        
+
         this.performanceHistory = [];
         this.overshoots = 0;
         this.systemLag = 0;
@@ -310,7 +310,7 @@ class PIDController {
 
 let pidController;
 
-const PAD = ['00','01','02','03','04','05','06','07','08','09'];
+const PAD = ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09'];
 
 function secondsToTime(seconds) {
     const wholeSecs = seconds | 0;
@@ -318,11 +318,11 @@ function secondsToTime(seconds) {
     const h = (wholeSecs / 3600) | 0;
     const m = ((wholeSecs / 60) | 0) % 60;
     const s = wholeSecs % 60;
-    
+
     return (h < 10 ? PAD[h] : h) + ':' +
-           (m < 10 ? PAD[m] : m) + ':' +
-           (s < 10 ? PAD[s] : s) + '.' +
-           (ms < 10 ? '00' : ms < 100 ? '0' : '') + ms;
+        (m < 10 ? PAD[m] : m) + ':' +
+        (s < 10 ? PAD[s] : s) + '.' +
+        (ms < 10 ? '00' : ms < 100 ? '0' : '') + ms;
 }
 
 function isActiveMediaWindow() {
@@ -406,7 +406,7 @@ function updateTimestampUI() {
 }
 
 const boundUpdateTimestampUI = updateTimestampUI.bind();
-let lastUpdateTime = 0; 
+let lastUpdateTime = 0;
 function handleTimeMessage(_, message) {
     const now = Date.now();
 
@@ -456,7 +456,7 @@ function installIPCHandler() {
 
 async function handleMediaWindowClosed(event, id) {
     video.audioTracks[0].enabled = true;
-    if (video.loop && video.currentTime > 0 && 
+    if (video.loop && video.currentTime > 0 &&
         video.duration - video.currentTime < 0.5) {  // Small threshold near end
         video.currentTime = 0;
         video.play()
@@ -1098,7 +1098,7 @@ const MEDIA_FORM_HTML = `
 
 function installDisplayChangeHandler() {
     if (installDisplayChangeHandler.initialized) return;
-    
+
     ipcRenderer.on('display-changed', async () => {
         await populateDisplaySelect();
     });
@@ -1704,7 +1704,7 @@ async function createMediaWindow() {
         video.audioTracks[0].enabled = false;
     }
 
-    video.muted=false;
+    video.muted = false;
     pidSeeking = true;
     unPauseMedia();
     if (opMode !== MEDIAPLAYERYT) {
