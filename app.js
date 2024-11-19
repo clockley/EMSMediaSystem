@@ -1432,6 +1432,7 @@ function loadLocalMediaHandler(event) {
 }
 
 function loadedmetadataHandler(e) {
+    console.log("RERE")
     if (video.src === window.location.href || isImg(video.src)) {
         return;
     }
@@ -1686,7 +1687,19 @@ async function createMediaWindow() {
     if (pidController) {
         pidController.reset();
     }
-    video.audioTracks[0].enabled = false;
+
+    if (video.audioTracks && video.audioTracks[0]) {
+        video.audioTracks[0].enabled = false;
+    }
+
+    video.addEventListener('loadedmetadata', () => {
+        video.audioTracks[0].enabled = false;
+    }, { once: true });
+
+    if (video.audioTracks && video.audioTracks[0]) {
+        video.audioTracks[0].enabled = false;
+    }
+
     video.muted=false;
     unPauseMedia();
     if (opMode !== MEDIAPLAYERYT) {
