@@ -1,7 +1,7 @@
 {
   "name": "emsmediasystem",
   "version": "4.0.1",
-  "description": "This program simplifies weekly music management.",
+  "description": "A simple media player",
   "main": "main.mjs",
   "scripts": {
     "start": "node node_modules/electron-nightly/cli.js .",
