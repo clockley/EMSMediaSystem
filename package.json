@@ -1,5 +1,5 @@
 {
-  "name": "EJaxMediaSystem",
+  "name": "emsmediasystem",
   "version": "4.0.1",
   "description": "This program simplifies weekly music management.",
   "main": "main.mjs",
