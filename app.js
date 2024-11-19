@@ -649,7 +649,7 @@ function playMedia(e) {
         e.target = document.getElementById("mediaWindowPlayButton");
     }
     fileEnded = false;
-    if (opMode === MEDIAPLAYER && encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
+    if (opMode === MEDIAPLAYER && mediaFile !== decodeURI(removeFileProtocol(video.src))) {
         saveMediaFile();
     }
 
@@ -1289,7 +1289,7 @@ function saveMediaFile() {
             }
             if (!playingMediaAudioOnly && mdfileElement.files) {
                 let uncachedLoad;
-                if (uncachedLoad = (encodeURI(mediaFile) !== removeFileProtocol(video.src))) {
+                if (uncachedLoad = (mediaFile !== decodeURI(removeFileProtocol(video.src)))) {
                     video.setAttribute("src", mediaFile);
                 }
                 video.id = "preview";
