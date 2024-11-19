@@ -654,8 +654,10 @@ function playMedia(e) {
 
     const mdFIle = document.getElementById("mdFile");
 
-    if (isPlaying === false && mdFIle.value === "" && opMode !== MEDIAPLAYER) {
-        return;
+    if (mediaFile !== decodeURI(removeFileProtocol(video.src))) {
+        if (isPlaying === false && mdFIle.value === "" && opMode !== MEDIAPLAYER) {
+            return;
+        }
     }
 
     if (mdFIle.value === "" && !playingMediaAudioOnly) {
@@ -670,8 +672,8 @@ function playMedia(e) {
             localTimeStampUpdateIsRunning = false;
             return;
         } else if (!isPlaying && video.src !== null && video.src !== '' && saveMediaFile.fileInpt != null) {
-            let t1 = encodeURI(saveMediaFile.fileInpt[0].name);
-            let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
+            let t1 = saveMediaFile.fileInpt[0].name;
+            let t2 = basename(removeFileProtocol(decodeURI(video.src)))
             if (t1 == null || t2 == null || t1 !== t2) {
                 return;
             } else {
