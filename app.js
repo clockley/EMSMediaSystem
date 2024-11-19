@@ -503,7 +503,7 @@ function playMedia(e) {
         }
         if (audioOnlyFile) {
             ipcRenderer.send("localMediaState", 0, "play");
-            addFilenameToTitlebar(mediaFile);
+            addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
             isPlaying = true;
             video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
