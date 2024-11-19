@@ -738,9 +738,6 @@ function playMedia(e) {
         }
         localTimeStampUpdateIsRunning = false;
         if (mediaFile !== decodeURI(removeFileProtocol(video.src))) {
-            video.src = mediaFile;
-            video.load();
-            console.log("XLM");
             waitForMetadata().then(saveMediaFile);
         }
     }
@@ -1328,7 +1325,7 @@ function restoreMediaFile() {
 
 function installEvents() {
     document.getElementById("MdPlyrRBtnFrmID").addEventListener('click', setSBFormMediaPlayer, { passive: true });
-    //document.getElementById("YtPlyrRBtnFrmID").addEventListener('click', setSBFormYouTubeMediaPlayer, { passive: true });
+    document.getElementById("YtPlyrRBtnFrmID").addEventListener('click', setSBFormYouTubeMediaPlayer, { passive: true });
     //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
 
     document.addEventListener('keydown', (event) => {
