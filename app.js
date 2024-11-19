@@ -211,7 +211,7 @@ class PIDController {
         if (!this.video || this.video.paused || this.video.seeking) {
             return;
         }
-     
+    
         if (this.isFirstAdjustment || this.lastWallTime === null) {
             this.lastWallTime = wallNow;
             this.lastUpdateTime = now;
@@ -220,37 +220,31 @@ class PIDController {
             this.updateSystemMetrics(timeDifference, wallNow);
             return timeDifference;
         }
-     
+    
         const wallTimeDelta = wallNow - this.lastWallTime;
-     
+    
         if (wallTimeDelta > this.maxTimeGap) {
+            pidSeeking = true;
             this.video.currentTime = targetTime;
-            this.reset();
             this.lastWallTime = wallNow;
             this.isFirstAdjustment = false;
             const timeDifference = targetTime - this.video.currentTime;
             this.updateSystemMetrics(timeDifference, wallNow);
             return timeDifference;
         }
-        
+    
         const deltaTime = (now - this.lastUpdateTime) / 1000;
         this.lastUpdateTime = now;
         this.lastWallTime = wallNow;
-        
+    
         const timeDifference = targetTime - this.video.currentTime;
         const timeDifferenceAbs = Math.abs(timeDifference);
-     
-        if (timeDifferenceAbs > this.fastSyncThreshold) {
-            this.video.currentTime = targetTime;
-            this.updateSystemMetrics(timeDifference, wallNow);
-            return timeDifference;
-        }
-     
+    
         this.updateSystemMetrics(timeDifference, wallNow);
-     
+    
         const historicalAdjustment = this.calculateHistoricalAdjustment(timeDifference, deltaTime);
         let finalAdjustment = historicalAdjustment;
-     
+    
         if (this.mlEnabled) {
             const features = [
                 timeDifference,
@@ -259,37 +253,40 @@ class PIDController {
                 this.overshoots,
                 deltaTime
             ];
-            
+    
             const mlAdjustment = this.predictMLAdjustment(features);
-            finalAdjustment = (mlAdjustment * this.mlConfidence) + 
+            finalAdjustment = (mlAdjustment * this.mlConfidence) +
                              (historicalAdjustment * this.historicalConfidence);
-     
+    
             this.trainML({
                 features,
                 result: timeDifference,
                 adjustment: mlAdjustment
             });
         }
-     
+    
         const currentSettings = this.performancePatterns[this.currentPattern];
         const maxRate = currentSettings.maxRate;
         const minRate = 2 - maxRate;
         let playbackRate = 1.0 + finalAdjustment;
         playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
-     
+    
         if (timeDifferenceAbs <= this.synchronizationThreshold) {
             playbackRate = 1.0;
             this.integral = 0;
         }
-     
+    
         if (!isNaN(playbackRate)) {
             this.video.playbackRate = playbackRate;
         }
-     
+    
         return timeDifference;
-     }
+    }
 
     reset() {
+        if (!isActiveMediaWindow()) {
+            return;
+        }
         this.lastError = 0;
         this.integral = 0;
         this.lastTimeDifference = 0;
@@ -556,6 +553,7 @@ function resetPIDOnSeek() {
 
 function hybridSync(targetTime) {
     if (audioOnlyFile) return;
+    if (!isActiveMediaWindow()) return;
     if (!activeLiveStream) {
         pidController.adjustPlaybackRate(targetTime);
     }
@@ -644,6 +642,7 @@ function waitForMetadata() {
 
 function playMedia(e) {
     startTime = video.currentTime;
+    targetTime = startTime;
     if (e === undefined && audioOnlyFile && opMode === MEDIAPLAYER) {
         e = {};
         e.target = document.getElementById("mediaWindowPlayButton");
@@ -734,8 +733,9 @@ function playMedia(e) {
             audioOnlyFile = false;
         }
         localTimeStampUpdateIsRunning = false;
-        if (mediaFile !== decodeURI(removeFileProtocol(video.src)))
+        if (mediaFile !== decodeURI(removeFileProtocol(video.src))) {
             waitForMetadata().then(saveMediaFile);
+        }
     }
     updateDynUI();
 }
@@ -1531,7 +1531,6 @@ function endLocalMedia() {
 }
 
 function pauseLocalMedia(event) {
-    pidController.reset();
     if (mediaSessionPause) {
         ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
         return;
@@ -1706,9 +1705,11 @@ async function createMediaWindow() {
     }
 
     video.muted=false;
+    pidSeeking = true;
     unPauseMedia();
     if (opMode !== MEDIAPLAYERYT) {
         if (video !== null && !isImgFile) {
+            pidSeeking = true;
             await video.play();
         }
     }
