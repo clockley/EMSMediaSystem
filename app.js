@@ -36,97 +36,281 @@ let isActiveMediaWindowCache = false;
 class PIDController {
     constructor(video) {
         this.video = video;
+       
+        this.kP = 0.6;
+        this.kI = 0.08;
+        this.kD = 0.12;
+        
+        this.patterns = {
+            STABLE: 'stable',
+            OSCILLATING: 'oscillating', 
+            LAGGING: 'lagging',
+            SYSTEM_STRESS: 'systemStress'
+        };
+
+        this.performancePatterns = {
+            [this.patterns.STABLE]: {
+                kP: 0.6, kI: 0.08, kD: 0.12,
+                maxRate: 1.1, threshold: 0.033
+            },
+            [this.patterns.OSCILLATING]: {
+                kP: 0.3, kI: 0.05, kD: 0.2,
+                maxRate: 1.05, threshold: 0.05
+            },
+            [this.patterns.LAGGING]: {
+                kP: 0.8, kI: 0.1, kD: 0.05,
+                maxRate: 1.2, threshold: 0.066
+            },
+            [this.patterns.SYSTEM_STRESS]: {
+                kP: 0.4, kI: 0.02, kD: 0.08,
+                maxRate: 1.05, threshold: 0.1
+            }
+        };
+        
+        this.performanceHistory = [];
+        this.mlHistory = [];
+        this.mlEnabled = false;
+        this.mlConfidence = 0;
+        this.historicalConfidence = 1;
+        this.minMLExamples = 50;
+        this.weights = new Float32Array(5).fill(0.2);
+        this.learningRate = 0.01;
+        
+        this.systemLag = 0;
+        this.overshoots = 0;
+        this.avgResponseTime = 0;
+        this.currentPattern = this.patterns.STABLE;
+        
+        this.lastWallTime = null;
+        this.maxTimeGap = 1000;
+        
+        this.synchronizationThreshold = 0.005;
+        this.maxIntegralError = 0.5;
+        this.fastSyncThreshold = 0.033;
+        
+        this.maxHistoryLength = 30;
+        this.isFirstAdjustment = true;
         this.reset();
-        
-        this.kP = 0.8;
-        this.kI = 0.1;
-        this.kD = 0.15;
-        
-        this.synchronizationThreshold = 0.01;
-        
-        this.maxIntegralError = 1.0;
-        this.fastSyncThreshold = 0.5;
-        this.initialSyncComplete = false;
     }
+
+    predictMLAdjustment(features) {
+        return features.reduce((sum, val, i) => sum + val * this.weights[i], 0);
+    }
+
+    trainML(example) {
+        this.mlHistory.push(example);
+        if (this.mlHistory.length > this.maxHistoryLength) {
+            this.mlHistory.shift();
+        }
+
+        const prediction = this.predictMLAdjustment(example.features);
+        const error = example.result - prediction;
+        
+        example.features.forEach((feature, i) => {
+            this.weights[i] += this.learningRate * error * feature;
+        });
+
+        const recentPredictions = this.mlHistory.slice(-10);
+        const avgError = recentPredictions.reduce((sum, ex) => {
+            const pred = this.predictMLAdjustment(ex.features);
+            return sum + Math.abs(ex.result - pred);
+        }, 0) / recentPredictions.length;
+
+        this.mlConfidence = Math.max(0, 1 - avgError);
+        this.historicalConfidence = 1 - this.mlConfidence;
+
+        if (this.mlHistory.length >= this.minMLExamples && this.mlConfidence > 0.6) {
+            this.mlEnabled = true;
+        }
+    }
+
+    detectPattern() {
+        if (this.performanceHistory.length < 10) return;
+
+        const recentHistory = this.performanceHistory.slice(-10);
+        const variance = this.calculateVariance(recentHistory.map(p => p.timeDifference));
+        const trend = this.calculateTrend(recentHistory.map(p => p.timeDifference));
+        
+        if (variance > 0.1 && this.overshoots > 3) {
+            this.currentPattern = this.patterns.OSCILLATING;
+        } else if (trend > 0.05 || this.avgResponseTime > 0.15) {
+            this.currentPattern = this.patterns.LAGGING;
+        } else if (this.systemLag > 100 || this.avgResponseTime > 0.2) {
+            this.currentPattern = this.patterns.SYSTEM_STRESS;
+        } else {
+            this.currentPattern = this.patterns.STABLE;
+        }
+
+        this.applyPatternSettings();
+    }
+
+    calculateVariance(values) {
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        const squareDiffs = values.map(value => Math.pow(value - mean, 2));
+        return squareDiffs.reduce((a, b) => a + b, 0) / values.length;
+    }
+
+    calculateTrend(values) {
+        let trend = 0;
+        for (let i = 1; i < values.length; i++) {
+            trend += values[i] - values[i-1];
+        }
+        return trend / values.length;
+    }
+
+    applyPatternSettings() {
+        const settings = this.performancePatterns[this.currentPattern];
+        this.kP = settings.kP;
+        this.kI = settings.kI;
+        this.kD = settings.kD;
+        this.fastSyncThreshold = settings.threshold;
+    }
+
+    updateSystemMetrics(timeDifference, timestamp) {
+        this.performanceHistory.push({
+            timeDifference,
+            timestamp,
+            responseTime: this.performanceHistory.length > 0 ? 
+                timestamp - this.performanceHistory[this.performanceHistory.length - 1].timestamp : 0
+        });
+
+        if (this.performanceHistory.length > this.maxHistoryLength) {
+            this.performanceHistory.shift();
+        }
+
+        if (this.performanceHistory.length > 1) {
+            const prevDiff = this.performanceHistory[this.performanceHistory.length - 2].timeDifference;
+            if (Math.sign(timeDifference) !== Math.sign(prevDiff)) {
+                this.overshoots++;
+            }
+
+            const recentPerformance = this.performanceHistory.slice(-5);
+            this.systemLag = recentPerformance.reduce((acc, curr) => acc + curr.responseTime, 0) / 5;
+            this.avgResponseTime = Math.abs(recentPerformance.reduce((acc, curr) => 
+                acc + curr.timeDifference, 0)) / 5;
+        }
+
+        this.detectPattern();
+    }
+
+    calculateHistoricalAdjustment(timeDifference, deltaTime) {
+        this.integral += timeDifference * deltaTime;
+        this.integral = Math.max(-this.maxIntegralError, Math.min(this.maxIntegralError, this.integral));
+
+        const derivative = (timeDifference - this.lastTimeDifference) / deltaTime;
+        this.lastTimeDifference = timeDifference;
+
+        return (this.kP * timeDifference) + 
+               (this.kI * this.integral) + 
+               (this.kD * derivative);
+    }
+
+    adjustPlaybackRate(targetTime) {
+        const now = performance.now();
+        const wallNow = Date.now();
+        if (!this.video || this.video.paused || this.video.seeking) {
+            return;
+        }
+     
+        if (this.isFirstAdjustment || this.lastWallTime === null) {
+            this.lastWallTime = wallNow;
+            this.lastUpdateTime = now;
+            this.isFirstAdjustment = false;
+            const timeDifference = targetTime - this.video.currentTime;
+            this.updateSystemMetrics(timeDifference, wallNow);
+            return timeDifference;
+        }
+     
+        const wallTimeDelta = wallNow - this.lastWallTime;
+     
+        if (wallTimeDelta > this.maxTimeGap) {
+            this.video.currentTime = targetTime;
+            this.reset();
+            this.lastWallTime = wallNow;
+            this.isFirstAdjustment = false;
+            const timeDifference = targetTime - this.video.currentTime;
+            this.updateSystemMetrics(timeDifference, wallNow);
+            return timeDifference;
+        }
+        
+        const deltaTime = (now - this.lastUpdateTime) / 1000;
+        this.lastUpdateTime = now;
+        this.lastWallTime = wallNow;
+        
+        const timeDifference = targetTime - this.video.currentTime;
+        const timeDifferenceAbs = Math.abs(timeDifference);
+     
+        if (timeDifferenceAbs > this.fastSyncThreshold) {
+            this.video.currentTime = targetTime;
+            this.updateSystemMetrics(timeDifference, wallNow);
+            return timeDifference;
+        }
+     
+        this.updateSystemMetrics(timeDifference, wallNow);
+     
+        const historicalAdjustment = this.calculateHistoricalAdjustment(timeDifference, deltaTime);
+        let finalAdjustment = historicalAdjustment;
+     
+        if (this.mlEnabled) {
+            const features = [
+                timeDifference,
+                this.systemLag,
+                this.avgResponseTime,
+                this.overshoots,
+                deltaTime
+            ];
+            
+            const mlAdjustment = this.predictMLAdjustment(features);
+            finalAdjustment = (mlAdjustment * this.mlConfidence) + 
+                             (historicalAdjustment * this.historicalConfidence);
+     
+            this.trainML({
+                features,
+                result: timeDifference,
+                adjustment: mlAdjustment
+            });
+        }
+     
+        const currentSettings = this.performancePatterns[this.currentPattern];
+        const maxRate = currentSettings.maxRate;
+        const minRate = 2 - maxRate;
+        let playbackRate = 1.0 + finalAdjustment;
+        playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
+     
+        if (timeDifferenceAbs <= this.synchronizationThreshold) {
+            playbackRate = 1.0;
+            this.integral = 0;
+        }
+     
+        if (!isNaN(playbackRate)) {
+            this.video.playbackRate = playbackRate;
+        }
+     
+        return timeDifference;
+     }
 
     reset() {
         this.lastError = 0;
         this.integral = 0;
         this.lastTimeDifference = 0;
-        this.initialSyncComplete = false;
         this.lastUpdateTime = performance.now();
-    }
-
-    adjustPlaybackRate(targetTime) {
-        const now = performance.now();
-        const deltaTime = (now - this.lastUpdateTime) / 1000;
-        this.lastUpdateTime = now;
+        this.isFirstAdjustment = true;
+        this.lastWallTime = null;
         
-        const timeDifference = targetTime - this.video.currentTime;
-        const timeDifferenceAbs = Math.abs(timeDifference);
+        this.performanceHistory = [];
+        this.overshoots = 0;
+        this.systemLag = 0;
+        this.avgResponseTime = 0;
+        this.currentPattern = this.patterns.STABLE;
 
-        if (!this.initialSyncComplete && timeDifferenceAbs > this.synchronizationThreshold) {
-            this.video.currentTime = targetTime;
-            this.reset();
-            this.initialSyncComplete = true;
-            return timeDifference;
-        }
-
-        if (timeDifferenceAbs > this.fastSyncThreshold) {
-            this.video.currentTime = targetTime;
-            this.reset();
-            return timeDifference;
-        }
-
-        this.integral += timeDifference * deltaTime;
-        this.integral = Math.max(-this.maxIntegralError, 
-                               Math.min(this.maxIntegralError, this.integral));
-
-        const derivative = (timeDifference - this.lastTimeDifference) / deltaTime;
-        this.lastTimeDifference = timeDifference;
-
-        let adjustment = (this.kP * timeDifference) + 
-                        (this.kI * this.integral) + 
-                        (this.kD * derivative);
-
-        let minRate = timeDifferenceAbs > 0.2 ? 0.5 : 0.8;
-        let maxRate = timeDifferenceAbs > 0.2 ? 1.5 : 1.2;
-
-        let playbackRate = 1.0 + adjustment;
-        playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
-
-        if (timeDifferenceAbs <= this.synchronizationThreshold) {
-            playbackRate = 1.0;
-            this.integral = 0;
-        }
-
-        if (!isNaN(playbackRate)) {
-            this.video.playbackRate = playbackRate;
-        }
-
-        return timeDifference;
-    }
-
-    // Auto-tuning mechanism for PID parameters
-    adjustPIDGains(timeDifference) {
-        const absError = Math.abs(timeDifference);
-        
-        // Dynamically adjust gains based on error magnitude
-        if (absError > 0.3) {
-            this.kP = 0.8;  // More aggressive for large errors
-            this.kI = 0.1;
-            this.kD = 0.15;
-        } else if (absError > 0.1) {
-            this.kP = 0.5;  // Moderate response for medium errors
-            this.kI = 0.05;
-            this.kD = 0.1;
-        } else {
-            this.kP = 0.3;  // Gentler response for fine-tuning
-            this.kI = 0.02;
-            this.kD = 0.05;
-        }
+        this.mlEnabled = false;
+        this.mlConfidence = 0;
+        this.historicalConfidence = 1;
+        this.weights = new Float32Array(5).fill(0.2);
+        this.mlHistory = [];
     }
 }
+
 let pidController;
 
 const PAD = ['00','01','02','03','04','05','06','07','08','09'];
@@ -225,7 +409,7 @@ function updateTimestampUI() {
 }
 
 const boundUpdateTimestampUI = updateTimestampUI.bind();
-
+let lastUpdateTime = 0; 
 function handleTimeMessage(_, message) {
     const now = Date.now();
 
@@ -234,15 +418,16 @@ function handleTimeMessage(_, message) {
         requestAnimationFrame(boundUpdateTimestampUI);
     }
 
-    targetTime = message[2] - (((now - message[3]) + (Date.now() - now)) * .001);
-    message = null;
-    if (now - this.lastUpdateTime > 0.5) {
-        if (!video.paused && video !== null && !video.seeking) {
+    // Ensure `lastUpdateTime` is defined and `this` refers to the correct context
+    if (now - lastUpdateTime > 500) {  // Use 500 milliseconds instead of 0.5
+        if (video && !video.paused && !video.seeking) {
+            targetTime = message[2] - (((now - message[3]) + (Date.now() - now)) * 0.001);
             hybridSync(targetTime);
-            this.lastUpdateTime = now;
+            lastUpdateTime = now;
         }
     }
 }
+
 
 function installIPCHandler() {
     ipcRenderer.on('timeRemaining-message', handleTimeMessage);
@@ -371,7 +556,7 @@ function resetPIDOnSeek() {
 function hybridSync(targetTime) {
     if (audioOnlyFile) return;
     if (!activeLiveStream) {
-        pidController.adjustPID(pidController.adjustPlaybackRate(targetTime));
+        pidController.adjustPlaybackRate(targetTime);
     }
 }
 
@@ -1257,6 +1442,8 @@ function seekLocalMedia(e) {
     if (pidSeeking) {
         pidSeeking = false;
         e.preventDefault();
+    } else {
+        pidController.reset();
     }
     if (video.src === window.location.href) {
         e.preventDefault();
@@ -1277,6 +1464,8 @@ function seekingLocalMedia(e) {
     if (pidSeeking) {
         pidSeeking = false;
         e.preventDefault();
+    } else {
+        pidController.reset();
     }
     if (dontSyncRemote === true) {
         return;
@@ -1336,6 +1525,7 @@ function endLocalMedia() {
 }
 
 function pauseLocalMedia(event) {
+    pidController.reset();
     if (mediaSessionPause) {
         ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
         return;
