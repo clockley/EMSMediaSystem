@@ -614,10 +614,6 @@ function setSBFormYouTubeMediaPlayer() {
         <br>
     `;
 
-    /*const vc = document.getElementById('volumeControl');
-    vc.addEventListener('input', handleVolumeChange);
-    vc.value = CrVL;*/
-
     if (mediaFile !== null && isLiveStream(mediaFile)) {
         document.getElementById("mdFile").value = mediaFile;
     }
@@ -905,11 +901,6 @@ const MEDIA_FORM_HTML = `
   </div>
 `;
 
-function handleVolumeChange(event) {
-    vlCtl(event.target.value);
-    CrVL = event.target.value;
-}
-
 function installDisplayChangeHandler() {
     if (installDisplayChangeHandler.initialized) return;
     
@@ -946,9 +937,6 @@ function setSBFormMediaPlayer() {
         }
     });
 
-    /*const vc = document.getElementById('volumeControl');
-    vc.addEventListener('input', handleVolumeChange);
-    vc.value = CrVL;*/
     const mdFile = document.getElementById("mdFile");
     mdFile.addEventListener("change", saveMediaFile);
     const isActiveMW = isActiveMediaWindow();
