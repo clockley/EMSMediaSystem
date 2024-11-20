@@ -796,6 +796,10 @@ function playMedia(e) {
                     video.src = '';
                 return;
             }
+        } else if (opMode === MEDIAPLAYERYT) {
+            audioOnlyFile = false;
+            createMediaWindow();
+            return;
         }
         if (audioOnlyFile) {
             ipcRenderer.send("localMediaState", 0, "play");
