@@ -113,14 +113,16 @@ class PIDController {
 
         if (this.performanceHistory.length > 1) {
             const prevDiff = this.performanceHistory[this.performanceHistory.length - 2].timeDifference;
-            if (Math.sign(timeDifference) !== Math.sign(prevDiff)) {
+            if ((timeDifference > 0 && prevDiff < 0) || (timeDifference < 0 && prevDiff > 0)) {
                 this.overshoots++;
             }
 
             const recentPerformance = this.performanceHistory.slice(-5);
             this.systemLag = recentPerformance.reduce((acc, curr) => acc + curr.responseTime, 0) / 5;
-            this.avgResponseTime = Math.abs(recentPerformance.reduce((acc, curr) =>
-                acc + curr.timeDifference, 0)) / 5;
+            this.avgResponseTime = ((recentPerformance.reduce((acc, curr) =>
+                acc + curr.timeDifference, 0) < 0) ? 
+                -recentPerformance.reduce((acc, curr) => acc + curr.timeDifference, 0) : 
+                recentPerformance.reduce((acc, curr) => acc + curr.timeDifference, 0)) / 5;
         }
 
         this.detectPattern();
@@ -150,31 +152,48 @@ class PIDController {
 
         switch (this.currentPattern) {
             case STABLE:
-                this.adaptiveCoefficients.kP.value = Math.min(this.adaptiveCoefficients.kP.maxValue, this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate);
-                this.adaptiveCoefficients.kI.value = Math.min(this.adaptiveCoefficients.kI.maxValue, this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate);
-                this.adaptiveCoefficients.kD.value = Math.min(this.adaptiveCoefficients.kD.maxValue, this.adaptiveCoefficients.kD.value + this.adaptiveCoefficients.kD.adjustmentRate);
+                // Replace Math.min with ternary operators
+                this.adaptiveCoefficients.kP.value = (this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate > this.adaptiveCoefficients.kP.maxValue) ? 
+                    this.adaptiveCoefficients.kP.maxValue : this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate;
+                this.adaptiveCoefficients.kI.value = (this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate > this.adaptiveCoefficients.kI.maxValue) ?
+                    this.adaptiveCoefficients.kI.maxValue : this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate;
+                this.adaptiveCoefficients.kD.value = (this.adaptiveCoefficients.kD.value + this.adaptiveCoefficients.kD.adjustmentRate > this.adaptiveCoefficients.kD.maxValue) ?
+                    this.adaptiveCoefficients.kD.maxValue : this.adaptiveCoefficients.kD.value + this.adaptiveCoefficients.kD.adjustmentRate;
                 break;
             case OSCILLATING:
-                this.adaptiveCoefficients.kP.value = Math.max(this.adaptiveCoefficients.kP.minValue, this.adaptiveCoefficients.kP.value - this.adaptiveCoefficients.kP.adjustmentRate);
-                this.adaptiveCoefficients.kI.value = Math.max(this.adaptiveCoefficients.kI.minValue, this.adaptiveCoefficients.kI.value - this.adaptiveCoefficients.kI.adjustmentRate);
-                this.adaptiveCoefficients.kD.value = Math.min(this.adaptiveCoefficients.kD.maxValue, this.adaptiveCoefficients.kD.value + this.adaptiveCoefficients.kD.adjustmentRate);
+                // Replace Math.max/min with ternary operators
+                this.adaptiveCoefficients.kP.value = (this.adaptiveCoefficients.kP.value - this.adaptiveCoefficients.kP.adjustmentRate < this.adaptiveCoefficients.kP.minValue) ?
+                    this.adaptiveCoefficients.kP.minValue : this.adaptiveCoefficients.kP.value - this.adaptiveCoefficients.kP.adjustmentRate;
+                this.adaptiveCoefficients.kI.value = (this.adaptiveCoefficients.kI.value - this.adaptiveCoefficients.kI.adjustmentRate < this.adaptiveCoefficients.kI.minValue) ?
+                    this.adaptiveCoefficients.kI.minValue : this.adaptiveCoefficients.kI.value - this.adaptiveCoefficients.kI.adjustmentRate;
+                this.adaptiveCoefficients.kD.value = (this.adaptiveCoefficients.kD.value + this.adaptiveCoefficients.kD.adjustmentRate > this.adaptiveCoefficients.kD.maxValue) ?
+                    this.adaptiveCoefficients.kD.maxValue : this.adaptiveCoefficients.kD.value + this.adaptiveCoefficients.kD.adjustmentRate;
                 break;
             case LAGGING:
-                this.adaptiveCoefficients.kP.value = Math.min(this.adaptiveCoefficients.kP.maxValue, this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate);
-                this.adaptiveCoefficients.kI.value = Math.min(this.adaptiveCoefficients.kI.maxValue, this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate);
-                this.adaptiveCoefficients.kD.value = Math.max(this.adaptiveCoefficients.kD.minValue, this.adaptiveCoefficients.kD.value - this.adaptiveCoefficients.kD.adjustmentRate);
+                this.adaptiveCoefficients.kP.value = (this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate > this.adaptiveCoefficients.kP.maxValue) ?
+                    this.adaptiveCoefficients.kP.maxValue : this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate;
+                this.adaptiveCoefficients.kI.value = (this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate > this.adaptiveCoefficients.kI.maxValue) ?
+                    this.adaptiveCoefficients.kI.maxValue : this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate;
+                this.adaptiveCoefficients.kD.value = (this.adaptiveCoefficients.kD.value - this.adaptiveCoefficients.kD.adjustmentRate < this.adaptiveCoefficients.kD.minValue) ?
+                    this.adaptiveCoefficients.kD.minValue : this.adaptiveCoefficients.kD.value - this.adaptiveCoefficients.kD.adjustmentRate;
                 break;
             case SYSTEM_STRESS:
-                this.adaptiveCoefficients.kP.value = Math.max(this.adaptiveCoefficients.kP.minValue, this.adaptiveCoefficients.kP.value - this.adaptiveCoefficients.kP.adjustmentRate);
-                this.adaptiveCoefficients.kI.value = Math.max(this.adaptiveCoefficients.kI.minValue, this.adaptiveCoefficients.kI.value - this.adaptiveCoefficients.kI.adjustmentRate);
-                this.adaptiveCoefficients.kD.value = Math.max(this.adaptiveCoefficients.kD.minValue, this.adaptiveCoefficients.kD.value - this.adaptiveCoefficients.kD.adjustmentRate);
+                this.adaptiveCoefficients.kP.value = (this.adaptiveCoefficients.kP.value - this.adaptiveCoefficients.kP.adjustmentRate < this.adaptiveCoefficients.kP.minValue) ?
+                    this.adaptiveCoefficients.kP.minValue : this.adaptiveCoefficients.kP.value - this.adaptiveCoefficients.kP.adjustmentRate;
+                this.adaptiveCoefficients.kI.value = (this.adaptiveCoefficients.kI.value - this.adaptiveCoefficients.kI.adjustmentRate < this.adaptiveCoefficients.kI.minValue) ?
+                    this.adaptiveCoefficients.kI.minValue : this.adaptiveCoefficients.kI.value - this.adaptiveCoefficients.kI.adjustmentRate;
+                this.adaptiveCoefficients.kD.value = (this.adaptiveCoefficients.kD.value - this.adaptiveCoefficients.kD.adjustmentRate < this.adaptiveCoefficients.kD.minValue) ?
+                    this.adaptiveCoefficients.kD.minValue : this.adaptiveCoefficients.kD.value - this.adaptiveCoefficients.kD.adjustmentRate;
                 break;
         }
     }
 
     calculateVariance(values) {
         const mean = values.reduce((a, b) => a + b, 0) / values.length;
-        const squareDiffs = values.map(value => Math.pow(value - mean, 2));
+        const squareDiffs = values.map(value => {
+            const diff = value - mean;
+            return diff * diff;
+        });
         return squareDiffs.reduce((a, b) => a + b, 0) / values.length;
     }
 
@@ -188,7 +207,8 @@ class PIDController {
 
     calculateHistoricalAdjustment(timeDifference, deltaTime) {
         this.integral += timeDifference * deltaTime;
-        this.integral = Math.max(-this.maxIntegralError, Math.min(this.maxIntegralError, this.integral));
+        this.integral = (this.integral < -this.maxIntegralError) ? -this.maxIntegralError :
+            (this.integral > this.maxIntegralError) ? this.maxIntegralError : this.integral;
 
         const derivative = (timeDifference - this.lastTimeDifference) / deltaTime;
         this.lastTimeDifference = timeDifference;
@@ -231,22 +251,21 @@ class PIDController {
         this.lastWallTime = wallNow;
     
         const timeDifference = targetTime - this.video.currentTime;
-        const timeDifferenceAbs = Math.abs(timeDifference);
+        const timeDifferenceAbs = timeDifference < 0 ? -timeDifference : timeDifference;
     
         this.updateSystemMetrics(timeDifference, wallNow);
     
         const historicalAdjustment = this.calculateHistoricalAdjustment(timeDifference, deltaTime);
         let finalAdjustment = historicalAdjustment;
     
-        // Perform fast sync if the time difference is greater than the threshold
         if (timeDifferenceAbs > this.fastSyncThreshold) {
             if (timeDifference > 0) {
-                // Local video is behind, speed it up
-                const fastSyncRate = Math.min(this.maxFastSyncRate, 1 + (timeDifferenceAbs / deltaTime));
+                const fastSyncRate = (this.maxFastSyncRate < 1 + (timeDifferenceAbs / deltaTime)) ?
+                    this.maxFastSyncRate : 1 + (timeDifferenceAbs / deltaTime);
                 this.video.playbackRate = fastSyncRate;
             } else {
-                // Local video is ahead, slow it down
-                const fastSyncRate = Math.max(1 / this.maxFastSyncRate, 1 - (timeDifferenceAbs / deltaTime));
+                const fastSyncRate = (1 / this.maxFastSyncRate > 1 - (timeDifferenceAbs / deltaTime)) ?
+                    1 / this.maxFastSyncRate : 1 - (timeDifferenceAbs / deltaTime);
                 this.video.playbackRate = fastSyncRate;
             }
             return timeDifference;
@@ -256,19 +275,22 @@ class PIDController {
         const maxRate = currentSettings.maxRate;
         const minRate = 2 - maxRate;
         let playbackRate = 1.0 + finalAdjustment;
-        playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
+        
+        playbackRate = (playbackRate < minRate) ? minRate : 
+                      (playbackRate > maxRate) ? maxRate : playbackRate;
     
         if (timeDifferenceAbs <= this.synchronizationThreshold) {
             playbackRate = 1.0;
             this.integral = 0;
         }
     
-        if (!isNaN(playbackRate)) {
+        if (playbackRate === playbackRate) {
             this.video.playbackRate = playbackRate;
         }
     
         return timeDifference;
     }
+
     reset() {
         if (!isActiveMediaWindow()) {
             return;
@@ -416,8 +438,7 @@ function handleTimeMessage(_, message) {
         requestAnimationFrame(boundUpdateTimestampUI);
     }
 
-    // Ensure `lastUpdateTime` is defined and `this` refers to the correct context
-    if (now - lastUpdateTime > 500) {  // Use 500 milliseconds instead of 0.5
+    if (now - lastUpdateTime > 500) {
         if (video && !video.paused && !video.seeking) {
             targetTime = message[2] - (((now - message[3]) + (Date.now() - now)) * 0.001);
             hybridSync(targetTime);
