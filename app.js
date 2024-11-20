@@ -1216,8 +1216,8 @@ function setSBFormMediaPlayer() {
 
     const loopctl = document.getElementById("mdLpCtlr");
     loopctl.addEventListener('change', (event) => {
+        video.loop = event.target.checked;
         if (isActiveMediaWindow()) {
-            video.loop = event.target.checked;
             ipcRenderer.invoke('set-media-loop-status', event.target.checked);
         }
     });
