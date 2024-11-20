@@ -32,6 +32,11 @@ let img = null;
 const MEDIAPLAYER = 0, MEDIAPLAYERYT = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
 const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 let isActiveMediaWindowCache = false;
+const SECONDS = new Int32Array(1);
+const SECONDSFLOAT = new Float64Array(1);
+const textNode = document.createTextNode('00:00:00.000');
+
+const updatePending = new Int32Array(1);
 
 class PIDController {
     constructor(video) {
@@ -389,16 +394,6 @@ const PAD = ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09'];
 const NUM_BUFFER = new Int32Array(4);
 const REM_BUFFER = new Int32Array(1);
 
-function secondsToTime(seconds) {
-    NUM_BUFFER[0] = ((seconds | 0) / 3600) | 0;
-    REM_BUFFER[0] = (seconds | 0) % 3600;
-    NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
-    NUM_BUFFER[2] = REM_BUFFER[0] % 60;
-    NUM_BUFFER[3] = ((seconds - (seconds | 0)) * 1000 + 0.5) | 0; // ms
-
-    return `${NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0]}:${NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1]}:${NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2]}.${NUM_BUFFER[3] < 10 ? '00' : NUM_BUFFER[3] < 100 ? '0' : ''}${NUM_BUFFER[3]}`;
-}
-
 function isActiveMediaWindow() {
     return isActiveMediaWindowCache;
 }
@@ -426,7 +421,23 @@ function removeFilenameFromTitlebar() {
 function update(time) {
     if (time - lastUpdateTimeLocalPlayer >= 33.33) {
         if (mediaCntDnEle) {
-            mediaCntDnEle.textContent = secondsToTime(video.duration - video.currentTime);
+            SECONDSFLOAT[0] = video.duration - video.currentTime;
+            NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
+            REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
+            NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
+            NUM_BUFFER[2] = REM_BUFFER[0] % 60;
+            NUM_BUFFER[3] = ((SECONDSFLOAT - (SECONDSFLOAT | 0)) * 1000 + 0.5) | 0;
+            if (!updatePending[0]) {
+                updatePending[0] = 1;
+                requestAnimationFrame(() => {
+                    try {
+                        textNode.data = `${NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0]}:${NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1]}:${NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2]}.${NUM_BUFFER[3] < 10 ? '00' : NUM_BUFFER[3] < 100 ? '0' : ''}${NUM_BUFFER[3]}`;
+                    } catch (error) {
+                        console.error('Error updating timestamp UI', error);
+                    }
+                    updatePending[0] = 0;
+                });
+            }
         } else {
             localTimeStampUpdateIsRunning = false;
             return;
@@ -442,7 +453,12 @@ function update(time) {
 
 function updateTimestamp(oneShot) {
     if (oneShot && mediaCntDnEle) {
-        mediaCntDnEle.textContent = secondsToTime(video.duration - video.currentTime);
+        SECONDS[0] = video.duration - video.currentTime
+        NUM_BUFFER[0] = ((SECONDS[0] | 0) / 3600) | 0;
+        REM_BUFFER[0] = (SECONDS[0] | 0) % 3600;
+        NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
+        NUM_BUFFER[2] = REM_BUFFER[0] % 60;
+        NUM_BUFFER[3] = ((SECONDS - (SECONDS | 0)) * 1000 + 0.5) | 0;
         return;
     }
 
@@ -469,10 +485,16 @@ function updateTimestampUI(currentMessage) {
     if (mediaCntDnEle == null) {
         return;
     }
-    try {
-        mediaCntDnEle.textContent = currentMessage;
-    } catch (error) {
-        console.error('Error updating timestamp UI:', error);
+    if (!updatePending[0]) {
+        updatePending[0] = 1;
+        requestAnimationFrame(() => {
+            try {
+                textNode.data = currentMessage;
+            } catch (error) {
+                console.error('Error updating timestamp UI', error);
+            }
+            updatePending[0] = 0;
+        });
     }
 }
 
@@ -483,7 +505,13 @@ function handleTimeMessage(_, message) {
     const now = Date.now();
 
     if (opMode === MEDIAPLAYER) {
-        requestAnimationFrame(() => boundUpdateTimestampUI(secondsToTime(message[0])));
+        SECONDSFLOAT[0] = message[0];
+        NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
+        REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
+        NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
+        NUM_BUFFER[2] = REM_BUFFER[0] % 60;
+        NUM_BUFFER[3] = ((SECONDSFLOAT - (SECONDSFLOAT | 0)) * 1000 + 0.5) | 0;
+        requestAnimationFrame(() => boundUpdateTimestampUI(`${NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0]}:${NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1]}:${NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2]}.${NUM_BUFFER[3] < 10 ? '00' : NUM_BUFFER[3] < 100 ? '0' : ''}${NUM_BUFFER[3]}`));
     }
 
     // Perform timestamp calculations only if enough time has passed
@@ -601,10 +629,6 @@ function resetVideoState() {
 }
 
 function resetMediaCountdown() {
-    const mediaCntDn = document.getElementById("mediaCntDn");
-    if (mediaCntDn !== null) {
-        mediaCntDn.innerText = "00:00:00.000";
-    }
 }
 
 function updatePlayButtonOnMediaWindow() {
@@ -790,8 +814,6 @@ function playMedia(e) {
         ipcRenderer.send('close-media-window', 0);
         playingMediaAudioOnly = false;
         dontSyncRemote = true;
-        if (opMode === MEDIAPLAYER)
-            document.getElementById('mediaCntDn').textContent = "00:00:00.000";
         if (!audioOnlyFile)
             activeLiveStream = true;
         video.pause();
@@ -801,8 +823,6 @@ function playMedia(e) {
             removeFilenameFromTitlebar();
             activeLiveStream = false;
             saveMediaFile();
-            if (opMode === MEDIAPLAYER)
-                document.getElementById('mediaCntDn').textContent = "00:00:00.000";
 
             audioOnlyFile = false;
         }
@@ -860,12 +880,6 @@ function setSBFormYouTubeMediaPlayer() {
     }
     opMode = MEDIAPLAYERYT;
     ipcRenderer.send('set-mode', opMode);
-
-    if (!isActiveMediaWindow()) {
-        if (document.getElementById("mediaCntDn") !== null) {
-            document.getElementById("mediaCntDn").textContent = "00:00:00.000";
-        }
-    }
 
     dyneForm.innerHTML =
         `
@@ -1152,21 +1166,8 @@ const MEDIA_FORM_HTML = `
   </form>
   <br><br>
   <center><video disablePictureInPicture controls id="preview"></video></center>
-  <div id="cntdndiv">
-    <span id="mediaCntDn" style="
-      contain: layout style;
-      transform: translateX(50px);
-      will-change: transform;
-      top: 80%;
-      transform: translate(-50%, -50%);
-      color: red;
-      font-weight: bold;
-      font-family: 'Courier New', monospace;
-      text-align: center;
-      overflow: hidden;
-      user-select: none;
-      font-size: calc(1vw + 80%);
-      line-height: ${lineHeight};">00:00:00.000</span>
+  <div id="cntdndiv" style="display: flex; justify-content: center;">
+    <div id="mediaCntDn" style="contain: layout style; color: red; font-weight: bold; font-family: 'Courier New', monospace;"></div>
   </div>
 `;
 
@@ -1187,7 +1188,7 @@ function setSBFormMediaPlayer() {
     opMode = MEDIAPLAYER;
     ipcRenderer.send('set-mode', opMode);
     dyneForm.innerHTML = MEDIA_FORM_HTML;
-
+    mediaCntDn.appendChild(textNode);
     installDisplayChangeHandler();
     populateDisplaySelect();
 
@@ -1212,10 +1213,8 @@ function setSBFormMediaPlayer() {
     let plyBtn = document.getElementById("mediaWindowPlayButton");
     if (!isActiveMW && !playingMediaAudioOnly) {
         isPlaying = false;
-        document.getElementById("mediaCntDn").textContent = "00:00:00.000";
     } else {
         isPlaying = true;
-        document.getElementById('mediaCntDn').textContent = "00:00:00.000";
         if (typeof currentMediaFile === 'undefined') {
             currentMediaFile = mdFile.files
         } else {
@@ -1285,6 +1284,7 @@ function removeFileProtocol(filePath) {
 }
 
 function saveMediaFile() {
+    textNode.data="";
     const mdfileElement = document.getElementById("mdFile");
     if (!mdfileElement) {
         return;
@@ -1417,12 +1417,7 @@ function installEvents() {
                 }
                 mediaCntDnEle = document.getElementById('mediaCntDn');
                 updateTimestamp(false);
-                if (masterPauseState) {
-                    mediaCntDnEle.textContent = savedCurTime;
-                }
             } else {
-                if (mediaCntDnEle)
-                    savedCurTime = mediaCntDnEle.textContent;
                 mediaCntDnEle = null;
             }
         }
@@ -1572,15 +1567,9 @@ function endLocalMedia() {
     if (playingMediaAudioOnly) {
         video.src = '';
         playingMediaAudioOnly = false;
-        if (opMode === MEDIAPLAYER) {
-            document.getElementById('mediaCntDn').textContent = "00:00:00.000";
-        }
 
         if (video !== null) {
             video.currentTime = 0;
-        }
-        if (document.getElementById("mediaCntDn") !== null) {
-            document.getElementById("mediaCntDn").innerText = "00:00:00.000";
         }
 
         if (document.getElementById("mediaWindowPlayButton") !== null) {
@@ -1740,8 +1729,6 @@ async function createMediaWindow() {
         return;
     } else {
         playingMediaAudioOnly = false;
-        if (document.getElementById('mediaCntDn'))
-            document.getElementById('mediaCntDn').textContent = "00:00:00.000";
     }
 
     let strtVl = video.volume;
