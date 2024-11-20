@@ -37,9 +37,26 @@ class PIDController {
     constructor(video) {
         this.video = video;
 
-        this.kP = 0.6;
-        this.kI = 0.08;
-        this.kD = 0.12;
+        this.adaptiveCoefficients = {
+            kP: {
+                value: 0.6,
+                minValue: 0.3,
+                maxValue: 0.9,
+                adjustmentRate: 0.01
+            },
+            kI: {
+                value: 0.08,
+                minValue: 0.02,
+                maxValue: 0.2,
+                adjustmentRate: 0.005
+            },
+            kD: {
+                value: 0.12,
+                minValue: 0.05,
+                maxValue: 0.2,
+                adjustmentRate: 0.01
+            }
+        };
 
         this.patterns = {
             STABLE: 'stable',
@@ -50,32 +67,20 @@ class PIDController {
 
         this.performancePatterns = {
             [this.patterns.STABLE]: {
-                kP: 0.6, kI: 0.08, kD: 0.12,
                 maxRate: 1.1, threshold: 0.033
             },
             [this.patterns.OSCILLATING]: {
-                kP: 0.3, kI: 0.05, kD: 0.2,
                 maxRate: 1.05, threshold: 0.05
             },
             [this.patterns.LAGGING]: {
-                kP: 0.8, kI: 0.1, kD: 0.05,
                 maxRate: 1.2, threshold: 0.066
             },
             [this.patterns.SYSTEM_STRESS]: {
-                kP: 0.4, kI: 0.02, kD: 0.08,
                 maxRate: 1.05, threshold: 0.1
             }
         };
 
         this.performanceHistory = [];
-        this.mlHistory = [];
-        this.mlEnabled = false;
-        this.mlConfidence = 0;
-        this.historicalConfidence = 1;
-        this.minMLExamples = 50;
-        this.weights = new Float32Array(5).fill(0.2);
-        this.learningRate = 0.01;
-
         this.systemLag = 0;
         this.overshoots = 0;
         this.avgResponseTime = 0;
@@ -86,84 +91,12 @@ class PIDController {
 
         this.synchronizationThreshold = 0.005;
         this.maxIntegralError = 0.5;
-        this.fastSyncThreshold = 0.033;
+        this.fastSyncThreshold = 1; // Trigger fast sync if the absolute time difference is greater than 1 second
+        this.maxFastSyncRate = 10; // Maximum speed-up rate for fast sync
 
         this.maxHistoryLength = 30;
         this.isFirstAdjustment = true;
         this.reset();
-    }
-
-    predictMLAdjustment(features) {
-        return features.reduce((sum, val, i) => sum + val * this.weights[i], 0);
-    }
-
-    trainML(example) {
-        this.mlHistory.push(example);
-        if (this.mlHistory.length > this.maxHistoryLength) {
-            this.mlHistory.shift();
-        }
-
-        const prediction = this.predictMLAdjustment(example.features);
-        const error = example.result - prediction;
-
-        example.features.forEach((feature, i) => {
-            this.weights[i] += this.learningRate * error * feature;
-        });
-
-        const recentPredictions = this.mlHistory.slice(-10);
-        const avgError = recentPredictions.reduce((sum, ex) => {
-            const pred = this.predictMLAdjustment(ex.features);
-            return sum + Math.abs(ex.result - pred);
-        }, 0) / recentPredictions.length;
-
-        this.mlConfidence = Math.max(0, 1 - avgError);
-        this.historicalConfidence = 1 - this.mlConfidence;
-
-        if (this.mlHistory.length >= this.minMLExamples && this.mlConfidence > 0.6) {
-            this.mlEnabled = true;
-        }
-    }
-
-    detectPattern() {
-        if (this.performanceHistory.length < 10) return;
-
-        const recentHistory = this.performanceHistory.slice(-10);
-        const variance = this.calculateVariance(recentHistory.map(p => p.timeDifference));
-        const trend = this.calculateTrend(recentHistory.map(p => p.timeDifference));
-
-        if (variance > 0.1 && this.overshoots > 3) {
-            this.currentPattern = this.patterns.OSCILLATING;
-        } else if (trend > 0.05 || this.avgResponseTime > 0.15) {
-            this.currentPattern = this.patterns.LAGGING;
-        } else if (this.systemLag > 100 || this.avgResponseTime > 0.2) {
-            this.currentPattern = this.patterns.SYSTEM_STRESS;
-        } else {
-            this.currentPattern = this.patterns.STABLE;
-        }
-
-        this.applyPatternSettings();
-    }
-
-    calculateVariance(values) {
-        const mean = values.reduce((a, b) => a + b, 0) / values.length;
-        const squareDiffs = values.map(value => Math.pow(value - mean, 2));
-        return squareDiffs.reduce((a, b) => a + b, 0) / values.length;
-    }
-
-    calculateTrend(values) {
-        let trend = 0;
-        for (let i = 1; i < values.length; i++) {
-            trend += values[i] - values[i - 1];
-        }
-        return trend / values.length;
-    }
-
-    applyPatternSettings() {
-        const settings = this.performancePatterns[this.currentPattern];
-        this.kP = settings.kP;
-        this.kI = settings.kI;
-        this.kD = settings.kD;
-        this.fastSyncThreshold = settings.threshold;
     }
 
     updateSystemMetrics(timeDifference, timestamp) {
@@ -191,6 +124,66 @@ class PIDController {
         }
 
         this.detectPattern();
+        this.adjustPIDCoefficients();
+    }
+
+    detectPattern() {
+        if (this.performanceHistory.length < 10) return;
+
+        const recentHistory = this.performanceHistory.slice(-10);
+        const variance = this.calculateVariance(recentHistory.map(p => p.timeDifference));
+        const trend = this.calculateTrend(recentHistory.map(p => p.timeDifference));
+
+        if (variance > 0.1 && this.overshoots > 3) {
+            this.currentPattern = this.patterns.OSCILLATING;
+        } else if (trend > 0.05 || this.avgResponseTime > 0.15) {
+            this.currentPattern = this.patterns.LAGGING;
+        } else if (this.systemLag > 100 || this.avgResponseTime > 0.2) {
+            this.currentPattern = this.patterns.SYSTEM_STRESS;
+        } else {
+            this.currentPattern = this.patterns.STABLE;
+        }
+    }
+
+    adjustPIDCoefficients() {
+        const { STABLE, OSCILLATING, LAGGING, SYSTEM_STRESS } = this.patterns;
+
+        switch (this.currentPattern) {
+            case STABLE:
+                this.adaptiveCoefficients.kP.value = Math.min(this.adaptiveCoefficients.kP.maxValue, this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate);
+                this.adaptiveCoefficients.kI.value = Math.min(this.adaptiveCoefficients.kI.maxValue, this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate);
+                this.adaptiveCoefficients.kD.value = Math.min(this.adaptiveCoefficients.kD.maxValue, this.adaptiveCoefficients.kD.value + this.adaptiveCoefficients.kD.adjustmentRate);
+                break;
+            case OSCILLATING:
+                this.adaptiveCoefficients.kP.value = Math.max(this.adaptiveCoefficients.kP.minValue, this.adaptiveCoefficients.kP.value - this.adaptiveCoefficients.kP.adjustmentRate);
+                this.adaptiveCoefficients.kI.value = Math.max(this.adaptiveCoefficients.kI.minValue, this.adaptiveCoefficients.kI.value - this.adaptiveCoefficients.kI.adjustmentRate);
+                this.adaptiveCoefficients.kD.value = Math.min(this.adaptiveCoefficients.kD.maxValue, this.adaptiveCoefficients.kD.value + this.adaptiveCoefficients.kD.adjustmentRate);
+                break;
+            case LAGGING:
+                this.adaptiveCoefficients.kP.value = Math.min(this.adaptiveCoefficients.kP.maxValue, this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate);
+                this.adaptiveCoefficients.kI.value = Math.min(this.adaptiveCoefficients.kI.maxValue, this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate);
+                this.adaptiveCoefficients.kD.value = Math.max(this.adaptiveCoefficients.kD.minValue, this.adaptiveCoefficients.kD.value - this.adaptiveCoefficients.kD.adjustmentRate);
+                break;
+            case SYSTEM_STRESS:
+                this.adaptiveCoefficients.kP.value = Math.max(this.adaptiveCoefficients.kP.minValue, this.adaptiveCoefficients.kP.value - this.adaptiveCoefficients.kP.adjustmentRate);
+                this.adaptiveCoefficients.kI.value = Math.max(this.adaptiveCoefficients.kI.minValue, this.adaptiveCoefficients.kI.value - this.adaptiveCoefficients.kI.adjustmentRate);
+                this.adaptiveCoefficients.kD.value = Math.max(this.adaptiveCoefficients.kD.minValue, this.adaptiveCoefficients.kD.value - this.adaptiveCoefficients.kD.adjustmentRate);
+                break;
+        }
+    }
+
+    calculateVariance(values) {
+        const mean = values.reduce((a, b) => a + b, 0) / values.length;
+        const squareDiffs = values.map(value => Math.pow(value - mean, 2));
+        return squareDiffs.reduce((a, b) => a + b, 0) / values.length;
+    }
+
+    calculateTrend(values) {
+        let trend = 0;
+        for (let i = 1; i < values.length; i++) {
+            trend += values[i] - values[i - 1];
+        }
+        return trend / values.length;
     }
 
     calculateHistoricalAdjustment(timeDifference, deltaTime) {
@@ -200,9 +193,9 @@ class PIDController {
         const derivative = (timeDifference - this.lastTimeDifference) / deltaTime;
         this.lastTimeDifference = timeDifference;
 
-        return (this.kP * timeDifference) +
-            (this.kI * this.integral) +
-            (this.kD * derivative);
+        return (this.adaptiveCoefficients.kP.value * timeDifference) +
+            (this.adaptiveCoefficients.kI.value * this.integral) +
+            (this.adaptiveCoefficients.kD.value * derivative);
     }
 
     adjustPlaybackRate(targetTime) {
@@ -245,24 +238,11 @@ class PIDController {
         const historicalAdjustment = this.calculateHistoricalAdjustment(timeDifference, deltaTime);
         let finalAdjustment = historicalAdjustment;
 
-        if (this.mlEnabled) {
-            const features = [
-                timeDifference,
-                this.systemLag,
-                this.avgResponseTime,
-                this.overshoots,
-                deltaTime
-            ];
-
-            const mlAdjustment = this.predictMLAdjustment(features);
-            finalAdjustment = (mlAdjustment * this.mlConfidence) +
-                (historicalAdjustment * this.historicalConfidence);
-
-            this.trainML({
-                features,
-                result: timeDifference,
-                adjustment: mlAdjustment
-            });
+        // Perform fast sync if the time difference is greater than the threshold
+        if (timeDifferenceAbs > this.fastSyncThreshold) {
+            const fastSyncRate = Math.min(this.maxFastSyncRate, 1 + (timeDifferenceAbs / deltaTime));
+            this.video.playbackRate = fastSyncRate;
+            return timeDifference;
         }
 
         const currentSettings = this.performancePatterns[this.currentPattern];
@@ -300,11 +280,26 @@ class PIDController {
         this.avgResponseTime = 0;
         this.currentPattern = this.patterns.STABLE;
 
-        this.mlEnabled = false;
-        this.mlConfidence = 0;
-        this.historicalConfidence = 1;
-        this.weights = new Float32Array(5).fill(0.2);
-        this.mlHistory = [];
+        this.adaptiveCoefficients = {
+            kP: {
+                value: 0.6,
+                minValue: 0.3,
+                maxValue: 0.9,
+                adjustmentRate: 0.01
+            },
+            kI: {
+                value: 0.08,
+                minValue: 0.02,
+                maxValue: 0.2,
+                adjustmentRate: 0.005
+            },
+            kD: {
+                value: 0.12,
+                minValue: 0.05,
+                maxValue: 0.2,
+                adjustmentRate: 0.01
+            }
+        };
     }
 }
 
