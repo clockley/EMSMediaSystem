@@ -553,6 +553,10 @@ function installIPCHandler() {
 }
 
 async function handleMediaWindowClosed(event, id) {
+    if (isLiveStream(mediaFile)) {
+        saveMediaFile();
+    }
+
     video.audioTracks[0].enabled = true;
     if (video.loop && video.currentTime > 0 &&
         video.duration - video.currentTime < 0.5) {  // Small threshold near end
