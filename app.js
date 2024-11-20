@@ -797,7 +797,8 @@ function playMedia(e) {
             ipcRenderer.send("localMediaState", 0, "play");
             addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
             isPlaying = true;
-            video.loop = document.getElementById("mdLpCtlr").checked;
+            if (document.getElementById("mdLpCtlr"))
+                video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
             currentMediaFile = mdFIle.files;
             video.play();
@@ -813,6 +814,7 @@ function playMedia(e) {
         isPlaying = false;
         updateDynUI();
         ipcRenderer.send('close-media-window', 0);
+        isActiveMediaWindowCache = false;
         playingMediaAudioOnly = false;
         dontSyncRemote = true;
         if (!audioOnlyFile)
