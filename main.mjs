@@ -50,21 +50,6 @@ if (isDevMode === false) {
   Menu.setApplicationMenu(null);
 }
 
-const PAD = ['00','01','02','03','04','05','06','07','08','09'];
-
-function secondsToTime(seconds) {
-    const wholeSecs = seconds | 0;
-    const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
-    const h = (wholeSecs / 3600) | 0;
-    const m = ((wholeSecs / 60) | 0) % 60;
-    const s = wholeSecs % 60;
-    
-    return (h < 10 ? PAD[h] : h) + ':' +
-           (m < 10 ? PAD[m] : m) + ':' +
-           (s < 10 ? PAD[s] : s) + '.' +
-           (ms < 10 ? '00' : ms < 100 ? '0' : '') + ms;
-}
-
 const saveWindowBounds = (function () {
   let timeoutId = null;
 
@@ -123,7 +108,8 @@ function stopMediaPlaybackPowerHint() {
 }
 
 function sendRemainingTime(event, arg) {
-  win?.webContents.send('timeRemaining-message', [secondsToTime(arg[0] - arg[1]), arg[0], arg[1], arg[2]]);
+  let tarr = new Float64Array([arg[0] - arg[1], arg[0], arg[1], arg[2]]);
+  win?.webContents.send('timeRemaining-message', tarr, [tarr]);
 }
 
 async function getSetting(_, setting) {
