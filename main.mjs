@@ -133,7 +133,6 @@ function localMediaStateUpdate(event, id, state) {
   }
 }
 
-
 async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
   return measurePerformance('Creating media window', async () => {
     const displays = screen.getAllDisplays();
