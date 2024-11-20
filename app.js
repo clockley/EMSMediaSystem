@@ -92,7 +92,7 @@ class PIDController {
         this.synchronizationThreshold = 0.005;
         this.maxIntegralError = 0.5;
         this.fastSyncThreshold = 1; // Trigger fast sync if the absolute time difference is greater than 1 second
-        this.maxFastSyncRate = 10; // Maximum speed-up rate for fast sync
+        this.maxFastSyncRate = 2; // Maximum speed-up rate for fast sync
 
         this.maxHistoryLength = 30;
         this.isFirstAdjustment = true;
@@ -204,7 +204,7 @@ class PIDController {
         if (!this.video || this.video.paused || this.video.seeking) {
             return;
         }
-
+    
         if (this.isFirstAdjustment || this.lastWallTime === null) {
             this.lastWallTime = wallNow;
             this.lastUpdateTime = now;
@@ -213,9 +213,9 @@ class PIDController {
             this.updateSystemMetrics(timeDifference, wallNow);
             return timeDifference;
         }
-
+    
         const wallTimeDelta = wallNow - this.lastWallTime;
-
+    
         if (wallTimeDelta > this.maxTimeGap) {
             pidSeeking = true;
             this.video.currentTime = targetTime;
@@ -225,44 +225,50 @@ class PIDController {
             this.updateSystemMetrics(timeDifference, wallNow);
             return timeDifference;
         }
-
+    
         const deltaTime = (now - this.lastUpdateTime) / 1000;
         this.lastUpdateTime = now;
         this.lastWallTime = wallNow;
-
+    
         const timeDifference = targetTime - this.video.currentTime;
         const timeDifferenceAbs = Math.abs(timeDifference);
-
+    
         this.updateSystemMetrics(timeDifference, wallNow);
-
+    
         const historicalAdjustment = this.calculateHistoricalAdjustment(timeDifference, deltaTime);
         let finalAdjustment = historicalAdjustment;
-
+    
         // Perform fast sync if the time difference is greater than the threshold
         if (timeDifferenceAbs > this.fastSyncThreshold) {
-            const fastSyncRate = Math.min(this.maxFastSyncRate, 1 + (timeDifferenceAbs / deltaTime));
-            this.video.playbackRate = fastSyncRate;
+            if (timeDifference > 0) {
+                // Local video is behind, speed it up
+                const fastSyncRate = Math.min(this.maxFastSyncRate, 1 + (timeDifferenceAbs / deltaTime));
+                this.video.playbackRate = fastSyncRate;
+            } else {
+                // Local video is ahead, slow it down
+                const fastSyncRate = Math.max(1 / this.maxFastSyncRate, 1 - (timeDifferenceAbs / deltaTime));
+                this.video.playbackRate = fastSyncRate;
+            }
             return timeDifference;
         }
-
+    
         const currentSettings = this.performancePatterns[this.currentPattern];
         const maxRate = currentSettings.maxRate;
         const minRate = 2 - maxRate;
         let playbackRate = 1.0 + finalAdjustment;
         playbackRate = Math.max(minRate, Math.min(maxRate, playbackRate));
-
+    
         if (timeDifferenceAbs <= this.synchronizationThreshold) {
             playbackRate = 1.0;
             this.integral = 0;
         }
-
+    
         if (!isNaN(playbackRate)) {
             this.video.playbackRate = playbackRate;
         }
-
+    
         return timeDifference;
     }
-
     reset() {
         if (!isActiveMediaWindow()) {
             return;
