@@ -34,7 +34,7 @@ const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 let isActiveMediaWindowCache = false;
 const SECONDS = new Int32Array(1);
 const SECONDSFLOAT = new Float64Array(1);
-const textNode = document.createTextNode('00:00:00.000');
+const textNode = document.createTextNode('');
 
 const updatePending = new Int32Array(1);
 
@@ -581,6 +581,7 @@ async function handleMediaWindowClosed(event, id) {
     masterPauseState = false;
     saveMediaFile();
     removeFilenameFromTitlebar();
+    textNode.data="";
 }
 
 function handleMediaPlayback(isImgFile) {
@@ -1167,7 +1168,7 @@ const MEDIA_FORM_HTML = `
   <br><br>
   <center><video disablePictureInPicture controls id="preview"></video></center>
   <div id="cntdndiv" style="display: flex; justify-content: center;">
-    <div id="mediaCntDn" style="contain: layout style; color: red; font-weight: bold; font-family: 'Courier New', monospace;"></div>
+    <div id="mediaCntDn" style="contain: layout style; color: red; font-weight: bold; font-family: 'Courier New', monospace; font-size: 2.5em;"></div>
   </div>
 `;
 
@@ -1552,6 +1553,7 @@ function seekingLocalMedia(e) {
 }
 
 function endLocalMedia() {
+    textNode.data="";
     if (video.loop && video.currentTime >= video.duration) {
         video.currentTime = 0;
         playLocalMedia();
