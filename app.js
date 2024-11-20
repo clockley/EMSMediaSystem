@@ -99,42 +99,86 @@ class PIDController {
         this.reset();
     }
 
-    updateSystemMetrics(timeDifference, timestamp) {
-        this.performanceHistory.push({
-            timeDifference,
-            timestamp,
-            responseTime: this.performanceHistory.length > 0 ?
-                timestamp - this.performanceHistory[this.performanceHistory.length - 1].timestamp : 0
-        });
+    responseTimeReducer(acc, curr) {
+        acc + curr.responseTime;
+    }
 
-        if (this.performanceHistory.length > this.maxHistoryLength) {
+    timeDifferenceReducer(acc, curr) {
+        acc + curr.timeDifference;
+    }
+
+    updateSystemMetrics(timeDifference, timestamp) {
+        if (this.performanceHistory.length >= this.maxHistoryLength) {
             this.performanceHistory.shift();
         }
 
-        if (this.performanceHistory.length > 1) {
-            const prevDiff = this.performanceHistory[this.performanceHistory.length - 2].timeDifference;
-            if ((timeDifference > 0 && prevDiff < 0) || (timeDifference < 0 && prevDiff > 0)) {
-                this.overshoots++;
+        this.performanceHistory.push({
+            timeDifference,
+            timestamp,
+            responseTime: this.performanceHistory.length > 1
+                ? timestamp - this.performanceHistory[this.performanceHistory.length - 2].timestamp
+                : 0
+        });
+
+        if (this.performanceHistory.length >= 10) {
+            let variance = 0;
+            let trend = 0;
+            let sumTimeDifference = 0;
+            let previousTimeDiff = this.performanceHistory[this.performanceHistory.length - 11]?.timeDifference || 0;
+
+            for (let i = this.performanceHistory.length - 10; i < this.performanceHistory.length; i++) {
+                const currentTimeDiff = this.performanceHistory[i].timeDifference;
+                sumTimeDifference += currentTimeDiff;
+                variance += currentTimeDiff * currentTimeDiff;  // Squared differences for variance
+
+                if (i > this.performanceHistory.length - 10) {
+                    trend += currentTimeDiff - previousTimeDiff;  // Calculate the trend
+                }
+
+                previousTimeDiff = currentTimeDiff;
             }
 
-            const recentPerformance = this.performanceHistory.slice(-5);
-            this.systemLag = recentPerformance.reduce((acc, curr) => acc + curr.responseTime, 0) / 5;
-            this.avgResponseTime = ((recentPerformance.reduce((acc, curr) =>
-                acc + curr.timeDifference, 0) < 0) ? 
-                -recentPerformance.reduce((acc, curr) => acc + curr.timeDifference, 0) : 
-                recentPerformance.reduce((acc, curr) => acc + curr.timeDifference, 0)) / 5;
-        }
+            const mean = sumTimeDifference / 10;
+            variance = (variance / 10) - (mean * mean);
 
-        this.detectPattern();
-        this.adjustPIDCoefficients();
+            trend = trend / 9;
+
+            if (variance > 0.1 && this.overshoots > 3) {
+                this.currentPattern = this.patterns.OSCILLATING;
+            } else if (trend > 0.05 || this.avgResponseTime > 0.15) {
+                this.currentPattern = this.patterns.LAGGING;
+            } else if (this.systemLag > 100 || this.avgResponseTime > 0.2) {
+                this.currentPattern = this.patterns.SYSTEM_STRESS;
+            } else {
+                this.currentPattern = this.patterns.STABLE;
+            }
+        }
     }
 
     detectPattern() {
         if (this.performanceHistory.length < 10) return;
 
-        const recentHistory = this.performanceHistory.slice(-10);
-        const variance = this.calculateVariance(recentHistory.map(p => p.timeDifference));
-        const trend = this.calculateTrend(recentHistory.map(p => p.timeDifference));
+        let variance = 0;
+        let trend = 0;
+        let sumOfDifferences = 0;
+        let previousTimeDiff = this.performanceHistory[this.performanceHistory.length - 11]?.timeDifference || 0;
+
+        for (let i = this.performanceHistory.length - 10; i < this.performanceHistory.length; i++) {
+            const currentTimeDiff = this.performanceHistory[i].timeDifference;
+            sumOfDifferences += currentTimeDiff;
+            variance += currentTimeDiff * currentTimeDiff;  // Squared differences for variance
+
+            if (i > this.performanceHistory.length - 10) {
+                trend += currentTimeDiff - previousTimeDiff;  // Calculate the trend
+            }
+
+            previousTimeDiff = currentTimeDiff;
+        }
+
+        const mean = sumOfDifferences / 10;
+        variance = (variance / 10) - (mean * mean);
+
+        trend = trend / 9;  // Dividing by 9 because trend is the sum of 9 differences between consecutive values
 
         if (variance > 0.1 && this.overshoots > 3) {
             this.currentPattern = this.patterns.OSCILLATING;
@@ -147,13 +191,14 @@ class PIDController {
         }
     }
 
+
     adjustPIDCoefficients() {
         const { STABLE, OSCILLATING, LAGGING, SYSTEM_STRESS } = this.patterns;
 
         switch (this.currentPattern) {
             case STABLE:
                 // Replace Math.min with ternary operators
-                this.adaptiveCoefficients.kP.value = (this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate > this.adaptiveCoefficients.kP.maxValue) ? 
+                this.adaptiveCoefficients.kP.value = (this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate > this.adaptiveCoefficients.kP.maxValue) ?
                     this.adaptiveCoefficients.kP.maxValue : this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate;
                 this.adaptiveCoefficients.kI.value = (this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate > this.adaptiveCoefficients.kI.maxValue) ?
                     this.adaptiveCoefficients.kI.maxValue : this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate;
@@ -189,12 +234,18 @@ class PIDController {
     }
 
     calculateVariance(values) {
-        const mean = values.reduce((a, b) => a + b, 0) / values.length;
-        const squareDiffs = values.map(value => {
-            const diff = value - mean;
-            return diff * diff;
-        });
-        return squareDiffs.reduce((a, b) => a + b, 0) / values.length;
+        let sum = 0;
+        let varianceSum = 0;
+        const length = values.length;
+
+        for (let i = 0; i < length; i++) {
+            const value = values[i];
+            sum += value;
+            varianceSum += value * value;
+        }
+
+        const mean = sum / length;
+        return (varianceSum / length) - (mean * mean);
     }
 
     calculateTrend(values) {
@@ -224,7 +275,7 @@ class PIDController {
         if (!this.video || this.video.paused || this.video.seeking) {
             return;
         }
-    
+
         if (this.isFirstAdjustment || this.lastWallTime === null) {
             this.lastWallTime = wallNow;
             this.lastUpdateTime = now;
@@ -233,9 +284,9 @@ class PIDController {
             this.updateSystemMetrics(timeDifference, wallNow);
             return timeDifference;
         }
-    
+
         const wallTimeDelta = wallNow - this.lastWallTime;
-    
+
         if (wallTimeDelta > this.maxTimeGap) {
             pidSeeking = true;
             this.video.currentTime = targetTime;
@@ -245,19 +296,19 @@ class PIDController {
             this.updateSystemMetrics(timeDifference, wallNow);
             return timeDifference;
         }
-    
+
         const deltaTime = (now - this.lastUpdateTime) / 1000;
         this.lastUpdateTime = now;
         this.lastWallTime = wallNow;
-    
+
         const timeDifference = targetTime - this.video.currentTime;
         const timeDifferenceAbs = timeDifference < 0 ? -timeDifference : timeDifference;
-    
+
         this.updateSystemMetrics(timeDifference, wallNow);
-    
+
         const historicalAdjustment = this.calculateHistoricalAdjustment(timeDifference, deltaTime);
         let finalAdjustment = historicalAdjustment;
-    
+
         if (timeDifferenceAbs > this.fastSyncThreshold) {
             if (timeDifference > 0) {
                 const fastSyncRate = (this.maxFastSyncRate < 1 + (timeDifferenceAbs / deltaTime)) ?
@@ -270,24 +321,24 @@ class PIDController {
             }
             return timeDifference;
         }
-    
+
         const currentSettings = this.performancePatterns[this.currentPattern];
         const maxRate = currentSettings.maxRate;
         const minRate = 2 - maxRate;
         let playbackRate = 1.0 + finalAdjustment;
-        
-        playbackRate = (playbackRate < minRate) ? minRate : 
-                      (playbackRate > maxRate) ? maxRate : playbackRate;
-    
+
+        playbackRate = (playbackRate < minRate) ? minRate :
+            (playbackRate > maxRate) ? maxRate : playbackRate;
+
         if (timeDifferenceAbs <= this.synchronizationThreshold) {
             playbackRate = 1.0;
             this.integral = 0;
         }
-    
+
         if (playbackRate === playbackRate) {
             this.video.playbackRate = playbackRate;
         }
-    
+
         return timeDifference;
     }
 
@@ -335,17 +386,17 @@ let pidController;
 
 const PAD = ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09'];
 
-function secondsToTime(seconds) {
-    const wholeSecs = seconds | 0;
-    const ms = ((seconds - wholeSecs) * 1000 + 0.5) | 0;
-    const h = (wholeSecs / 3600) | 0;
-    const m = ((wholeSecs / 60) | 0) % 60;
-    const s = wholeSecs % 60;
+const NUM_BUFFER = new Int32Array(4);
+const REM_BUFFER = new Int32Array(1);
 
-    return (h < 10 ? PAD[h] : h) + ':' +
-        (m < 10 ? PAD[m] : m) + ':' +
-        (s < 10 ? PAD[s] : s) + '.' +
-        (ms < 10 ? '00' : ms < 100 ? '0' : '') + ms;
+function secondsToTime(seconds) {
+    NUM_BUFFER[0] = ((seconds | 0) / 3600) | 0;
+    REM_BUFFER[0] = (seconds | 0) % 3600;
+    NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
+    NUM_BUFFER[2] = REM_BUFFER[0] % 60;
+    NUM_BUFFER[3] = ((seconds - (seconds | 0)) * 1000 + 0.5) | 0; // ms
+
+    return `${NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0]}:${NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1]}:${NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2]}.${NUM_BUFFER[3] < 10 ? '00' : NUM_BUFFER[3] < 100 ? '0' : ''}${NUM_BUFFER[3]}`;
 }
 
 function isActiveMediaWindow() {
@@ -414,30 +465,28 @@ function updateTimestamp(oneShot) {
     }
 }
 
-let currentMessage = null;
-
-function updateTimestampUI() {
+function updateTimestampUI(currentMessage) {
     if (mediaCntDnEle == null) {
         return;
     }
     try {
         mediaCntDnEle.textContent = currentMessage;
-        currentMessage = null;
     } catch (error) {
         console.error('Error updating timestamp UI:', error);
     }
 }
 
-const boundUpdateTimestampUI = updateTimestampUI.bind();
+const boundUpdateTimestampUI = (message) => updateTimestampUI(message);
 let lastUpdateTime = 0;
+
 function handleTimeMessage(_, message) {
     const now = Date.now();
 
     if (opMode === MEDIAPLAYER) {
-        currentMessage = message[0];
-        requestAnimationFrame(boundUpdateTimestampUI);
+        requestAnimationFrame(() => boundUpdateTimestampUI(secondsToTime(message[0])));
     }
 
+    // Perform timestamp calculations only if enough time has passed
     if (now - lastUpdateTime > 500) {
         if (video && !video.paused && !video.seeking) {
             targetTime = message[2] - (((now - message[3]) + (Date.now() - now)) * 0.001);
@@ -446,7 +495,6 @@ function handleTimeMessage(_, message) {
         }
     }
 }
-
 
 function installIPCHandler() {
     ipcRenderer.on('timeRemaining-message', handleTimeMessage);
@@ -1719,11 +1767,11 @@ async function createMediaWindow() {
 
     if (video.audioTracks && video.audioTracks[0]) {
         video.audioTracks[0].enabled = false;
+    } else {
+        video.addEventListener('loadedmetadata', () => {
+            video.audioTracks[0].enabled = false;
+        }, { once: true });
     }
-
-    video.addEventListener('loadedmetadata', () => {
-        video.audioTracks[0].enabled = false;
-    }, { once: true });
 
     if (video.audioTracks && video.audioTracks[0]) {
         video.audioTracks[0].enabled = false;
