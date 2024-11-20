@@ -749,6 +749,10 @@ function playMedia(e) {
         saveMediaFile();
     }
 
+    if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
+        audioOnlyFile = true;
+    }
+
     const mdFIle = document.getElementById("mdFile");
 
     if (mediaFile !== decodeURI(removeFileProtocol(video.src))) {
