@@ -400,6 +400,53 @@ function isActiveMediaWindow() {
 
 let lastUpdateTimeLocalPlayer = 0;
 
+async function getAudioDevices() {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioOutputs = devices.filter(device => device.kind === 'audiooutput');
+    return audioOutputs;
+}
+
+let audioOutputs = [];
+let audioContext = null;
+let audioSource = null;
+
+
+async function changeAudioOutput(deviceIds) {
+    if (!video) return;
+
+    // Cleanup existing audio setup
+    if (audioOutputs.length) {
+        audioOutputs.forEach(audio => {
+            audio.pause();
+            audio.srcObject = null;
+        });
+        audioOutputs = [];
+    }
+
+    if (audioSource) {
+        audioSource.disconnect();
+    }
+
+    // Create new audio context if needed
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioSource = audioContext.createMediaElementSource(video);
+    }
+
+    // Create outputs for each device
+    audioOutputs = await Promise.all(
+        deviceIds.map(async deviceId => {
+            const dest = audioContext.createMediaStreamDestination();
+            const audio = new Audio();
+            await audio.setSinkId(deviceId);
+            audioSource.connect(dest);
+            audio.srcObject = dest.stream;
+            await audio.play();
+            return audio;
+        })
+    );
+}
+
 const basename = (input) => {
     const urlMatch = input.match(/^(?:https?:\/\/)?(?:www\.)?([^/]+)/);
     if (urlMatch) return urlMatch[1];
@@ -585,7 +632,7 @@ async function handleMediaWindowClosed(event, id) {
     masterPauseState = false;
     saveMediaFile();
     removeFilenameFromTitlebar();
-    textNode.data="";
+    textNode.data = "";
 }
 
 function handleMediaPlayback(isImgFile) {
@@ -1299,7 +1346,7 @@ function removeFileProtocol(filePath) {
 }
 
 function saveMediaFile() {
-    textNode.data="";
+    textNode.data = "";
     const mdfileElement = document.getElementById("mdFile");
     if (!mdfileElement) {
         return;
@@ -1567,7 +1614,7 @@ function seekingLocalMedia(e) {
 }
 
 function endLocalMedia() {
-    textNode.data="";
+    textNode.data = "";
     if (video.loop && video.currentTime >= video.duration) {
         video.currentTime = 0;
         playLocalMedia();
