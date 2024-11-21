@@ -1475,9 +1475,35 @@ function modeSwitchHandler(event) {
     }
 }
 
+function cleanRefs() {
+    const playButton = document.querySelector("#mediaWindowPlayButton");
+    if (playButton) {
+        playButton.removeEventListener("click", playMedia);
+    }
+
+    const loopctl = document.getElementById("mdLpCtlr");
+    if (loopctl) {
+        loopctl.removeEventListener("change", loopCtlHandler);
+    }
+
+    const mdFile = document.getElementById("mdFile");
+    if (mdFile) {
+        mdFile.removeEventListener("change", saveMediaFile);
+    }
+    mediaCntDnEle = null;
+}
+
 function installEvents() {
-    document.getElementById("MdPlyrRBtnFrmID").addEventListener('click', setSBFormMediaPlayer, { passive: true });
-    document.getElementById("YtPlyrRBtnFrmID").addEventListener('click', setSBFormYouTubeMediaPlayer, { passive: true });
+    document.getElementById("MdPlyrRBtnFrmID").addEventListener('click', () => {
+        cleanRefs();
+        setSBFormMediaPlayer();
+    }, { passive: true });
+
+    document.getElementById("YtPlyrRBtnFrmID").addEventListener('click', () => {
+        cleanRefs();
+        setSBFormYouTubeMediaPlayer();
+    }, { passive: true });
+
     //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
 
     document.addEventListener('keydown', fileOpenShortcutHandler);
