@@ -500,17 +500,7 @@ function update(time) {
     }
 }
 
-function updateTimestamp(oneShot) {
-    if (oneShot && mediaCntDnEle) {
-        SECONDS[0] = video.duration - video.currentTime
-        NUM_BUFFER[0] = ((SECONDS[0] | 0) / 3600) | 0;
-        REM_BUFFER[0] = (SECONDS[0] | 0) % 3600;
-        NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
-        NUM_BUFFER[2] = REM_BUFFER[0] % 60;
-        NUM_BUFFER[3] = ((SECONDS - (SECONDS | 0)) * 1000 + 0.5) | 0;
-        return;
-    }
-
+function updateTimestamp() {
     if (localTimeStampUpdateIsRunning) {
         return;
     }
@@ -865,7 +855,7 @@ function playMedia(e) {
             playingMediaAudioOnly = true;
             currentMediaFile = mdFIle.files;
             video.play();
-            updateTimestamp(false);
+            updateTimestamp();
             return;
         }
 
@@ -970,7 +960,7 @@ function setSBFormYouTubeMediaPlayer() {
     installDisplayChangeHandler();
     populateDisplaySelect();
 
-    document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia);
+    document.getElementById("mediaWindowPlayButton").addEventListener("click", playMedia, { passive: true });
 
     if (playingMediaAudioOnly) {
         isPlaying = true;
@@ -1270,7 +1260,7 @@ function setSBFormMediaPlayer() {
     }
 
     restoreMediaFile();
-    updateTimestamp(false);
+    updateTimestamp();
 
     const loopctl = document.getElementById("mdLpCtlr");
     loopctl.addEventListener('change', loopCtlHandler);
@@ -1478,7 +1468,7 @@ function modeSwitchHandler(event) {
                 dontSyncRemote = false;
             }
             mediaCntDnEle = document.getElementById('mediaCntDn');
-            updateTimestamp(false);
+            updateTimestamp();
         } else {
             mediaCntDnEle = null;
         }
@@ -1497,7 +1487,7 @@ function installEvents() {
 
 function playAudioFileAfterDelay() {
     video.play();
-    updateTimestamp(false);
+    updateTimestamp();
 }
 
 function playLocalMedia(event) {
@@ -1513,7 +1503,7 @@ function playLocalMedia(event) {
         addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
         isPlaying = true;
         updateDynUI();
-        updateTimestamp(false);
+        updateTimestamp();
         if (!playingMediaAudioOnly) {
             let t1 = encodeURI(saveMediaFile.fileInpt[0].name);
             let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
@@ -1536,7 +1526,7 @@ function playLocalMedia(event) {
             }
             audioOnlyFile = true;
             playingMediaAudioOnly = true;
-            updateTimestamp(false);
+            updateTimestamp();
             return;
         }
     }
@@ -1552,7 +1542,7 @@ function playLocalMedia(event) {
         audioOnlyFile = false;
         playingMediaAudioOnly = false;
     } else {
-        updateTimestamp(false);
+        updateTimestamp();
         if (audioOnlyFile) {
             if (document.getElementById("mdLpCtlr")) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
@@ -1598,7 +1588,6 @@ function seekLocalMedia(e) {
         dontSyncRemote = false;
         return;
     }
-    updateTimestamp(true);
     if (e.target.isConnected) {
         ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
         ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
@@ -1615,7 +1604,6 @@ function seekingLocalMedia(e) {
     if (dontSyncRemote === true) {
         return;
     }
-    updateTimestamp(true);
     if (e.target.isConnected) {
         ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
         ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
@@ -1799,7 +1787,7 @@ async function createMediaWindow() {
         }
         playingMediaAudioOnly = true;
         if (playingMediaAudioOnly)
-            updateTimestamp(false);
+            updateTimestamp();
         return;
     } else {
         playingMediaAudioOnly = false;
