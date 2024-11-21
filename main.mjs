@@ -174,11 +174,11 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
 
 async function handleDisplayChange() {
   const currentDisplays = screen.getAllDisplays();
-  
+
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     const currentBounds = mediaWindow.getBounds();
     const currentDisplayIndex = await settings.get('lastDisplayIndex');
-    
+
     if (!lastKnownDisplayState) {
       lastKnownDisplayState = {
         bounds: currentBounds,
@@ -186,7 +186,7 @@ async function handleDisplayChange() {
       };
     }
 
-    const isOnValidDisplay = currentDisplays.some(display => 
+    const isOnValidDisplay = currentDisplays.some(display =>
       currentBounds.x >= display.bounds.x &&
       currentBounds.y >= display.bounds.y &&
       currentBounds.x < display.bounds.x + display.bounds.width &&
@@ -202,16 +202,16 @@ async function handleDisplayChange() {
         width: primaryDisplay.bounds.width,
         height: primaryDisplay.bounds.height
       });
-      
+
       await settings.set('lastMediaWindowBounds', lastKnownDisplayState.bounds);
       await settings.set('lastDisplayIndex', lastKnownDisplayState.displayIndex);
     } else if (wasDisplayDisconnected) {
       const savedBounds = await settings.get('lastMediaWindowBounds');
       const savedDisplayIndex = await settings.get('lastDisplayIndex');
-      
+
       if (savedBounds && savedDisplayIndex !== undefined) {
         const targetDisplay = currentDisplays[savedDisplayIndex];
-        
+
         if (targetDisplay) {  // Ensure targetDisplay is defined
           mediaWindow.setBounds({
             x: targetDisplay.bounds.x,
@@ -498,33 +498,40 @@ async function getConnectedDisplays() {
 async function handleGetAllDisplays() {
   const displays = screen.getAllDisplays();
   let edidDisplayInfo = [];
-
-  // Get saved display preference from electron-settings
   const savedDisplayIndex = await settings.get('lastDisplayIndex');
-  let defaultDisplayIndex;
 
+  let defaultDisplayIndex;
   if (savedDisplayIndex !== undefined && displays[savedDisplayIndex]) {
-    // Use saved preference if it exists and is valid
     defaultDisplayIndex = savedDisplayIndex;
   } else {
-    // No saved preference or invalid - fall back to secondary display
     defaultDisplayIndex = displays.findIndex(d => d.bounds.x !== 0 || d.bounds.y !== 0);
     if (defaultDisplayIndex === -1) defaultDisplayIndex = 0;
   }
 
-  // Only Linux needs EDID info for display names
   if (process.platform === 'linux') {
     try {
       edidDisplayInfo = await getConnectedDisplays();
+
+      // Sort EDID info to match Electron's display order
+      edidDisplayInfo.sort((a, b) => {
+        // Put internal display (eDP) first
+        const aIsInternal = a.connector.includes('eDP');
+        const bIsInternal = b.connector.includes('eDP');
+        if (aIsInternal !== bIsInternal) return bIsInternal ? 1 : -1;
+
+        // Then sort by connector number
+        const aNum = parseInt(a.connector.match(/\d+/)?.[0] || 0);
+        const bNum = parseInt(b.connector.match(/\d+/)?.[0] || 0);
+        return aNum - bNum;
+      });
     } catch (error) {
       console.error('Failed to get EDID info:', error);
     }
   }
 
   if (isDevMode) {
-    console.log('Saved display index:', savedDisplayIndex);
-    console.log('Default display index:', defaultDisplayIndex);
-    console.log('All displays:', displays);
+    console.log('EDID Display Info:', edidDisplayInfo);
+    console.log('Electron Displays:', displays);
   }
 
   const displayOptions = displays.map((display, index) => {
@@ -532,17 +539,16 @@ async function handleGetAllDisplays() {
 
     switch (process.platform) {
       case 'linux':
-        const edidDisplay = edidDisplayInfo.find(info => {
-          return true;
-        });
+        // Match displays based on index after sorting
+        const matchingDisplay = edidDisplayInfo[index];
 
-        if (edidDisplay) {
-          if (edidDisplay.name.includes(edidDisplay.manufacturer)) {
-            name = edidDisplay.name;
-          } else {
-            const manufacturerPrefix = edidDisplay.manufacturer ? `${edidDisplay.manufacturer} ` : '';
-            name = manufacturerPrefix ? `${manufacturerPrefix}${edidDisplay.name}` : edidDisplay.name;
-          }
+        if (matchingDisplay) {
+          const manufacturer = matchingDisplay.manufacturer ? `${matchingDisplay.manufacturer} ` : '';
+          name = matchingDisplay.name.includes(manufacturer) ?
+            matchingDisplay.name :
+            `${manufacturer}${matchingDisplay.name}`;
+        } else {
+          name = display.internal ? 'Internal Display' : 'External Display';
         }
         break;
 
@@ -554,8 +560,6 @@ async function handleGetAllDisplays() {
       default:
         name = display.label || 'Display';
     }
-
-    name = name || (display.internal ? 'Internal Display' : 'External Display');
 
     return {
       value: index,
@@ -581,23 +585,23 @@ async function handleGetAllDisplays() {
 
 function handleSetDisplayIndex(event, index) {
   settings.set('lastDisplayIndex', index)
-      .catch(error => {
-          console.error('Error saving display index:', error);
-      });
+    .catch(error => {
+      console.error('Error saving display index:', error);
+    });
 
   // If there's an active media window, move it to the new display
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-      const displays = screen.getAllDisplays();
-      const targetDisplay = displays[index] || 
-                          displays.find(d => d.bounds.x !== 0 || d.bounds.y !== 0) || 
-                          displays[0];
+    const displays = screen.getAllDisplays();
+    const targetDisplay = displays[index] ||
+      displays.find(d => d.bounds.x !== 0 || d.bounds.y !== 0) ||
+      displays[0];
 
-      mediaWindow.setBounds({
-          x: targetDisplay.bounds.x,
-          y: targetDisplay.bounds.y,
-          width: targetDisplay.bounds.width,
-          height: targetDisplay.bounds.height
-      });
+    mediaWindow.setBounds({
+      x: targetDisplay.bounds.x,
+      y: targetDisplay.bounds.y,
+      width: targetDisplay.bounds.width,
+      height: targetDisplay.bounds.height
+    });
   }
 }
 
