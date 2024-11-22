@@ -37,6 +37,15 @@ const textNode = document.createTextNode('');
 
 const updatePending = new Int32Array(1);
 
+const mediaPlayerInputState = {
+    fileInpt: null,
+    urlInpt: null,
+    clear() {
+        this.fileInpt = null;
+        this.urlInpt = null;
+    }
+};
+
 class PIDController {
     constructor(video) {
         this.video = video;
@@ -805,13 +814,13 @@ function playMedia(e) {
             updateDynUI();
             localTimeStampUpdateIsRunning = false;
             return;
-        } else if (!isPlaying && video.src !== null && video.src !== '' && saveMediaFile.fileInpt != null) {
-            let t1 = saveMediaFile.fileInpt[0].name;
+        } else if (opMode === MEDIAPLAYER && !isPlaying && video.src !== null && video.src !== '' && mediaPlayerInputState.fileInpt != null) {
+            let t1 = mediaPlayerInputState.fileInpt[0].name;
             let t2 = basename(removeFileProtocol(decodeURI(video.src)))
             if (t1 == null || t2 == null || t1 !== t2) {
                 return;
             } else {
-                mdFIle.files = saveMediaFile.fileInpt;
+                mdFIle.files = mediaPlayerInputState.fileInpt;
             }
         } else {
             return;
@@ -1357,8 +1366,10 @@ function saveMediaFile() {
         }
         if (opMode !== MEDIAPLAYER && dontSyncRemote !== true)
             dontSyncRemote = true;
-        saveMediaFile.fileInpt = mdfileElement.files;
-        saveMediaFile.urlInpt = mdfileElement.value.toLowerCase();
+        mediaPlayerInputState.clear();
+
+        mediaPlayerInputState.fileInpt = mdfileElement.files;
+        mediaPlayerInputState.urlInpt = mdfileElement.value.toLowerCase();
     }
     const isActiveMW = isActiveMediaWindow();
     if (isActiveMW) {
@@ -1428,11 +1439,11 @@ function saveMediaFile() {
 }
 
 function restoreMediaFile() {
-    if (saveMediaFile.fileInpt != null && document.getElementById("mdFile") != null) {
+    if (mediaPlayerInputState.fileInpt != null && document.getElementById("mdFile") != null) {
         if (document.getElementById("YtPlyrRBtnFrmID") != null && document.getElementById("YtPlyrRBtnFrmID").checked) {
-            document.getElementById("mdFile").value = saveMediaFile.urlInpt;
+            document.getElementById("mdFile").value = mediaPlayerInputState.urlInpt;
         } else {
-            document.getElementById("mdFile").files = saveMediaFile.fileInpt;
+            document.getElementById("mdFile").files = mediaPlayerInputState.fileInpt;
         }
     }
 }
@@ -1476,9 +1487,10 @@ function cleanRefs() {
         mdFile.removeEventListener("change", saveMediaFile);
     }
     let mcd = document.getElementById("mediaCntDn");
-    if (mcd) {
+    if (mcd && mcd.contains(textNode)) {
         mcd.removeChild(textNode);
     }
+    dyneForm.innerHTML = null;
 }
 
 function installEvents() {
@@ -1519,10 +1531,10 @@ function playLocalMedia(event) {
         updateDynUI();
         updateTimestamp();
         if (!playingMediaAudioOnly) {
-            let t1 = encodeURI(saveMediaFile.fileInpt[0].name);
+            let t1 = encodeURI(mediaPlayerInputState.fileInpt[0].name);
             let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
             if (t1 != null && t2 != null && t1 === t2) {
-                document.getElementById("mdFile").files = saveMediaFile.fileInpt;
+                document.getElementById("mdFile").files = mediaPlayerInputState.fileInpt;
             }
         }
     }
