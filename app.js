@@ -519,7 +519,6 @@ function updateTimestampUI(currentMessage) {
     }
 }
 
-const boundUpdateTimestampUI = (message) => updateTimestampUI(message);
 let lastUpdateTime = 0;
 
 function handleTimeMessage(_, message) {
@@ -532,7 +531,7 @@ function handleTimeMessage(_, message) {
         NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
         NUM_BUFFER[2] = REM_BUFFER[0] % 60;
         NUM_BUFFER[3] = ((SECONDSFLOAT - (SECONDSFLOAT | 0)) * 1000 + 0.5) | 0;
-        requestAnimationFrame(() => boundUpdateTimestampUI(`${NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0]}:${NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1]}:${NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2]}.${NUM_BUFFER[3] < 10 ? '00' : NUM_BUFFER[3] < 100 ? '0' : ''}${NUM_BUFFER[3]}`));
+        requestAnimationFrame(() => updateTimestampUI(`${NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0]}:${NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1]}:${NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2]}.${NUM_BUFFER[3] < 10 ? '00' : NUM_BUFFER[3] < 100 ? '0' : ''}${NUM_BUFFER[3]}`));
     }
 
     // Perform timestamp calculations only if enough time has passed
