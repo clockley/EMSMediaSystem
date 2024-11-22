@@ -455,11 +455,6 @@ function removeFilenameFromTitlebar() {
     document.title = "EMS Media System";
 }
 
-function updateTextNode() {
-    textNode.data = `${NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0]}:${NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1]}:${NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2]}.${NUM_BUFFER[3] < 10 ? '00' : NUM_BUFFER[3] < 100 ? '0' : ''}${NUM_BUFFER[3]}`;
-    updatePending[0] = 0;
-}
-
 function update(time) {
     if (time - lastUpdateTimeLocalPlayer >= 33.33) {
         if (opMode === MEDIAPLAYER) {
@@ -471,7 +466,7 @@ function update(time) {
             NUM_BUFFER[3] = ((SECONDSFLOAT - (SECONDSFLOAT | 0)) * 1000 + 0.5) | 0;
             if (!updatePending[0]) {
                 updatePending[0] = 1;
-                requestAnimationFrame(updateTextNode);
+                requestAnimationFrame(updateCountdownNode);
             }
         } else {
             localTimeStampUpdateIsRunning = false;
@@ -506,20 +501,39 @@ function updateTimestamp() {
     }
 }
 
-function updateTimestampUI(currentMessage) {
-    if (opMode !== MEDIAPLAYER) {
-        return;
-    }
-    if (!updatePending[0]) {
-        updatePending[0] = 1;
-        requestAnimationFrame(() => {
-            textNode.data = currentMessage;
-            updatePending[0] = 0;
-        });
-    }
-}
-
 let lastUpdateTime = 0;
+
+const STRING_BUFFER = new Array(20);
+const COLON = ':';
+const DOT = '.';
+const ZERO = '0';
+const DOUBLE_ZERO = '00';
+
+function updateCountdownNode() {
+    STRING_BUFFER.length = 0;
+
+    STRING_BUFFER[STRING_BUFFER.length++] = NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0];
+    STRING_BUFFER[STRING_BUFFER.length++] = COLON;
+
+    STRING_BUFFER[STRING_BUFFER.length++] = NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1];
+    STRING_BUFFER[STRING_BUFFER.length++] = COLON;
+
+    STRING_BUFFER[STRING_BUFFER.length++] = NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2];
+    STRING_BUFFER[STRING_BUFFER.length++] = DOT;
+
+    if (NUM_BUFFER[3] < 10) {
+        STRING_BUFFER[STRING_BUFFER.length++] = DOUBLE_ZERO;
+        STRING_BUFFER[STRING_BUFFER.length++] = NUM_BUFFER[3];
+    } else if (NUM_BUFFER[3] < 100) {
+        STRING_BUFFER[STRING_BUFFER.length++] = ZERO;
+        STRING_BUFFER[STRING_BUFFER.length++] = NUM_BUFFER[3];
+    } else {
+        STRING_BUFFER[STRING_BUFFER.length++] = NUM_BUFFER[3];
+    }
+
+    textNode.data = STRING_BUFFER.join('');
+    updatePending[0] = 0;
+}
 
 function handleTimeMessage(_, message) {
     const now = Date.now();
@@ -531,7 +545,10 @@ function handleTimeMessage(_, message) {
         NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
         NUM_BUFFER[2] = REM_BUFFER[0] % 60;
         NUM_BUFFER[3] = ((SECONDSFLOAT - (SECONDSFLOAT | 0)) * 1000 + 0.5) | 0;
-        requestAnimationFrame(() => updateTimestampUI(`${NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0]}:${NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1]}:${NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2]}.${NUM_BUFFER[3] < 10 ? '00' : NUM_BUFFER[3] < 100 ? '0' : ''}${NUM_BUFFER[3]}`));
+        if (!updatePending[0]) {
+            updatePending[0] = 1;
+            requestAnimationFrame(updateCountdownNode);
+        }
     }
 
     // Perform timestamp calculations only if enough time has passed
