@@ -1260,6 +1260,9 @@ function setSBFormMediaPlayer() {
     updateTimestamp();
 
     const loopctl = document.getElementById("mdLpCtlr");
+    if (video.loop === true) {
+        document.getElementById("mdLpCtlr").checked=true
+    }
     loopctl.addEventListener('change', loopCtlHandler);
 
     const mdFile = document.getElementById("mdFile");
