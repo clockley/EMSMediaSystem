@@ -644,14 +644,12 @@ function handleImageDisplay(isImgFile, imgEle) {
     if (imgEle && !isImgFile) {
         imgEle.remove();
         document.getElementById("preview").style.display = '';
-        document.getElementById("cntdndiv").style.display = '';
     } else if (isImgFile) {
         if (imgEle) {
             imgEle.src = mediaFile;
         } else {
             if ((imgEle = document.querySelector('img')) !== null) {
                 imgEle.remove();
-                document.getElementById("cntdndiv").style.display = '';
             }
             video.src = '';
             img = document.createElement('img');
@@ -661,7 +659,6 @@ function handleImageDisplay(isImgFile, imgEle) {
                 document.getElementById("preview").style.display = 'none';
             }
             document.getElementById("preview").parentNode.appendChild(img);
-            document.getElementById("cntdndiv").style.display = 'none';
         }
     }
 }
@@ -891,11 +888,15 @@ function playMedia(e) {
 }
 
 function updateDynUI() {
+    textNode.data = "";
     const playButton = document.getElementById("mediaWindowPlayButton");
     if (playButton) {
         playButton.textContent = isPlaying ? "Stop Presentation" : "Start Presentation";
     }
-    document.getElementById("dspSelct").disabled = (isPlaying && audioOnlyFile);
+
+    if (document.getElementById("dspSelct")) {
+        document.getElementById("dspSelct").disabled = (isPlaying && audioOnlyFile);
+    }
 }
 
 async function populateDisplaySelect() {
@@ -1222,9 +1223,7 @@ const MEDIA_FORM_HTML = `
   </form>
   <br><br>
   <center><video disablePictureInPicture controls id="preview"></video></center>
-  <div id="cntdndiv" style="display: flex; justify-content: center;">
-    <div id="mediaCntDn" style="contain: layout style; color: red; font-weight: bold; font-family: 'Courier New', monospace; font-size: 2.5em;"></div>
-  </div>
+  <div id="mediaCntDn" style="display: flex; justify-content: center;contain: layout style; color: red; font-weight: bold; font-family: 'Courier New', monospace; font-size: 2.5em;"></div>
 `;
 
 function installDisplayChangeHandler() {
@@ -1327,7 +1326,6 @@ function setSBFormMediaPlayer() {
             img.setAttribute("id", "preview");
             document.getElementById("preview").style.display = 'none';
             document.getElementById("preview").parentNode.appendChild(img);
-            document.getElementById("cntdndiv").style.display = 'none';
             return;
         }
     }
@@ -1382,7 +1380,6 @@ function saveMediaFile() {
     if (imgEle = document.querySelector('img')) {
         imgEle.remove();
         document.getElementById("preview").style.display = '';
-        document.getElementById("cntdndiv").style.display = '';
     }
     let iM;
     if ((iM = isImg(mediaFile))) {
@@ -1394,7 +1391,6 @@ function saveMediaFile() {
         let imgEle = null;
         if ((imgEle = document.querySelector('img')) !== null) {
             imgEle.remove();
-            document.getElementById("cntdndiv").style.display = '';
             if (video) {
                 video.style.display = 'none';
             }
@@ -1405,7 +1401,6 @@ function saveMediaFile() {
         img.setAttribute("id", "preview");
         document.getElementById("preview").style.display = 'none';
         document.getElementById("preview").parentNode.appendChild(img);
-        document.getElementById("cntdndiv").style.display = 'none';
         return;
     }
     let liveStream = isLiveStream(mediaFile);
@@ -1476,20 +1471,23 @@ function modeSwitchHandler(event) {
 }
 
 function cleanRefs() {
-    const playButton = document.querySelector("#mediaWindowPlayButton");
+    let playButton = document.querySelector("#mediaWindowPlayButton");
     if (playButton) {
         playButton.removeEventListener("click", playMedia);
+        playButton = null;
     }
 
-    const loopctl = document.getElementById("mdLpCtlr");
+    let loopctl = document.getElementById("mdLpCtlr");
     if (loopctl) {
         loopctl.removeEventListener("change", loopCtlHandler);
+        loopctl = null;
     }
 
-    const mdFile = document.getElementById("mdFile");
+    let mdFile = document.getElementById("mdFile");
     if (mdFile) {
         mdFile.removeEventListener("change", saveMediaFile);
     }
+
     mediaCntDnEle = null;
 }
 
@@ -1795,7 +1793,6 @@ async function createMediaWindow() {
             if (document.getElementById("mdLpCtlr") !== null) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
             }
-            document.getElementById("cntdndiv").style.display = '';
         }
     } else {
         if (video && !isImg(video.src))
