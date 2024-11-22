@@ -17,7 +17,6 @@ var prePathname = '';
 var savedCurTime = '';
 var playingMediaAudioOnly = false;
 var audioOnlyFile = false;
-var mediaCntDnEle = null;
 var CrVL = 1;
 var opMode = -1;
 var osName = navigator.userAgentData.platform;
@@ -476,7 +475,7 @@ function updateTextNode() {
 
 function update(time) {
     if (time - lastUpdateTimeLocalPlayer >= 33.33) {
-        if (mediaCntDnEle) {
+        if (opMode === MEDIAPLAYER) {
             SECONDSFLOAT[0] = video.duration - video.currentTime;
             NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
             REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
@@ -505,7 +504,7 @@ function updateTimestamp() {
         return;
     }
 
-    if (!mediaCntDnEle) {
+    if (opMode !== MEDIAPLAYER) {
         localTimeStampUpdateIsRunning = false;
         return;
     }
@@ -521,7 +520,7 @@ function updateTimestamp() {
 }
 
 function updateTimestampUI(currentMessage) {
-    if (mediaCntDnEle == null) {
+    if (opMode !== MEDIAPLAYER) {
         return;
     }
     if (!updatePending[0]) {
@@ -1222,7 +1221,7 @@ const MEDIA_FORM_HTML = `
     <br>
   </form>
   <br><br>
-  <center><video disablePictureInPicture controls id="preview"></video></center>
+  <video style="display: flex; margin: auto;" disablePictureInPicture controls id="preview"></video>
   <div id="mediaCntDn" style="display: flex; justify-content: center;contain: layout style; color: red; font-weight: bold; font-family: 'Courier New', monospace; font-size: 2.5em;"></div>
 `;
 
@@ -1462,10 +1461,7 @@ function modeSwitchHandler(event) {
             if (video && !activeLiveStream && isActiveMediaWindow()) {
                 dontSyncRemote = false;
             }
-            mediaCntDnEle = document.getElementById('mediaCntDn');
             updateTimestamp();
-        } else {
-            mediaCntDnEle = null;
         }
     }
 }
@@ -1487,8 +1483,10 @@ function cleanRefs() {
     if (mdFile) {
         mdFile.removeEventListener("change", saveMediaFile);
     }
-
-    mediaCntDnEle = null;
+    let mcd = document.getElementById("mediaCntDn");
+    if (mcd) {
+        mcd.removeChild(textNode);
+    }
 }
 
 function installEvents() {
@@ -1755,7 +1753,6 @@ function loadOpMode(mode) {
         document.getElementById("MdPlyrRBtnFrmID").checked = true;
         setSBFormMediaPlayer();
         installPreviewEventHandlers();
-        mediaCntDnEle = document.getElementById('mediaCntDn');
     }
 }
 
