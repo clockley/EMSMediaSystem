@@ -465,11 +465,7 @@ function removeFilenameFromTitlebar() {
 }
 
 function updateTextNode() {
-    try {
-        textNode.data = `${NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0]}:${NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1]}:${NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2]}.${NUM_BUFFER[3] < 10 ? '00' : NUM_BUFFER[3] < 100 ? '0' : ''}${NUM_BUFFER[3]}`;
-    } catch (error) {
-        console.error('Error updating timestamp UI', error);
-    }
+    textNode.data = `${NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0]] : NUM_BUFFER[0]}:${NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1]}:${NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2]}.${NUM_BUFFER[3] < 10 ? '00' : NUM_BUFFER[3] < 100 ? '0' : ''}${NUM_BUFFER[3]}`;
     updatePending[0] = 0;
 }
 
@@ -526,11 +522,7 @@ function updateTimestampUI(currentMessage) {
     if (!updatePending[0]) {
         updatePending[0] = 1;
         requestAnimationFrame(() => {
-            try {
-                textNode.data = currentMessage;
-            } catch (error) {
-                console.error('Error updating timestamp UI', error);
-            }
+            textNode.data = currentMessage;
             updatePending[0] = 0;
         });
     }
