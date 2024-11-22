@@ -1220,7 +1220,7 @@ const MEDIA_FORM_HTML = `
     <br>
   </form>
   <br><br>
-  <video style="display: flex; margin: auto;" disablePictureInPicture controls id="preview"></video>
+  <center><video  disablePictureInPicture controls id="preview"></video></center>
   <div id="mediaCntDn" style="display: flex; justify-content: center;contain: layout style; color: red; font-weight: bold; font-family: 'Courier New', monospace; font-size: 2.5em;"></div>
 `;
 
