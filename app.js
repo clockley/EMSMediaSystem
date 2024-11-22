@@ -93,7 +93,6 @@ class PIDController {
             }
         };
 
-        this.performanceHistory = [];
         this.systemLag = 0;
         this.overshoots = 0;
         this.avgResponseTime = 0;
@@ -104,56 +103,59 @@ class PIDController {
 
         this.synchronizationThreshold = 0.005;
         this.maxIntegralError = 0.5;
-        this.fastSyncThreshold = 1; // Trigger fast sync if the absolute time difference is greater than 1 second
-        this.maxFastSyncRate = 2; // Maximum speed-up rate for fast sync
+        this.fastSyncThreshold = 1;
+        this.maxFastSyncRate = 2;
 
         this.maxHistoryLength = 30;
         this.isFirstAdjustment = true;
+
+        // Pre-allocate arrays for history
+        this.timeArray = new Float64Array(this.maxHistoryLength);
+        this.diffArray = new Float64Array(this.maxHistoryLength);
+        this.responseArray = new Float64Array(this.maxHistoryLength);
+        this.historyIndex = 0;
+        this.historySize = 0;
+
         this.reset();
     }
 
-    responseTimeReducer(acc, curr) {
-        acc + curr.responseTime;
-    }
-
-    timeDifferenceReducer(acc, curr) {
-        acc + curr.timeDifference;
-    }
-
     updateSystemMetrics(timeDifference, timestamp) {
-        if (this.performanceHistory.length >= this.maxHistoryLength) {
-            this.performanceHistory.shift();
+        const idx = this.historyIndex;
+        this.timeArray[idx] = timestamp;
+        this.diffArray[idx] = timeDifference;
+        this.responseArray[idx] = this.historySize > 0
+            ? timestamp - this.timeArray[(idx - 1 + this.maxHistoryLength) % this.maxHistoryLength]
+            : 0;
+
+        this.historyIndex = (idx + 1) % this.maxHistoryLength;
+        if (this.historySize < this.maxHistoryLength) {
+            this.historySize++;
         }
 
-        this.performanceHistory.push({
-            timeDifference,
-            timestamp,
-            responseTime: this.performanceHistory.length > 1
-                ? timestamp - this.performanceHistory[this.performanceHistory.length - 2].timestamp
-                : 0
-        });
-
-        if (this.performanceHistory.length >= 10) {
+        if (this.historySize >= 10) {
             let variance = 0;
             let trend = 0;
             let sumTimeDifference = 0;
-            let previousTimeDiff = this.performanceHistory[this.performanceHistory.length - 11]?.timeDifference || 0;
 
-            for (let i = this.performanceHistory.length - 10; i < this.performanceHistory.length; i++) {
-                const currentTimeDiff = this.performanceHistory[i].timeDifference;
+            const startIdx = (this.historyIndex - 10 + this.maxHistoryLength) % this.maxHistoryLength;
+            let previousTimeDiff = startIdx > 0
+                ? this.diffArray[(startIdx - 1 + this.maxHistoryLength) % this.maxHistoryLength]
+                : 0;
+
+            for (let i = 0; i < 10; i++) {
+                const bufferIdx = (startIdx + i) % this.maxHistoryLength;
+                const currentTimeDiff = this.diffArray[bufferIdx];
                 sumTimeDifference += currentTimeDiff;
-                variance += currentTimeDiff * currentTimeDiff;  // Squared differences for variance
+                variance += currentTimeDiff * currentTimeDiff;
 
-                if (i > this.performanceHistory.length - 10) {
-                    trend += currentTimeDiff - previousTimeDiff;  // Calculate the trend
+                if (i > 0) {
+                    trend += currentTimeDiff - previousTimeDiff;
                 }
-
                 previousTimeDiff = currentTimeDiff;
             }
 
             const mean = sumTimeDifference / 10;
             variance = (variance / 10) - (mean * mean);
-
             trend = trend / 9;
 
             if (variance > 0.1 && this.overshoots > 3) {
@@ -169,29 +171,32 @@ class PIDController {
     }
 
     detectPattern() {
-        if (this.performanceHistory.length < 10) return;
+        if (this.historySize < 10) return;
 
         let variance = 0;
         let trend = 0;
         let sumOfDifferences = 0;
-        let previousTimeDiff = this.performanceHistory[this.performanceHistory.length - 11]?.timeDifference || 0;
 
-        for (let i = this.performanceHistory.length - 10; i < this.performanceHistory.length; i++) {
-            const currentTimeDiff = this.performanceHistory[i].timeDifference;
+        const startIdx = (this.historyIndex - 10 + this.maxHistoryLength) % this.maxHistoryLength;
+        let previousTimeDiff = startIdx > 0
+            ? this.diffArray[(startIdx - 1 + this.maxHistoryLength) % this.maxHistoryLength]
+            : 0;
+
+        for (let i = 0; i < 10; i++) {
+            const bufferIdx = (startIdx + i) % this.maxHistoryLength;
+            const currentTimeDiff = this.diffArray[bufferIdx];
             sumOfDifferences += currentTimeDiff;
-            variance += currentTimeDiff * currentTimeDiff;  // Squared differences for variance
+            variance += currentTimeDiff * currentTimeDiff;
 
-            if (i > this.performanceHistory.length - 10) {
-                trend += currentTimeDiff - previousTimeDiff;  // Calculate the trend
+            if (i > 0) {
+                trend += currentTimeDiff - previousTimeDiff;
             }
-
             previousTimeDiff = currentTimeDiff;
         }
 
         const mean = sumOfDifferences / 10;
         variance = (variance / 10) - (mean * mean);
-
-        trend = trend / 9;  // Dividing by 9 because trend is the sum of 9 differences between consecutive values
+        trend = trend / 9;
 
         if (variance > 0.1 && this.overshoots > 3) {
             this.currentPattern = this.patterns.OSCILLATING;
@@ -204,13 +209,11 @@ class PIDController {
         }
     }
 
-
     adjustPIDCoefficients() {
         const { STABLE, OSCILLATING, LAGGING, SYSTEM_STRESS } = this.patterns;
 
         switch (this.currentPattern) {
             case STABLE:
-                // Replace Math.min with ternary operators
                 this.adaptiveCoefficients.kP.value = (this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate > this.adaptiveCoefficients.kP.maxValue) ?
                     this.adaptiveCoefficients.kP.maxValue : this.adaptiveCoefficients.kP.value + this.adaptiveCoefficients.kP.adjustmentRate;
                 this.adaptiveCoefficients.kI.value = (this.adaptiveCoefficients.kI.value + this.adaptiveCoefficients.kI.adjustmentRate > this.adaptiveCoefficients.kI.maxValue) ?
@@ -219,7 +222,6 @@ class PIDController {
                     this.adaptiveCoefficients.kD.maxValue : this.adaptiveCoefficients.kD.value + this.adaptiveCoefficients.kD.adjustmentRate;
                 break;
             case OSCILLATING:
-                // Replace Math.max/min with ternary operators
                 this.adaptiveCoefficients.kP.value = (this.adaptiveCoefficients.kP.value - this.adaptiveCoefficients.kP.adjustmentRate < this.adaptiveCoefficients.kP.minValue) ?
                     this.adaptiveCoefficients.kP.minValue : this.adaptiveCoefficients.kP.value - this.adaptiveCoefficients.kP.adjustmentRate;
                 this.adaptiveCoefficients.kI.value = (this.adaptiveCoefficients.kI.value - this.adaptiveCoefficients.kI.adjustmentRate < this.adaptiveCoefficients.kI.minValue) ?
@@ -244,29 +246,6 @@ class PIDController {
                     this.adaptiveCoefficients.kD.minValue : this.adaptiveCoefficients.kD.value - this.adaptiveCoefficients.kD.adjustmentRate;
                 break;
         }
-    }
-
-    calculateVariance(values) {
-        let sum = 0;
-        let varianceSum = 0;
-        const length = values.length;
-
-        for (let i = 0; i < length; i++) {
-            const value = values[i];
-            sum += value;
-            varianceSum += value * value;
-        }
-
-        const mean = sum / length;
-        return (varianceSum / length) - (mean * mean);
-    }
-
-    calculateTrend(values) {
-        let trend = 0;
-        for (let i = 1; i < values.length; i++) {
-            trend += values[i] - values[i - 1];
-        }
-        return trend / values.length;
     }
 
     calculateHistoricalAdjustment(timeDifference, deltaTime) {
@@ -323,15 +302,16 @@ class PIDController {
         let finalAdjustment = historicalAdjustment;
 
         if (timeDifferenceAbs > this.fastSyncThreshold) {
+            let playbackRate;
             if (timeDifference > 0) {
-                const fastSyncRate = (this.maxFastSyncRate < 1 + (timeDifferenceAbs / deltaTime)) ?
-                    this.maxFastSyncRate : 1 + (timeDifferenceAbs / deltaTime);
-                this.video.playbackRate = fastSyncRate;
+                const calcRate = 1 + (timeDifferenceAbs / deltaTime);
+                playbackRate = calcRate > this.maxFastSyncRate ? this.maxFastSyncRate : calcRate;
             } else {
-                const fastSyncRate = (1 / this.maxFastSyncRate > 1 - (timeDifferenceAbs / deltaTime)) ?
-                    1 / this.maxFastSyncRate : 1 - (timeDifferenceAbs / deltaTime);
-                this.video.playbackRate = fastSyncRate;
+                const calcRate = 1 - (timeDifferenceAbs / deltaTime);
+                const minRate = 1 / this.maxFastSyncRate;
+                playbackRate = calcRate < minRate ? minRate : calcRate;
             }
+            this.video.playbackRate = playbackRate;
             return timeDifference;
         }
 
@@ -348,12 +328,13 @@ class PIDController {
             this.integral = 0;
         }
 
-        if (playbackRate === playbackRate) {
+        if (playbackRate >= 0 || playbackRate <= 0) {
             this.video.playbackRate = playbackRate;
         }
 
         return timeDifference;
     }
+
 
     reset() {
         if (!isActiveMediaWindow()) {
@@ -366,9 +347,11 @@ class PIDController {
         this.isFirstAdjustment = true;
         this.lastWallTime = null;
 
-        this.performanceHistory = [];
-        this.overshoots = 0;
+        this.historyIndex = 0;
+        this.historySize = 0;
+
         this.systemLag = 0;
+        this.overshoots = 0;
         this.avgResponseTime = 0;
         this.currentPattern = this.patterns.STABLE;
 
@@ -394,7 +377,6 @@ class PIDController {
         };
     }
 }
-
 let pidController;
 
 const PAD = ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09'];
