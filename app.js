@@ -1221,7 +1221,7 @@ const MEDIA_FORM_HTML = `
   </form>
   <br><br>
   <center><video  disablePictureInPicture controls id="preview"></video></center>
-  <div id="mediaCntDn" style="display: flex; justify-content: center;contain: layout style; color: red; font-weight: bold; font-family: 'Courier New', monospace; font-size: 2.5em;"></div>
+  <div id="mediaCntDn" style="display: flex; justify-content: center; contain: layout style; color: red; font-family: 'Source Code Pro', 'Courier New', monospace; font-size: 2.5em;"></div>
 `;
 
 function installDisplayChangeHandler() {

@@ -26,6 +26,7 @@
     "productName": "EMS Media System",
     "files": [
       "**/*",
+      "fonts/*",
       "node_modules/**/*"
     ],
     "win": {
