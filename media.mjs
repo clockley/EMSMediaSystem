@@ -1,4 +1,4 @@
-const { ipcRenderer, argv} = window.electron;
+const { ipcRenderer, argv } = window.electron;
 const { video } = window.api;
 import hls from './node_modules/hls.js/dist/hls.mjs';
 var img = null;
@@ -121,6 +121,17 @@ async function loadMedia() {
     } else {
         navigator.mediaSession.setActionHandler('play', playMediaSessionHandler);
         navigator.mediaSession.setActionHandler('pause', pauseMediaSessionHandler);
+
+        navigator.mediaSession.setActionHandler('seekbackward', () => {
+            ipcRenderer.send('media-seek', -10);
+        });
+
+        navigator.mediaSession.setActionHandler('seekforward', () => {
+            ipcRenderer.send('media-seek', 10);
+        });
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+            ipcRenderer.send('media-seekto', details.seekTime);
+        });
         video.currentTime = strtTm;
         video.addEventListener('play', () => {
             const playbackState = {
