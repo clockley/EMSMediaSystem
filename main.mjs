@@ -621,6 +621,12 @@ app.once('browser-window-created', async () => {
   ipcMain.on('timeGoto-message', handleTimeGotoMessage);
   ipcMain.on('play-ctl', handlePlayCtl);
   ipcMain.on('set-display-index', handleSetDisplayIndex);
+  ipcMain.on('media-seekto', (event, seekTime) => {
+    win?.webContents.send('timeGoto-message', {
+      currentTime: seekTime,
+      timestamp: Date.now()
+    })
+  });
 });
 
 app.on('window-all-closed', () => {

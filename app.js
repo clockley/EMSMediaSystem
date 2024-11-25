@@ -587,6 +587,15 @@ function installIPCHandler() {
     });
 
     ipcRenderer.on('media-window-closed', handleMediaWindowClosed);
+
+    ipcRenderer.on('media-seek', (event, seekTime) => {
+        if (video) {
+          const newTime = video.currentTime + seekTime;
+          if (newTime >= 0 && newTime <= video.duration) {
+            video.currentTime = newTime;
+          }
+        }
+      });
 }
 
 async function handleMediaWindowClosed(event, id) {
