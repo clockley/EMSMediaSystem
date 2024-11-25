@@ -650,8 +650,8 @@ windowBounds = await windowBounds;
 const mainWindowOptions = {
   width: windowBounds ? windowBounds.width : 1068,
   height: windowBounds ? windowBounds.height : 660,
-  minWidth: 1096,
-  minHeight: 681,
+  minWidth: 1151,
+  minHeight: 715,
   icon: `${import.meta.dirname}/icon.png`,
   paintWhenInitiallyHidden: true,
   show: false,
