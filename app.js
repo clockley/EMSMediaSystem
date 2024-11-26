@@ -17,7 +17,6 @@ var prePathname = '';
 var savedCurTime = '';
 var playingMediaAudioOnly = false;
 var audioOnlyFile = false;
-var CrVL = 1;
 var opMode = -1;
 var osName = navigator.userAgentData.platform;
 var localTimeStampUpdateIsRunning = false;
