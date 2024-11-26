@@ -108,7 +108,7 @@ function stopMediaPlaybackPowerHint() {
 }
 
 function sendRemainingTime(event, arg) {
-  let tarr = new Float64Array([arg[0] - arg[1], arg[0], arg[1], arg[2]]);
+  let tarr = new Float64Array([arg[0], arg[1], arg[2]]);
   win?.webContents.send('timeRemaining-message', tarr, [tarr]);
 }
 
