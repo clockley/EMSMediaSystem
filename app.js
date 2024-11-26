@@ -535,7 +535,7 @@ function handleTimeMessage(_, message) {
     const now = Date.now();
 
     if (opMode === MEDIAPLAYER) {
-        SECONDSFLOAT[0] = message[0];
+        SECONDSFLOAT[0] = message[0] - message[1];
         NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
         REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
         NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
@@ -550,7 +550,7 @@ function handleTimeMessage(_, message) {
     // Perform timestamp calculations only if enough time has passed
     if (now - lastUpdateTime > 500) {
         if (video && !video.paused && !video.seeking) {
-            targetTime = message[2] - (((now - message[3]) + (Date.now() - now)) * 0.001);
+            targetTime = message[1] - (((now - message[2]) + (Date.now() - now)) * 0.001);
             hybridSync(targetTime);
             lastUpdateTime = now;
         }
