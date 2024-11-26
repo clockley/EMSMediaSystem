@@ -120,14 +120,13 @@ class PIDController {
     }
 
     updateSystemMetrics(timeDifference, timestamp) {
-        const idx = this.historyIndex;
-        this.timeArray[idx] = timestamp;
-        this.diffArray[idx] = timeDifference;
-        this.responseArray[idx] = this.historySize > 0
-            ? timestamp - this.timeArray[(idx - 1 + this.maxHistoryLength) % this.maxHistoryLength]
+        this.timeArray[this.historyIndex] = timestamp;
+        this.diffArray[this.historyIndex] = timeDifference;
+        this.responseArray[this.historyIndex] = this.historySize > 0
+            ? timestamp - this.timeArray[(this.historyIndex - 1 + this.maxHistoryLength) % this.maxHistoryLength]
             : 0;
 
-        this.historyIndex = (idx + 1) % this.maxHistoryLength;
+        this.historyIndex = (this.historyIndex + 1) % this.maxHistoryLength;
         if (this.historySize < this.maxHistoryLength) {
             this.historySize++;
         }
@@ -183,8 +182,7 @@ class PIDController {
             : 0;
 
         for (let i = 0; i < 10; i++) {
-            const bufferIdx = (startIdx + i) % this.maxHistoryLength;
-            const currentTimeDiff = this.diffArray[bufferIdx];
+            const currentTimeDiff = this.diffArray[(startIdx + i) % this.maxHistoryLength];
             sumOfDifferences += currentTimeDiff;
             variance += currentTimeDiff * currentTimeDiff;
 
@@ -298,8 +296,7 @@ class PIDController {
 
         this.updateSystemMetrics(timeDifference, wallNow);
 
-        const historicalAdjustment = this.calculateHistoricalAdjustment(timeDifference, deltaTime);
-        let finalAdjustment = historicalAdjustment;
+        const finalAdjustment = this.calculateHistoricalAdjustment(timeDifference, deltaTime);
 
         if (timeDifferenceAbs > this.fastSyncThreshold) {
             let playbackRate;
@@ -315,8 +312,7 @@ class PIDController {
             return timeDifference;
         }
 
-        const currentSettings = this.performancePatterns[this.currentPattern];
-        const maxRate = currentSettings.maxRate;
+        const maxRate = this.performancePatterns[this.currentPattern].maxRate;
         const minRate = 2 - maxRate;
         let playbackRate = 1.0 + finalAdjustment;
 
