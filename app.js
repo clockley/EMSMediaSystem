@@ -6,7 +6,6 @@
 
 const { ipcRenderer, __dirname, bibleAPI, webUtils } = window.electron;
 
-var dontSyncRemote = false;
 var pidSeeking = false;
 var video = null;
 var masterPauseState = false;
@@ -860,7 +859,6 @@ function playMedia(e) {
 
         currentMediaFile = mdFIle.files;
         createMediaWindow();
-        dontSyncRemote = false;
     } else {
         startTime = 0;
         isPlaying = false;
@@ -868,7 +866,6 @@ function playMedia(e) {
         ipcRenderer.send('close-media-window', 0);
         isActiveMediaWindowCache = false;
         playingMediaAudioOnly = false;
-        dontSyncRemote = true;
         if (!audioOnlyFile)
             activeLiveStream = true;
         video.pause();
@@ -1285,12 +1282,10 @@ function setSBFormMediaPlayer() {
     }
     updateDynUI();
     plyBtn.addEventListener("click", playMedia);
-    dontSyncRemote = true;
     let isImgFile;
     if (mdFile !== null) {
         if (document.getElementById("preview").parentNode !== null) {
             if (!masterPauseState && video !== null && !video.paused) {
-                dontSyncRemote = false;
                 if (!isImg(mediaFile)) {
                     video.play();
                 }
@@ -1316,12 +1311,9 @@ function setSBFormMediaPlayer() {
                             }
                         }
                     }
-                    dontSyncRemote = false;
                 }
                 document.getElementById("preview").parentNode.replaceChild(video, document.getElementById("preview"));
             }
-        } else {
-            dontSyncRemote = false;
         }
 
         if (isImgFile && !document.querySelector('img')) {
@@ -1369,8 +1361,7 @@ function saveMediaFile() {
         } else if (mdfileElement.value === "") {
             return;
         }
-        if (opMode !== MEDIAPLAYER && dontSyncRemote !== true)
-            dontSyncRemote = true;
+
         mediaPlayerInputState.clear();
 
         mediaPlayerInputState.fileInpt = mdfileElement.files;
@@ -1438,9 +1429,6 @@ function saveMediaFile() {
             }
         }
     }
-    if (opMode === MEDIAPLAYER && mediaFile !== null) {
-        dontSyncRemote = false;
-    }
 }
 
 function restoreMediaFile() {
@@ -1465,10 +1453,6 @@ function modeSwitchHandler(event) {
     if (event.target.type === 'radio') {
         if (event.target.value === 'Media Player') {
             installPreviewEventHandlers();
-            dontSyncRemote = true;
-            if (video && !activeLiveStream && isActiveMediaWindow()) {
-                dontSyncRemote = false;
-            }
             updateTimestamp();
         }
     }
@@ -1615,10 +1599,6 @@ function seekLocalMedia(e) {
         e.preventDefault();
         return;
     }
-    if (dontSyncRemote === true) {
-        dontSyncRemote = false;
-        return;
-    }
     if (e.target.isConnected) {
         ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
         ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
@@ -1631,9 +1611,6 @@ function seekingLocalMedia(e) {
         e.preventDefault();
     } else {
         pidController.reset();
-    }
-    if (dontSyncRemote === true) {
-        return;
     }
     if (e.target.isConnected) {
         ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
