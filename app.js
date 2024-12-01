@@ -880,7 +880,10 @@ function playMedia(e) {
         }
         localTimeStampUpdateIsRunning = false;
         if (mediaFile !== decodeURI(removeFileProtocol(video.src))) {
-            waitForMetadata().then(saveMediaFile);
+            waitForMetadata().then(saveMediaFile).catch(function(rej) { console.log(rej);});
+        }
+        if (isImg(mediaFile)) {
+            saveMediaFile();
         }
     }
     updateDynUI();
@@ -1329,6 +1332,10 @@ function setSBFormMediaPlayer() {
     if (encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
         saveMediaFile();
     }
+
+    if (isImg(mediaFile)) {
+        document.getElementById("preview").parentNode.appendChild(img);
+    }
     //console.timeEnd("start");
 }
 
@@ -1507,7 +1514,9 @@ function playAudioFileAfterDelay() {
 
 function playLocalMedia(event) {
     if (!isActiveMediaWindow()) {
-        video.audioTracks[0].enabled = true;
+        if (video.audioTracks) {
+            video.audioTracks[0].enabled = true;
+        }
     }
     mediaSessionPause = false;
     if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
