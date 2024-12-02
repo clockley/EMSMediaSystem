@@ -529,8 +529,9 @@ function updateCountdownNode() {
     updatePending[0] = 0;
 }
 
+let now = 0;
 function handleTimeMessage(_, message) {
-    const now = Date.now();
+    now = Date.now();
 
     if (opMode === MEDIAPLAYER) {
         SECONDSFLOAT[0] = message[0] - message[1];
