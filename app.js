@@ -384,10 +384,15 @@ function isActiveMediaWindow() {
 
 let lastUpdateTimeLocalPlayer = 0;
 
-async function getAudioDevices() {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const audioOutputs = devices.filter(device => device.kind === 'audiooutput');
-    return audioOutputs;
+function getAudioDevices() {
+    return navigator.mediaDevices.enumerateDevices().then(devices =>
+        devices.reduce((audioOutputs, device) => {
+            if (device.kind === 'audiooutput') {
+                audioOutputs.push(device);
+            }
+            return audioOutputs;
+        }, [])
+    );
 }
 
 let audioOutputs = [];
