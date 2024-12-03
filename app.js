@@ -803,6 +803,10 @@ function playMedia(e) {
         }
     }
 
+    if (isImg(mediaFile) && document.getElementById("mdFile").files.length === 0 && video.style.display === 'none') {
+        mdFile.files=mediaPlayerInputState.fileInpt;
+    }
+
     if (mdFIle.value === "" && !playingMediaAudioOnly) {
         if (isPlaying) {
             isPlaying = false;
