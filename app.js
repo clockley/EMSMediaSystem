@@ -22,7 +22,6 @@ var localTimeStampUpdateIsRunning = false;
 var mediaFile;
 var currentMediaFile;
 var fileEnded = false;
-var dyneForm = null;
 var mediaSessionPause = false;
 let isPlaying = false;
 let img = null;
@@ -948,7 +947,7 @@ function setSBFormYouTubeMediaPlayer() {
     opMode = MEDIAPLAYERYT;
     ipcRenderer.send('set-mode', opMode);
 
-    dyneForm.innerHTML =
+    document.getElementById("dyneForm").innerHTML =
         `
         <form onsubmit="return false;">
         <input type="url" name="mdFile" id="mdFile" placeholder="Paste your video URL here..." style="width: 80%; padding: 15px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; outline: none;" onfocus="this.style.borderColor='#0056b3';" onblur="this.style.borderColor='#ddd';" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
@@ -1000,7 +999,7 @@ async function setSBFormTextPlayer() {
     opMode = TEXTPLAYER;
     ipcRenderer.send('set-mode', opMode);
 
-    dyneForm.innerHTML = `
+    document.getElementById("dyneForm").innerHTML = `
         <form onsubmit="return false;">
             <label for="scriptureInput">Scripture:</label>
             <input type="text" id="scriptureInput" class="input-field" placeholder="e.g., Genesis 1:1">
@@ -1259,7 +1258,7 @@ function setSBFormMediaPlayer() {
     }
     opMode = MEDIAPLAYER;
     ipcRenderer.send('set-mode', opMode);
-    dyneForm.innerHTML = MEDIA_FORM_HTML;
+    document.getElementById("dyneForm").innerHTML = MEDIA_FORM_HTML;
     mediaCntDn.appendChild(textNode);
     installDisplayChangeHandler();
     populateDisplaySelect();
@@ -1494,7 +1493,7 @@ function cleanRefs() {
     if (mcd && mcd.contains(textNode)) {
         mcd.removeChild(textNode);
     }
-    dyneForm.innerHTML = null;
+    document.getElementById("dyneForm").innerHTML = '';
 }
 
 function installEvents() {
@@ -1744,8 +1743,6 @@ function installPreviewEventHandlers() {
 }
 
 function loadOpMode(mode) {
-    dyneForm = document.getElementById("dyneForm");
-
     if (mode === MEDIAPLAYERYT) {
         document.getElementById("YtPlyrRBtnFrmID").checked = true;
         setSBFormYouTubeMediaPlayer();
