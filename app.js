@@ -13,7 +13,6 @@ var activeLiveStream = false;
 var targetTime = 0;
 var startTime = 0;
 var prePathname = '';
-var savedCurTime = '';
 var playingMediaAudioOnly = false;
 var audioOnlyFile = false;
 var opMode = -1;
