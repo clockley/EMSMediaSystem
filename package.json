@@ -12,12 +12,12 @@
   "author": "Christian Lockley",
   "license": "GPL-3.0-or-later",
   "devDependencies": {
-    "electron-builder": "^24.6.0",
-    "electron-nightly": "^35.0.0-nightly.20241115"
+    "electron-builder": "^25.0.0",
+    "electron-nightly": "^35.0.0-nightly"
   },
   "dependencies": {
     "atem-connection": "^3.5.0",
-    "bonjour": "^3.3.0",
+    "bonjour": "^3.5.0",
     "electron-settings": "^4.0.4",
     "hls.js": "^1.6.0-beta.1"
   },
