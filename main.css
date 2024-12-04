@@ -1,117 +1,55 @@
 @font-face {
-    font-family: 'Source Code Pro';
-    src: url('./fonts/SourceCodePro-Regular.otf') format('opentype');
+    font-family: 'B612';
+    src: url('./fonts/B612_Mono/B612Mono-Regular.ttf') format('truetype');
     font-weight: normal;
     font-style: normal;
     font-display: swap;
 }
 
+@font-face {
+    font-family: 'Cantarell';
+    src: url('./fonts/cantarell/Cantarell-Regular.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+:root {
+    --adw-accent: #3584e4;
+    --adw-accent-hover: #1c71d8;
+    --adw-bg: #f6f5f4;
+    --adw-card-bg: #ffffff;
+    --adw-border: #d3d3d3;
+    --adw-text: #2e3436;
+    --adw-radius-sm: 6px;
+    --adw-radius-lg: 12px;
+    --adw-spacing: 24px;
+}
 
 /* Grid layout */
 .index-grid-container {
     display: grid;
     grid-template: "main main" auto "main main" auto "footerBar footerBar" auto / 1fr 1fr;
+    min-width: 100vw;
+    min-height: 100vh;
 }
 
 /* Base styles */
 body {
-    font-family: Arial, sans-serif;
     user-select: none;
-}
-
-body.windows {
-    font-family: "Segoe UI", sans-serif;
-    color: #333;
-    background-color: #fff;
-}
-
-body.linux {
-    font-family: Cantarell, Arial, sans-serif;
-    color: #2e3436;
-    background-color: #edecec;
+    overflow-y: auto;
+    font-family: "Cantarell";
+    color: var(--adw-text);
+    background-color: var(--adw-bg);
+    margin: 0;
 }
 
 /* Form elements */
 button,
 input,
 textarea {
+    font-family: inherit;
     font-size: 14px;
-}
-
-body.linux button,
-body.linux input,
-body.linux textarea {
-    border: 1px solid #c7c7c7;
-    padding: 8px 16px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-body.windows button,
-body.windows input,
-body.windows textarea {
-    border: 1px solid #ccc;
-    padding: 6px 12px;
-}
-
-/* Button states */
-button:hover {
-    background-color: #eaeaea;
-}
-
-body.linux button:hover {
-    background-color: #d3d7cf;
-    border-color: #b1b1b1;
-}
-
-body.linux button:active {
-    background-color: #babdb6;
-    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.2);
-}
-
-/* Input focus */
-input:focus,
-textarea:focus {
-    outline: none;
-}
-
-body.linux input:focus,
-body.linux textarea:focus {
-    border-color: #4a90d9;
-}
-
-/* Slider styles */
-.adwaita-slider,
-.WinStyle-slider {
-    appearance: none;
-    width: calc(100% - 40px);
-    height: 2px;
-    margin: 10px 20px;
-    transition: background-color 0.3s;
-    background: #b3b3b3;
-}
-
-.WinStyle-slider {
-    background: #ccc;
-}
-
-.adwaita-slider::-webkit-slider-thumb,
-.WinStyle-slider::-webkit-slider-thumb {
-    appearance: none;
-    cursor: pointer;
-    height: 16px;
-    width: 16px;
-    border-radius: 50%;
-    margin-top: -7px;
-    box-shadow: 0 0 1px 1px rgba(0, 0, 0, 0.2);
-    transition: background-color 0.3s;
-    background: #0078D7;
-}
-
-.WinStyle-slider::-webkit-slider-thumb {
-    width: 20px;
-    height: 20px;
-    background: #0078D7;
-    margin-top: -9px;
 }
 
 /* Layout elements */
@@ -123,92 +61,277 @@ footer {
     grid-area: footerBar;
 }
 
-#cntdndiv {
-    text-align: center;
+.media-container {
+    padding: 16px 24px;
+    height: calc(100vh - 100px);
+    display: flex;
+    flex-direction: column;
 }
 
-[draggable] {
-    user-drag: element;
+.control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.control-label {
+    font-weight: 500;
+    color: var(--adw-text);
+    font-size: 14px;
+}
+
+.control-panel {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    flex-shrink: 0; /* Prevent panel from shrinking */
+}
+
+/* File input */
+.file-input-group {
+    position: relative;
+}
+
+.file-input-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border: 1px solid var(--adw-border);
+    border-radius: var(--adw-radius-sm);
+    background: linear-gradient(to bottom, #ffffff, #f6f6f6);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-height: 36px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    width: auto;
+}
+
+.file-input-label:hover {
+    background: linear-gradient(to bottom, #f9f9f9, #f1f1f1);
+    border-color: #bbb;
+}
+
+.file-input-label:active {
+    background: #ebebeb;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.file-input-label svg {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    color: var(--adw-text);
+}
+
+.file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+}
+
+/* Display select */
+.display-select {
+    width: 100%;
+    padding: 8px 16px;
+    border: 1px solid var(--adw-border);
+    border-radius: var(--adw-radius-sm);
+    background: var(--adw-card-bg);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 32px;
+}
+
+/* Loop control */
+.loop-control {
+    display: flex;
+    align-items: center;
+    gap: 8px; /* Small gap between label and switch */
+    justify-content: flex-start; /
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 48px;
+    height: 26px;
+}
+
+.switch-track {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #cdcdcd;
+    border-radius: 13px;
+    transition: 0.2s;
+}
+
+.switch-thumb {
+    position: absolute;
+    height: 22px;
+    width: 22px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    border-radius: 50%;
+    transition: 0.2s;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.switch input:checked + .switch-track {
+    background-color: var(--adw-accent);
+}
+
+.switch input:checked + .switch-track + .switch-thumb {
+    transform: translateX(22px);
+}
+
+/* Button styling */
+#mediaWindowPlayButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: linear-gradient(to bottom, #ffffff, #f6f6f6);
+    border: 1px solid var(--adw-border);
+    color: var(--adw-text);
+    border-radius: var(--adw-radius-sm);
+    cursor: pointer;
+    font-weight: normal;
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    width: auto;
+    align-self: flex-end;
+}
+
+#mediaWindowPlayButton:hover {
+    background: linear-gradient(to bottom, #f9f9f9, #f1f1f1);
+    border-color: #bbb;
+}
+
+#mediaWindowPlayButton:active {
+    background: #ebebeb;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+#mediaWindowPlayButton svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Video area */
+.video-wrapper {
+    margin-top: 24px;
+    border-radius: 12px;
+    overflow: hidden;
+    flex: 1;  /* Take remaining space */
+    position: relative;
 }
 
 #preview {
-    width: 70vw;
-    height: 39.375vw;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
-    border-radius: 10px;
-    overflow: hidden;
-    max-height: 100vh;
+    background: black;
+    contain: strict;
+    will-change: transform;
 }
-
-.setTimerButton,
-#mediaWindowPlayButton {
-    height: 32px;
-    width: 256px;
-}
-
 
 #preview video::-webkit-media-controls-panel {
     display: flex !important;
     opacity: 1 !important;
 }
 
-#volumeControl {
-    width: 150px;
+/* Timer display */
+#mediaCntDn {
+    padding: 12px 0;
+    flex-shrink: 0; /* Prevent shrinking */
 }
 
-/* Tab styles */
-input[type="radio"] {
-    display: none;
+/* Focus styles */
+button:focus-visible,
+.file-input-label:focus-visible,
+.display-select:focus-visible,
+.switch input:focus-visible + .switch-track {
+    outline: 2px solid var(--adw-accent);
+    outline-offset: 2px;
 }
 
-label.tab {
-    padding: 10px 20px;
-    cursor: pointer;
-    display: inline-block;
-    border: 1px solid #ccc;
-    border-bottom: none;
-    margin-bottom: -1px;
-    background-color: #f1f1f1;
-    color: #000;
-}
-
-label.tab:hover {
-    background-color: #e1e1e1;
-}
-
-input[type="radio"]:checked+label.tab {
-    background-color: white;
-    border-bottom: 1px solid white;
-    position: relative;
-    top: 1px;
-}
-
-.tab-content {
-    display: none;
-    border: 1px solid #ccc;
-    padding: 20px;
-}
-
-/* Suggestions styles */
-#suggestions {
-    background-color: #fff;
-    border: 1px solid #ccc;
+.tabs {
+    display: flex;
     padding: 0;
-    margin-top: 5px;
+    background: #ffffff;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    gap: 8px;
+    padding: 0 12px;
+}
+
+/* Hide actual radio buttons but keep them functional */
+.tabs input[type="radio"] {
     position: absolute;
-    z-index: 1000;
-    width: 200px;
-    list-style: none;
-    display: none;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
 }
 
-#suggestions li {
-    padding: 5px;
+/* Style the labels as GNOME tabs */
+.tabs label.tab {
+    padding: 8px 16px;
+    font-size: 14px;
+    color: #2e3436;
+    background: none;
+    border: none;
     cursor: pointer;
+    position: relative;
+    transition: all 0.2s ease;
+    user-select: none;
 }
 
-#suggestions li:hover,
-.highlight {
-    background-color: #f0f0f0;
-    color: #333;
+/* Active tab styling (when radio is checked) */
+.tabs input[type="radio"]:checked + label.tab {
+    box-shadow: inset 0 -2px #3584e4;
+    font-weight: 500;
+}
+
+/* Hover effect for non-active tabs */
+.tabs label.tab:hover {
+    background: rgba(0, 0, 0, 0.03);
+}
+
+/* No hover effect needed on active tab */
+.tabs input[type="radio"]:checked + label.tab:hover {
+    background: none;
+}
+
+@media (height: 715px) {
+    .media-container {
+        padding: 12px 24px;
+    }
+    
+    .control-panel {
+        padding: 16px;
+        gap: 16px;
+    }
+    
+    .control-group {
+        gap: 4px;
+    }
 }

@@ -586,12 +586,12 @@ function installIPCHandler() {
 
     ipcRenderer.on('media-seek', (event, seekTime) => {
         if (video) {
-          const newTime = video.currentTime + seekTime;
-          if (newTime >= 0 && newTime <= video.duration) {
-            video.currentTime = newTime;
-          }
+            const newTime = video.currentTime + seekTime;
+            if (newTime >= 0 && newTime <= video.duration) {
+                video.currentTime = newTime;
+            }
         }
-      });
+    });
 }
 
 async function handleMediaWindowClosed(event, id) {
@@ -807,7 +807,7 @@ function playMedia(e) {
     }
 
     if (isImg(mediaFile) && document.getElementById("mdFile").files.length === 0 && video.style.display === 'none') {
-        mdFile.files=mediaPlayerInputState.fileInpt;
+        mdFile.files = mediaPlayerInputState.fileInpt;
     }
 
     if (mdFIle.value === "" && !playingMediaAudioOnly) {
@@ -886,7 +886,7 @@ function playMedia(e) {
         }
         localTimeStampUpdateIsRunning = false;
         if (mediaFile !== decodeURI(removeFileProtocol(video.src))) {
-            waitForMetadata().then(saveMediaFile).catch(function(rej) { console.log(rej);});
+            waitForMetadata().then(saveMediaFile).catch(function (rej) { console.log(rej); });
         }
         if (isImg(mediaFile)) {
             saveMediaFile();
@@ -1214,24 +1214,56 @@ async function setSBFormTextPlayer() {
 }
 
 const isLinux = osName === "Linux";
-const sliderClass = isLinux ? 'adwaita-slider' : 'WinStyle-slider';
 const lineHeight = isLinux ? '1' : '1.2';
 
 const MEDIA_FORM_HTML = `
-  <form onsubmit="return false;">
-    <input type="file" name="mdFile" id="mdFile" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
-    <select name="dspSelct" id="dspSelct">
-      <option value="" disabled>--Select Display Device--</option>
-    </select>
-    <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
-    <label for="mdLpCtlr">Loop</label>
-    <br><br>
-    <button id="mediaWindowPlayButton" type="button">Start Presentation</button>
-    <br>
+<div class="media-container">
+  <form onsubmit="return false;" class="control-panel">
+    <div class="control-group">
+      <span class="control-label">Media</span>
+      <label class="file-input-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+        <span>Choose media file...</span>
+        <input type="file" class="file-input" name="mdFile" id="mdFile"
+               accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
+      </label>
+    </div>
+    
+    <div class="control-group">
+      <span class="control-label">Display</span>
+      <div class="display-select-group">
+        <select name="dspSelct" id="dspSelct" class="display-select">
+          <option value="" disabled>--Select Display Device--</option>
+        </select>
+      </div>
+    </div>
+    <div class="control-group">
+        <div class="control-group">
+            <div class="loop-control">
+                <span class="control-label">Repeat</span>
+                <label class="switch">
+                <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
+                <span class="switch-track"></span>
+                <span class="switch-thumb"></span>
+                </label>
+            </div>
+    </div>
+      <div class="controls-row">
+        <button id="mediaWindowPlayButton" type="button">
+          Start Presentation
+        </button>
+      </div>
+    </div>
   </form>
-  <br><br>
-  <center><video  disablePictureInPicture controls id="preview"></video></center>
-  <div id="mediaCntDn" style="display: flex; justify-content: center; contain: layout style; color: red; font-family: 'Source Code Pro', 'Courier New', monospace; font-size: 2.5em;"></div>
+
+  <div class="video-wrapper">
+    <video id="preview" disablePictureInPicture controls></video>
+  </div>
+  
+  <div id="mediaCntDn"></div>
+</div>
 `;
 
 function installDisplayChangeHandler() {
@@ -1259,6 +1291,7 @@ function setSBFormMediaPlayer() {
     ipcRenderer.send('set-mode', opMode);
     document.getElementById("dyneForm").innerHTML = MEDIA_FORM_HTML;
     mediaCntDn.appendChild(textNode);
+    mediaCntDn.style.color = "#5c87b2";
     installDisplayChangeHandler();
     populateDisplaySelect();
 
@@ -1266,12 +1299,19 @@ function setSBFormMediaPlayer() {
         video = document.getElementById('preview');
     }
 
+    if (mediaFile) {
+        const fileNameSpan = document.querySelector('.file-input-label span');
+        if (fileNameSpan) {
+            fileNameSpan.textContent = basename(mediaFile);
+        }
+    }
+
     restoreMediaFile();
     updateTimestamp();
 
     const loopctl = document.getElementById("mdLpCtlr");
     if (video.loop === true) {
-        document.getElementById("mdLpCtlr").checked=true
+        document.getElementById("mdLpCtlr").checked = true
     }
     loopctl.addEventListener('change', loopCtlHandler);
 
@@ -1386,6 +1426,13 @@ function saveMediaFile() {
     }
 
     mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : webUtils.getPathForFile(document.getElementById("mdFile").files[0]);
+
+    if (mediaFile) {
+        const fileNameSpan = document.querySelector('.file-input-label span');
+        if (fileNameSpan) {
+            fileNameSpan.textContent = basename(mediaFile);
+        }
+    }
 
     let imgEle = null;
     if (imgEle = document.querySelector('img')) {
@@ -1865,13 +1912,7 @@ async function createMediaWindow() {
 
 const WIN32 = 'Windows';
 const LINUX = 'Linux';
-const WIN_STYLE = 'WinStyle'
 
-function loadPlatformCSS() {
-    document.body.classList.add(WIN_STYLE);
-}
-
-loadPlatformCSS();
 installIPCHandler();
 installEvents();
 
