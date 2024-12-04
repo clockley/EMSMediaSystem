@@ -1498,11 +1498,17 @@ function cleanRefs() {
 
 function installEvents() {
     document.getElementById("MdPlyrRBtnFrmID").addEventListener('click', () => {
+        if (opMode === MEDIAPLAYER) {
+            return;
+        }
         cleanRefs();
         setSBFormMediaPlayer();
     }, { passive: true });
 
     document.getElementById("YtPlyrRBtnFrmID").addEventListener('click', () => {
+        if (opMode === MEDIAPLAYERYT) {
+            return;
+        }
         cleanRefs();
         setSBFormYouTubeMediaPlayer();
     }, { passive: true });
