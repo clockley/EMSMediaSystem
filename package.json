@@ -7,11 +7,13 @@
     "start": "node node_modules/electron-nightly/cli.js .",
     "dist": "electron-builder",
     "dist-win": "electron-builder --win",
-    "dist-linux": "electron-builder --linux"
+    "dist-linux": "electron-builder --linux",
+    "dist-all": "concurrently \"yarn dist-win\" \"yarn dist-linux\""
   },
   "author": "Christian Lockley",
   "license": "GPL-3.0-or-later",
   "devDependencies": {
+    "concurrently": "^9.1.0",
     "electron-builder": "^25.0.0",
     "electron-nightly": "^35.0.0-nightly"
   },
