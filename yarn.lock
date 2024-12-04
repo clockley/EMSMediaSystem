@@ -1258,7 +1258,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"electron-builder@npm:^25.1.8":
+"electron-builder@npm:^25.0.0":
   version: 25.1.8
   resolution: "electron-builder@npm:25.1.8"
   dependencies:
@@ -1340,7 +1340,7 @@ __metadata:
   dependencies:
     atem-connection: "npm:^3.5.0"
     bonjour: "npm:^3.5.0"
-    electron-builder: "npm:^25.1.8"
+    electron-builder: "npm:^25.0.0"
     electron-nightly: "npm:^35.0.0-nightly"
     electron-settings: "npm:^4.0.4"
     hls.js: "npm:^1.6.0-beta.1"
