@@ -946,20 +946,27 @@ function setSBFormYouTubeMediaPlayer() {
     opMode = MEDIAPLAYERYT;
     ipcRenderer.send('set-mode', opMode);
 
-    document.getElementById("dyneForm").innerHTML =
-        `
-        <form onsubmit="return false;">
-        <input type="url" name="mdFile" id="mdFile" placeholder="Paste your video URL here..." style="width: 80%; padding: 15px; font-size: 16px; border: 2px solid #ddd; border-radius: 8px; outline: none;" onfocus="this.style.borderColor='#0056b3';" onblur="this.style.borderColor='#ddd';" accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
-        <br>
-            <button id="mediaWindowPlayButton" type="button">Start Presentation</button>
-        <br>
-            <select name="dspSelct" id="dspSelct">
-                <option value="" disabled>--Select Display Device--</option>
-            </select>
-            <br>
-            <br>
-        </form>
-        <br>
+    document.getElementById("dyneForm").innerHTML = `
+    <div class="media-container">
+        <div class="control-panel">
+            <div class="control-group">
+                <span class="control-label">Stream URL</span>
+                <input type="url" 
+                       name="mdFile" 
+                       id="mdFile" 
+                       placeholder="Paste your video URL here..." 
+                       class="url-input"
+                       accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
+            </div>
+    
+            <div class="control-group">
+                <span class="control-label">Display</span>
+                <select name="dspSelct" id="dspSelct" class="display-select">
+                    <option value="" disabled>Select Display</option>
+                </select>
+            </div>
+        </div>      
+    </div>
     `;
 
     if (mediaFile !== null && isLiveStream(mediaFile)) {
@@ -1250,11 +1257,6 @@ const MEDIA_FORM_HTML = `
                 </label>
             </div>
     </div>
-      <div class="controls-row">
-        <button id="mediaWindowPlayButton" type="button">
-          Start Presentation
-        </button>
-      </div>
     </div>
   </form>
 
