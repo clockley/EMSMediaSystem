@@ -63,7 +63,7 @@ footer {
 
 .media-container {
     padding: 16px 24px;
-    height: calc(100vh - 100px);
+    height: calc(100vh - 70px);
     display: flex;
     flex-direction: column;
 }
