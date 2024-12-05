@@ -42,6 +42,9 @@ body {
     color: var(--adw-text);
     background-color: var(--adw-bg);
     margin: 0;
+    color-scheme: light dark;
+    border-radius: 12px;
+    overflow: hidden;
 }
 
 /* Form elements */
@@ -55,6 +58,8 @@ textarea {
 /* Layout elements */
 main {
     grid-area: main;
+    margin-top: 57px; /* Height of headerbar */
+
 }
 
 footer {
@@ -63,9 +68,10 @@ footer {
 
 .media-container {
     padding: 16px 24px;
-    height: calc(100vh - 70px);
+    height: calc(100vh - 45px - 37px - 32px); /* viewport - headerbar - tabs - padding */
     display: flex;
     flex-direction: column;
+    margin-top: 37px; /* Height of tabs */
 }
 
 .control-group {
@@ -274,53 +280,6 @@ button:focus-visible,
     outline-offset: 2px;
 }
 
-.tabs {
-    display: flex;
-    padding: 0;
-    background: #ffffff;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    gap: 8px;
-    padding: 0 12px;
-}
-
-/* Hide actual radio buttons but keep them functional */
-.tabs input[type="radio"] {
-    position: absolute;
-    opacity: 0;
-    width: 0;
-    height: 0;
-    margin: 0;
-}
-
-/* Style the labels as GNOME tabs */
-.tabs label.tab {
-    padding: 8px 16px;
-    font-size: 14px;
-    color: #2e3436;
-    background: none;
-    border: none;
-    cursor: pointer;
-    position: relative;
-    transition: all 0.2s ease;
-    user-select: none;
-}
-
-/* Active tab styling (when radio is checked) */
-.tabs input[type="radio"]:checked + label.tab {
-    box-shadow: inset 0 -2px #3584e4;
-    font-weight: 500;
-}
-
-/* Hover effect for non-active tabs */
-.tabs label.tab:hover {
-    background: rgba(0, 0, 0, 0.03);
-}
-
-/* No hover effect needed on active tab */
-.tabs input[type="radio"]:checked + label.tab:hover {
-    background: none;
-}
-
 @media (height: 715px) {
     .media-container {
         padding: 12px 24px;
@@ -334,4 +293,219 @@ button:focus-visible,
     .control-group {
         gap: 4px;
     }
+}
+
+.headerbar {
+    background: color-mix(in srgb, AccentColor 5%, Canvas);
+    color: CanvasText;
+    padding: 6px;
+    height: 45px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    -webkit-app-region: drag;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+ }
+ .headerbar-center {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    height: 100%;
+    display: flex;
+    align-items: stretch;
+}
+
+ .headerbar-start {
+    display: flex;
+    align-items: stretch;
+    height: 100%;
+ }
+ 
+ .headerbar-end {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-right: 6px;
+ }
+ 
+ .tabs {
+    display: flex;
+    align-items: stretch;
+    height: 100%;
+    margin: 0 -6px;
+    -webkit-app-region: no-drag;
+ }
+ 
+ /* Hide actual radio buttons but keep them functional */
+ .tabs input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+ }
+ 
+ .tab {
+    padding: 0 16px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    color: color-mix(in srgb, CanvasText 80%, transparent);
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+ }
+ 
+ .tabs input[type="radio"]:checked + .tab {
+    color: CanvasText;
+    box-shadow: inset 0 -2px CanvasText;
+ }
+ 
+ .tab:hover:not(:checked + .tab) {
+    background: color-mix(in srgb, CanvasText 10%, transparent);
+ }
+ 
+ .window-controls {
+    display: flex;
+    gap: 2px;
+    -webkit-app-region: no-drag;
+ }
+ 
+ .window-control {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: currentColor;  /* This will inherit from headerbar color */
+    transition: all 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+ }
+ 
+ .window-control:hover {
+    background: color-mix(in srgb, CanvasText 10%, transparent);
+ }
+ 
+ .window-control.close:hover {
+    background: #e01b24;
+ }
+ 
+ .window-control svg {
+    color: currentColor;
+    fill: none;    /* For the close button X */
+    stroke: currentColor;  /* For the close button X */
+}
+
+.window-control svg path {
+    fill: currentColor;
+}
+
+.window-control:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.window-control.close:hover {
+    background: #e01b24;
+}
+
+ #mediaWindowPlayButton {
+    -webkit-app-region: no-drag;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+    background: transparent;
+    color: CanvasText;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background-color 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+ }
+ 
+ #mediaWindowPlayButton:hover {
+    background: color-mix(in srgb, CanvasText 10%, transparent);
+ }
+ 
+ .window-title {
+    font-size: 14px;
+    font-weight: normal;
+    margin: 0;
+    color: #ffffff;
+    user-select: none;
+ }
+
+ .file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+}
+
+.title-button {
+    background: none;
+    border: none;
+    padding: 6px 8px;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    color: inherit;
+    cursor: pointer;
+    -webkit-app-region: no-drag;
+    position: relative;
+    min-width: 200px;
+}
+
+.title-button:hover {
+    background: color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+.display-select {
+    width: 100%;
+    padding: 8px 16px;
+    border: 1px solid var(--adw-border);
+    border-radius: var(--adw-radius-sm);
+    background: var(--adw-card-bg);
+    color: var(--adw-text); /* Add text color */
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 32px;
+}
+
+/* Style for dropdown options */
+.display-select option {
+    color: var(--adw-text);
+    background: var(--adw-card-bg);
+}
+
+.url-input {
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 14px;
+    border: 1px solid var(--adw-border);
+    border-radius: var(--adw-radius-sm);
+    background: var(--adw-card-bg);
+    color: var(--adw-text);
+    transition: all 0.2s ease;
+}
+
+.url-input:focus {
+    border-color: var(--adw-accent);
+    outline: none;
+}
+
+.url-input::placeholder {
+    color: #888;
 }

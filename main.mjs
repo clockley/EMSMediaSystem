@@ -76,6 +76,24 @@ function createWindow() {
   //win.openDevTools()
   win.webContents.on('did-finish-load', lateInit);
 
+  win.on('maximize', () => {
+    win?.webContents.send('maximize-change', true);
+  });
+
+  win.on('unmaximize', () => {
+    win.webContents.send('maximize-change', false);
+  });
+
+  if (process.platform === 'linux') {
+    win.on('maximize', () => {
+      win.setBackgroundColor('#00000000');
+    });
+
+    win.on('unmaximize', () => {
+      win.setBackgroundColor('#00000000');
+    });
+  }
+
   win.on('closed', () => {
     win = null;
     app.quit();
@@ -627,6 +645,22 @@ app.once('browser-window-created', async () => {
       timestamp: Date.now()
     })
   });
+  ipcMain.on('minimize-window', () => {
+    win.minimize();
+  });
+
+  ipcMain.on('maximize-window', () => {
+    if (win.isMaximized()) {
+      win.unmaximize();
+    } else {
+      win.maximize();
+    }
+  });
+
+  ipcMain.on('close-window', () => {
+    win.close();
+  });
+
 });
 
 app.on('window-all-closed', () => {
@@ -654,6 +688,8 @@ app.whenReady().then(async () => {
 
 windowBounds = await windowBounds;
 const mainWindowOptions = {
+  frame: false,
+  transparent: true,
   width: windowBounds ? windowBounds.width : 1068,
   height: windowBounds ? windowBounds.height : 660,
   minWidth: 1151,

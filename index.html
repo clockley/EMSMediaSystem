@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval';" />
@@ -7,18 +8,74 @@
   <script defer type="text/javascript" src="app.js"></script>
   <title>EMS Media System</title>
 </head>
+
 <body class="grid-container">
-  <main>
-    <form>
-      <div class="tabs">
-      <input type="radio" id="MdPlyrRBtnFrmID" name="plystTyp" value="Media Player">
-      <label for="MdPlyrRBtnFrmID" class="tab">Media Player</label>
-      <input type="radio" id="YtPlyrRBtnFrmID" name="plystTyp" value="YouTube Live Stream">
-      <label for="YtPlyrRBtnFrmID" class="tab">Live Stream Viewer</label>
+  <header class="headerbar">
+    <div class="headerbar-start">
+      <form>
+        <div class="tabs">
+          <input type="radio" id="MdPlyrRBtnFrmID" name="plystTyp" value="Media Player" checked>
+          <label for="MdPlyrRBtnFrmID" class="tab">Media Player</label>
+          <input type="radio" id="YtPlyrRBtnFrmID" name="plystTyp" value="YouTube Live Stream">
+          <label for="YtPlyrRBtnFrmID" class="tab">Live Stream Viewer</label>
+        </div>
+      </form>
+    </div>
+    <div class="headerbar-end">
+      <button id="mediaWindowPlayButton" type="button">
+        Start Presentation
+      </button>
+      <div class="window-controls">
+        <button class="window-control minimize" aria-label="Minimize">
+          <svg width="16" height="16" viewBox="0 0 16 16">
+            <rect x="4" y="7" width="8" height="2" fill="currentColor" />
+          </svg>
+        </button>
+        <button class="window-control maximize" aria-label="Maximize">
+          <svg width="16" height="16" viewBox="0 0 16 16" class="maximize-icon">
+            <rect x="4" y="4" width="8" height="8" stroke="currentColor" fill="none" stroke-width="1" />
+          </svg>
+          <svg width="16" height="16" viewBox="0 0 16 16" class="restore-icon" style="display: none;">
+            <g fill="none" stroke="currentColor" stroke-width="1">
+              <rect x="4" y="6" width="6" height="6" />
+              <path d="M6 4h6v6" />
+            </g>
+          </svg>
+        </button>
+        <button class="window-control close" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 16 16">
+            <path d="M5 5l6 6m0-6l-6 6" stroke="currentColor" stroke-width="1.5" />
+          </svg>
+        </button>
       </div>
-    </form>
+    </div>
+  </header>
+  <main>
     <div id="dyneForm">
     </div>
   </main>
 </body>
+<script>
+  // Window control functionality
+  const minimizeButton = document.querySelector('.window-control.minimize');
+  const maximizeButton = document.querySelector('.window-control.maximize');
+  const closeButton = document.querySelector('.window-control.close');
+
+  minimizeButton.addEventListener('click', () => {
+    windowControls.minimize();
+  });
+
+  maximizeButton.addEventListener('click', () => {
+    windowControls.maximize();
+  });
+
+  closeButton.addEventListener('click', () => {
+    close();
+  });
+
+  windowControls.onMaximizeChange((event, isMaximized) => {
+    maximizeButton.setAttribute('data-maximized', isMaximized);
+  });
+</script>
+
 </html>
