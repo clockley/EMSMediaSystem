@@ -87,7 +87,7 @@ function createWindow() {
   win.on('maximize', () => {
     win.webContents.send('window-maximized', true);
   });
-  
+
   win.on('unmaximize', () => {
     win.webContents.send('window-maximized', false);
   });
