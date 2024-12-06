@@ -17,7 +17,6 @@ var prePathname = '';
 var playingMediaAudioOnly = false;
 var audioOnlyFile = false;
 var opMode = -1;
-var osName = navigator.userAgentData.platform;
 var localTimeStampUpdateIsRunning = false;
 var mediaFile;
 var currentMediaFile;
@@ -1249,9 +1248,6 @@ async function setSBFormTextPlayer() {
     });
 }
 
-const isLinux = osName === "Linux";
-const lineHeight = isLinux ? '1' : '1.2';
-
 const MEDIA_FORM_HTML = `
 <div class="media-container">
   <form onsubmit="return false;" class="control-panel">
@@ -1966,9 +1962,6 @@ async function createMediaWindow() {
         addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
     }
 }
-
-const WIN32 = 'Windows';
-const LINUX = 'Linux';
 
 installIPCHandler();
 installEvents();
