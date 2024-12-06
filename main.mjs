@@ -73,7 +73,10 @@ function lateInit() {
 
 function createWindow() {
   win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
-  //win.openDevTools()
+  if (isDevMode) {
+    win.openDevTools();
+  }
+
   win.webContents.on('did-finish-load', lateInit);
 
   win.on('maximize', () => {
