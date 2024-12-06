@@ -1553,6 +1553,11 @@ function modeSwitchHandler(event) {
 }
 
 function cleanRefs() {
+    let vsl = document.getElementById("volume-slider");
+    if (vsl) {
+        vsl.removeEventListener("input", handleVolumeChange);
+    }
+
     let playButton = document.querySelector("#mediaWindowPlayButton");
     if (playButton) {
         playButton.removeEventListener("click", playMedia);
