@@ -7,6 +7,7 @@
 const { ipcRenderer, __dirname, bibleAPI, webUtils } = window.electron;
 
 var pidSeeking = false;
+var streamVolume = 1;
 var video = null;
 var masterPauseState = false;
 var activeLiveStream = false;
@@ -602,15 +603,20 @@ async function handleMediaWindowClosed(event, id) {
         saveMediaFile();
     }
 
-    video.audioTracks[0].enabled = true;
-    if (video.loop && video.currentTime > 0 &&
-        video.duration - video.currentTime < 0.5) {  // Small threshold near end
-        startTime = 0;
-        targetTime = 0;
-        video.currentTime = 0;
-        video.play()
-        await createMediaWindow();
-        return;
+    if (video) {
+        if (video.audioTracks.length !== 0) {
+            video.audioTracks[0].enabled = true;
+        }
+
+        if (video.loop && video.currentTime > 0 &&
+            video.duration - video.currentTime < 0.5) {  // Small threshold near end
+            startTime = 0;
+            targetTime = 0;
+            video.currentTime = 0;
+            video.play()
+            await createMediaWindow();
+            return;
+        }
     }
 
     isPlaying = false;
@@ -786,7 +792,9 @@ function waitForMetadata() {
 }
 
 function playMedia(e) {
-    startTime = video.currentTime;
+    if (video) {
+        startTime = video.currentTime;
+    }
     targetTime = startTime;
     if (e === undefined && audioOnlyFile && opMode === MEDIAPLAYER) {
         e = {};
@@ -797,13 +805,13 @@ function playMedia(e) {
         saveMediaFile();
     }
 
-    if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
+    if (video && !audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
         audioOnlyFile = true;
     }
 
     const mdFIle = document.getElementById("mdFile");
 
-    if (mediaFile !== decodeURI(removeFileProtocol(video.src))) {
+    if (video && (mediaFile !== decodeURI(removeFileProtocol(video.src)))) {
         if (isPlaying === false && mdFIle.value === "" && opMode !== MEDIAPLAYER) {
             return;
         }
@@ -968,6 +976,21 @@ function setSBFormYouTubeMediaPlayer() {
                     <option value="" disabled>Select Display</option>
                 </select>
             </div>
+
+            <div class="control-group">
+                <span class="control-label">Volume</span>
+                <div class="volume-control">
+                    <input
+                    id="volume-slider"
+                    class="volume-slider"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value="1"
+                    >
+                </div>
+            </div>
         </div>      
     </div>
     `;
@@ -975,6 +998,9 @@ function setSBFormYouTubeMediaPlayer() {
     if (mediaFile !== null && isLiveStream(mediaFile)) {
         document.getElementById("mdFile").value = mediaFile;
     }
+
+    document.getElementById("volume-slider").value = streamVolume;
+    document.getElementById("volume-slider").addEventListener("input", handleVolumeChange);
 
     installDisplayChangeHandler();
     populateDisplaySelect();
@@ -1310,6 +1336,10 @@ function setSBFormMediaPlayer() {
         }
     }
 
+    if (isLiveStream(document.querySelector('.file-input-label span').innerText)) {
+        document.querySelector('.file-input-label span').innerText = 'Open';
+    }
+
     restoreMediaFile();
     updateTimestamp();
 
@@ -1577,7 +1607,7 @@ function playAudioFileAfterDelay() {
 
 function playLocalMedia(event) {
     if (!isActiveMediaWindow()) {
-        if (video.audioTracks) {
+        if (video.audioTracks.length !== 0) {
             video.audioTracks[0].enabled = true;
         }
     }
@@ -1780,6 +1810,11 @@ function pauseLocalMedia(event) {
 }
 
 function handleVolumeChange(event) {
+    if (opMode === MEDIAPLAYERYT) {
+        streamVolume = event.target.value;
+        vlCtl(streamVolume);
+        return;
+    }
     event.target.muted ? vlCtl(0) : vlCtl(event.target.volume);
 }
 
@@ -1839,6 +1874,7 @@ async function createMediaWindow() {
             video = document.getElementById("preview");
         }
         if (video === null) {
+            video = document.createElement("video");
             video.setAttribute("src", mediaFile);
             video.id = "preview";
             video.currentTime = startTime;
@@ -1868,8 +1904,12 @@ async function createMediaWindow() {
     } else {
         playingMediaAudioOnly = false;
     }
-
-    let strtVl = video.volume;
+    let strtVl = 0;
+    if (opMode === MEDIAPLAYER) {
+        strtVl = video.volume;
+    } else {
+        strtVl = streamVolume;
+    }
     const windowOptions = {
         webPreferences: {
             additionalArguments: [
@@ -1890,19 +1930,22 @@ async function createMediaWindow() {
         pidController.reset();
     }
 
-    if (video.audioTracks && video.audioTracks[0]) {
-        video.audioTracks[0].enabled = false;
-    } else {
-        video.addEventListener('loadedmetadata', () => {
+    if (video) {
+        if (video.audioTracks && video.audioTracks[0]) {
             video.audioTracks[0].enabled = false;
-        }, { once: true });
-    }
+        } else {
+            video.addEventListener('loadedmetadata', () => {
+                if (video.audioTracks.length !== 0) {
+                    video.audioTracks[0].enabled = false;
+                }
+            }, { once: true });
+        }
 
-    if (video.audioTracks && video.audioTracks[0]) {
-        video.audioTracks[0].enabled = false;
+        if (video.audioTracks.length !== 0 && video.audioTracks[0]) {
+            video.audioTracks[0].enabled = false;
+        }
+        video.muted = false;
     }
-
-    video.muted = false;
     pidSeeking = true;
     unPauseMedia();
     if (opMode !== MEDIAPLAYERYT) {
@@ -1911,7 +1954,9 @@ async function createMediaWindow() {
             await video.play();
         }
     }
-    addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
+    if (video) {
+        addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
+    }
 }
 
 const WIN32 = 'Windows';
