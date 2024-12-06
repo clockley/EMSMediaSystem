@@ -68,13 +68,15 @@ footer {
 
 .media-container {
     padding: 16px 24px;
-    height: calc(100vh - 45px - 37px - 32px); /* viewport - headerbar - tabs - padding */
+    height: calc(100vh - 45px - 37px - 32px);
     display: flex;
-    flex-direction: column;
-    margin-top: 37px; /* Height of tabs */
+    flex-direction: row; /* Horizontal layout */
+    gap: 24px; /* Space between video and control panel */
+    margin-top: 37px;
 }
 
 .control-group {
+    max-width: 280px;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -93,7 +95,13 @@ footer {
     display: flex;
     flex-direction: column;
     gap: 24px;
-    flex-shrink: 0; /* Prevent panel from shrinking */
+    width: 300px;
+    height: 100%;
+    flex-shrink: 0;
+    overflow-y: auto;
+    margin-left: auto;
+    order: 2;
+    position: relative; /* For absolute positioning of children */
 }
 
 /* File input */
@@ -157,6 +165,7 @@ footer {
     background-position: right 8px center;
     padding-right: 32px;
 }
+
 
 /* Loop control */
 .loop-control {
@@ -241,11 +250,12 @@ footer {
 
 /* Video area */
 .video-wrapper {
-    margin-top: 24px;
+    margin-top: 0;
     border-radius: 12px;
     overflow: hidden;
-    flex: 1;  /* Take remaining space */
+    flex: 1;
     position: relative;
+    height: 100%;
 }
 
 #preview {
@@ -267,8 +277,14 @@ footer {
 
 /* Timer display */
 #mediaCntDn {
-    padding: 12px 0;
-    flex-shrink: 0; /* Prevent shrinking */
+    margin-top: auto; /* Push to bottom of flex container */
+    padding: 16px 0;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    text-align: center;
+    color: var(--adw-text);
+    font-family: "B612";
 }
 
 /* Focus styles */

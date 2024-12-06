@@ -1232,7 +1232,7 @@ const MEDIA_FORM_HTML = `
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
-        <span>Choose media file...</span>
+        <span>Open</span>
         <input type="file" class="file-input" name="mdFile" id="mdFile"
                accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
       </label>
@@ -1258,13 +1258,12 @@ const MEDIA_FORM_HTML = `
             </div>
     </div>
     </div>
+    <div id="mediaCntDn"></div>
   </form>
 
   <div class="video-wrapper">
     <video id="preview" disablePictureInPicture controls></video>
   </div>
-  
-  <div id="mediaCntDn"></div>
 </div>
 `;
 
