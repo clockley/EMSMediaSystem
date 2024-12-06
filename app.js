@@ -1810,6 +1810,9 @@ function pauseLocalMedia(event) {
 }
 
 function handleVolumeChange(event) {
+    if (event.target.id === 'volume-slider' && !isLiveStream(mediaFile)) {
+        return;
+    }
     if (opMode === MEDIAPLAYERYT) {
         streamVolume = event.target.value;
         vlCtl(streamVolume);
