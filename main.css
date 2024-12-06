@@ -123,7 +123,7 @@ footer {
 }
 
 .control-label {
-    font-weight: 500;
+    font-weight: 600;
     color: var(--adw-text);
     font-size: 14px;
 }
@@ -150,6 +150,7 @@ footer {
 }
 
 .file-input-label {
+    font-weight: 400;
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -491,6 +492,7 @@ button:focus-visible,
 }
 
  #mediaWindowPlayButton {
+    font-weight: 400;
     -webkit-app-region: no-drag;
     padding: 6px 14px;
     border-radius: 6px;
