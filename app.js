@@ -592,6 +592,9 @@ function installIPCHandler() {
             }
         }
     });
+    ipcRenderer.on('window-maximized', (event, isMaximized) => {
+        document.querySelector('.window-container').classList.toggle('maximized', isMaximized);
+    });
 }
 
 async function handleMediaWindowClosed(event, id) {
