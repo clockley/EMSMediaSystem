@@ -953,7 +953,7 @@ function setSBFormYouTubeMediaPlayer() {
     <div class="media-container">
         <div class="control-panel">
             <div class="control-group">
-                <span class="control-label">Stream URL</span>
+                <span class="control-label">URL</span>
                 <input type="url" 
                        name="mdFile" 
                        id="mdFile" 
