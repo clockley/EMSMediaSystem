@@ -84,6 +84,14 @@ function createWindow() {
     win.webContents.send('maximize-change', false);
   });
 
+  win.on('maximize', () => {
+    win.webContents.send('window-maximized', true);
+  });
+  
+  win.on('unmaximize', () => {
+    win.webContents.send('window-maximized', false);
+  });
+
   if (process.platform === 'linux') {
     win.on('maximize', () => {
       win.setBackgroundColor('#00000000');

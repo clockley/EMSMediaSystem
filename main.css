@@ -36,6 +36,39 @@
     min-height: 100vh;
 }
 
+.window-container {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    background: var(--adw-bg);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 0 8px 2px rgba(0, 0, 0, 0.15),
+                0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+.window-container.maximized {
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.window-container.maximized .headerbar {
+    border-radius: 0;
+}
+
+.window-container.maximized .headerbar {
+    top: 0;
+    left: 0;
+    right: 0;
+    border-radius: 0;
+}
+
 /* Base styles */
 body {
     user-select: none;
@@ -43,6 +76,7 @@ body {
     font-family: "Cantarell";
     color: var(--adw-text);
     margin: 0;
+    padding: 0;
     color-scheme: light dark;
     border-radius: 12px;
     overflow: hidden;
@@ -331,10 +365,12 @@ button:focus-visible,
     }
 }
 
+
 .headerbar {
     background: color-mix(in srgb, AccentColor 5%, Canvas);
     color: CanvasText;
     padding: 6px;
+    margin: -1px;
     height: 45px;
     display: flex;
     justify-content: space-between;
@@ -342,9 +378,9 @@ button:focus-visible,
     -webkit-app-region: drag;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
+    top: 8px; /* Match window-container top margin */
+    left: 8px; /* Match window-container left margin */
+    right: 8px;
     z-index: 1000;
     border-top-left-radius: 12px;
     border-top-right-radius: 12px;
