@@ -351,22 +351,6 @@ button:focus-visible,
     outline-offset: 2px;
 }
 
-@media (height: 715px) {
-    .media-container {
-        padding: 12px 24px;
-    }
-    
-    .control-panel {
-        padding: 16px;
-        gap: 16px;
-    }
-    
-    .control-group {
-        gap: 4px;
-    }
-}
-
-
 .headerbar {
     background: color-mix(in srgb, AccentColor 5%, Canvas);
     color: CanvasText;
