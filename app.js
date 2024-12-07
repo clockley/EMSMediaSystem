@@ -1539,6 +1539,12 @@ function fileOpenShortcutHandler(event) {
     }
 }
 
+function appCloseShortcutHandler(event) {
+    if ((event.ctrlKey || event.metaKey) && (event.key === 'q' || event.key === 'Q')) {
+        close();
+    }
+}
+
 function modeSwitchHandler(event) {
     if (event.target.type === 'radio') {
         if (event.target.value === 'Media Player') {
@@ -1597,6 +1603,7 @@ function installEvents() {
     //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
 
     document.addEventListener('keydown', fileOpenShortcutHandler);
+    document.addEventListener('keydown', appCloseShortcutHandler);
 
     document.querySelector('form').addEventListener('change', modeSwitchHandler, { passive: true });
 }
