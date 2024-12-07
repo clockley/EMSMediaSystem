@@ -14,7 +14,16 @@
     font-display: swap;
 }
 
+@font-face {
+    font-family: 'Cantarell';
+    src: url('./fonts/cantarell/Cantarell-Bold.otf') format('opentype');
+    font-weight: 700;
+}
 
+* {
+    transition-duration: 200ms;
+    transition-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
 
 :root {
     --adw-accent: #3584e4;
@@ -26,6 +35,13 @@
     --adw-radius-sm: 6px;
     --adw-radius-lg: 12px;
     --adw-spacing: 24px;
+    --spacing-xxs: 2px;
+    --spacing-xs: 4px;
+    --spacing-s: 8px;
+    --spacing-m: 12px;
+    --spacing-l: 16px;
+    --spacing-xl: 24px;
+    --spacing-xxl: 32px;
 }
 
 /* Grid layout */
@@ -126,7 +142,7 @@ footer {
 }
 
 .control-label {
-    font-weight: 600;
+    font-weight: 700;
     color: var(--adw-text);
     font-size: 14px;
 }
@@ -635,4 +651,10 @@ button:focus-visible,
 .volume-slider {
     width: 150px;
     margin-left: 10px;
+}
+
+:focus-visible {
+    outline: 2px solid var(--adw-accent);
+    outline-offset: -1px;
+    border-radius: var(--adw-radius-sm);
 }
