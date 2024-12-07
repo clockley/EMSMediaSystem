@@ -64,6 +64,30 @@ const saveWindowBounds = (function () {
   };
 })();
 
+function checkWindowState() {
+  const bounds = win.getBounds();
+  const targetScreen = screen.getDisplayMatching(bounds);
+
+  if (win.isMaximized()) {
+    win.webContents.send('window-maximized', true);
+    return;
+  }
+
+  // Check if window is actually tiled/snapped
+  // A window is considered tiled if it touches TWO or more edges
+  const touchingLeft = bounds.x === 0;
+  const touchingTop = bounds.y === 0;
+  const touchingRight = bounds.x + bounds.width === targetScreen.bounds.width;
+  const touchingBottom = bounds.y + bounds.height === targetScreen.bounds.height;
+
+  const edgeCount = [touchingLeft, touchingTop, touchingRight, touchingBottom]
+    .filter(Boolean).length;
+
+  const isTiled = edgeCount >= 2;  // Only consider it tiled if touching multiple edges
+
+  win.webContents.send('window-maximized', isTiled);
+}
+
 function lateInit() {
   win.webContents.send('ready');
   measurePerformance('Setting window aspect ratio', win.setAspectRatio.bind(win, 1.618));
@@ -692,6 +716,10 @@ app.whenReady().then(async () => {
     const appReadyTime = performance.now();
     console.log(`Application ready in ${(appReadyTime - appStartTime).toFixed(2)} ms`);
   }
+
+  win.on('move', checkWindowState);
+  win.on('resize', checkWindowState);
+
   screen.on('display-added', handleDisplayChange);
   screen.on('display-removed', handleDisplayChange);
   screen.on('display-metrics-changed', handleDisplayChange);
