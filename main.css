@@ -234,18 +234,28 @@ footer {
 
 /* Display select */
 .display-select {
-    width: 100%;
-    padding: 8px 16px;
-    border: 1px solid var(--adw-border);
-    border-radius: var(--adw-radius-sm);
-    background: var(--adw-card-bg);
+    cursor: default !important;
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--adw-border);
+    border-radius: 6px;
+    background-color: var(--adw-card-bg);
+    color: var(--adw-text);
+    font-size: 14px;
+    line-height: 1.5;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%232e3436' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 6.5l4.5 4.5 4.5-4.5'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
-    background-position: right 8px center;
-    padding-right: 32px;
+    background-position: right 12px center;
+    padding-right: 36px;
+    transition: all 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
+.display-select:hover {
+    border-color: var(--adw-border);
+    background-color: color-mix(in srgb, var(--adw-card-bg) 95%, var(--adw-text));
+}
 
 /* Loop control */
 .loop-control {
@@ -614,17 +624,18 @@ button:focus-visible,
 
 .display-select {
     width: 100%;
-    padding: 8px 16px;
+    padding: 8px 16px 8px 40px; /* Increased left padding for icon */
     border: 1px solid var(--adw-border);
     border-radius: var(--adw-radius-sm);
-    background: var(--adw-card-bg);
+    background-color: var(--adw-card-bg);
+    background-image: 
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z'/%3E%3Cpath stroke='currentColor' stroke-width='1.5' stroke-linecap='round' d='M5.5 12.5h5'/%3E%3C/svg%3E"),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%232e3436' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 6.5l4.5 4.5 4.5-4.5'/%3E%3C/svg%3E");
+    background-position: 12px center, right 8px center;
+    background-repeat: no-repeat, no-repeat;
+    background-size: 16px, 16px;
     color: var(--adw-text);
-    /* Add text color */
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 8px center;
-    padding-right: 32px;
 }
 
 /* Style for dropdown options */

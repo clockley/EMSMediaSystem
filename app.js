@@ -1254,8 +1254,29 @@ const MEDIA_FORM_HTML = `
     <div class="control-group">
       <span class="control-label">Media</span>
       <label class="file-input-label">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+        <path 
+            fill="none"
+            stroke="currentColor" 
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M2.5 2.5h11a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"
+        />
+        <circle 
+            cx="5.5" 
+            cy="5.5" 
+            r="1" 
+            fill="currentColor"
+        />
+        <path 
+            fill="none"
+            stroke="currentColor" 
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M3.5 11.5l2.5-2.5c.4-.4 1-.4 1.4 0l2.1 2.1m-1-1l1-1c.4-.4 1-.4 1.4 0l2.1 2.1"
+        />
         </svg>
         <span>Open</span>
         <input type="file" class="file-input" name="mdFile" id="mdFile"
