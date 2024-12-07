@@ -154,6 +154,7 @@ footer {
 }
 
 .file-input-label {
+    cursor: default !important;
     font-weight: 400;
     display: inline-flex;
     align-items: center;
@@ -222,19 +223,26 @@ footer {
 
 /* Loop control */
 .loop-control {
+    cursor: default !important;
     display: flex;
     align-items: center;
     justify-content: space-between;
 }
 
 .switch {
+    cursor: default !important;
     position: relative;
     display: inline-block;
     width: 48px;
     height: 26px;
 }
 
+#mdLpCtlr {
+    cursor: default !important;
+}
+
 .switch-track {
+    cursor: default !important;
     position: absolute;
     cursor: pointer;
     top: 0;
@@ -247,6 +255,7 @@ footer {
 }
 
 .switch-thumb {
+    cursor: default !important;
     position: absolute;
     height: 22px;
     width: 22px;
@@ -259,15 +268,18 @@ footer {
 }
 
 .switch input:checked+.switch-track {
+    cursor: default !important;
     background-color: var(--adw-accent);
 }
 
 .switch input:checked+.switch-track+.switch-thumb {
+    cursor: default !important;
     transform: translateX(22px);
 }
 
 /* Button styling */
 #mediaWindowPlayButton {
+    cursor: default !important;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -278,9 +290,7 @@ footer {
     border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
     color: CanvasText;
     font-size: 14px;
-    cursor: pointer;
     border-radius: var(--adw-radius-sm);
-    cursor: pointer;
     font-weight: normal;
     transition: background-color 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -402,6 +412,7 @@ button:focus-visible,
 }
 
 .tabs {
+    cursor: default !important;
     display: flex;
     align-items: stretch;
     height: 100%;
@@ -411,6 +422,7 @@ button:focus-visible,
 
 /* Hide actual radio buttons but keep them functional */
 .tabs input[type="radio"] {
+    cursor: default !important;
     position: absolute;
     opacity: 0;
     width: 0;
@@ -419,6 +431,7 @@ button:focus-visible,
 }
 
 .tab {
+    cursor: default !important;
     padding: 0 16px;
     height: 100%;
     display: flex;
@@ -430,11 +443,13 @@ button:focus-visible,
 }
 
 .tabs input[type="radio"]:checked+.tab {
+    cursor: default !important;
     color: CanvasText;
     box-shadow: inset 0 -2px CanvasText;
 }
 
 .tab:hover:not(:checked + .tab) {
+    cursor: default !important;
     background: color-mix(in srgb, CanvasText 10%, transparent);
 }
 
@@ -513,6 +528,7 @@ button:focus-visible,
 }
 
 .file-input {
+    cursor: default !important;
     position: absolute;
     width: 1px;
     height: 1px;
