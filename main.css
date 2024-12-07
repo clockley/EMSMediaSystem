@@ -85,6 +85,16 @@
     border-radius: 0;
 }
 
+/* For touching one edge - keep radius, no shadow */
+.window-container.touching {
+    box-shadow: none;
+}
+
+.window-container.maximized .headerbar,
+.window-container.tiled .headerbar {
+    border-radius: 0;
+}
+
 /* Base styles */
 body {
     user-select: none;
