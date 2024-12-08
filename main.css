@@ -21,8 +21,40 @@
 }
 
 * {
-    transition-duration: 200ms;
-    transition-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    transition: none;
+}
+
+/* Button and clickable elements */
+button,
+.window-control,
+#mediaWindowPlayButton,
+.title-button {
+    transition: background-color 75ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+/* Dropdown/Combobox */
+.display-select {
+    transition: background-color 75ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+/* Switch/Toggle transitions */
+.switch-track,
+.switch-thumb {
+    transition: background-color 100ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.switch input:checked + .switch-track + .switch-thumb {
+    transition: transform 100ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+/* Tab transitions */
+.tab {
+    transition: background-color 75ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+/* Focus outline */
+:focus-visible {
+    transition: outline-color 75ms cubic-bezier(0, 0, 0.2, 1);
 }
 
 :root {
