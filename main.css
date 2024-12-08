@@ -512,7 +512,7 @@ button:focus-visible,
     display: flex;
     align-items: stretch;
     height: 100%;
-    margin: 0 -6px;
+    margin: 0 12px;
     -webkit-app-region: no-drag;
 }
 
