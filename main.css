@@ -1,12 +1,4 @@
 @font-face {
-    font-family: 'B612';
-    src: url('./fonts/B612_Mono/B612Mono-Regular.ttf') format('truetype');
-    font-weight: normal;
-    font-style: normal;
-    font-display: swap;
-}
-
-@font-face {
     font-family: 'Cantarell';
     src: url('./fonts/cantarell/Cantarell-Regular.otf') format('opentype');
     font-weight: normal;
@@ -18,6 +10,12 @@
     font-family: 'Cantarell';
     src: url('./fonts/cantarell/Cantarell-Bold.otf') format('opentype');
     font-weight: 700;
+}
+
+@font-face {
+    font-family: 'Inter';
+    src: url('./fonts/Inter-4.1/Inter-Regular.otf') format('opentype');
+    font-weight: 400;
 }
 
 * {
@@ -446,12 +444,15 @@ video::-webkit-media-controls-volume-control-hover-background {
     margin-top: auto;
     /* Push to bottom of flex container */
     padding: 16px 0;
+    font-size: 11pt;
     width: 100%;
     display: flex;
     justify-content: center;
     text-align: center;
     color: var(--adw-text);
-    font-family: "B612";
+    font-family: "Inter";
+    font-weight: 400;
+    font-feature-settings: "tnum" 1, "ss01" 1;
 }
 
 /* Focus styles */
