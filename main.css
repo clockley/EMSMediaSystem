@@ -512,11 +512,12 @@ button:focus-visible,
     display: flex;
     align-items: stretch;
     height: 100%;
-    margin: 0 12px;
+    margin: 0;
     -webkit-app-region: no-drag;
+    gap: 2px;
+    padding: 0 6px;
 }
 
-/* Hide actual radio buttons but keep them functional */
 .tabs input[type="radio"] {
     cursor: default !important;
     position: absolute;
@@ -529,24 +530,25 @@ button:focus-visible,
 .tab {
     cursor: default !important;
     padding: 0 16px;
-    height: 100%;
+    height: calc(100% - 6px);
+    margin-top: 6px;
     display: flex;
     align-items: center;
     color: color-mix(in srgb, CanvasText 80%, transparent);
-    cursor: pointer;
+    border-radius: 6px 6px 0 0;
     font-size: 14px;
     transition: all 0.2s ease;
 }
 
-.tabs input[type="radio"]:checked+.tab {
+.tabs input[type="radio"]:checked + .tab {
     cursor: default !important;
     color: CanvasText;
-    box-shadow: inset 0 -2px CanvasText;
+    background: color-mix(in srgb, CanvasText 8%, transparent);
 }
 
 .tab:hover:not(:checked + .tab) {
     cursor: default !important;
-    background: color-mix(in srgb, CanvasText 10%, transparent);
+    background: color-mix(in srgb, CanvasText 5%, transparent);
 }
 
 .window-controls {
