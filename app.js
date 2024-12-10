@@ -1975,7 +1975,7 @@ async function createMediaWindow() {
     if (pidController) {
         pidController.reset();
     }
-xx``
+
     if (video) {
         if (video.audioTracks && video.audioTracks[0]) {
             video.audioTracks[0].enabled = false;
