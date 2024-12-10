@@ -64,17 +64,9 @@
   const maximizeButton = document.querySelector('.window-control.maximize');
   const closeButton = document.querySelector('.window-control.close');
 
-  minimizeButton.addEventListener('click', () => {
-    windowControls.minimize();
-  });
-
-  maximizeButton.addEventListener('click', () => {
-    windowControls.maximize();
-  });
-
-  closeButton.addEventListener('click', () => {
-    close();
-  });
+  minimizeButton.addEventListener('click', windowControls.minimize);
+  maximizeButton.addEventListener('click', windowControls.maximize);
+  closeButton.addEventListener('click', close);
 
   windowControls.onMaximizeChange((event, isMaximized) => {
     maximizeButton.setAttribute('data-maximized', isMaximized);
