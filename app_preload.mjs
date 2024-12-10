@@ -19,6 +19,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { readFile } from 'fs/promises';
 import { Bible } from './Bible.mjs';
 import { Script } from 'vm';
+import { basename } from 'path';
 
 async function initializeBible() {
   const bible = new Bible();
@@ -53,7 +54,8 @@ contextBridge.exposeInMainWorld('electron', {
   },
   __dirname: import.meta.dirname,
   bibleAPI: bibleAPI,
-  webUtils: webUtils
+  webUtils: webUtils,
+  basename
 });
 
 contextBridge.exposeInMainWorld('windowControls', {

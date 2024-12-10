@@ -18,7 +18,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 
-const { ipcRenderer, __dirname, bibleAPI, webUtils } = window.electron;
+const { ipcRenderer, __dirname, bibleAPI, webUtils, basename } = window.electron;
 
 var pidSeeking = false;
 var streamVolume = 1;
@@ -447,16 +447,6 @@ async function changeAudioOutput(deviceIds) {
         })
     );
 }
-
-const basename = (input) => {
-    const urlMatch = input.match(/^(?:https?:\/\/)?(?:www\.)?([^/]+)/);
-    if (urlMatch) return urlMatch[1];
-
-    const uncMatch = input.match(/^\\\\[^\\]+\\[^\\]+/);
-    if (uncMatch) return input.split(/[/\\]/).pop();
-
-    return input.replace(/^[A-Z]:/i, '').split(/[/\\]/).pop();
-};
 
 function addFilenameToTitlebar(path) {
     document.title = basename(path) + " - EMS Media System";
