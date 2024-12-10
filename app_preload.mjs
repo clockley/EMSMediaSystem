@@ -62,3 +62,6 @@ contextBridge.exposeInMainWorld('windowControls', {
   close: () => ipcRenderer.send('close-window'),
   onMaximizeChange: (callback) => ipcRenderer.on('maximize-change', callback)
 });
+
+Object.freeze(window.electron);
+Object.freeze(window.windowControls);

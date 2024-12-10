@@ -753,6 +753,7 @@ const mainWindowOptions = {
   paintWhenInitiallyHidden: true,
   show: false,
   webPreferences: {
+    contextIsolation: true,
     nodeIntegration: true,
     v8CacheOptions: 'code',
     userGesture: true,
