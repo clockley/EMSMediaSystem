@@ -18,7 +18,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 
-const { ipcRenderer, __dirname, bibleAPI, webUtils, basename } = window.electron;
+const { ipcRenderer, __dirname, bibleAPI, webUtils, getHostnameOrBasename } = window.electron;
 
 var pidSeeking = false;
 var streamVolume = 1;
@@ -449,7 +449,7 @@ async function changeAudioOutput(deviceIds) {
 }
 
 function addFilenameToTitlebar(path) {
-    document.title = basename(path) + " - EMS Media System";
+    document.title = getHostnameOrBasename(path) + " - EMS Media System";
 }
 
 function removeFilenameFromTitlebar() {
@@ -837,7 +837,7 @@ function playMedia(e) {
             return;
         } else if (opMode === MEDIAPLAYER && !isPlaying && video.src !== null && video.src !== '' && mediaPlayerInputState.fileInpt != null) {
             let t1 = mediaPlayerInputState.fileInpt[0].name;
-            let t2 = basename(removeFileProtocol(decodeURI(video.src)))
+            let t2 = getHostnameOrBasename(removeFileProtocol(decodeURI(video.src)))
             if (t1 == null || t2 == null || t1 !== t2) {
                 return;
             } else {
@@ -1353,7 +1353,7 @@ function setSBFormMediaPlayer() {
     if (mediaFile) {
         const fileNameSpan = document.querySelector('.file-input-label span');
         if (fileNameSpan) {
-            fileNameSpan.textContent = basename(mediaFile);
+            fileNameSpan.textContent = getHostnameOrBasename(mediaFile);
         }
     }
 
@@ -1485,7 +1485,7 @@ function saveMediaFile() {
     if (mediaFile) {
         const fileNameSpan = document.querySelector('.file-input-label span');
         if (fileNameSpan) {
-            fileNameSpan.textContent = basename(mediaFile);
+            fileNameSpan.textContent = getHostnameOrBasename(mediaFile);
         }
     }
 

@@ -19,7 +19,8 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { readFile } from 'fs/promises';
 import { Bible } from './Bible.mjs';
 import { Script } from 'vm';
-import { basename } from 'path';
+import { basename} from 'path';
+import { URL } from 'url';
 
 async function initializeBible() {
   const bible = new Bible();
@@ -45,6 +46,14 @@ const [bibleAPI] = await Promise.all([
   executeWasmScript().then(() => initializeBible())
 ]);
 
+function getHostnameOrBasename(input) {
+  try {
+    return new URL(input).hostname;
+  } catch (error) {
+    return basename(input);
+  }
+}
+
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
     send: ipcRenderer.send.bind(ipcRenderer),
@@ -55,7 +64,7 @@ contextBridge.exposeInMainWorld('electron', {
   __dirname: import.meta.dirname,
   bibleAPI: bibleAPI,
   webUtils: webUtils,
-  basename
+  getHostnameOrBasename
 });
 
 contextBridge.exposeInMainWorld('windowControls', {
