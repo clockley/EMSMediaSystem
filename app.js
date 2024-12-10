@@ -1958,6 +1958,10 @@ async function createMediaWindow() {
     }
     const windowOptions = {
         webPreferences: {
+            contextIsolation: true,
+            sandbox: true,
+            enableWebSQL: false,
+            webgl: false,
             additionalArguments: [
                 '__mediafile-ems=' + encodeURIComponent(mediaFile),
                 startTime !== 0 ? '__start-time=' + startTime : "",
