@@ -1252,7 +1252,8 @@ async function setSBFormTextPlayer() {
     });
 }
 
-const MEDIA_FORM_HTML = `
+function generateMediaFormHTML(video = null) {
+    return `
 <div class="media-container">
   <form onsubmit="return false;" class="control-panel">
     <div class="control-group">
@@ -1301,7 +1302,7 @@ const MEDIA_FORM_HTML = `
             <div class="loop-control">
                 <span class="control-label">Repeat</span>
                 <label class="switch">
-                <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr">
+                <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr" ${video?.loop ? 'checked' : ''}>
                 <span class="switch-track"></span>
                 <span class="switch-thumb"></span>
                 </label>
@@ -1314,8 +1315,8 @@ const MEDIA_FORM_HTML = `
   <div class="video-wrapper">
     <video id="preview" disablePictureInPicture controls></video>
   </div>
-</div>
-`;
+</div>`;
+}
 
 function installDisplayChangeHandler() {
     if (installDisplayChangeHandler.initialized) return;
@@ -1340,7 +1341,7 @@ function setSBFormMediaPlayer() {
     }
     opMode = MEDIAPLAYER;
     ipcRenderer.send('set-mode', opMode);
-    document.getElementById("dyneForm").innerHTML = MEDIA_FORM_HTML;
+    document.getElementById("dyneForm").innerHTML = generateMediaFormHTML(video);
     mediaCntDn.appendChild(textNode);
     mediaCntDn.style.color = "#5c87b2";
     installDisplayChangeHandler();
