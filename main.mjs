@@ -205,12 +205,6 @@ function localMediaStateUpdate(event, id, state) {
 async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
   return measurePerformance('Creating media window', async () => {
     const displays = screen.getAllDisplays();
-
-    // Save the selected display index
-    await settings.set('lastDisplayIndex', displayIndex).catch(error => {
-      console.error('Error saving display preference:', error);
-    });
-
     // Use selected display or fall back
     const targetDisplay = displays[displayIndex] ||
       displays.find(d => d.bounds.x !== 0 || d.bounds.y !== 0) ||
@@ -235,6 +229,11 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     mediaWindow.on('closed', () => {
       if (win) win.webContents.send('media-window-closed', mediaWindow.id);
       stopMediaPlaybackPowerHint();
+    });
+
+    // Save the selected display index
+    settings.set('lastDisplayIndex', displayIndex).catch(error => {
+      console.error('Error saving display preference:', error);
     });
 
     return mediaWindow.id;
