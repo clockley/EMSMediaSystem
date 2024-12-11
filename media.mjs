@@ -16,7 +16,6 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 const { ipcRenderer, argv, birth } = window.electron;
 const { video } = window.api;
-import hls from './node_modules/hls.js/dist/hls.mjs';
 var img = null;
 var mediaFile;
 var loopFile = false;
@@ -143,6 +142,7 @@ async function loadMedia() {
         }
 
         mediaFile = video.src;
+        const { default: hls } = await import('./node_modules/hls.js/dist/hls.mjs');
         h = new hls();
         h.loadSource(mediaFile);
     } else {
