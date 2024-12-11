@@ -16,26 +16,22 @@
     media-src * 'self' blob: data:;
   ">  
     <style>
-        #bigPlayer, #mediaBody {
-            width: 100vw;
-            height: 100vh;
+        body {
             margin: 0;
             padding: 0;
-        }
-
-        #bigPlayer {
-            object-fit: contain;
-        }
-
-        #mediaBody {
             overflow: hidden;
-            background-color: black;
+            background: black;
+        }
+        video {
+            width: 100vw;
+            height: 100vh;
+            object-fit: contain;
         }
     </style>
     <script type="module" src="media.mjs" async></script>
 </head>
 
-<body id="mediaBody">
+<body>
     <video autoplay id="bigPlayer"></video>
 </body>
 
