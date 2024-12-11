@@ -30,4 +30,5 @@ contextBridge.exposeInMainWorld('electron', {
         on: ipcRenderer.on.bind(ipcRenderer),
     },
     argv: process.argv,
+    birth: Date.now()
 });

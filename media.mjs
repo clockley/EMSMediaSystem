@@ -14,7 +14,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
-const { ipcRenderer, argv } = window.electron;
+const { ipcRenderer, argv, birth } = window.electron;
 const { video } = window.api;
 import hls from './node_modules/hls.js/dist/hls.mjs';
 var img = null;
@@ -23,7 +23,6 @@ var loopFile = false;
 var strtvl = 1;
 var strtTm = 0;
 var liveStreamMode = false;
-var prom = null;
 var isImg = false;
 let i = argv.length - 1;
 
@@ -44,7 +43,7 @@ do {
     --i;
 } while (argv[i][0] !== '-');
 
-async function installICPHandlers() {
+function installICPHandlers() {
     if (!liveStreamMode) {
         ipcRenderer.on('timeGoto-message', function (evt, message) {
             const localTs = performance.now();
@@ -125,7 +124,7 @@ async function loadMedia() {
         document.querySelector('video').style.display = 'none';
         return;
     } else {
-        prom = installICPHandlers();
+        installICPHandlers();
     }
     video.volume = strtvl;
     video.src = mediaFile;
@@ -160,13 +159,12 @@ async function loadMedia() {
         navigator.mediaSession.setActionHandler('seekto', (details) => {
             ipcRenderer.send('media-seekto', details.seekTime);
         });
-        video.currentTime = strtTm;
+
+        video.currentTime = strtTm + ((Date.now() - birth)*.001);
 
         video.addEventListener('play', playbackStateUpdate);
         video.addEventListener('pause', playbackStateUpdate);
     }
-
-    await prom;
 
     if (loopFile) {
         video.setAttribute("loop", loopFile);
