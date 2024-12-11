@@ -102,6 +102,18 @@ function matchYouTubeUrl(url) {
     return youtubeRegex.test(url);
 }
 
+function playbackStateUpdate() {
+    const playbackState = {
+        currentTime: video.currentTime,
+        playing: !video.paused,
+    };
+    ipcRenderer.send('playback-state-change', playbackState);
+    if (strtvl != null) {
+        video.volume = strtvl;
+        strtvl = null;
+    }
+}
+
 async function loadMedia() {
     let h = null;
 
@@ -149,25 +161,9 @@ async function loadMedia() {
             ipcRenderer.send('media-seekto', details.seekTime);
         });
         video.currentTime = strtTm;
-        video.addEventListener('play', () => {
-            const playbackState = {
-                currentTime: video.currentTime,
-                playing: !video.paused,
-            };
-            ipcRenderer.send('playback-state-change', playbackState);
-            if (strtvl != null) {
-                video.volume = strtvl;
-                strtvl = null;
-            }
-        });
 
-        video.addEventListener('pause', () => {
-            const playbackState = {
-                currentTime: video.currentTime,
-                playing: !video.paused,
-            };
-            ipcRenderer.send('playback-state-change', playbackState);
-        });
+        video.addEventListener('play', playbackStateUpdate);
+        video.addEventListener('pause', playbackStateUpdate);
     }
 
     await prom;
