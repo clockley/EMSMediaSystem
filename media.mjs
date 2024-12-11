@@ -126,6 +126,7 @@ async function loadMedia() {
         installICPHandlers();
     }
     video.volume = strtvl;
+    video.setAttribute("loop", loopFile);
     video.src = mediaFile;
     if (liveStreamMode) {
         if (matchYouTubeUrl(mediaFile)) {
@@ -164,10 +165,6 @@ async function loadMedia() {
 
         video.addEventListener('play', playbackStateUpdate);
         video.addEventListener('pause', playbackStateUpdate);
-    }
-
-    if (loopFile) {
-        video.setAttribute("loop", loopFile);
     }
 
     video.onended = () => close();
