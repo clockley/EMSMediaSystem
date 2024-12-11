@@ -561,6 +561,7 @@ function handleTimeMessage(_, message) {
     }
 }
 
+
 function installIPCHandler() {
     ipcRenderer.on('timeRemaining-message', handleTimeMessage);
 
@@ -1898,31 +1899,13 @@ function isLiveStream(mediaFile) {
 async function createMediaWindow() {
     mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : webUtils.getPathForFile(document.getElementById("mdFile").files[0]);
     var liveStreamMode = isLiveStream(mediaFile);
-
-    if (liveStreamMode === false && video !== null) {
-        startTime = video.currentTime;
-    }
-
     var selectedIndex = document.getElementById("dspSelct").selectedIndex - 1;
     activeLiveStream = liveStreamMode;
 
-    if (liveStreamMode === false) {
-        if (video === null) {
-            video = document.getElementById("preview");
-        }
-        if (video === null) {
-            video = document.createElement("video");
-            video.setAttribute("src", mediaFile);
-            video.id = "preview";
-            video.currentTime = startTime;
-            video.controlsList = "noplaybackrate";
-            if (document.getElementById("mdLpCtlr") !== null) {
-                video.loop = document.getElementById("mdLpCtlr").checked;
-            }
-        }
-    } else {
-        if (video && !isImg(video.src))
+    if (liveStreamMode === true) {
+        if (video && !isImg(video.src)) {
             video.src = '';
+        }
     }
 
     const isImgFile = isImg(mediaFile);
@@ -1947,6 +1930,11 @@ async function createMediaWindow() {
     } else {
         strtVl = streamVolume;
     }
+
+    if (liveStreamMode === false && video !== null) {
+        startTime = video.currentTime;
+    }
+
     const windowOptions = {
         webPreferences: {
             contextIsolation: true,
@@ -1988,13 +1976,7 @@ async function createMediaWindow() {
         video.muted = false;
     }
     pidSeeking = true;
-    unPauseMedia();
-    if (opMode !== MEDIAPLAYERYT) {
-        if (video !== null && !isImgFile) {
-            pidSeeking = true;
-            await video.play();
-        }
-    }
+
     if (video) {
         addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
     }
