@@ -253,6 +253,7 @@ footer {
 
 .file-input {
     position: absolute;
+    pointer-events: none;
     width: 1px;
     height: 1px;
     padding: 0;
