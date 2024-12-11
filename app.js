@@ -47,6 +47,10 @@ const textNode = document.createTextNode('');
 
 const updatePending = new Int32Array(1);
 
+const send = ipcRenderer.send;
+const invoke = ipcRenderer.invoke;
+const on = ipcRenderer.on;
+
 const mediaPlayerInputState = {
     fileInpt: null,
     urlInpt: null,
@@ -563,9 +567,9 @@ function handleTimeMessage(_, message) {
 
 
 function installIPCHandler() {
-    ipcRenderer.on('timeRemaining-message', handleTimeMessage);
+    on('timeRemaining-message', handleTimeMessage);
 
-    ipcRenderer.on('update-playback-state', async (event, playbackState) => {
+    on('update-playback-state', async (event, playbackState) => {
         if (!video) {
             return;
         }
@@ -583,13 +587,13 @@ function installIPCHandler() {
         }
     });
 
-    ipcRenderer.on('remoteplaypause', (_, arg) => {
+    on('remoteplaypause', (_, arg) => {
         mediaSessionPause = arg;
     });
 
-    ipcRenderer.on('media-window-closed', handleMediaWindowClosed);
+    on('media-window-closed', handleMediaWindowClosed);
 
-    ipcRenderer.on('media-seek', (event, seekTime) => {
+    on('media-seek', (event, seekTime) => {
         if (video) {
             const newTime = video.currentTime + seekTime;
             if (newTime >= 0 && newTime <= video.duration) {
@@ -597,7 +601,7 @@ function installIPCHandler() {
             }
         }
     });
-    ipcRenderer.on('window-maximized', (event, isMaximized) => {
+    on('window-maximized', (event, isMaximized) => {
         document.querySelector('.window-container').classList.toggle('maximized', isMaximized);
     });
 }
@@ -720,7 +724,7 @@ function isImg(pathname) {
 
 function vlCtl(v) {
     if (!audioOnlyFile) {
-        ipcRenderer.send('vlcl', v, 0);
+        send('vlcl', v, 0);
     } else {
         video.volume = v;
     }
@@ -728,7 +732,7 @@ function vlCtl(v) {
 
 async function pauseMedia(e) {
     if (activeLiveStream) {
-        await ipcRenderer.send('play-ctl', 'pause');
+        await send('play-ctl', 'pause');
         return;
     }
     if (video.src === window.location.href || video.readyState === 0) {
@@ -736,15 +740,15 @@ async function pauseMedia(e) {
     }
 
     if (!playingMediaAudioOnly) {
-        await ipcRenderer.send('play-ctl', 'pause');
-        ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
+        await send('play-ctl', 'pause');
+        invoke('get-media-current-time').then(r => { targetTime = r });
     }
     resetPIDOnSeek();
 }
 
 async function unPauseMedia(e) {
     if (activeLiveStream) {
-        await ipcRenderer.send('play-ctl', 'play');
+        await send('play-ctl', 'play');
         return;
     }
     if (video.src === window.location.href || video.readyState === 0) {
@@ -753,7 +757,7 @@ async function unPauseMedia(e) {
 
     if (!playingMediaAudioOnly && e !== null && e !== undefined && e.target.isConnected) {
         resetPIDOnSeek();
-        await ipcRenderer.send('play-ctl', 'play');
+        await send('play-ctl', 'play');
     }
     if (playingMediaAudioOnly && document.getElementById("mediaWindowPlayButton")) {
         updateDynUI();
@@ -828,7 +832,7 @@ function playMedia(e) {
     if (mdFIle.value === "" && !playingMediaAudioOnly) {
         if (isPlaying) {
             isPlaying = false;
-            ipcRenderer.send('close-media-window', 0);
+            send('close-media-window', 0);
             saveMediaFile();
             video.currentTime = 0;
             video.pause();
@@ -866,7 +870,7 @@ function playMedia(e) {
             return;
         }
         if (audioOnlyFile) {
-            ipcRenderer.send("localMediaState", 0, "play");
+            send("localMediaState", 0, "play");
             addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
             isPlaying = true;
             if (document.getElementById("mdLpCtlr"))
@@ -884,7 +888,7 @@ function playMedia(e) {
         startTime = 0;
         isPlaying = false;
         updateDynUI();
-        ipcRenderer.send('close-media-window', 0);
+        send('close-media-window', 0);
         isActiveMediaWindowCache = false;
         playingMediaAudioOnly = false;
         if (!audioOnlyFile)
@@ -892,7 +896,7 @@ function playMedia(e) {
         video.pause();
         video.currentTime = 0;
         if (audioOnlyFile) {
-            ipcRenderer.send("localMediaState", 0, "stop");
+            send("localMediaState", 0, "stop");
             removeFilenameFromTitlebar();
             activeLiveStream = false;
             saveMediaFile();
@@ -927,11 +931,11 @@ async function populateDisplaySelect() {
     if (!displaySelect) return;
 
     displaySelect.addEventListener('change', (event) => {
-        ipcRenderer.send('set-display-index', parseInt(event.target.value));
+        send('set-display-index', parseInt(event.target.value));
     });
 
     try {
-        const { displays, defaultDisplayIndex } = await ipcRenderer.invoke('get-all-displays');
+        const { displays, defaultDisplayIndex } = await invoke('get-all-displays');
 
         // Clear existing options except the first disabled one
         while (displaySelect.options.length > 1) {
@@ -959,7 +963,7 @@ function setSBFormYouTubeMediaPlayer() {
         return;
     }
     opMode = MEDIAPLAYERYT;
-    ipcRenderer.send('set-mode', opMode);
+    send('set-mode', opMode);
 
     document.getElementById("dyneForm").innerHTML = `
     <div class="media-container">
@@ -1036,7 +1040,7 @@ async function setSBFormTextPlayer() {
         return;
     }
     opMode = TEXTPLAYER;
-    ipcRenderer.send('set-mode', opMode);
+    send('set-mode', opMode);
 
     document.getElementById("dyneForm").innerHTML = `
         <form onsubmit="return false;">
@@ -1322,7 +1326,7 @@ function generateMediaFormHTML(video = null) {
 function installDisplayChangeHandler() {
     if (installDisplayChangeHandler.initialized) return;
 
-    ipcRenderer.on('display-changed', async () => {
+    on('display-changed', async () => {
         await populateDisplaySelect();
     });
 
@@ -1332,7 +1336,7 @@ function installDisplayChangeHandler() {
 function loopCtlHandler(event) {
     video.loop = event.target.checked;
     if (isActiveMediaWindow()) {
-        ipcRenderer.invoke('set-media-loop-status', event.target.checked);
+        invoke('set-media-loop-status', event.target.checked);
     }
 }
 
@@ -1341,7 +1345,7 @@ function setSBFormMediaPlayer() {
         return;
     }
     opMode = MEDIAPLAYER;
-    ipcRenderer.send('set-mode', opMode);
+    send('set-mode', opMode);
     document.getElementById("dyneForm").innerHTML = generateMediaFormHTML(video);
     mediaCntDn.appendChild(textNode);
     mediaCntDn.style.color = "#5c87b2";
@@ -1651,7 +1655,7 @@ function playLocalMedia(event) {
         audioOnlyFile = true;
     }
     if (audioOnlyFile) {
-        ipcRenderer.send("localMediaState", 0, "play");
+        send("localMediaState", 0, "play");
         addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
         isPlaying = true;
         updateDynUI();
@@ -1737,8 +1741,8 @@ function seekLocalMedia(e) {
         return;
     }
     if (e.target.isConnected) {
-        ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-        ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
+        send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+        invoke('get-media-current-time').then(r => { targetTime = r });
     }
 }
 
@@ -1750,8 +1754,8 @@ function seekingLocalMedia(e) {
         pidController.reset();
     }
     if (e.target.isConnected) {
-        ipcRenderer.send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
-        ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
+        send('timeGoto-message', { currentTime: e.target.currentTime, timestamp: Date.now() });
+        invoke('get-media-current-time').then(r => { targetTime = r });
     }
 }
 
@@ -1789,7 +1793,7 @@ function endLocalMedia() {
     }
     targetTime = 0;
     fileEnded = true;
-    ipcRenderer.send("localMediaState", 0, "stop");
+    send("localMediaState", 0, "stop");
     removeFilenameFromTitlebar();
     video.pause();
     masterPauseState = false;
@@ -1799,7 +1803,7 @@ function endLocalMedia() {
 
 function pauseLocalMedia(event) {
     if (mediaSessionPause) {
-        ipcRenderer.invoke('get-media-current-time').then(r => { targetTime = r });
+        invoke('get-media-current-time').then(r => { targetTime = r });
         return;
     }
     if (fileEnded) {
@@ -1886,7 +1890,7 @@ function loadOpMode(mode) {
 }
 
 function initPlayer() {
-    ipcRenderer.invoke('get-setting', "operating-mode").then(loadOpMode);
+    invoke('get-setting', "operating-mode").then(loadOpMode);
 }
 
 function isLiveStream(mediaFile) {
@@ -1952,7 +1956,7 @@ async function createMediaWindow() {
         }
     };
 
-    await ipcRenderer.invoke('create-media-window', windowOptions, selectedIndex);
+    await invoke('create-media-window', windowOptions, selectedIndex);
     isActiveMediaWindowCache = true;
 
     if (pidController) {
