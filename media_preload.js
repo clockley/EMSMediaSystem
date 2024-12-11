@@ -14,7 +14,8 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
-const { contextBridge, ipcRenderer } = require('electron');
+const birth = Date.now();
+const { contextBridge, ipcRenderer } = require('electron/renderer');
 
 window.addEventListener('DOMContentLoaded', () => {
     const video = document.getElementById('bigPlayer');
@@ -30,5 +31,5 @@ contextBridge.exposeInMainWorld('electron', {
         on: ipcRenderer.on.bind(ipcRenderer),
     },
     argv: process.argv,
-    birth: Date.now()
+    birth: birth
 });

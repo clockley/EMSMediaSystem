@@ -15,7 +15,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
 "use strict";
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron/renderer';
 import { readFile } from 'fs/promises';
 import { Bible } from './Bible.mjs';
 import { Script } from 'vm';
