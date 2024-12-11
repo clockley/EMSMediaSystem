@@ -16,7 +16,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker } from 'electron/main';
-import settings from 'electron-settings';
+import settings from './settings.mjs'
 import { readdir, readFile } from 'fs/promises';
 import path from 'path';
 const isDevMode = process.env.ems_dev === 'true';
