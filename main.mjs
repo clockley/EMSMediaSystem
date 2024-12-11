@@ -15,7 +15,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
 "use strict";
-import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, Menu } from 'electron';
+import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker } from 'electron';
 import settings from 'electron-settings';
 import { readdir, readFile } from 'fs/promises';
 import path from 'path';
@@ -61,10 +61,6 @@ function getWindowBounds() {
 let mediaWindow = null;
 let windowBounds = measurePerformanceAsync('Getting window bounds', getWindowBounds);
 let win = null;
-
-if (isDevMode === false) {
-  Menu.setApplicationMenu(null);
-}
 
 const saveWindowBounds = (function () {
   let timeoutId = null;
