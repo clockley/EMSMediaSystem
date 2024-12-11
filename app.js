@@ -1980,6 +1980,13 @@ async function createMediaWindow() {
         video.muted = false;
     }
     pidSeeking = true;
+    unPauseMedia();
+    if (opMode !== MEDIAPLAYERYT) {
+        if (video !== null && !isImgFile) {
+            pidSeeking = true;
+            await video.play();
+        }
+    }
 
     if (video) {
         addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
