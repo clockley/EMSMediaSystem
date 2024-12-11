@@ -106,7 +106,7 @@ function checkWindowState() {
 
 function lateInit() {
   win.webContents.send('ready');
-  measurePerformance('Setting window aspect ratio', win.setAspectRatio.bind(win, 1.618));
+  measurePerformance('Setting window aspect ratio', win.setAspectRatio.bind(win, 1.778));
   win.show();
   win.on('resize', saveWindowBounds);
 }
@@ -747,8 +747,8 @@ const mainWindowOptions = {
   transparent: true,
   width: windowBounds ? windowBounds.width : 1068,
   height: windowBounds ? windowBounds.height : 660,
-  minWidth: 1151,
-  minHeight: 715,
+  minWidth: 960,
+  minHeight: 540,
   icon: `${import.meta.dirname}/icon.png`,
   paintWhenInitiallyHidden: true,
   show: false,
