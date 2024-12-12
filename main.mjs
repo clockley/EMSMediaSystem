@@ -219,6 +219,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     };
 
     mediaWindow = new BrowserWindow(finalWindowOptions);
+    //mediaWindow.openDevTools()
     mediaWindow.loadFile("media.html");
     mediaWindow.on('closed', () => {
       if (win) win.webContents.send('media-window-closed', mediaWindow.id);
@@ -667,7 +668,16 @@ function handleSetDisplayIndex(event, index) {
   }
 }
 
+async function getSystemTIme() {
+  const [seconds, nanoseconds] = process.hrtime();
+  return {
+    systemTime: seconds + (nanoseconds / 1e9),
+    ipcTimestamp:  Date.now()
+  };
+}
+
 app.once('browser-window-created', async () => {
+  ipcMain.handle('get-system-time', getSystemTIme);
   ipcMain.on('set-mode', handleSetMode);
   ipcMain.handle('get-setting', getSetting);
   ipcMain.handle('get-all-displays', handleGetAllDisplays);

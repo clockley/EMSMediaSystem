@@ -38,6 +38,7 @@ var fileEnded = false;
 var mediaSessionPause = false;
 let isPlaying = false;
 let img = null;
+let itc = 0;
 const MEDIAPLAYER = 0, MEDIAPLAYERYT = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
 const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 let isActiveMediaWindowCache = false;
@@ -801,6 +802,7 @@ function waitForMetadata() {
 
 function playMedia(e) {
     if (video) {
+        itc = performance.now() * .001;
         startTime = video.currentTime;
     }
     targetTime = startTime;
@@ -1898,6 +1900,8 @@ function isLiveStream(mediaFile) {
 }
 
 async function createMediaWindow() {
+    let ts = await invoke('get-system-time');
+    let birth = video.paused == true ? 0 : ts.systemTime + ((Date.now() - ts.ipcTimestamp)*.001) +((performance.now()*.001)-itc)+'';
     mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : webUtils.getPathForFile(document.getElementById("mdFile").files[0]);
     var liveStreamMode = isLiveStream(mediaFile);
     var selectedIndex = document.getElementById("dspSelct").selectedIndex - 1;
@@ -1948,7 +1952,7 @@ async function createMediaWindow() {
                 startTime !== 0 ? '__start-time=' + startTime : "",
                 strtVl !== 1 ? '__start-vol=' + strtVl : "",
                 document.getElementById("mdLpCtlr") !== null ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true' : '') : "",
-                liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : "", Date.now()+''
+                liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : "", birth
             ],
             preload: `${__dirname}/media_preload.js`
         }

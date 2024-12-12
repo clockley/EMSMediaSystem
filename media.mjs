@@ -160,8 +160,9 @@ async function loadMedia() {
         navigator.mediaSession.setActionHandler('seekto', (details) => {
             ipcRenderer.send('media-seekto', details.seekTime);
         });
+        let ts = await ipcRenderer.invoke('get-system-time')
 
-        video.currentTime = strtTm + ((Date.now() - birth)*.001);
+        video.currentTime = strtTm + (ts.systemTime - birth)+((Date.now() - ts.ipcTimestamp)*.001);
 
         video.addEventListener('play', playbackStateUpdate);
         video.addEventListener('pause', playbackStateUpdate);
