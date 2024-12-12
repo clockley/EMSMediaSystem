@@ -1937,6 +1937,7 @@ async function createMediaWindow() {
 
     const windowOptions = {
         webPreferences: {
+            v8CacheOptions: 'bypassHeatCheck',
             contextIsolation: true,
             sandbox: true,
             enableWebSQL: false,

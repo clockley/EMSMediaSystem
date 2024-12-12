@@ -747,7 +747,7 @@ const mainWindowOptions = {
   webPreferences: {
     contextIsolation: true,
     nodeIntegration: true,
-    v8CacheOptions: 'code',
+    v8CacheOptions: 'bypassHeatCheck',
     userGesture: true,
     backgroundThrottling: false,
     experimentalFeatures: true,
