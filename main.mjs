@@ -737,8 +737,8 @@ app.whenReady().then(async () => {
 const mainWindowOptions = {
   frame: false,
   transparent: true,
-  width: windowBounds ? windowBounds.width : 1068,
-  height: windowBounds ? windowBounds.height : 660,
+  width: windowBounds ? windowBounds.width : 960,
+  height: windowBounds ? windowBounds.height : 540,
   x: windowBounds ? windowBounds.x : 0,
   y: windowBounds ? windowBounds.y : 0,
   minWidth: 960,
