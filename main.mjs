@@ -110,7 +110,7 @@ function lateInit() {
 function createWindow() {
   win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
   if (isDevMode) {
-    win.openDevTools();
+    //win.openDevTools();
   }
 
   win.webContents.on('did-finish-load', lateInit);
@@ -241,7 +241,7 @@ async function handleDisplayChange() {
 
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     const currentBounds = mediaWindow.getBounds();
-    const currentDisplayIndex = await settings.get('lastDisplayIndex');
+    const currentDisplayIndex = settings.getSync('lastDisplayIndex');
 
     if (!lastKnownDisplayState) {
       lastKnownDisplayState = {
@@ -270,8 +270,8 @@ async function handleDisplayChange() {
       await settings.set('lastMediaWindowBounds', lastKnownDisplayState.bounds);
       await settings.set('lastDisplayIndex', lastKnownDisplayState.displayIndex);
     } else if (wasDisplayDisconnected) {
-      const savedBounds = await settings.get('lastMediaWindowBounds');
-      const savedDisplayIndex = await settings.get('lastDisplayIndex');
+      const savedBounds = settings.getSync('lastMediaWindowBounds');
+      const savedDisplayIndex = settings.getSync('lastDisplayIndex');
 
       if (savedBounds && savedDisplayIndex !== undefined) {
         const targetDisplay = currentDisplays[savedDisplayIndex];
@@ -562,7 +562,7 @@ async function getConnectedDisplays() {
 async function handleGetAllDisplays() {
   const displays = screen.getAllDisplays();
   let edidDisplayInfo = [];
-  const savedDisplayIndex = await settings.get('lastDisplayIndex');
+  const savedDisplayIndex = settings.getSync('lastDisplayIndex');
 
   let defaultDisplayIndex;
   if (savedDisplayIndex !== undefined && displays[savedDisplayIndex]) {
@@ -736,7 +736,6 @@ app.whenReady().then(async () => {
   screen.on('display-metrics-changed', handleDisplayChange);
 });
 
-windowBounds = await windowBounds;
 const mainWindowOptions = {
   frame: false,
   transparent: true,
