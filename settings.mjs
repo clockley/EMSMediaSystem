@@ -21,7 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
-import { join } from 'path';
+
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import writeFileAtomic from 'write-file-atomic';
 import { app } from 'electron';
@@ -45,7 +45,7 @@ function getSettingsFilePath() {
     if (cache.filePath) {
         return cache.filePath;
     }
-    cache.filePath = join(getSettingsDirPath(), 'settings.json');
+    cache.filePath = getSettingsDirPath() +'/'+ 'settings.json';
     return cache.filePath;
 }
 

@@ -16,9 +16,8 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker } from 'electron/main';
-import settings from './settings.mjs'
 import { readdir, readFile } from 'fs/promises';
-import path from 'path';
+import settings from './settings.mjs'
 const isDevMode = process.env.ems_dev === 'true';
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
@@ -511,15 +510,15 @@ async function getConnectedDisplays() {
     const displays = await Promise.all(entries.map(async (entry) => {
       if (!entry.match(/card\d+[-\w]+/)) return null;
 
-      const displayPath = path.join(DRM_PATH, entry);
+      const displayPath = DRM_PATH + '/' + entry;
       try {
         // Check if display is connected
-        const statusPath = path.join(displayPath, 'status');
+        const statusPath = displayPath + '/' + 'status';
         const status = await readFile(statusPath, 'utf8').catch(() => 'disconnected');
         if (status.trim() !== 'connected') return null;
 
         // Try to read EDID
-        const edidPath = path.join(displayPath, 'edid');
+        const edidPath = displayPath + '/' + 'edid';
         let edidInfo = null;
 
         try {
