@@ -14,7 +14,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
-const birth = Date.now();
+
 const { contextBridge, ipcRenderer } = require('electron/renderer');
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -31,5 +31,5 @@ contextBridge.exposeInMainWorld('electron', {
         on: ipcRenderer.on.bind(ipcRenderer),
     },
     argv: process.argv,
-    birth: birth
+    birth: process.argv[process.argv.length-1]
 });
