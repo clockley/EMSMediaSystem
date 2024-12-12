@@ -73,22 +73,6 @@
 		}
 	}
 
-	if (!globalThis.crypto) {
-		throw new Error("globalThis.crypto is not available, polyfill required (crypto.getRandomValues only)");
-	}
-
-	if (!globalThis.performance) {
-		throw new Error("globalThis.performance is not available, polyfill required (performance.now only)");
-	}
-
-	if (!globalThis.TextEncoder) {
-		throw new Error("globalThis.TextEncoder is not available, polyfill required");
-	}
-
-	if (!globalThis.TextDecoder) {
-		throw new Error("globalThis.TextDecoder is not available, polyfill required");
-	}
-
 	const encoder = new TextEncoder("utf-8");
 	const decoder = new TextDecoder("utf-8");
 
