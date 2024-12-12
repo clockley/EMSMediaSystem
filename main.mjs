@@ -76,6 +76,7 @@ const saveWindowBounds = (function () {
 })();
 
 function checkWindowState() {
+  saveWindowBounds();
   const bounds = win.getBounds();
   const targetScreen = screen.getDisplayMatching(bounds);
 
@@ -102,7 +103,6 @@ function checkWindowState() {
 function lateInit() {
   measurePerformance('Setting window aspect ratio', win.setAspectRatio.bind(win, 1.778));
   win.show();
-  win.on('resize', saveWindowBounds);
 }
 
 function createWindow() {
@@ -739,6 +739,8 @@ const mainWindowOptions = {
   transparent: true,
   width: windowBounds ? windowBounds.width : 1068,
   height: windowBounds ? windowBounds.height : 660,
+  x: windowBounds ? windowBounds.x : 0,
+  y: windowBounds ? windowBounds.y : 0,
   minWidth: 960,
   minHeight: 540,
   icon: `${import.meta.dirname}/icon.png`,
