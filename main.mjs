@@ -100,7 +100,6 @@ function checkWindowState() {
 }
 
 function lateInit() {
-  win.webContents.send('ready');
   measurePerformance('Setting window aspect ratio', win.setAspectRatio.bind(win, 1.778));
   win.show();
   win.on('resize', saveWindowBounds);

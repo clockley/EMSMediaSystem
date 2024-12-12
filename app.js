@@ -1889,10 +1889,6 @@ function loadOpMode(mode) {
     }
 }
 
-function initPlayer() {
-    invoke('get-setting', "operating-mode").then(loadOpMode);
-}
-
 function isLiveStream(mediaFile) {
     if (mediaFile === undefined || mediaFile === null) {
         return false;
@@ -1995,5 +1991,4 @@ async function createMediaWindow() {
 
 installIPCHandler();
 installEvents();
-
-ipcRenderer.once('ready', initPlayer);
+invoke('get-setting', "operating-mode").then(loadOpMode);
