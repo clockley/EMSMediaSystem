@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer: {
         send: ipcRenderer.send.bind(ipcRenderer),
         on: ipcRenderer.on.bind(ipcRenderer),
+        invoke: ipcRenderer.invoke.bind(ipcRenderer)
     },
     argv: process.argv,
     birth: process.argv[process.argv.length-1]
