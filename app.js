@@ -1794,6 +1794,7 @@ function endLocalMedia() {
     targetTime = 0;
     fileEnded = true;
     send("localMediaState", 0, "stop");
+    send('close-media-window', 0);
     removeFilenameFromTitlebar();
     video.pause();
     masterPauseState = false;
