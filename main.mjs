@@ -55,11 +55,11 @@ async function measurePerformanceAsync(operation, func) {
 const appStartTime = isDevMode ? performance.now() : null;
 
 function getWindowBounds() {
-  return settings.get('windowBounds');
+  return settings.getSync('windowBounds');
 }
 
 let mediaWindow = null;
-let windowBounds = measurePerformanceAsync('Getting window bounds', getWindowBounds);
+let windowBounds = measurePerformance('Getting window bounds', getWindowBounds);
 let win = null;
 
 const saveWindowBounds = (function () {
@@ -177,8 +177,8 @@ function sendRemainingTime(event, arg) {
   win?.webContents.send('timeRemaining-message', tarr, [tarr]);
 }
 
-async function getSetting(_, setting) {
-  return settings.get(setting);
+function getSetting(_, setting) {
+  return settings.getSync(setting);
 }
 
 function handleCloseMediaWindow(event, id) {
