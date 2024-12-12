@@ -162,7 +162,9 @@ async function loadMedia() {
         });
         let ts = await ipcRenderer.invoke('get-system-time')
 
-        video.currentTime = strtTm + (ts.systemTime - birth)+((Date.now() - ts.ipcTimestamp)*.001);
+        if (strtTm != 0) {
+            video.currentTime = strtTm + (ts.systemTime - birth) + ((Date.now() - ts.ipcTimestamp) * .001);
+        }
 
         video.addEventListener('play', playbackStateUpdate);
         video.addEventListener('pause', playbackStateUpdate);
