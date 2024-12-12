@@ -1901,7 +1901,7 @@ function isLiveStream(mediaFile) {
 
 async function createMediaWindow() {
     let ts = await invoke('get-system-time');
-    let birth = video.paused == true ? 0 : ts.systemTime + ((Date.now() - ts.ipcTimestamp)*.001) +((performance.now()*.001)-itc)+'';
+    let birth = ts.systemTime + ((Date.now() - ts.ipcTimestamp)*.001) +((performance.now()*.001)-itc)+'';
     mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : webUtils.getPathForFile(document.getElementById("mdFile").files[0]);
     var liveStreamMode = isLiveStream(mediaFile);
     var selectedIndex = document.getElementById("dspSelct").selectedIndex - 1;
