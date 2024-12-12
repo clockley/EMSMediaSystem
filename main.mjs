@@ -700,11 +700,6 @@ app.once('browser-window-created', async () => {
       win.maximize();
     }
   });
-
-  ipcMain.on('close-window', () => {
-    win.close();
-  });
-
 });
 
 app.on('window-all-closed', () => {
