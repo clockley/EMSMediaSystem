@@ -1948,7 +1948,7 @@ async function createMediaWindow() {
                 startTime !== 0 ? '__start-time=' + startTime : "",
                 strtVl !== 1 ? '__start-vol=' + strtVl : "",
                 document.getElementById("mdLpCtlr") !== null ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true' : '') : "",
-                liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : ""
+                liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : "", Date.now()+''
             ],
             preload: `${__dirname}/media_preload.js`
         }
