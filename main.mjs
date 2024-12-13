@@ -15,7 +15,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
 "use strict";
-import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker } from 'electron/main';
+import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session } from 'electron/main';
 import { readdir, readFile } from 'fs/promises';
 import settings from './settings.mjs'
 const isDevMode = process.env.ems_dev === 'true';
@@ -108,7 +108,7 @@ function lateInit() {
 function createWindow() {
   win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
   if (isDevMode) {
-    //win.openDevTools();
+    win.openDevTools();
   }
 
   win.webContents.on('did-finish-load', lateInit);
@@ -737,6 +737,14 @@ app.whenReady().then(async () => {
   screen.on('display-added', handleDisplayChange);
   screen.on('display-removed', handleDisplayChange);
   screen.on('display-metrics-changed', handleDisplayChange);
+
+  //needed for high performance timers in renderer
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      const headers = details.responseHeaders || {};
+      headers['Cross-Origin-Opener-Policy'] = ['same-origin'];
+      headers['Cross-Origin-Embedder-Policy'] = ['require-corp'];
+      callback({ responseHeaders: headers });
+  });
 });
 
 const mainWindowOptions = {
