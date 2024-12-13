@@ -19,6 +19,7 @@ import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session } from '
 import { readdir, readFile } from 'fs/promises';
 import settings from './settings.mjs'
 const isDevMode = process.env.ems_dev === 'true';
+const openDevConsole = process.env.ems_dev_console === 'true';
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
 app.commandLine.appendSwitch('js-flags', '--maglev --no-wasm-stack-checks  --no-wasm-stack-checks');
@@ -108,8 +109,8 @@ function lateInit() {
 
 function createWindow() {
   win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
-  if (isDevMode) {
-    //win.openDevTools();
+  if (openDevConsole) {
+    win.openDevTools();
   }
 
   win.webContents.on('did-finish-load', lateInit);
