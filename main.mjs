@@ -21,6 +21,7 @@ import settings from './settings.mjs'
 const isDevMode = process.env.ems_dev === 'true';
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
+app.commandLine.appendSwitch('js-flags', '--maglev --no-wasm-stack-checks  --no-wasm-stack-checks');
 
 if (isDevMode) {
   console.log(`Node version: ${process.versions.node}`);
@@ -108,7 +109,7 @@ function lateInit() {
 function createWindow() {
   win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
   if (isDevMode) {
-    win.openDevTools();
+    //win.openDevTools();
   }
 
   win.webContents.on('did-finish-load', lateInit);
