@@ -22,11 +22,11 @@ const isDevMode = process.env.ems_dev === 'true';
 const openDevConsole = process.env.ems_dev_console === 'true';
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
-app.commandLine.appendSwitch('js-flags', '--maglev --no-wasm-stack-checks  --no-wasm-stack-checks');
+app.commandLine.appendSwitch('js-flags', '--maglev --no-use-osr');
 
 if (isDevMode) {
-  console.log(`Node version: ${process.versions.node}`);
-  console.log(`Electron version: ${process.versions.electron}`);
+  console.log(process.versions);
+
 }
 
 function measurePerformance(operation, func) {
