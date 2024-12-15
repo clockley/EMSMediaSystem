@@ -24,7 +24,6 @@ SOFTWARE.
 
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import writeFileAtomic from 'write-file-atomic';
-import { app } from 'electron';
 
 // Memory cache
 const cache = {
@@ -33,19 +32,17 @@ const cache = {
     filePath: null,
 };
 
+function init(settingsFilePath) {
+    cache.filePath = settingsFilePath;
+    cache.dirPath = settingsFilePath.substring(0, settingsFilePath.lastIndexOf('/'));
+    loadSettings();
+}
+
 function getSettingsDirPath() {
-    if (cache.dirPath) {
-        return cache.dirPath;
-    }
-    cache.dirPath = app.getPath('userData');
     return cache.dirPath;
 }
 
 function getSettingsFilePath() {
-    if (cache.filePath) {
-        return cache.filePath;
-    }
-    cache.filePath = getSettingsDirPath() +'/'+ 'settings.json';
     return cache.filePath;
 }
 
@@ -118,12 +115,10 @@ function saveSettings(data) {
 
 // Core functions
 function get(keyPath) {
-    const settings = loadSettings();
     return getValueByPath(settings, keyPath);
 }
 
 function has(keyPath) {
-    const settings = loadSettings();
     const value = getValueByPath(settings, keyPath);
     return value !== undefined;
 }
@@ -134,7 +129,6 @@ async function set(keyPath, value) {
         return;
     }
 
-    const settings = loadSettings();
     setValueByPath(settings, keyPath, value);
     saveSettings(settings);
 }
@@ -145,7 +139,6 @@ function setSync(keyPath, value) {
         return;
     }
 
-    const settings = loadSettings();
     setValueByPath(settings, keyPath, value);
     saveSettings(settings);
 }
@@ -156,7 +149,6 @@ async function unset(keyPath) {
         return;
     }
 
-    const settings = loadSettings();
     const parts = Array.isArray(keyPath) ? keyPath : keyPath.split('.');
     let current = settings;
     for (let i = 0; i < parts.length - 1; i++) {
@@ -173,7 +165,6 @@ function unsetSync(keyPath) {
         return;
     }
 
-    const settings = loadSettings();
     const parts = Array.isArray(keyPath) ? keyPath : keyPath.split('.');
     let current = settings;
     for (let i = 0; i < parts.length - 1; i++) {
@@ -188,11 +179,11 @@ function file() {
     return getSettingsFilePath();
 }
 
-// getSync is just an alias for get since get is already sync
 const getSync = get;
 const hasSync = has;
 
-export {
+const settings = {
+    init,
     get,
     getSync,
     set,
@@ -204,14 +195,4 @@ export {
     file
 };
 
-export default {
-    get,
-    getSync,
-    set,
-    setSync,
-    has,
-    hasSync,
-    unset,
-    unsetSync,
-    file
-};
+export default settings;
