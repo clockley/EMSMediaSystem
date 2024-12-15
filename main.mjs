@@ -674,7 +674,7 @@ async function getSystemTIme() {
   const [seconds, nanoseconds] = process.hrtime();
   return {
     systemTime: seconds + (nanoseconds / 1e9),
-    ipcTimestamp:  Date.now()
+    ipcTimestamp: Date.now()
   };
 }
 
@@ -741,12 +741,16 @@ app.whenReady().then(async () => {
   screen.on('display-metrics-changed', handleDisplayChange);
 
   //needed for high performance timers in renderer
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-      const headers = details.responseHeaders || {};
-      headers['Cross-Origin-Opener-Policy'] = ['same-origin'];
-      headers['Cross-Origin-Embedder-Policy'] = ['require-corp'];
-      callback({ responseHeaders: headers });
-  });
+  const headersHandler = (details, callback) => {
+    if (!details.responseHeaders) details.responseHeaders = {};
+
+    details.responseHeaders['Cross-Origin-Opener-Policy'] = ['same-origin'];
+    details.responseHeaders['Cross-Origin-Embedder-Policy'] = ['require-corp'];
+
+    callback({ responseHeaders: details.responseHeaders });
+  };
+
+  session.defaultSession.webRequest.onHeadersReceived(headersHandler);
 });
 
 const mainWindowOptions = {
