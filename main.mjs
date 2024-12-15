@@ -23,6 +23,7 @@ const openDevConsole = process.env.ems_dev_console === 'true';
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
 app.commandLine.appendSwitch('js-flags', '--maglev --no-use-osr');
+settings.init(app.getPath('userData') + '/settings.json');
 
 if (isDevMode) {
   console.log(process.versions);
