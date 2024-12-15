@@ -679,7 +679,7 @@ async function getSystemTIme() {
   };
 }
 
-app.once('browser-window-created', async () => {
+function setIPC() {
   ipcMain.handle('get-system-time', getSystemTIme);
   ipcMain.on('set-mode', handleSetMode);
   ipcMain.handle('get-setting', getSetting);
@@ -713,7 +713,9 @@ app.once('browser-window-created', async () => {
       win.maximize();
     }
   });
-});
+}
+
+app.once('browser-window-created', setIPC);
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

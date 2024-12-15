@@ -130,8 +130,6 @@ class PIDController {
         this.responseArray = new Float64Array(this.maxHistoryLength);
         this.historyIndex = 0;
         this.historySize = 0;
-
-        this.reset();
     }
 
     updateSystemMetrics(timeDifference, timestamp) {
