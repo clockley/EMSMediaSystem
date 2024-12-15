@@ -19,8 +19,6 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron/renderer';
 import { readFile } from 'fs/promises';
 import { Bible } from './Bible.mjs';
 import { Script } from 'vm';
-import { basename} from 'path';
-import { URL } from 'url';
 
 async function initializeBible() {
   const bible = new Bible();
@@ -47,10 +45,31 @@ const [bibleAPI] = await Promise.all([
 ]);
 
 function getHostnameOrBasename(input) {
-  try {
-    return new URL(input).hostname;
-  } catch (error) {
-    return basename(input);
+  // Check if input contains a protocol-like prefix (http://, https://, ftp://, etc.)
+  const protocolMatch = input.match(/^(\w+):\/\//);
+  
+  if (protocolMatch) {
+    // If protocol exists, extract hostname
+    const protocolEnd = protocolMatch[0].length;
+    const remainingPart = input.slice(protocolEnd);
+    const firstSlashIndex = remainingPart.indexOf('/');
+    
+    // Return full domain or first part before path
+    return firstSlashIndex === -1 
+      ? remainingPart 
+      : remainingPart.slice(0, firstSlashIndex);
+  } else {
+    // If not a URL, extract basename
+    // Handle both forward and backslashes
+    const lastForwardSlash = input.lastIndexOf('/');
+    const lastBackSlash = input.lastIndexOf('\\');
+    
+    // Choose the last separator
+    const lastSeparator = Math.max(lastForwardSlash, lastBackSlash);
+    
+    // If no separator found, return the entire input
+    // Otherwise, return the part after the last separator
+    return lastSeparator === -1 ? input : input.slice(lastSeparator + 1);
   }
 }
 
