@@ -566,45 +566,49 @@ function handleTimeMessage(_, message) {
     }
 }
 
+async function handlePlaybackState(event, playbackState) {
+    if (!video) {
+        return;
+    }
+    if (playbackState.playing && video.paused) {
+        masterPauseState = false;
+        if (video && !isImg(mediaFile)) {
+            await video.play();
+        }
+    } else if (!playbackState.playing && !video.paused) {
+        masterPauseState = true;
+        if (video) {
+            video.currentTime = playbackState.currentTime;
+            await video.pause();
+        }
+    }
+}
+
+function handlePlayPause(event, arg) {
+    mediaSessionPause = arg;
+}
+
+function handleMediaseek(event, seekTime) {
+    if (video) {
+        const newTime = video.currentTime + seekTime;
+        if (newTime >= 0 && newTime <= video.duration) {
+            video.currentTime = newTime;
+        }
+    }
+}
+
+function handleWindowMax(event, isMaximized) {
+    document.querySelector('.window-container').classList.toggle('maximized', isMaximized);
+
+}
 
 function installIPCHandler() {
     on('timeRemaining-message', handleTimeMessage);
-
-    on('update-playback-state', async (event, playbackState) => {
-        if (!video) {
-            return;
-        }
-        if (playbackState.playing && video.paused) {
-            masterPauseState = false;
-            if (video && !isImg(mediaFile)) {
-                await video.play();
-            }
-        } else if (!playbackState.playing && !video.paused) {
-            masterPauseState = true;
-            if (video) {
-                video.currentTime = playbackState.currentTime;
-                await video.pause();
-            }
-        }
-    });
-
-    on('remoteplaypause', (_, arg) => {
-        mediaSessionPause = arg;
-    });
-
+    on('update-playback-state', handlePlaybackState);
+    on('remoteplaypause', handlePlayPause);
     on('media-window-closed', handleMediaWindowClosed);
-
-    on('media-seek', (event, seekTime) => {
-        if (video) {
-            const newTime = video.currentTime + seekTime;
-            if (newTime >= 0 && newTime <= video.duration) {
-                video.currentTime = newTime;
-            }
-        }
-    });
-    on('window-maximized', (event, isMaximized) => {
-        document.querySelector('.window-container').classList.toggle('maximized', isMaximized);
-    });
+    on('media-seek', handleMediaseek);
+    on('window-maximized', handleWindowMax);
 }
 
 async function handleMediaWindowClosed(event, id) {
