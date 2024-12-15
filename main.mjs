@@ -14,7 +14,8 @@ You should have received a copy of the GNU Lesser General Public License
 along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
-"use strict";
+import { enableCompileCache } from 'module';
+process.env.NODE_COMPILE_CACHE = enableCompileCache().directory;
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session } from 'electron/main';
 import { readdir, readFile } from 'fs/promises';
 import settings from './settings.mjs'
