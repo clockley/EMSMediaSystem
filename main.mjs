@@ -65,7 +65,7 @@ let mediaWindow = null;
 let windowBounds = measurePerformance('Getting window bounds', getWindowBounds);
 let win = null;
 
-const saveWindowBounds = (function () {
+const saveWindowBounds = (async function () {
   let timeoutId = null;
 
   return async function () {
@@ -79,7 +79,7 @@ const saveWindowBounds = (function () {
   };
 })();
 
-function checkWindowState() {
+async function checkWindowState() {
   saveWindowBounds();
   const bounds = win.getBounds();
   const targetScreen = screen.getDisplayMatching(bounds);
