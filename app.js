@@ -18,7 +18,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 
-const { ipcRenderer, __dirname, bibleAPI, webUtils, getHostnameOrBasename } = window.electron;
+const { ipcRenderer, __dirname, bibleAPI, webUtils } = window.electron;
 
 var pidSeeking = false;
 var streamVolume = 1;
@@ -392,6 +392,35 @@ const PAD = ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09'];
 
 const NUM_BUFFER = new Int32Array(4);
 const REM_BUFFER = new Int32Array(1);
+
+function getHostnameOrBasename(input) {
+  // Check if input contains a protocol-like prefix (http://, https://, ftp://, etc.)
+  const protocolMatch = input.match(/^(\w+):\/\//);
+
+  if (protocolMatch) {
+    // If protocol exists, extract hostname
+    const protocolEnd = protocolMatch[0].length;
+    const remainingPart = input.slice(protocolEnd);
+    const firstSlashIndex = remainingPart.indexOf('/');
+
+    // Return full domain or first part before path
+    return firstSlashIndex === -1
+      ? remainingPart
+      : remainingPart.slice(0, firstSlashIndex);
+  } else {
+    // If not a URL, extract basename
+    // Handle both forward and backslashes
+    const lastForwardSlash = input.lastIndexOf('/');
+    const lastBackSlash = input.lastIndexOf('\\');
+
+    // Choose the last separator
+    const lastSeparator = Math.max(lastForwardSlash, lastBackSlash);
+
+    // If no separator found, return the entire input
+    // Otherwise, return the part after the last separator
+    return lastSeparator === -1 ? input : input.slice(lastSeparator + 1);
+  }
+}
 
 function isActiveMediaWindow() {
     return isActiveMediaWindowCache;
