@@ -65,7 +65,7 @@ let mediaWindow = null;
 let windowBounds = measurePerformance('Getting window bounds', getWindowBounds);
 let win = null;
 
-const saveWindowBounds = (async function () {
+const saveWindowBounds = (function () {
   let timeoutId = null;
 
   return async function () {
