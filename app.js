@@ -51,7 +51,7 @@ const updatePending = new Int32Array(1);
 const send = ipcRenderer.send;
 const invoke = ipcRenderer.invoke;
 const on = ipcRenderer.on;
-
+const getPathForFile = webUtils.getPathForFile;
 const mediaPlayerInputState = {
     fileInpt: null,
     urlInpt: null,
@@ -1409,7 +1409,7 @@ function setSBFormMediaPlayer() {
                     if (!mdFile.value.includes("fake")) {
                         mediaFile = mdFile.value;
                     } else {
-                        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked === true ? mdFile.value : webUtils.getPathForFile(mdFile.files[0]);
+                        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked === true ? mdFile.value : getPathForFile(mdFile.files[0]);
                     }
                 }
                 const isImgFile = isImg(mediaFile);
@@ -1461,7 +1461,7 @@ function saveMediaFile() {
         return;
     }
 
-    if (mdfileElement.files !== null && mdfileElement.files.length !== 0 && encodeURI(webUtils.getPathForFile(mdfileElement.files[0])) === removeFileProtocol(video.src)) {
+    if (mdfileElement.files !== null && mdfileElement.files.length !== 0 && encodeURI(getPathForFile(mdfileElement.files[0])) === removeFileProtocol(video.src)) {
         return;
     }
 
@@ -1469,7 +1469,7 @@ function saveMediaFile() {
         if (mdfileElement.files[0].length === 0) {
             return;
         }
-        mediaFile = webUtils.getPathForFile(mdfileElement.files[0]);
+        mediaFile = getPathForFile(mdfileElement.files[0]);
         return;
     }
 
@@ -1490,7 +1490,7 @@ function saveMediaFile() {
         return;
     }
 
-    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : webUtils.getPathForFile(document.getElementById("mdFile").files[0]);
+    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : getPathForFile(document.getElementById("mdFile").files[0]);
 
     if (mediaFile) {
         const fileNameSpan = document.querySelector('.file-input-label span');
@@ -1904,7 +1904,7 @@ function isLiveStream(mediaFile) {
 async function createMediaWindow() {
     let ts = await invoke('get-system-time');
     let birth = ts.systemTime + ((Date.now() - ts.ipcTimestamp)*.001) +((performance.now()*.001)-itc)+'';
-    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : webUtils.getPathForFile(document.getElementById("mdFile").files[0]);
+    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : getPathForFile(document.getElementById("mdFile").files[0]);
     var liveStreamMode = isLiveStream(mediaFile);
     var selectedIndex = document.getElementById("dspSelct").selectedIndex - 1;
     activeLiveStream = liveStreamMode;
