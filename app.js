@@ -1338,17 +1338,17 @@ function generateMediaFormHTML(video = null) {
     <div class="control-group">
         <div class="control-group">
             <div class="loop-control">
-                <span class="control-label">Repeat</span>
+                <span class="control-label">Autoplay</span>
                 <label class="switch">
-                <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr" ${video?.loop ? 'checked' : ''}>
+                <input type="checkbox" checked name="autoPlayCtl" id="autoPlayCtl"'}>
                 <span class="switch-track"></span>
                 <span class="switch-thumb"></span>
                 </label>
             </div>
             <div class="loop-control">
-                <span class="control-label">Autoplay</span>
+                <span class="control-label">Repeat</span>
                 <label class="switch">
-                <input type="checkbox" checked name="autoPlayCtl" id="autoPlayCtl"'}>
+                <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr" ${video?.loop ? 'checked' : ''}>
                 <span class="switch-track"></span>
                 <span class="switch-thumb"></span>
                 </label>
