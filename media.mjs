@@ -23,6 +23,7 @@ var strtvl = 1;
 var strtTm = 0;
 var liveStreamMode = false;
 var isImg = false;
+var autoPlay = false;
 let i = argv.length - 1;
 
 do {
@@ -38,6 +39,8 @@ do {
         strtvl = parseFloat(argv[i].substring(12));
     } else if (argv[i] === '__media-loop=true') {
         loopFile = true;
+    } else if (argv[i] === '__autoplay=true') {
+        autoPlay = true;
     }
     --i;
 } while (argv[i][0] !== '-');
@@ -128,6 +131,9 @@ async function loadMedia() {
     video.volume = strtvl;
     video.setAttribute("loop", loopFile);
     video.src = mediaFile;
+    if (autoPlay) {
+        video.play();
+    }
     if (liveStreamMode) {
         if (matchYouTubeUrl(mediaFile)) {
             const response = await fetch(mediaFile);

@@ -1991,7 +1991,9 @@ async function createMediaWindow() {
                 startTime !== 0 ? '__start-time=' + startTime : "",
                 strtVl !== 1 ? '__start-vol=' + strtVl : "",
                 document.getElementById("mdLpCtlr") !== null ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true' : '') : "",
-                liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : "", birth
+                liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : "",
+                `__autoplay=${document.getElementById("autoPlayCtl")?.checked !== undefined && document.getElementById("autoPlayCtl").checked}`,
+                birth
             ],
             preload: `${__dirname}/media_preload.js`
         }
@@ -2020,15 +2022,16 @@ async function createMediaWindow() {
         }
         video.muted = false;
     }
-    pidSeeking = true;
-    unPauseMedia();
-    if (opMode !== MEDIAPLAYERYT) {
-        if (video !== null && !isImgFile) {
-            pidSeeking = true;
-            await video.play();
+    if (document.getElementById("autoPlayCtl")?.checked !== undefined && document.getElementById("autoPlayCtl").checked) {
+        pidSeeking = true;
+        unPauseMedia();
+        if (opMode !== MEDIAPLAYERYT) {
+            if (video !== null && !isImgFile) {
+                pidSeeking = true;
+                await video.play();
+            }
         }
     }
-
     if (video) {
         addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
     }
