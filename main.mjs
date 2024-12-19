@@ -778,5 +778,6 @@ const mainWindowOptions = {
     experimentalFeatures: true,
     autoplayPolicy: 'no-user-gesture-required',
     preload: `${import.meta.dirname}/app_preload.mjs`,
+    devTools: isDevMode
   }
 };
