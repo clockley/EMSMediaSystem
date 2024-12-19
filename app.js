@@ -1345,6 +1345,14 @@ function generateMediaFormHTML(video = null) {
                 <span class="switch-thumb"></span>
                 </label>
             </div>
+            <div class="loop-control">
+                <span class="control-label">Autoplay</span>
+                <label class="switch">
+                <input type="checkbox" checked name="autoPlayCtl" id="autoPlayCtl"'}>
+                <span class="switch-track"></span>
+                <span class="switch-thumb"></span>
+                </label>
+            </div>
     </div>
     </div>
     <div id="mediaCntDn"></div>
