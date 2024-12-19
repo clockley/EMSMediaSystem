@@ -963,9 +963,9 @@ async function populateDisplaySelect() {
     const displaySelect = document.getElementById("dspSelct");
     if (!displaySelect) return;
 
-    displaySelect.addEventListener('change', (event) => {
+    displaySelect.onchange = (event) => {
         send('set-display-index', parseInt(event.target.value));
-    });
+    };
 
     try {
         const { displays, defaultDisplayIndex } = await invoke('get-all-displays');
