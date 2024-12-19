@@ -1986,6 +1986,7 @@ async function createMediaWindow() {
             sandbox: true,
             enableWebSQL: false,
             webgl: false,
+            skipTaskbar: true,
             additionalArguments: [
                 '__mediafile-ems=' + encodeURIComponent(mediaFile),
                 startTime !== 0 ? '__start-time=' + startTime : "",
