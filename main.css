@@ -469,7 +469,7 @@ button:focus-visible,
     background: color-mix(in srgb, AccentColor 5%, Canvas);
     color: CanvasText;
     padding: 6px;
-    margin: -1px;
+    margin-top: -1px;
     height: 45px;
     display: flex;
     justify-content: space-between;
