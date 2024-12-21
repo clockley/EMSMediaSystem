@@ -65,19 +65,12 @@ let mediaWindow = null;
 let windowBounds = measurePerformance('Getting window bounds', getWindowBounds);
 let win = null;
 
-const saveWindowBounds = (function () {
-  let timeoutId = null;
-
-  return async function () {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(async () => {
-      settings.set('windowBounds', win.getBounds())
-        .catch(error => {
-          console.error('Error saving window bounds:', error);
-        });
-    }, 300);
-  };
-})();
+function saveWindowBounds() {
+  settings.set('windowBounds', win.getBounds())
+    .catch(error => {
+      console.error('Error saving window bounds:', error);
+    });
+};
 
 async function checkWindowState() {
   saveWindowBounds();
