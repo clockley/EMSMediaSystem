@@ -30,6 +30,7 @@ const cache = {
     data: null,
     dirPath: null,
     filePath: null,
+    isDirty: false
 };
 
 function init(settingsFilePath) {
@@ -110,7 +111,7 @@ function saveSettings(data) {
     }
 
     writeFileAtomic.sync(filePath, JSON.stringify(data));
-    cache.data = data;
+    cache.isDirty = false;
 }
 
 // Core functions
@@ -125,27 +126,26 @@ function has(keyPath) {
 
 async function set(keyPath, value) {
     if (arguments.length === 1) {
-        saveSettings(keyPath);
-        return;
+        cache.data = keyPath;
+    } else {
+        setValueByPath(cache.data, keyPath, value);
     }
-
-    setValueByPath(cache.data, keyPath, value);
-    saveSettings(cache.data);
+    cache.isDirty = true;
 }
 
 function setSync(keyPath, value) {
     if (arguments.length === 1) {
-        saveSettings(keyPath);
-        return;
+        cache.data = keyPath;
+    } else {
+        setValueByPath(cache.data, keyPath, value);
     }
-
-    setValueByPath(cache.data, keyPath, value);
-    saveSettings(cache.data);
+    cache.isDirty = true;
 }
 
 async function unset(keyPath) {
     if (!keyPath) {
-        saveSettings({});
+        cache.data = {};
+        cache.isDirty = true;
         return;
     }
 
@@ -156,12 +156,13 @@ async function unset(keyPath) {
         current = current[parts[i]];
     }
     delete current[parts[parts.length - 1]];
-    saveSettings(cache.data);
+    cache.isDirty = true;
 }
 
 function unsetSync(keyPath) {
     if (!keyPath) {
-        saveSettings({});
+        cache.data = {};
+        cache.isDirty = true;
         return;
     }
 
@@ -172,11 +173,17 @@ function unsetSync(keyPath) {
         current = current[parts[i]];
     }
     delete current[parts[parts.length - 1]];
-    saveSettings(cache.data);
+    cache.isDirty = true;
 }
 
 function file() {
     return getSettingsFilePath();
+}
+
+function flush() {
+    if (cache.isDirty) {
+        saveSettings(cache.data);
+    }
 }
 
 const getSync = get;
@@ -192,7 +199,8 @@ const settings = {
     hasSync,
     unset,
     unsetSync,
-    file
+    file,
+    flush
 };
 
 export default settings;
