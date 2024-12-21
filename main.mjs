@@ -65,16 +65,16 @@ let mediaWindow = null;
 let windowBounds = measurePerformance('Getting window bounds', getWindowBounds);
 let win = null;
 
-function saveWindowBounds() {
-  settings.set('windowBounds', win.getBounds())
+function saveWindowBounds(bounds) {
+  settings.set('windowBounds', bounds)
     .catch(error => {
       console.error('Error saving window bounds:', error);
     });
 };
 
 async function checkWindowState() {
-  saveWindowBounds();
   const bounds = win.getBounds();
+  saveWindowBounds(bounds);
   const targetScreen = screen.getDisplayMatching(bounds);
 
   if (win.isMaximized()) {
