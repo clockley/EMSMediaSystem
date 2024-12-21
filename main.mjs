@@ -146,6 +146,7 @@ function createWindow() {
   win.on('closed', () => {
     win = null;
     app.quit();
+    settings.flush();
   });
 
   measurePerformanceAsync('Loading index.html', win.loadFile.bind(win, 'index.html'));
