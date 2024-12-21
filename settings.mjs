@@ -115,11 +115,11 @@ function saveSettings(data) {
 
 // Core functions
 function get(keyPath) {
-    return getValueByPath(settings, keyPath);
+    return getValueByPath(cache.data, keyPath);
 }
 
 function has(keyPath) {
-    const value = getValueByPath(settings, keyPath);
+    const value = getValueByPath(cache.data, keyPath);
     return value !== undefined;
 }
 
@@ -129,8 +129,8 @@ async function set(keyPath, value) {
         return;
     }
 
-    setValueByPath(settings, keyPath, value);
-    saveSettings(settings);
+    setValueByPath(cache.data, keyPath, value);
+    saveSettings(cache.data);
 }
 
 function setSync(keyPath, value) {
@@ -139,8 +139,8 @@ function setSync(keyPath, value) {
         return;
     }
 
-    setValueByPath(settings, keyPath, value);
-    saveSettings(settings);
+    setValueByPath(cache.data, keyPath, value);
+    saveSettings(cache.data);
 }
 
 async function unset(keyPath) {
@@ -150,13 +150,13 @@ async function unset(keyPath) {
     }
 
     const parts = Array.isArray(keyPath) ? keyPath : keyPath.split('.');
-    let current = settings;
+    let current = cache.data;
     for (let i = 0; i < parts.length - 1; i++) {
         if (!(parts[i] in current)) return;
         current = current[parts[i]];
     }
     delete current[parts[parts.length - 1]];
-    saveSettings(settings);
+    saveSettings(cache.data);
 }
 
 function unsetSync(keyPath) {
@@ -166,13 +166,13 @@ function unsetSync(keyPath) {
     }
 
     const parts = Array.isArray(keyPath) ? keyPath : keyPath.split('.');
-    let current = settings;
+    let current = cache.data;
     for (let i = 0; i < parts.length - 1; i++) {
         if (!(parts[i] in current)) return;
         current = current[parts[i]];
     }
     delete current[parts[parts.length - 1]];
-    saveSettings(settings);
+    saveSettings(cache.data);
 }
 
 function file() {
