@@ -957,6 +957,10 @@ function updateDynUI() {
     if (document.getElementById("dspSelct")) {
         document.getElementById("dspSelct").disabled = (isPlaying && audioOnlyFile);
     }
+    if (document.getElementById("autoPlayCtl")) {
+        document.getElementById("autoPlayCtl").checked = true;
+        document.getElementById("autoPlayCtl").disabled = (isPlaying && audioOnlyFile);
+    }
 }
 
 async function populateDisplaySelect() {
