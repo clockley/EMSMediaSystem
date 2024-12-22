@@ -707,6 +707,17 @@ app.on('activate', () => {
 });
 
 app.whenReady().then(async () => {
+  //needed for high performance timers in renderer
+  const headersHandler = (details, callback) => {
+    if (!details.responseHeaders) details.responseHeaders = {};
+
+    details.responseHeaders['Cross-Origin-Opener-Policy'] = ['same-origin'];
+    details.responseHeaders['Cross-Origin-Embedder-Policy'] = ['require-corp'];
+
+    callback({ responseHeaders: details.responseHeaders });
+  };
+
+  session.defaultSession.webRequest.onHeadersReceived(headersHandler);
   measurePerformance('Creating window', createWindow);
   if (isDevMode) {
     const appReadyTime = performance.now();
@@ -719,18 +730,6 @@ app.whenReady().then(async () => {
   screen.on('display-added', handleDisplayChange);
   screen.on('display-removed', handleDisplayChange);
   screen.on('display-metrics-changed', handleDisplayChange);
-
-  //needed for high performance timers in renderer
-  const headersHandler = (details, callback) => {
-    if (!details.responseHeaders) details.responseHeaders = {};
-
-    details.responseHeaders['Cross-Origin-Opener-Policy'] = ['same-origin'];
-    details.responseHeaders['Cross-Origin-Embedder-Policy'] = ['require-corp'];
-
-    callback({ responseHeaders: details.responseHeaders });
-  };
-
-  session.defaultSession.webRequest.onHeadersReceived(headersHandler);
 });
 
 const mainWindowOptions = {
