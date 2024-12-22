@@ -394,32 +394,32 @@ const NUM_BUFFER = new Int32Array(4);
 const REM_BUFFER = new Int32Array(1);
 
 function getHostnameOrBasename(input) {
-  // Check if input contains a protocol-like prefix (http://, https://, ftp://, etc.)
-  const protocolMatch = input.match(/^(\w+):\/\//);
+    // Check if input contains a protocol-like prefix (http://, https://, ftp://, etc.)
+    const protocolMatch = input.match(/^(\w+):\/\//);
 
-  if (protocolMatch) {
-    // If protocol exists, extract hostname
-    const protocolEnd = protocolMatch[0].length;
-    const remainingPart = input.slice(protocolEnd);
-    const firstSlashIndex = remainingPart.indexOf('/');
+    if (protocolMatch) {
+        // If protocol exists, extract hostname
+        const protocolEnd = protocolMatch[0].length;
+        const remainingPart = input.slice(protocolEnd);
+        const firstSlashIndex = remainingPart.indexOf('/');
 
-    // Return full domain or first part before path
-    return firstSlashIndex === -1
-      ? remainingPart
-      : remainingPart.slice(0, firstSlashIndex);
-  } else {
-    // If not a URL, extract basename
-    // Handle both forward and backslashes
-    const lastForwardSlash = input.lastIndexOf('/');
-    const lastBackSlash = input.lastIndexOf('\\');
+        // Return full domain or first part before path
+        return firstSlashIndex === -1
+            ? remainingPart
+            : remainingPart.slice(0, firstSlashIndex);
+    } else {
+        // If not a URL, extract basename
+        // Handle both forward and backslashes
+        const lastForwardSlash = input.lastIndexOf('/');
+        const lastBackSlash = input.lastIndexOf('\\');
 
-    // Choose the last separator
-    const lastSeparator = Math.max(lastForwardSlash, lastBackSlash);
+        // Choose the last separator
+        const lastSeparator = Math.max(lastForwardSlash, lastBackSlash);
 
-    // If no separator found, return the entire input
-    // Otherwise, return the part after the last separator
-    return lastSeparator === -1 ? input : input.slice(lastSeparator + 1);
-  }
+        // If no separator found, return the entire input
+        // Otherwise, return the part after the last separator
+        return lastSeparator === -1 ? input : input.slice(lastSeparator + 1);
+    }
 }
 
 function isActiveMediaWindow() {
@@ -1402,11 +1402,11 @@ function setSBFormMediaPlayer() {
                 fileNameSpan.textContent = getHostnameOrBasename(mediaFile);
             }
         }
-    
+
         if (isLiveStream(document.querySelector('.file-input-label span').innerText)) {
             document.querySelector('.file-input-label span').innerText = 'Open';
         }
-    
+
         restoreMediaFile();
         updateTimestamp();
     }
@@ -1940,7 +1940,7 @@ function isLiveStream(mediaFile) {
 
 async function createMediaWindow() {
     let ts = await invoke('get-system-time');
-    let birth = ts.systemTime + ((Date.now() - ts.ipcTimestamp)*.001) +((performance.now()*.001)-itc)+'';
+    let birth = ts.systemTime + ((Date.now() - ts.ipcTimestamp) * .001) + ((performance.now() * .001) - itc) + '';
     mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : getPathForFile(document.getElementById("mdFile").files[0]);
     var liveStreamMode = isLiveStream(mediaFile);
     var selectedIndex = document.getElementById("dspSelct").selectedIndex - 1;
