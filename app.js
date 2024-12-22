@@ -959,7 +959,7 @@ function updateDynUI() {
     }
     if (document.getElementById("autoPlayCtl")) {
         document.getElementById("autoPlayCtl").checked = true;
-        document.getElementById("autoPlayCtl").disabled = (isPlaying && audioOnlyFile);
+        document.getElementById("autoPlayCtl").disabled = (isPlaying && audioOnlyFile) || isImg(mediaFile);
     }
 }
 
