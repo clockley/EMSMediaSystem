@@ -1395,21 +1395,21 @@ function setSBFormMediaPlayer() {
 
     if (video === null) {
         video = document.getElementById('preview');
-    }
-
-    if (mediaFile) {
-        const fileNameSpan = document.querySelector('.file-input-label span');
-        if (fileNameSpan) {
-            fileNameSpan.textContent = getHostnameOrBasename(mediaFile);
+    } else {
+        if (mediaFile) {
+            const fileNameSpan = document.querySelector('.file-input-label span');
+            if (fileNameSpan) {
+                fileNameSpan.textContent = getHostnameOrBasename(mediaFile);
+            }
         }
+    
+        if (isLiveStream(document.querySelector('.file-input-label span').innerText)) {
+            document.querySelector('.file-input-label span').innerText = 'Open';
+        }
+    
+        restoreMediaFile();
+        updateTimestamp();
     }
-
-    if (isLiveStream(document.querySelector('.file-input-label span').innerText)) {
-        document.querySelector('.file-input-label span').innerText = 'Open';
-    }
-
-    restoreMediaFile();
-    updateTimestamp();
 
     const loopctl = document.getElementById("mdLpCtlr");
     if (video.loop === true) {
