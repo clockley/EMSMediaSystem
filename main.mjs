@@ -104,11 +104,8 @@ function lateInit() {
 
 function handleMaximizeChange(isMaximized) {
   saveWindowBounds();
+  win.setBackgroundColor('#00000000');
   win?.webContents.send('maximize-change', isMaximized);
-}
-
-function handleWindowMaximized(isMaximized) {
-  win?.webContents.send('window-maximized', isMaximized);
 }
 
 function createWindow() {
@@ -120,18 +117,6 @@ function createWindow() {
   win.webContents.on('did-finish-load', lateInit);
   win.on('maximize', handleMaximizeChange.bind(null, true));
   win.on('unmaximize', handleMaximizeChange.bind(null, false));
-  win.on('maximize', handleWindowMaximized.bind(null, true));
-  win.on('unmaximize', handleWindowMaximized.bind(null, false));
-
-  if (process.platform === 'linux') {
-    win.on('maximize', () => {
-      win.setBackgroundColor('#00000000');
-    });
-
-    win.on('unmaximize', () => {
-      win.setBackgroundColor('#00000000');
-    });
-  }
 
   win.on('closed', () => {
     win = null;
