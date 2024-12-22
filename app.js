@@ -958,7 +958,9 @@ function updateDynUI() {
         document.getElementById("dspSelct").disabled = (isPlaying && audioOnlyFile);
     }
     if (document.getElementById("autoPlayCtl")) {
-        document.getElementById("autoPlayCtl").checked = true;
+        if ((isPlaying && audioOnlyFile) || isImg(mediaFile)) {
+            document.getElementById("autoPlayCtl").checked = true;
+        }
         document.getElementById("autoPlayCtl").disabled = (isPlaying && audioOnlyFile) || isImg(mediaFile);
     }
 }
