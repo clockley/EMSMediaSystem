@@ -102,6 +102,15 @@ function lateInit() {
   win.show();
 }
 
+function handleMaximizeChange(isMaximized) {
+  saveWindowBounds();
+  win?.webContents.send('maximize-change', isMaximized);
+}
+
+function handleWindowMaximized(isMaximized) {
+  win?.webContents.send('window-maximized', isMaximized);
+}
+
 function createWindow() {
   win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
   if (openDevConsole) {
@@ -109,23 +118,10 @@ function createWindow() {
   }
 
   win.webContents.on('did-finish-load', lateInit);
-
-  win.on('maximize', () => {
-    saveWindowBounds()
-    win?.webContents.send('maximize-change', true);
-  });
-
-  win.on('unmaximize', () => {
-    win.webContents.send('maximize-change', false);
-  });
-
-  win.on('maximize', () => {
-    win.webContents.send('window-maximized', true);
-  });
-
-  win.on('unmaximize', () => {
-    win.webContents.send('window-maximized', false);
-  });
+  win.on('maximize', handleMaximizeChange.bind(null, true));
+  win.on('unmaximize', handleMaximizeChange.bind(null, false));
+  win.on('maximize', handleWindowMaximized.bind(null, true));
+  win.on('unmaximize', handleWindowMaximized.bind(null, false));
 
   if (process.platform === 'linux') {
     win.on('maximize', () => {
