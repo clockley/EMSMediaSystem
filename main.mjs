@@ -111,6 +111,7 @@ function createWindow() {
   win.webContents.on('did-finish-load', lateInit);
 
   win.on('maximize', () => {
+    saveWindowBounds()
     win?.webContents.send('maximize-change', true);
   });
 
