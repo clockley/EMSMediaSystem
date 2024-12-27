@@ -1947,7 +1947,7 @@ function isLiveStream(mediaFile) {
 }
 
 async function createMediaWindow() {
-    let ts = await invoke('get-system-time');
+    const ts = await invoke('get-system-time');
     let birth = ts.systemTime + ((Date.now() - ts.ipcTimestamp) * .001) + ((performance.now() * .001) - itc) + '';
     mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : getPathForFile(document.getElementById("mdFile").files[0]);
     var liveStreamMode = isLiveStream(mediaFile);
