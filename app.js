@@ -1736,6 +1736,8 @@ function playLocalMedia(event) {
         }
     }
     if (isImg(video.src)) {
+        audioOnlyFile = false;
+        playingMediaAudioOnly = false;
         return;
     }
     if (video.src === window.location.href) {
@@ -1743,21 +1745,16 @@ function playLocalMedia(event) {
         return;
     }
     masterPauseState = false;
-    if (isImg(video.src)) {
-        audioOnlyFile = false;
-        playingMediaAudioOnly = false;
-    } else {
-        updateTimestamp();
-        if (audioOnlyFile) {
-            if (document.getElementById("mdLpCtlr")) {
-                video.loop = document.getElementById("mdLpCtlr").checked;
-            }
-            if (document.getElementById('volumeControl')) {
-                video.volume = document.getElementById('volumeControl').value;
-            }
-            playingMediaAudioOnly = true;
-            return;
+    updateTimestamp();
+    if (audioOnlyFile) {
+        if (document.getElementById("mdLpCtlr")) {
+            video.loop = document.getElementById("mdLpCtlr").checked;
         }
+        if (document.getElementById('volumeControl')) {
+            video.volume = document.getElementById('volumeControl').value;
+        }
+        playingMediaAudioOnly = true;
+        return;
     }
 }
 
