@@ -859,8 +859,8 @@ function playMedia(e) {
             return;
         }
     }
-
-    if (isImg(mediaFile) && mdFile.files.length === 0 && video.style.display === 'none') {
+    const iM = isImg(mediaFile);
+    if (iM && mdFile.files.length === 0 && video.style.display === 'none') {
         mdFile.files = mediaPlayerInputState.fileInpt;
     }
 
@@ -892,7 +892,7 @@ function playMedia(e) {
         isPlaying = true;
         updateDynUI()
         if (opMode === MEDIAPLAYER) {
-            if (isImg(mediaFile)) {
+            if (iM) {
                 createMediaWindow();
                 video.currentTime = 0;
                 if (!video.paused)
@@ -942,7 +942,7 @@ function playMedia(e) {
         if (mediaFile !== normalizedPathname) {
             waitForMetadata().then(saveMediaFile).catch(function (rej) { console.log(rej); });
         }
-        if (isImg(mediaFile)) {
+        if (iM) {
             saveMediaFile();
         }
     }
@@ -960,10 +960,11 @@ function updateDynUI() {
         document.getElementById("dspSelct").disabled = (isPlaying && audioOnlyFile);
     }
     if (document.getElementById("autoPlayCtl")) {
-        if ((isPlaying && audioOnlyFile) || isImg(mediaFile)) {
+        const iM = isImg(mediaFile);
+        if ((isPlaying && audioOnlyFile) || iM) {
             document.getElementById("autoPlayCtl").checked = true;
         }
-        document.getElementById("autoPlayCtl").disabled = (isPlaying && audioOnlyFile) || isImg(mediaFile);
+        document.getElementById("autoPlayCtl").disabled = (isPlaying && audioOnlyFile) || iM;
     }
 }
 
