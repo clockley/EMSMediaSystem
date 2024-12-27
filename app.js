@@ -842,7 +842,9 @@ function playMedia(e) {
         e.target = document.getElementById("mediaWindowPlayButton");
     }
     fileEnded = false;
-    if (opMode === MEDIAPLAYER && mediaFile !== decodeURI(removeFileProtocol(video.src))) {
+    let normalizedPathname = decodeURI(removeFileProtocol(video.src));
+
+    if (opMode === MEDIAPLAYER && mediaFile !== normalizedPathname) {
         saveMediaFile();
     }
 
@@ -850,19 +852,19 @@ function playMedia(e) {
         audioOnlyFile = true;
     }
 
-    const mdFIle = document.getElementById("mdFile");
+    const mdFile = document.getElementById("mdFile");
 
-    if (video && (mediaFile !== decodeURI(removeFileProtocol(video.src)))) {
-        if (isPlaying === false && mdFIle.value === "" && opMode !== MEDIAPLAYER) {
+    if (video && (mediaFile !== normalizedPathname)) {
+        if (isPlaying === false && mdFile.value === "" && opMode !== MEDIAPLAYER) {
             return;
         }
     }
 
-    if (isImg(mediaFile) && document.getElementById("mdFile").files.length === 0 && video.style.display === 'none') {
+    if (isImg(mediaFile) && mdFile.files.length === 0 && video.style.display === 'none') {
         mdFile.files = mediaPlayerInputState.fileInpt;
     }
 
-    if (mdFIle.value === "" && !playingMediaAudioOnly) {
+    if (mdFile.value === "" && !playingMediaAudioOnly) {
         if (isPlaying) {
             isPlaying = false;
             send('close-media-window', 0);
@@ -875,11 +877,11 @@ function playMedia(e) {
             return;
         } else if (opMode === MEDIAPLAYER && !isPlaying && video.src !== null && video.src !== '' && mediaPlayerInputState.fileInpt != null) {
             let t1 = mediaPlayerInputState.fileInpt[0].name;
-            let t2 = getHostnameOrBasename(removeFileProtocol(decodeURI(video.src)))
+            let t2 = getHostnameOrBasename(normalizedPathname)
             if (t1 == null || t2 == null || t1 !== t2) {
                 return;
             } else {
-                mdFIle.files = mediaPlayerInputState.fileInpt;
+                mdFile.files = mediaPlayerInputState.fileInpt;
             }
         } else {
             return;
@@ -904,18 +906,18 @@ function playMedia(e) {
         }
         if (audioOnlyFile) {
             send("localMediaState", 0, "play");
-            addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
+            addFilenameToTitlebar(normalizedPathname);
             isPlaying = true;
             if (document.getElementById("mdLpCtlr"))
                 video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
-            currentMediaFile = mdFIle.files;
+            currentMediaFile = mdFile.files;
             video.play();
             updateTimestamp();
             return;
         }
 
-        currentMediaFile = mdFIle.files;
+        currentMediaFile = mdFile.files;
         createMediaWindow();
     } else {
         startTime = 0;
@@ -937,7 +939,7 @@ function playMedia(e) {
             audioOnlyFile = false;
         }
         localTimeStampUpdateIsRunning = false;
-        if (mediaFile !== decodeURI(removeFileProtocol(video.src))) {
+        if (mediaFile !== normalizedPathname) {
             waitForMetadata().then(saveMediaFile).catch(function (rej) { console.log(rej); });
         }
         if (isImg(mediaFile)) {
@@ -1438,7 +1440,7 @@ function setSBFormMediaPlayer() {
         }
     }
     updateDynUI();
-    plyBtn.addEventListener("click", playMedia);
+    plyBtn.addEventListener("click", playMedia, { passive: true });
     let isImgFile;
     if (mdFile !== null) {
         if (document.getElementById("preview").parentNode !== null) {
@@ -2007,8 +2009,8 @@ async function createMediaWindow() {
         }
     };
 
-    await invoke('create-media-window', windowOptions, selectedIndex);
     isActiveMediaWindowCache = true;
+    await invoke('create-media-window', windowOptions, selectedIndex);
 
     if (pidController) {
         pidController.reset();
@@ -2039,9 +2041,6 @@ async function createMediaWindow() {
                 await video.play();
             }
         }
-    }
-    if (video) {
-        addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
     }
 }
 
