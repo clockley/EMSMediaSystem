@@ -1612,17 +1612,17 @@ function restoreMediaFile() {
     }
 }
 
-function fileOpenShortcutHandler(event) {
-    if ((event.ctrlKey || event.metaKey) && (event.key === 'o' || event.key === 'O')) {
-        if (document.getElementById("mdFile")) {
-            document.getElementById("mdFile").click();
+function shortcutHandler(event) {
+    if (event.ctrlKey || event.metaKey) {
+        if (event.key === 'o' || event.key === 'O') {
+            if (document.getElementById("mdFile")) {
+                document.getElementById("mdFile").click();
+            }
         }
-    }
-}
 
-function appCloseShortcutHandler(event) {
-    if ((event.ctrlKey || event.metaKey) && (event.key === 'q' || event.key === 'Q')) {
-        close();
+        if (event.key === 'q' || event.key === 'Q') {
+            close();
+        }
     }
 }
 
@@ -1683,9 +1683,7 @@ function installEvents() {
 
     //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
 
-    document.addEventListener('keydown', fileOpenShortcutHandler);
-    document.addEventListener('keydown', appCloseShortcutHandler);
-
+    document.addEventListener('keydown', shortcutHandler, { passive: true });
     document.querySelector('form').addEventListener('change', modeSwitchHandler, { passive: true });
 }
 
