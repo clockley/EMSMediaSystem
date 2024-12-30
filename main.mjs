@@ -110,6 +110,9 @@ function handleMaximizeChange(isMaximized) {
 
 function createWindow() {
   win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
+  win.webContents.on('will-navigate', (event, url) => {
+    event.preventDefault();
+  });
   if (openDevConsole) {
     win.openDevTools();
   }
