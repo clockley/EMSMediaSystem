@@ -953,7 +953,7 @@ function updateDynUI() {
     textNode.data = "";
     const playButton = document.getElementById("mediaWindowPlayButton");
     if (playButton) {
-        playButton.textContent = isPlaying ? "Stop" : "Present";
+        playButton.textContent = isPlaying ? "Stop Presentation" : "Start Presentation";
     }
 
     if (document.getElementById("dspSelct")) {
