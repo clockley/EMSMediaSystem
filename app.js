@@ -1613,6 +1613,12 @@ function restoreMediaFile() {
 }
 
 function shortcutHandler(event) {
+    if ((event.key === 'F5' || event.code === 'F5') && !isActiveMediaWindow() && !playingMediaAudioOnly) {
+        playMedia();
+    }
+    if ((event.key === 'Escape' || event.code == 'Escape') && (isActiveMediaWindow() || audioOnlyFile)) {
+        playMedia();
+    }
     if (event.ctrlKey || event.metaKey) {
         if (event.key === 'o' || event.key === 'O') {
             if (document.getElementById("mdFile")) {
