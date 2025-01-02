@@ -187,6 +187,7 @@ async function loadMedia() {
         });
     } else {
         h.attachMedia(video);
+        video.play()
     }
 }
 
