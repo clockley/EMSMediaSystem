@@ -1693,11 +1693,6 @@ function installEvents() {
     document.querySelector('form').addEventListener('change', modeSwitchHandler, { passive: true });
 }
 
-function playAudioFileAfterDelay() {
-    video.play();
-    updateTimestamp();
-}
-
 function playLocalMedia(event) {
     if (!isActiveMediaWindow()) {
         if (video.audioTracks.length !== 0) {
