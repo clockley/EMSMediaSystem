@@ -21,6 +21,7 @@ var mediaFile;
 var loopFile = false;
 var strtvl = 1;
 var strtTm = 0;
+var isText = false;
 var liveStreamMode = false;
 var isImg = false;
 var autoPlay = false;
@@ -41,6 +42,8 @@ do {
         loopFile = true;
     } else if (argv[i] === '__autoplay=true') {
         autoPlay = true;
+    } else if (argv[i] === '__isText') {
+        isText = true;
     }
     --i;
 } while (argv[i][0] !== '-');
@@ -115,8 +118,49 @@ function playbackStateUpdate() {
     }
 }
 
+function installTextHandlers() {
+    ipcRenderer.on('update-text', (evt, message) => {
+        const textCanvas = document.getElementById('textCanvas');
+        const textContent = document.getElementById('textContent');
+
+        textContent.textContent = message.text;
+
+        if (message.color) {
+            textContent.style.color = message.color;
+        }
+
+        if (message.fontSize) {
+            textContent.style.fontSize = `${message.fontSize}px`;
+        }
+
+        if (message.position) {
+            textCanvas.style.alignItems = message.position.vertical || 'center';
+            textCanvas.style.justifyContent = message.position.horizontal || 'center';
+        }
+
+        if (message.backgroundColor) {
+            textContent.style.backgroundColor = message.backgroundColor;
+        }
+
+        if (message.backgroundImage) {
+            textCanvas.style.backgroundImage = `url('${message.backgroundImage}')`;
+            textCanvas.style.backgroundSize = 'cover';
+            textCanvas.style.backgroundPosition = 'center';
+        }
+    });
+}
+
 async function loadMedia() {
     let h = null;
+
+    if (isText) {
+        document.querySelector('video').style.display = 'none';
+        textCanvas.style.display = 'flex';
+        installTextHandlers();
+        return;
+    }
+
+    textCanvas.style.display = 'none';
 
     if (isImg) {
         img = document.createElement('img');
