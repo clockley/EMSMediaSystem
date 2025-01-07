@@ -39,7 +39,7 @@ var mediaSessionPause = false;
 let isPlaying = false;
 let img = null;
 let itc = 0;
-const MEDIAPLAYER = 0, MEDIAPLAYERYT = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
+const MEDIAPLAYER = 0, STREAMPLAYER = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
 const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 let isActiveMediaWindowCache = false;
 const SECONDS = new Int32Array(1);
@@ -899,7 +899,7 @@ function playMedia(e) {
                     video.src = '';
                 return;
             }
-        } else if (opMode === MEDIAPLAYERYT) {
+        } else if (opMode === STREAMPLAYER) {
             audioOnlyFile = false;
             createMediaWindow();
             return;
@@ -1000,11 +1000,11 @@ async function populateDisplaySelect() {
     }
 }
 
-function setSBFormYouTubeMediaPlayer() {
-    if (opMode === MEDIAPLAYERYT) {
+function setSBFormStreamPlayer() {
+    if (opMode === STREAMPLAYER) {
         return;
     }
-    opMode = MEDIAPLAYERYT;
+    opMode = STREAMPLAYER;
     send('set-mode', opMode);
 
     document.getElementById("dyneForm").innerHTML = `
@@ -1536,7 +1536,7 @@ function saveMediaFile() {
         return;
     }
 
-    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : getPathForFile(document.getElementById("mdFile").files[0]);
+    mediaFile = opMode === STREAMPLAYER ? document.getElementById("mdFile").value : getPathForFile(document.getElementById("mdFile").files[0]);
 
     if (mediaFile) {
         const fileNameSpan = document.querySelector('.file-input-label span');
@@ -1680,11 +1680,11 @@ function installEvents() {
     }, { passive: true });
 
     document.getElementById("YtPlyrRBtnFrmID").addEventListener('click', () => {
-        if (opMode === MEDIAPLAYERYT) {
+        if (opMode === STREAMPLAYER) {
             return;
         }
         cleanRefs();
-        setSBFormYouTubeMediaPlayer();
+        setSBFormStreamPlayer();
     }, { passive: true });
 
     //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
@@ -1899,7 +1899,7 @@ function handleVolumeChange(event) {
     if (event.target.id === 'volume-slider' && !isLiveStream(mediaFile)) {
         return;
     }
-    if (opMode === MEDIAPLAYERYT) {
+    if (opMode === STREAMPLAYER) {
         streamVolume = event.target.value;
         vlCtl(streamVolume);
         return;
@@ -1923,9 +1923,9 @@ function installPreviewEventHandlers() {
 }
 
 function loadOpMode(mode) {
-    if (mode === MEDIAPLAYERYT) {
+    if (mode === STREAMPLAYER) {
         document.getElementById("YtPlyrRBtnFrmID").checked = true;
-        setSBFormYouTubeMediaPlayer();
+        setSBFormStreamPlayer();
     } else if (mode === TEXTPLAYER) {
         document.getElementById("TxtPlyrRBtnFrmID").checked = true;
         setSBFormTextPlayer();
@@ -1946,7 +1946,7 @@ function isLiveStream(mediaFile) {
 async function createMediaWindow() {
     const ts = await invoke('get-system-time');
     let birth = ts.systemTime + ((Date.now() - ts.ipcTimestamp) * .001) + ((performance.now() * .001) - itc) + '';
-    mediaFile = opMode === MEDIAPLAYERYT ? document.getElementById("mdFile").value : getPathForFile(document.getElementById("mdFile").files[0]);
+    mediaFile = opMode === STREAMPLAYER ? document.getElementById("mdFile").value : getPathForFile(document.getElementById("mdFile").files[0]);
     var liveStreamMode = isLiveStream(mediaFile);
     var selectedIndex = document.getElementById("dspSelct").selectedIndex - 1;
     activeLiveStream = liveStreamMode;
@@ -2032,7 +2032,7 @@ async function createMediaWindow() {
     if (document.getElementById("autoPlayCtl")?.checked !== undefined && document.getElementById("autoPlayCtl").checked) {
         pidSeeking = true;
         unPauseMedia();
-        if (opMode !== MEDIAPLAYERYT) {
+        if (opMode !== STREAMPLAYER) {
             if (video !== null && !isImgFile) {
                 pidSeeking = true;
                 await video.play();
