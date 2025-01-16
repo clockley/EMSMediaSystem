@@ -32,9 +32,9 @@ const cache = {
     isDirty: false
 };
 
-function init(settingsFilePath) {
-    cache.filePath = settingsFilePath;
-    cache.dirPath = settingsFilePath.substring(0, settingsFilePath.lastIndexOf('/'));
+function init(settingsDirPath) {
+    cache.dirPath = settingsDirPath;
+    cache.filePath = `${settingsDirPath}/settings.json}`;
     loadSettings();
 }
 
