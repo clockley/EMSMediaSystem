@@ -121,10 +121,10 @@ function createWindow() {
   win.on('maximize', handleMaximizeChange.bind(null, true));
   win.on('unmaximize', handleMaximizeChange.bind(null, false));
 
-  win.on('closed', () => {
+  win.on('closed', async() => {
     win = null;
     app.quit();
-    settings.flush();
+    await settings.flush();
   });
 
   measurePerformanceAsync('Loading index.html', win.loadFile.bind(win, 'index.html'));

@@ -1503,11 +1503,12 @@ function removeFileProtocol(filePath) {
 function saveMediaFile() {
     textNode.data = "";
     const mdfileElement = document.getElementById("mdFile");
-    if (!mdfileElement) {
+    if (!mdfileElement || mdfileElement.value === "" ||
+        (mdfileElement.files && mdfileElement.files.length === 0)) {
         return;
     }
 
-    if (mdfileElement.files !== null && mdfileElement.files.length !== 0 && encodeURI(getPathForFile(mdfileElement.files[0])) === removeFileProtocol(video.src)) {
+    if (encodeURI(getPathForFile(mdfileElement.files[0])) === removeFileProtocol(video.src)) {
         return;
     }
 

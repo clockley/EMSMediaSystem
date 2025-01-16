@@ -23,7 +23,6 @@ SOFTWARE.
 */
 
 import { readFileSync, existsSync, mkdirSync } from 'fs';
-import writeFileAtomic from 'write-file-atomic';
 
 // Memory cache
 const cache = {
@@ -102,7 +101,7 @@ function loadSettings() {
     }
 }
 
-function saveSettings(data) {
+async function saveSettings(data) {
     const filePath = getSettingsFilePath();
     const dirPath = getSettingsDirPath();
 
@@ -110,7 +109,8 @@ function saveSettings(data) {
         mkdirSync(dirPath, { recursive: true });
     }
 
-    writeFileAtomic.sync(filePath, JSON.stringify(data));
+    const writeFileAtomic = await import('write-file-atomic');
+    writeFileAtomic.default.sync(filePath, JSON.stringify(data));
     cache.isDirty = false;
 }
 
@@ -180,9 +180,9 @@ function file() {
     return getSettingsFilePath();
 }
 
-function flush() {
+async function flush() {
     if (cache.isDirty) {
-        saveSettings(cache.data);
+        await saveSettings(cache.data);
     }
 }
 
