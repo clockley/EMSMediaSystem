@@ -980,17 +980,15 @@ async function populateDisplaySelect() {
         const { displays, defaultDisplayIndex } = await invoke('get-all-displays');
 
         // Clear existing options except the first disabled one
-        while (displaySelect.options.length > 1) {
-            displaySelect.remove(1);
-        }
+        displaySelect.options.length = 1;
 
         const fragment = document.createDocumentFragment();
-        displays.forEach(({ value, label }) => {
+        for (const { value, label } of displays) {
             const option = document.createElement("option");
             option.value = value;
             option.textContent = label;
             fragment.appendChild(option);
-        });
+        }
 
         displaySelect.appendChild(fragment);
         displaySelect.value = defaultDisplayIndex;
