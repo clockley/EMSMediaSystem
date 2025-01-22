@@ -1922,16 +1922,36 @@ function installPreviewEventHandlers() {
 }
 
 function loadOpMode(mode) {
-    if (mode === STREAMPLAYER) {
-        document.getElementById("YtPlyrRBtnFrmID").checked = true;
-        setSBFormStreamPlayer();
-    } else if (mode === TEXTPLAYER) {
-        document.getElementById("TxtPlyrRBtnFrmID").checked = true;
-        setSBFormTextPlayer();
+    const execute = () => {
+        // Window control functionality
+        const minimizeButton = document.querySelector('.window-control.minimize');
+        const maximizeButton = document.querySelector('.window-control.maximize');
+        const closeButton = document.querySelector('.window-control.close');
+
+        minimizeButton.addEventListener('click', windowControls.minimize);
+        maximizeButton.addEventListener('click', windowControls.maximize);
+        closeButton.addEventListener('click', close);
+
+        windowControls.onMaximizeChange((event, isMaximized) => {
+            maximizeButton.setAttribute('data-maximized', isMaximized);
+        });
+        if (mode === STREAMPLAYER) {
+            document.getElementById("YtPlyrRBtnFrmID").checked = true;
+            setSBFormStreamPlayer();
+        } else if (mode === TEXTPLAYER) {
+            document.getElementById("TxtPlyrRBtnFrmID").checked = true;
+            setSBFormTextPlayer();
+        } else {
+            document.getElementById("MdPlyrRBtnFrmID").checked = true;
+            setSBFormMediaPlayer();
+            installPreviewEventHandlers();
+        }
+    };
+
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        execute();
     } else {
-        document.getElementById("MdPlyrRBtnFrmID").checked = true;
-        setSBFormMediaPlayer();
-        installPreviewEventHandlers();
+        document.addEventListener('DOMContentLoaded', execute, { once: true });
     }
 }
 
