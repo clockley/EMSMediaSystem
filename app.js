@@ -1810,6 +1810,20 @@ function installPreviewEventHandlers() {
 
 function loadOpMode(mode) {
     const execute = () => {
+        //hamburger
+        const hamburgerButton = document.getElementById('hamburgerMenuButton');
+        const dropdownMenu = document.getElementById('gtkDropdownMenu');
+    
+        hamburgerButton.addEventListener('click', () => {
+            dropdownMenu.classList.toggle('hidden');
+        });
+    
+        // Close the menu when clicking outside
+        document.addEventListener('click', (event) => {
+            if (!hamburgerButton.contains(event.target) && !dropdownMenu.contains(event.target)) {
+                dropdownMenu.classList.add('hidden');
+            }
+        });
         // Window control functionality
         const minimizeButton = document.querySelector('.window-control.minimize');
         const maximizeButton = document.querySelector('.window-control.maximize');

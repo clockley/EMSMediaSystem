@@ -749,3 +749,75 @@ button:focus-visible,
     width: 16px;
     height: 16px;
 }
+
+.hidden {
+    display: none;
+}
+
+.gtk-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: #2E3436; /* Dark background (Adwaita dark) */
+    border: 1px solid #4C5157; /* Dark border */
+    box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.6);
+    border-radius: 8px;
+    padding: 8px 0;
+    z-index: 1000;
+    list-style: none;
+    margin: 8px 0 0;
+    width: 200px;
+    font-family: "Cantarell", sans-serif;
+    font-size: 14px;
+}
+
+/* Light mode adaptation */
+@media (prefers-color-scheme: light) {
+    .gtk-dropdown {
+        background: #f6f5f4; /* Light background (Adwaita light) */
+        border: 1px solid #d3d7cf; /* Light border */
+        box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.15);
+    }
+
+    .gtk-dropdown .menu-item {
+        color: #2e3436; /* Dark text color */
+    }
+
+    .gtk-dropdown .menu-item:hover {
+        background: #e0e0e0; /* Light hover background */
+        color: #2e3436;
+    }
+
+    .gtk-dropdown .menu-item:active {
+        background: #4a90d9; /* Active selection color (Adwaita light blue) */
+        color: white;
+    }
+
+    .gtk-dropdown .menu-separator {
+        background: #d3d7cf; /* Light separator */
+    }
+}
+
+/* Common styles (both modes) */
+.gtk-dropdown .menu-item {
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.gtk-dropdown .menu-item:hover {
+    background: #4C5157; /* Dark hover background */
+    color: #FFFFFF;
+}
+
+.gtk-dropdown .menu-item:active {
+    background: #729FCF; /* Dark active background */
+    color: white;
+}
+
+.gtk-dropdown .menu-separator {
+    height: 1px;
+    margin: 4px 0;
+    background: #555753; /* Dark separator */
+    border: none;
+}
