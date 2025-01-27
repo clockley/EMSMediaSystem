@@ -716,3 +716,32 @@ button:focus-visible,
     outline-offset: -1px;
     border-radius: var(--adw-radius-sm);
 }
+
+.hamburger-menu {
+    width: 28px;
+    height: 28px;
+    padding: 6px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: currentColor;
+    -webkit-app-region: no-drag;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    margin-right: 4px;
+  }
+  
+  .hamburger-menu:hover {
+    background: color-mix(in srgb, CanvasText 10%, transparent);
+  }
+  
+  .hamburger-menu:active {
+    background: color-mix(in srgb, CanvasText 15%, transparent);
+  }
+  
+  .hamburger-menu svg {
+    width: 16px;
+    height: 16px;
+  }
