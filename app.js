@@ -31,7 +31,6 @@ var prePathname = '';
 var playingMediaAudioOnly = false;
 var audioOnlyFile = false;
 var opMode = -1;
-var localTimeStampUpdateIsRunning = false;
 var mediaFile;
 var currentMediaFile;
 var fileEnded = false;
@@ -488,52 +487,6 @@ function removeFilenameFromTitlebar() {
     document.title = "EMS Media System";
 }
 
-function update(time) {
-    if (time - lastUpdateTimeLocalPlayer >= 33.33) {
-        if (opMode === MEDIAPLAYER) {
-            SECONDSFLOAT[0] = video.duration - video.currentTime;
-            NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
-            REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
-            NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
-            NUM_BUFFER[2] = REM_BUFFER[0] % 60;
-            NUM_BUFFER[3] = ((SECONDSFLOAT - (SECONDSFLOAT | 0)) * 1000 + 0.5) | 0;
-            if (!updatePending[0]) {
-                updatePending[0] = 1;
-                requestAnimationFrame(updateCountdownNode);
-            }
-        } else {
-            localTimeStampUpdateIsRunning = false;
-            return;
-        }
-        lastUpdateTimeLocalPlayer = time;
-    }
-    if (!video.paused) {
-        requestAnimationFrame(update);
-    } else {
-        localTimeStampUpdateIsRunning = false;
-    }
-}
-
-function updateTimestamp() {
-    if (localTimeStampUpdateIsRunning) {
-        return;
-    }
-
-    if (opMode !== MEDIAPLAYER) {
-        localTimeStampUpdateIsRunning = false;
-        return;
-    }
-
-    if (!video.paused) {
-        localTimeStampUpdateIsRunning = true;
-        if (!video.paused) {
-            requestAnimationFrame(update);
-        } else {
-            localTimeStampUpdateIsRunning = false;
-        }
-    }
-}
-
 let lastUpdateTime = 0;
 
 const STRING_BUFFER = new Array(20);
@@ -542,56 +495,9 @@ const DOT = '.';
 const ZERO = '0';
 const DOUBLE_ZERO = '00';
 
-function updateCountdownNode() {
-    STRING_BUFFER[0] = NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0] & 63] : NUM_BUFFER[0] & 63;
-    STRING_BUFFER[1] = COLON;
 
-    STRING_BUFFER[3] = NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1];
-    STRING_BUFFER[4] = COLON;
-
-    STRING_BUFFER[5] = NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2];
-    STRING_BUFFER[6] = DOT;
-    STRING_BUFFER.length = 7;
-    if (NUM_BUFFER[3] < 10) {
-        STRING_BUFFER[++STRING_BUFFER.length] = DOUBLE_ZERO;
-        STRING_BUFFER[++STRING_BUFFER.length] = NUM_BUFFER[3];
-    } else if (NUM_BUFFER[3] < 100) {
-        STRING_BUFFER[++STRING_BUFFER.length] = ZERO;
-        STRING_BUFFER[++STRING_BUFFER.length] = NUM_BUFFER[3];
-    } else {
-        STRING_BUFFER[++STRING_BUFFER.length] = NUM_BUFFER[3];
-    }
-
-    textNode.data = STRING_BUFFER.join('');
-    updatePending[0] = 0;
-}
 
 let now = 0;
-function handleTimeMessage(_, message) {
-    now = Date.now();
-
-    if (opMode === MEDIAPLAYER) {
-        SECONDSFLOAT[0] = message[0] - message[1];
-        NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
-        REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
-        NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
-        NUM_BUFFER[2] = REM_BUFFER[0] % 60;
-        NUM_BUFFER[3] = ((SECONDSFLOAT - (SECONDSFLOAT | 0)) * 1000 + 0.5) | 0;
-        if (!updatePending[0]) {
-            updatePending[0] = 1;
-            requestAnimationFrame(updateCountdownNode);
-        }
-    }
-
-    // Perform timestamp calculations only if enough time has passed
-    if (now - lastUpdateTime > 500) {
-        if (video && !video.paused && !video.seeking) {
-            targetTime = message[1] - (((now - message[2]) + (Date.now() - now)) * 0.001);
-            hybridSync(targetTime);
-            lastUpdateTime = now;
-        }
-    }
-}
 
 async function handlePlaybackState(event, playbackState) {
     if (!video) {
@@ -630,7 +536,6 @@ function handleWindowMax(event, isMaximized) {
 }
 
 function installIPCHandler() {
-    on('timeRemaining-message', handleTimeMessage);
     on('update-playback-state', handlePlaybackState);
     on('remoteplaypause', handlePlayPause);
     on('media-window-closed', handleMediaWindowClosed);
@@ -676,7 +581,6 @@ async function handleMediaWindowClosed(event, id) {
     masterPauseState = false;
     saveMediaFile();
     removeFilenameFromTitlebar();
-    textNode.data = "";
 }
 
 function isAudioFile() {
@@ -873,7 +777,6 @@ function playMedia(e) {
             video.pause();
             isPlaying = false;
             updateDynUI();
-            localTimeStampUpdateIsRunning = false;
             return;
         } else if (opMode === MEDIAPLAYER && !isPlaying && video.src !== null && video.src !== '' && mediaPlayerInputState.fileInpt != null) {
             let t1 = mediaPlayerInputState.fileInpt[0].name;
@@ -913,7 +816,6 @@ function playMedia(e) {
             playingMediaAudioOnly = true;
             currentMediaFile = mdFile.files;
             video.play();
-            updateTimestamp();
             return;
         }
 
@@ -938,7 +840,6 @@ function playMedia(e) {
 
             audioOnlyFile = false;
         }
-        localTimeStampUpdateIsRunning = false;
         if (mediaFile !== normalizedPathname) {
             waitForMetadata().then(saveMediaFile).catch(function (rej) { console.log(rej); });
         }
@@ -950,7 +851,6 @@ function playMedia(e) {
 }
 
 function updateDynUI() {
-    textNode.data = "";
     const playButton = document.getElementById("mediaWindowPlayButton");
     if (playButton) {
         playButton.textContent = isPlaying ? "Stop Presentation" : "Start Presentation";
@@ -1362,7 +1262,6 @@ function generateMediaFormHTML(video = null) {
             </div>
     </div>
     </div>
-    <div id="mediaCntDn"></div>
   </form>
 
   <div class="video-wrapper">
@@ -1415,7 +1314,6 @@ function setSBFormMediaPlayer() {
         }
 
         restoreMediaFile();
-        updateTimestamp();
     }
 
     const loopctl = document.getElementById("mdLpCtlr");
@@ -1499,7 +1397,6 @@ function removeFileProtocol(filePath) {
 }
 
 function saveMediaFile() {
-    textNode.data = "";
     const mdfileElement = document.getElementById("mdFile");
     if (!mdfileElement || mdfileElement.value === "" ||
         (mdfileElement.files && mdfileElement.files.length === 0)) {
@@ -1635,7 +1532,6 @@ function modeSwitchHandler(event) {
     if (event.target.type === 'radio') {
         if (event.target.value === 'Media Player') {
             installPreviewEventHandlers();
-            updateTimestamp();
         }
     }
 }
@@ -1707,7 +1603,6 @@ function playLocalMedia(event) {
         addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
         isPlaying = true;
         updateDynUI();
-        updateTimestamp();
         if (!playingMediaAudioOnly) {
             let t1 = encodeURI(mediaPlayerInputState.fileInpt[0].name);
             let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
@@ -1730,7 +1625,6 @@ function playLocalMedia(event) {
             }
             audioOnlyFile = true;
             playingMediaAudioOnly = true;
-            updateTimestamp();
             return;
         }
     }
@@ -1744,7 +1638,6 @@ function playLocalMedia(event) {
         return;
     }
     masterPauseState = false;
-    updateTimestamp();
     if (audioOnlyFile) {
         if (document.getElementById("mdLpCtlr")) {
             video.loop = document.getElementById("mdLpCtlr").checked;
@@ -1805,7 +1698,6 @@ function seekingLocalMedia(e) {
 }
 
 function endLocalMedia() {
-    textNode.data = "";
     if (video.loop && video.currentTime >= video.duration) {
         video.currentTime = 0;
         playLocalMedia();
@@ -1844,7 +1736,6 @@ function endLocalMedia() {
     video.pause();
     masterPauseState = false;
     resetPIDOnSeek();
-    localTimeStampUpdateIsRunning = false;
 }
 
 function pauseLocalMedia(event) {
@@ -1986,8 +1877,7 @@ async function createMediaWindow() {
             video.src = '';
         }
         playingMediaAudioOnly = true;
-        if (playingMediaAudioOnly)
-            updateTimestamp();
+
         return;
     } else {
         playingMediaAudioOnly = false;
