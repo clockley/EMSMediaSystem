@@ -666,6 +666,7 @@ function createAboutWindow(parentWindow) {
   }
   aboutWindow = new BrowserWindow({
     parent: parentWindow,
+    modal: true,
     width: 500,
     height: 480,
     resizable: false,
