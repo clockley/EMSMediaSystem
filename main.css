@@ -801,7 +801,7 @@ button:focus-visible,
 /* Common styles (both modes) */
 .gtk-dropdown .menu-item {
     padding: 8px 16px;
-    cursor: pointer;
+    cursor: default;
     transition: all 0.2s ease;
 }
 

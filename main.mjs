@@ -16,13 +16,14 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 import { enableCompileCache } from 'module';
 process.env.NODE_COMPILE_CACHE = enableCompileCache().directory;
-import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session } from 'electron/main';
+import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session,shell } from 'electron/main';
 import { readdir, readFile } from 'fs/promises';
 import settings from './settings.mjs'
 const isDevMode = process.env.ems_dev === 'true';
 const openDevConsole = process.env.ems_dev_console === 'true';
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
+let aboutWindow = null;
 app.commandLine.appendSwitch('js-flags', '--maglev --no-use-osr');
 settings.init(app.getPath('userData'));
 
@@ -121,7 +122,7 @@ function createWindow() {
   win.on('maximize', handleMaximizeChange.bind(null, true));
   win.on('unmaximize', handleMaximizeChange.bind(null, false));
 
-  win.on('closed', async() => {
+  win.on('closed', async () => {
     win = null;
     app.quit();
     await settings.flush();
@@ -659,6 +660,50 @@ async function getSystemTIme() {
   };
 }
 
+function createAboutWindow(parentWindow) {
+  if (aboutWindow != null && !aboutWindow?.isDestroyed()) {
+    return;
+  }
+  aboutWindow = new BrowserWindow({
+    parent: parentWindow,
+    width: 500,
+    height: 480,
+    resizable: false,
+    minimizable: false,
+    frame: false,
+    transparent: true,
+    show: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      webviewTag: false,
+      sandbox: true,
+      navigateOnDragDrop: false,
+      spellcheck: false,
+      devTools: false
+    }
+  });
+
+  aboutWindow.loadFile('about.html');
+
+  // Position it centered relative to parent
+  aboutWindow.once('ready-to-show', () => {
+    const parentBounds = parentWindow.getBounds();
+    const x = parentBounds.x + (parentBounds.width - 500) / 2;
+    const y = parentBounds.y + (parentBounds.height - 480) / 2;
+    aboutWindow.setBounds({ x, y, width: 500, height: 480 });
+    aboutWindow.show();
+  });
+
+  aboutWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  return aboutWindow;
+}
+
 function setIPC() {
   ipcMain.handle('get-system-time', getSystemTIme);
   ipcMain.on('set-mode', handleSetMode);
@@ -692,6 +737,10 @@ function setIPC() {
     } else {
       win.maximize();
     }
+  });
+  ipcMain.handle('open-about-window', (event) => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+    createAboutWindow(mainWindow);
   });
 }
 

@@ -1824,6 +1824,13 @@ function loadOpMode(mode) {
                 dropdownMenu.classList.add('hidden');
             }
         });
+        const menuItems = dropdownMenu.querySelectorAll('.menu-item');
+        menuItems.forEach(item => {
+            item.addEventListener('click', () => {
+                dropdownMenu.classList.add('hidden');
+            });
+        });
+
         // Window control functionality
         const minimizeButton = document.querySelector('.window-control.minimize');
         const maximizeButton = document.querySelector('.window-control.maximize');
