@@ -1808,16 +1808,22 @@ function installPreviewEventHandlers() {
     }
 }
 
+function filesArrayToFileList(filesArray) {
+    const dataTransfer = new DataTransfer();
+    filesArray.forEach((file) => dataTransfer.items.add(file));
+    return dataTransfer.files; // Returns a FileList
+}
+
 function loadOpMode(mode) {
     const execute = () => {
         //hamburger
         const hamburgerButton = document.getElementById('hamburgerMenuButton');
         const dropdownMenu = document.getElementById('gtkDropdownMenu');
-    
+
         hamburgerButton.addEventListener('click', () => {
             dropdownMenu.classList.toggle('hidden');
         });
-    
+
         // Close the menu when clicking outside
         document.addEventListener('click', (event) => {
             if (!hamburgerButton.contains(event.target) && !dropdownMenu.contains(event.target)) {
@@ -1854,6 +1860,43 @@ function loadOpMode(mode) {
             setSBFormMediaPlayer();
             installPreviewEventHandlers();
         }
+
+
+        document.addEventListener("dragover", (event) => {
+            event.preventDefault(); // Allow drop
+        });
+
+        document.addEventListener("drop", (event) => {
+            event.preventDefault();
+
+            const allowedTypes = [
+                "video/mp4",
+                "video/x-m4v",
+                "audio/x-m4a",
+            ];
+
+            const allowedExtensions = [".mp4", ".m4v", ".mp3", ".wav", ".flac", ".m4a"];
+
+            const files = Array.from(event.dataTransfer.files).filter((file) => {
+                const mimeType = file.type;
+                const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
+
+                return (
+                    allowedTypes.includes(mimeType) ||
+                    mimeType.startsWith('video/') ||
+                    mimeType.startsWith('audio/') ||
+                    allowedExtensions.includes(ext)
+                );
+            });
+
+            if (files.length > 0) {
+                //console.log("Accepted files:", files.map((file) => getPathForFile(file)));
+                document.getElementById("mdFile").files = filesArrayToFileList(files);
+                saveMediaFile();
+            } else {
+                console.warn("No valid files were dropped.");
+            }
+        });
     };
 
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
