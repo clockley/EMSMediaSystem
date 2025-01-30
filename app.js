@@ -1868,27 +1868,37 @@ function loadOpMode(mode) {
 
         document.addEventListener("drop", (event) => {
             event.preventDefault();
-
+        
             const allowedTypes = [
                 "video/mp4",
                 "video/x-m4v",
                 "audio/x-m4a",
+                "image/jpeg",
+                "image/png",
+                "image/gif",
+                "image/webp",
+                "image/bmp",
+                "image/svg+xml"
             ];
-
-            const allowedExtensions = [".mp4", ".m4v", ".mp3", ".wav", ".flac", ".m4a"];
-
+        
+            const allowedExtensions = [
+                ".mp4", ".m4v", ".mp3", ".wav", ".flac", ".m4a",
+                ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"
+            ];
+        
             const files = Array.from(event.dataTransfer.files).filter((file) => {
                 const mimeType = file.type;
                 const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
-
+        
                 return (
                     allowedTypes.includes(mimeType) ||
                     mimeType.startsWith('video/') ||
                     mimeType.startsWith('audio/') ||
+                    mimeType.startsWith('image/') ||
                     allowedExtensions.includes(ext)
                 );
             });
-
+        
             if (files.length > 0) {
                 //console.log("Accepted files:", files.map((file) => getPathForFile(file)));
                 document.getElementById("mdFile").files = filesArrayToFileList(files);
@@ -1896,7 +1906,7 @@ function loadOpMode(mode) {
             } else {
                 console.warn("No valid files were dropped.");
             }
-        });
+        });        
     };
 
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
