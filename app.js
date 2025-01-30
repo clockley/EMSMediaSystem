@@ -1866,9 +1866,15 @@ function loadOpMode(mode) {
             event.preventDefault(); // Allow drop
         });
 
+        document.addEventListener("dragstart", (event) => {
+            if (event.target.tagName === "IMG" || event.target.tagName === "A") {
+                event.preventDefault();
+            }
+        });
+
         document.addEventListener("drop", (event) => {
             event.preventDefault();
-        
+
             const allowedTypes = [
                 "video/mp4",
                 "video/x-m4v",
@@ -1880,16 +1886,16 @@ function loadOpMode(mode) {
                 "image/bmp",
                 "image/svg+xml"
             ];
-        
+
             const allowedExtensions = [
                 ".mp4", ".m4v", ".mp3", ".wav", ".flac", ".m4a",
                 ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"
             ];
-        
+
             const files = Array.from(event.dataTransfer.files).filter((file) => {
                 const mimeType = file.type;
                 const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
-        
+
                 return (
                     allowedTypes.includes(mimeType) ||
                     mimeType.startsWith('video/') ||
@@ -1898,15 +1904,14 @@ function loadOpMode(mode) {
                     allowedExtensions.includes(ext)
                 );
             });
-        
+
             if (files.length > 0) {
-                //console.log("Accepted files:", files.map((file) => getPathForFile(file)));
                 document.getElementById("mdFile").files = filesArrayToFileList(files);
                 saveMediaFile();
             } else {
                 console.warn("No valid files were dropped.");
             }
-        });        
+        });
     };
 
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
