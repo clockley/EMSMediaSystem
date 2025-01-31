@@ -15,7 +15,7 @@
   "devDependencies": {
     "concurrently": "^9.1.0",
     "electron-builder": "^25.0.0",
-    "electron-nightly": "^35.0.0-nightly"
+    "electron-nightly": "^36.0.0-nightly"
   },
   "dependencies": {
     "atem-connection": "^3.5.0",
