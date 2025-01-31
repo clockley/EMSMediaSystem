@@ -1383,16 +1383,16 @@ __metadata:
   languageName: node
   linkType: hard
 
-"electron-nightly@npm:^35.0.0-nightly":
-  version: 35.0.0-nightly.20241223
-  resolution: "electron-nightly@npm:35.0.0-nightly.20241223"
+"electron-nightly@npm:^36.0.0-nightly":
+  version: 36.0.0-nightly.20250123
+  resolution: "electron-nightly@npm:36.0.0-nightly.20250123"
   dependencies:
     "@electron/get": "npm:^2.0.0"
     "@types/node": "npm:^22.7.7"
     extract-zip: "npm:^2.0.1"
   bin:
     electron: cli.js
-  checksum: 10c0/a66b6a9a746c73882107ba2351ed8a5585838b9a4521734a3a1d1f0a64b8a88eb52adb82c53b31ba97276cb89e26cca905f149563ca02573f32dbedb03d85c31
+  checksum: 10c0/3a7e297d82e6c6618bd4fdc0bcf4615370f913d1396c3a5d662c1e5e2533e0383c512305b2c3555971b1d18acac7b633a70086a84143926e91b5762a51d6d18f
   languageName: node
   linkType: hard
 
@@ -1433,7 +1433,7 @@ __metadata:
     bonjour: "npm:^3.5.0"
     concurrently: "npm:^9.1.0"
     electron-builder: "npm:^25.0.0"
-    electron-nightly: "npm:^35.0.0-nightly"
+    electron-nightly: "npm:^36.0.0-nightly"
     hls.js: "npm:^1.6.0-beta.1"
     write-file-atomic: "npm:^6.0.0"
   languageName: unknown
