@@ -67,7 +67,9 @@
             margin-bottom: var(--spacing-xl);
         }
 
-        h1, h2, h3 {
+        h1,
+        h2,
+        h3 {
             color: var(--adw-text);
             margin-top: 0;
         }
@@ -87,7 +89,8 @@
             margin: var(--spacing-l) 0;
         }
 
-        ul, ol {
+        ul,
+        ol {
             padding-left: var(--spacing-xl);
         }
 
@@ -161,15 +164,20 @@
                 <p>EMS Media System allows you to play videos, display images, and stream media content on secondary
                     displays. The application features a control window for preview and management, with fullscreen
                     presentation capabilities.</p>
-                
+
                 <div class="toc">
                     <h2>Contents</h2>
                     <ul>
-                        <li><a href="#media-playback" onclick="saveLastSection('media-playback')">Media Playback</a></li>
-                        <li><a href="#stream-integration" onclick="saveLastSection('stream-integration')">Stream Integration</a></li>
-                        <li><a href="#display-settings" onclick="saveLastSection('display-settings')">Display Settings</a></li>
-                        <li><a href="#presentation-mode" onclick="saveLastSection('presentation-mode')">Presentation Mode</a></li>
-                        <li><a href="#keyboard-shortcuts" onclick="saveLastSection('keyboard-shortcuts')">Keyboard Shortcuts</a></li>
+                        <li><a href="#media-playback" onclick="saveLastSection('media-playback')">Media Playback</a>
+                        </li>
+                        <li><a href="#stream-integration" onclick="saveLastSection('stream-integration')">Stream
+                                Integration</a></li>
+                        <li><a href="#display-settings" onclick="saveLastSection('display-settings')">Display
+                                Settings</a></li>
+                        <li><a href="#presentation-mode" onclick="saveLastSection('presentation-mode')">Presentation
+                                Mode</a></li>
+                        <li><a href="#keyboard-shortcuts" onclick="saveLastSection('keyboard-shortcuts')">Keyboard
+                                Shortcuts</a></li>
                     </ul>
                 </div>
             </div>
@@ -238,6 +246,29 @@
     </div>
 
     <script defer>
+        const storedSessionID = localStorage.getItem('sessionID');
+        windowControls.getSessionID().then((currentSessionID) => {
+            const storedSessionID = localStorage.getItem('sessionID');
+            if (!storedSessionID || storedSessionID !== currentSessionID) {
+                console.log("Session ID changed or not set, clearing local storage...");
+                localStorage.clear();
+                localStorage.setItem('sessionID', currentSessionID);
+            } else {
+                scrollToLastSection();
+            }
+        });
+
+        function saveLastSection(sectionId) {
+            localStorage.setItem('lastSection', sectionId);
+        }
+
+        function scrollToLastSection() {
+            const lastSection = localStorage.getItem('lastSection');
+            if (lastSection) {
+                document.getElementById(lastSection)?.scrollIntoView();
+            }
+        }
+
         const minimizeButton = document.querySelector('.window-control.minimize');
         const maximizeButton = document.querySelector('.window-control.maximize');
         const closeButton = document.querySelector('.window-control.close');
@@ -260,8 +291,6 @@
                 document.getElementById(lastSection)?.scrollIntoView();
             }
         }
-
-        document.addEventListener("DOMContentLoaded", scrollToLastSection);
     </script>
 </body>
 
