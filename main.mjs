@@ -723,8 +723,10 @@ function createHelpWindow() {
     helpWindowY = ovrdHWindBnd.y;
   }
   helpWindow = new BrowserWindow({
-    width: 700,
-    height: 600,
+    width: ovrdHWindBnd.width,
+    height: ovrdHWindBnd.height,
+    minWidth: 700,
+    minHeight: 600,
     resizable: true,
     minimizable: false,
     frame: false,
