@@ -5,9 +5,125 @@
     <meta charset="UTF-8">
     <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval';" />
     <link rel="stylesheet" type="text/css" href="main.css">
+    <style>
+        main {
+            padding: 24px;
+            overflow-y: scroll;
+            height: calc(100vh - 75px);
+            background: var(--adw-bg);
+            position: relative;
+            box-sizing: border-box;
+        }
+
+        /* GTK3-style scrollbar - updated for visibility */
+        ::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+            background-color: transparent;
+        }
+
+        ::-webkit-scrollbar-track {
+            background-color: transparent;
+            border-radius: 8px;
+            margin: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background-color: #919191;
+            border: 3px solid var(--adw-bg);
+            border-radius: 8px;
+            min-height: 40px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background-color: #757575;
+            margin: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:active {
+            background-color: #666666;
+        }
+
+        /* Dark mode scrollbar */
+        @media (prefers-color-scheme: dark) {
+            ::-webkit-scrollbar-thumb {
+                background-color: #666666;
+                border: 3px solid var(--adw-bg);
+            }
+
+            ::-webkit-scrollbar-thumb:hover {
+                background-color: #808080;
+            }
+
+            ::-webkit-scrollbar-thumb:active {
+                background-color: #919191;
+            }
+        }
+
+        .content-section {
+            background: var(--adw-card-bg);
+            border-radius: var(--adw-radius-lg);
+            padding: var(--spacing-xl);
+            margin-bottom: var(--spacing-xl);
+        }
+
+        h1, h2, h3 {
+            color: var(--adw-text);
+            margin-top: 0;
+        }
+
+        .feature {
+            background: var(--adw-bg);
+            border-radius: var(--adw-radius-sm);
+            padding: var(--spacing-l);
+            margin-bottom: var(--spacing-l);
+        }
+
+        .tip {
+            background: var(--adw-accent);
+            color: white;
+            border-radius: var(--adw-radius-sm);
+            padding: var(--spacing-l);
+            margin: var(--spacing-l) 0;
+        }
+
+        ul, ol {
+            padding-left: var(--spacing-xl);
+        }
+
+        li {
+            margin-bottom: var(--spacing-s);
+        }
+
+        /* New styles for table of contents */
+        .toc {
+            background: var(--adw-bg);
+            border-radius: var(--adw-radius-sm);
+            padding: var(--spacing-l);
+            margin-bottom: var(--spacing-xl);
+        }
+
+        .toc ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+
+        .toc li {
+            margin-bottom: var(--spacing-s);
+        }
+
+        .toc a {
+            color: var(--adw-accent);
+            text-decoration: none;
+        }
+
+        .toc a:hover {
+            text-decoration: underline;
+        }
+    </style>
 </head>
 
-<body class="grid-container">
+<body>
     <div class="window-container">
         <header class="headerbar">
             <div class="headerbar-start">
@@ -40,11 +156,88 @@
             </div>
         </header>
         <main>
+            <div class="content-section">
+                <h1>EMS Media System Help Guide</h1>
+                <p>EMS Media System allows you to play videos, display images, and stream media content on secondary
+                    displays. The application features a control window for preview and management, with fullscreen
+                    presentation capabilities.</p>
+                
+                <div class="toc">
+                    <h2>Contents</h2>
+                    <ul>
+                        <li><a href="#media-playback" onclick="saveLastSection('media-playback')">Media Playback</a></li>
+                        <li><a href="#stream-integration" onclick="saveLastSection('stream-integration')">Stream Integration</a></li>
+                        <li><a href="#display-settings" onclick="saveLastSection('display-settings')">Display Settings</a></li>
+                        <li><a href="#presentation-mode" onclick="saveLastSection('presentation-mode')">Presentation Mode</a></li>
+                        <li><a href="#keyboard-shortcuts" onclick="saveLastSection('keyboard-shortcuts')">Keyboard Shortcuts</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div id="media-playback" class="content-section">
+                <h2>Media Playback</h2>
+                <div class="feature">
+                    <h3>Local Media</h3>
+                    <ul>
+                        <li>Click the "Media" tab to access local media files</li>
+                        <li>Use the "Open" button to select videos or images from your computer</li>
+                        <li>Preview your media in the control window before presentation</li>
+                        <li>Control playback using play, pause, and seek functions</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div id="stream-integration" class="content-section">
+                <div class="feature">
+                    <h3>Stream Integration</h3>
+                    <ul>
+                        <li>Select the "Streams" tab for network media content</li>
+                        <li>Enter the URL of your YouTube live stream or other network media</li>
+                        <li>Adjust volume using the slider in the control panel</li>
+                        <li>Note: Stream preview is not available in the control window</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div id="display-settings" class="content-section">
+                <div class="feature">
+                    <h3>Display Settings</h3>
+                    <ul>
+                        <li>Choose your target display from the dropdown menu</li>
+                        <li>Note: Your display resolution will be automatically detected</li>
+                        <li>Toggle "Autoplay" for automatic media playback</li>
+                        <li>Enable "Repeat" for looped playback</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div id="presentation-mode" class="content-section">
+                <h2>Presentation Mode</h2>
+                <ol>
+                    <li>Select your desired media or stream</li>
+                    <li>Configure your display settings</li>
+                    <li>Adjust volume if needed</li>
+                    <li>Click "Start Presentation" to begin fullscreen mode on the secondary display</li>
+                </ol>
+
+                <div class="tip">
+                    <strong>Tip:</strong> All playback controls in the control window will be reflected in the
+                    fullscreen presentation on the secondary display.
+                </div>
+            </div>
+
+            <div id="keyboard-shortcuts" class="content-section">
+                <h2>Keyboard Shortcuts</h2>
+                <ul>
+                    <li><strong>Space</strong> - Play/Pause</li>
+                    <li><strong>F5</strong> - Start fullscreen presentation</li>
+                    <li><strong>Esc</strong> - Exit fullscreen presentation</li>
+                </ul>
+            </div>
         </main>
     </div>
 
     <script defer>
-        // Window control functionality
         const minimizeButton = document.querySelector('.window-control.minimize');
         const maximizeButton = document.querySelector('.window-control.maximize');
         const closeButton = document.querySelector('.window-control.close');
@@ -57,6 +250,18 @@
             maximizeButton.setAttribute('data-maximized', isMaximized);
             document.querySelector('.window-container').classList.toggle('maximized', isMaximized);
         });
+        function saveLastSection(sectionId) {
+            localStorage.setItem('lastSection', sectionId);
+        }
+
+        function scrollToLastSection() {
+            const lastSection = localStorage.getItem('lastSection');
+            if (lastSection) {
+                document.getElementById(lastSection)?.scrollIntoView();
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", scrollToLastSection);
     </script>
 </body>
 
