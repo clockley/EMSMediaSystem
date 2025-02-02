@@ -683,7 +683,6 @@ function createHelpWindow() {
     backgroundColor: '#00000000',
     x: helpWindowX,
     y: helpWindowY,
-    alwaysOnTop: true,
     title: "Help",
     webPreferences: {
       nodeIntegration: false,
