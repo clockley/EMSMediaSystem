@@ -63,6 +63,11 @@ function getWindowBounds() {
   return settings.getSync('windowBounds');
 }
 
+//not ideal but this is necessary to keep compatibility with older config file
+function getHelpWindowBounds() {
+  return settings.getSync('windowHelpBounds');
+}
+
 let mediaWindow = null;
 let windowBounds = measurePerformance('Getting window bounds', getWindowBounds);
 let win = null;
@@ -73,6 +78,38 @@ function saveWindowBounds(bounds) {
       console.error('Error saving window bounds:', error);
     });
 };
+
+function saveHelpWindowBounds(bounds) {
+  settings.set('windowHelpBounds', bounds)
+    .catch(error => {
+      console.error('Error saving window bounds:', error);
+    });
+};
+
+async function checkHelpWindowState() {
+  const bounds = helpWindow.getBounds();
+  saveHelpWindowBounds(bounds);
+  const targetScreen = screen.getDisplayMatching(bounds);
+
+  if (helpWindow.isMaximized()) {
+    helpWindow.webContents.send('window-maximized', true);
+    return;
+  }
+
+  // Check if window is actually tiled/snapped
+  // A window is considered tiled if it touches TWO or more edges
+  const touchingLeft = bounds.x === 0;
+  const touchingTop = bounds.y === 0;
+  const touchingRight = bounds.x + bounds.width === targetScreen.bounds.width;
+  const touchingBottom = bounds.y + bounds.height === targetScreen.bounds.height;
+
+  const edgeCount = [touchingLeft, touchingTop, touchingRight, touchingBottom]
+    .filter(Boolean).length;
+
+  const isTiled = edgeCount >= 2;  // Only consider it tiled if touching multiple edges
+
+  helpWindow.webContents.send('window-maximized', isTiled);
+}
 
 async function checkWindowState() {
   const bounds = win.getBounds();
@@ -108,6 +145,12 @@ function handleMaximizeChange(isMaximized) {
   saveWindowBounds();
   win.setBackgroundColor('#00000000');
   win?.webContents.send('maximize-change', isMaximized);
+}
+
+function handleMaximizeChangeHelpWindow(isMaximized) {
+  saveHelpWindowBounds();
+  helpWindow.setBackgroundColor('#00000000');
+  helpWindow?.webContents.send('maximize-change', isMaximized);
 }
 
 function createWindow() {
@@ -671,8 +714,13 @@ function createHelpWindow() {
   }
   const primaryDisplay = screen.getPrimaryDisplay();
   const { x, y, width } = primaryDisplay.workArea;
-  const helpWindowX = x + 50;
-  const helpWindowY = y + 50;
+  let helpWindowX = x + 50;
+  let helpWindowY = y + 50;
+  let ovrdHWindBnd = getHelpWindowBounds();
+  if (ovrdHWindBnd != undefined) {
+    helpWindowX = ovrdHWindBnd.x;
+    helpWindowY = ovrdHWindBnd.y;
+  }
   helpWindow = new BrowserWindow({
     width: 700,
     height: 600,
@@ -697,6 +745,10 @@ function createHelpWindow() {
 
   helpWindow.loadFile('help.html');
 
+  helpWindow.on('move', checkHelpWindowState);
+  helpWindow.on('resize', checkHelpWindowState);
+  helpWindow.on('maximize', handleMaximizeChangeHelpWindow.bind(null, true));
+  helpWindow.on('unmaximize', handleMaximizeChangeHelpWindow.bind(null, false));
   helpWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
