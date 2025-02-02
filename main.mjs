@@ -741,6 +741,7 @@ function createHelpWindow() {
       navigateOnDragDrop: false,
       spellcheck: false,
       preload: `${import.meta.dirname}/help_preload.mjs`,
+      devTools: false
     }
   });
 
