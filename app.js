@@ -1508,6 +1508,9 @@ function restoreMediaFile() {
 }
 
 function shortcutHandler(event) {
+    if (event.key === 'F1' || event.code === 'F1') {
+        invoke('open-help-window');
+    }
     if ((event.key === 'F5' || event.code === 'F5') && !isActiveMediaWindow() && !playingMediaAudioOnly) {
         playMedia();
     }
