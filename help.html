@@ -6,9 +6,9 @@
     <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval';" />
     <link rel="stylesheet" type="text/css" href="main.css">
 </head>
-<div class="window-container">
 
-    <body class="grid-container">
+<body class="grid-container">
+    <div class="window-container">
         <header class="headerbar">
             <div class="headerbar-start">
             </div>
@@ -40,25 +40,24 @@
             </div>
         </header>
         <main>
+        </main>
+    </div>
 
-</div>
-</main>
-</div>
-<script defer>
-    // Window control functionality
-    const minimizeButton = document.querySelector('.window-control.minimize');
-    const maximizeButton = document.querySelector('.window-control.maximize');
-    const closeButton = document.querySelector('.window-control.close');
+    <script defer>
+        // Window control functionality
+        const minimizeButton = document.querySelector('.window-control.minimize');
+        const maximizeButton = document.querySelector('.window-control.maximize');
+        const closeButton = document.querySelector('.window-control.close');
 
-    minimizeButton.addEventListener('click', windowControls.minimize);
-    maximizeButton.addEventListener('click', windowControls.maximize);
-    closeButton.addEventListener('click', close);
+        minimizeButton.addEventListener('click', windowControls.minimize);
+        maximizeButton.addEventListener('click', windowControls.maximize);
+        closeButton.addEventListener('click', close);
 
-    windowControls.onMaximizeChange((event, isMaximized) => {
-        maximizeButton.setAttribute('data-maximized', isMaximized);
-        document.querySelector('.window-container').classList.toggle('maximized', isMaximized);
-    });
-</script>
+        windowControls.onMaximizeChange((event, isMaximized) => {
+            maximizeButton.setAttribute('data-maximized', isMaximized);
+            document.querySelector('.window-container').classList.toggle('maximized', isMaximized);
+        });
+    </script>
 </body>
 
 </html>
