@@ -16,7 +16,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 import { enableCompileCache } from 'module';
 process.env.NODE_COMPILE_CACHE = enableCompileCache().directory;
-import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session,shell } from 'electron/main';
+import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session, shell } from 'electron/main';
 import { readdir, readFile } from 'fs/promises';
 import settings from './settings.mjs'
 const isDevMode = process.env.ems_dev === 'true';
@@ -24,6 +24,7 @@ const openDevConsole = process.env.ems_dev_console === 'true';
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
 let aboutWindow = null;
+let helpWindow = null;
 app.commandLine.appendSwitch('js-flags', '--maglev --no-use-osr');
 settings.init(app.getPath('userData'));
 
@@ -660,6 +661,51 @@ async function getSystemTIme() {
   };
 }
 
+function createHelpWindow() {
+  if (helpWindow != null && !helpWindow?.isDestroyed()) {
+    if (helpWindow.isMinimized()) {
+      helpWindow.restore();
+    }
+    helpWindow.focus();
+    return;
+  }
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { x, y, width } = primaryDisplay.workArea;
+  const helpWindowX = x + 50;
+  const helpWindowY = y + 50;
+  helpWindow = new BrowserWindow({
+    width: 700,
+    height: 600,
+    resizable: true,
+    minimizable: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    x: helpWindowX,
+    y: helpWindowY,
+    alwaysOnTop: true,
+    title: "Help",
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      webviewTag: false,
+      sandbox: false,
+      navigateOnDragDrop: false,
+      spellcheck: false,
+      preload: `${import.meta.dirname}/help_preload.mjs`,
+    }
+  });
+
+  helpWindow.loadFile('help.html');
+
+  helpWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  return helpWindow;
+}
+
 function createAboutWindow(parentWindow) {
   if (aboutWindow != null && !aboutWindow?.isDestroyed()) {
     return;
@@ -728,20 +774,28 @@ function setIPC() {
       timestamp: Date.now()
     })
   });
-  ipcMain.on('minimize-window', () => {
-    win.minimize();
+  ipcMain.on('minimize-window', (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    senderWindow.minimize();
   });
 
-  ipcMain.on('maximize-window', () => {
-    if (win.isMaximized()) {
-      win.unmaximize();
-    } else {
-      win.maximize();
+  ipcMain.on('maximize-window', (event) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+
+    if (senderWindow) {
+      if (senderWindow.isMaximized()) {
+        senderWindow.unmaximize();
+      } else {
+        senderWindow.maximize();
+      }
     }
   });
   ipcMain.handle('open-about-window', (event) => {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
     createAboutWindow(mainWindow);
+  });
+  ipcMain.handle('open-help-window', (event) => {
+    createHelpWindow();
   });
 }
 

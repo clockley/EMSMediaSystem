@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval';" />
+    <link rel="stylesheet" type="text/css" href="main.css">
+</head>
+<div class="window-container">
+
+    <body class="grid-container">
+        <header class="headerbar">
+            <div class="headerbar-start">
+            </div>
+            <div id="WindowTitle">Help</div>
+            <div class="headerbar-end">
+                <div class="window-controls">
+                    <button class="window-control minimize" tabindex="-1" aria-label="Minimize">
+                        <svg width="16" height="16" viewBox="0 0 16 16">
+                            <rect x="4" y="7" width="8" height="2" fill="currentColor" />
+                        </svg>
+                    </button>
+                    <button class="window-control maximize" tabindex="-1" aria-label="Maximize">
+                        <svg width="16" height="16" viewBox="0 0 16 16" class="maximize-icon">
+                            <rect x="4" y="4" width="8" height="8" stroke="currentColor" fill="none" stroke-width="1" />
+                        </svg>
+                        <svg width="16" height="16" viewBox="0 0 16 16" class="restore-icon" style="display: none;">
+                            <g fill="none" stroke="currentColor" stroke-width="1">
+                                <rect x="4" y="6" width="6" height="6" />
+                                <path d="M6 4h6v6" />
+                            </g>
+                        </svg>
+                    </button>
+                    <button class="window-control close" tabindex="-1" aria-label="Close">
+                        <svg width="16" height="16" viewBox="0 0 16 16">
+                            <path d="M5 5l6 6m0-6l-6 6" stroke="currentColor" stroke-width="1.5" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </header>
+        <main>
+
+</div>
+</main>
+</div>
+<script defer>
+    // Window control functionality
+    const minimizeButton = document.querySelector('.window-control.minimize');
+    const maximizeButton = document.querySelector('.window-control.maximize');
+    const closeButton = document.querySelector('.window-control.close');
+
+    minimizeButton.addEventListener('click', windowControls.minimize);
+    maximizeButton.addEventListener('click', windowControls.maximize);
+    closeButton.addEventListener('click', close);
+
+    windowControls.onMaximizeChange((event, isMaximized) => {
+        maximizeButton.setAttribute('data-maximized', isMaximized);
+    });
+</script>
+</body>
+
+</html>
