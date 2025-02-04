@@ -1581,7 +1581,13 @@ function installEvents() {
         setSBFormStreamPlayer();
     }, { passive: true });
 
-    //document.getElementById("TxtPlyrRBtnFrmID").onclick = setSBFormTextPlayer;
+    document.getElementById("TxtPlyrRBtnFrmID").addEventListener('click', () => {
+        if (opMode === TEXTPLAYER) {
+            return;
+        }
+        cleanRefs();
+        setSBFormTextPlayer();
+    }, { passive: true });
 
     document.addEventListener('keydown', shortcutHandler, { passive: true });
     document.querySelector('form').addEventListener('change', modeSwitchHandler, { passive: true });
