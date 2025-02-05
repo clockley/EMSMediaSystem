@@ -1608,7 +1608,7 @@ function installEvents() {
         setSBFormStreamPlayer();
     }, { passive: true });
 
-    document.getElementById("TxtPlyrRBtnFrmID").addEventListener('click', () => {
+    document.getElementById("TxtPlyrRBtnFrmID")?.addEventListener('click', () => {
         if (opMode === TEXTPLAYER) {
             return;
         }
