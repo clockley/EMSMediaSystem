@@ -6,6 +6,22 @@
     <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval';" />
     <link rel="stylesheet" type="text/css" href="main.css">
     <style>
+        .windows-xp-theme {
+            --adw-accent: #0055EA;
+            --adw-accent-hover: #0066FF;
+            --adw-bg: #ECE9D8;
+            --adw-card-bg: #FFFFFF;
+            --adw-border: #7BA2E7;
+            --adw-text: #000000;
+            --adw-text-muted: #666666;
+            --xp-blue: #0055EA;
+            --xp-gradient-start: #2A5AE0;
+            --xp-gradient-end: #0F3ACC;
+            --xp-border: #225AE5;
+            --adw-radius-sm: 3px;
+            --adw-radius-lg: 6px;
+        }
+
         main {
             padding: 24px;
             overflow-y: scroll;
@@ -123,6 +139,43 @@
 
         .toc a:hover {
             text-decoration: underline;
+        }
+
+        /* Windows XP Theme Overrides */
+        .windows-xp-theme ::-webkit-scrollbar {
+            width: 16px;
+            height: 16px;
+            background-color: var(--adw-bg);
+        }
+
+        .windows-xp-theme ::-webkit-scrollbar-track {
+            background-color: var(--adw-card-bg);
+            border: 1px solid var(--adw-border);
+            border-radius: 0;
+        }
+
+        .windows-xp-theme ::-webkit-scrollbar-thumb {
+            background: linear-gradient(to right, #EEF3FB, #DCEAFD);
+            border: 1px solid var(--adw-border);
+            border-radius: 0;
+        }
+
+        .windows-xp-theme ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(to right, #F2F7FE, #E6F0FE);
+        }
+
+        .windows-xp-theme .about-content,
+        .windows-xp-theme .content-section {
+            border: 1px solid var(--adw-border);
+            box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .windows-xp-theme .feature {
+            border: 1px solid var(--adw-border);
+        }
+
+        .windows-xp-theme .tip {
+            background: var(--xp-blue);
         }
     </style>
 </head>
