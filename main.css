@@ -758,8 +758,10 @@ button:focus-visible,
     position: absolute;
     top: 100%;
     right: 0;
-    background: #2E3436; /* Dark background (Adwaita dark) */
-    border: 1px solid #4C5157; /* Dark border */
+    background: #2E3436;
+    /* Dark background (Adwaita dark) */
+    border: 1px solid #4C5157;
+    /* Dark border */
     box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.6);
     border-radius: 8px;
     padding: 8px 0;
@@ -774,27 +776,33 @@ button:focus-visible,
 /* Light mode adaptation */
 @media (prefers-color-scheme: light) {
     .gtk-dropdown {
-        background: #f6f5f4; /* Light background (Adwaita light) */
-        border: 1px solid #d3d7cf; /* Light border */
+        background: #f6f5f4;
+        /* Light background (Adwaita light) */
+        border: 1px solid #d3d7cf;
+        /* Light border */
         box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.15);
     }
 
     .gtk-dropdown .menu-item {
-        color: #2e3436; /* Dark text color */
+        color: #2e3436;
+        /* Dark text color */
     }
 
     .gtk-dropdown .menu-item:hover {
-        background: #e0e0e0; /* Light hover background */
+        background: #e0e0e0;
+        /* Light hover background */
         color: #2e3436;
     }
 
     .gtk-dropdown .menu-item:active {
-        background: #4a90d9; /* Active selection color (Adwaita light blue) */
+        background: #4a90d9;
+        /* Active selection color (Adwaita light blue) */
         color: white;
     }
 
     .gtk-dropdown .menu-separator {
-        background: #d3d7cf; /* Light separator */
+        background: #d3d7cf;
+        /* Light separator */
     }
 }
 
@@ -806,18 +814,221 @@ button:focus-visible,
 }
 
 .gtk-dropdown .menu-item:hover {
-    background: #4C5157; /* Dark hover background */
+    background: #4C5157;
+    /* Dark hover background */
     color: #FFFFFF;
 }
 
 .gtk-dropdown .menu-item:active {
-    background: #729FCF; /* Dark active background */
+    background: #729FCF;
+    /* Dark active background */
     color: white;
 }
 
 .gtk-dropdown .menu-separator {
     height: 1px;
     margin: 4px 0;
-    background: #555753; /* Dark separator */
+    background: #555753;
+    /* Dark separator */
     border: none;
+}
+
+/* GTK3-style scrollbar - updated for visibility */
+::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+    background-color: transparent;
+}
+
+::-webkit-scrollbar-track {
+    background-color: transparent;
+    border-radius: 8px;
+    margin: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #919191;
+    border: 3px solid var(--adw-bg);
+    border-radius: 8px;
+    min-height: 40px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: #757575;
+    margin: 3px;
+}
+
+::-webkit-scrollbar-thumb:active {
+    background-color: #666666;
+}
+
+ul {
+    list-style-type: none;
+}
+
+/* Windows XP Theme */
+.windows-xp-theme {
+    --adw-accent: #0055EA;
+    --adw-accent-hover: #0066FF;
+    --adw-bg: #ECE9D8;
+    --adw-card-bg: #FFFFFF;
+    --adw-border: #7BA2E7;
+    --adw-text: #000000;
+    --xp-blue: #0055EA;
+    --xp-gradient-start: #2A5AE0;
+    --xp-gradient-end: #0F3ACC;
+    --xp-border: #225AE5;
+    --adw-radius-sm: 3px;
+    --adw-radius-lg: 6px;
+}
+
+.windows-xp-theme .window-container {
+    background: var(--adw-bg);
+    border: 1px solid #808080;
+    box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.windows-xp-theme .headerbar {
+    background: linear-gradient(to bottom, var(--xp-gradient-start), var(--xp-gradient-end));
+    border-bottom: 1px solid var(--xp-border);
+    color: #FFFFFF;
+    font-weight: bold;
+}
+
+.windows-xp-theme .control-panel {
+    background: var(--adw-card-bg);
+    border: 1px solid #919B9C;
+    box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.windows-xp-theme #mediaWindowPlayButton,
+.windows-xp-theme .window-control,
+.windows-xp-theme .title-button {
+    background: linear-gradient(to bottom, #EEF3FB, #DCEAFD);
+    border: 1px solid #7BA2E7;
+    color: #000000;
+}
+
+.windows-xp-theme #mediaWindowPlayButton:hover,
+.windows-xp-theme .window-control:hover,
+.windows-xp-theme .title-button:hover {
+    background: linear-gradient(to bottom, #F2F7FE, #E6F0FE);
+    border-color: var(--xp-blue);
+}
+
+.windows-xp-theme #mediaWindowPlayButton:active,
+.windows-xp-theme .window-control:active,
+.windows-xp-theme .title-button:active {
+    background: linear-gradient(to bottom, #DCEAFD, #EEF3FB);
+    border-color: var(--xp-blue);
+}
+
+.windows-xp-theme .display-select {
+    background-color: #FFFFFF;
+    border: 1px solid #7BA2E7;
+    color: #000000;
+}
+
+.windows-xp-theme .display-select:hover {
+    border-color: var(--xp-blue);
+}
+
+.windows-xp-theme .switch-track {
+    background-color: #D4D0C8;
+    border: 1px solid #808080;
+}
+
+.windows-xp-theme .switch input:checked + .switch-track {
+    background-color: var(--xp-blue);
+}
+
+.windows-xp-theme .switch-thumb {
+    background: linear-gradient(to bottom, #FFFFFF, #F0F0F0);
+    border: 1px solid #808080;
+    box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.windows-xp-theme .file-input-label {
+    background: linear-gradient(to bottom, #EEF3FB, #DCEAFD);
+    border: 1px solid #7BA2E7;
+    color: #000000;
+}
+
+.windows-xp-theme .file-input-label:hover {
+    background: linear-gradient(to bottom, #F2F7FE, #E6F0FE);
+    border-color: var(--xp-blue);
+}
+
+.windows-xp-theme .file-input-label:active {
+    background: linear-gradient(to bottom, #DCEAFD, #EEF3FB);
+}
+
+.windows-xp-theme .tab {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.windows-xp-theme .tabs input[type="radio"]:checked + .tab {
+    background: rgba(255, 255, 255, 0.15);
+    color: #FFFFFF;
+}
+
+.windows-xp-theme .gtk-dropdown {
+    background: #FFFFFF;
+    border: 1px solid #7BA2E7;
+    box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.windows-xp-theme .gtk-dropdown .menu-item {
+    color: #000000;
+}
+
+.windows-xp-theme .gtk-dropdown .menu-item:hover {
+    background: var(--xp-blue);
+    color: #FFFFFF;
+}
+
+.windows-xp-theme ::-webkit-scrollbar {
+    width: 16px;
+    height: 16px;
+    background-color: #ECE9D8;
+}
+
+.windows-xp-theme ::-webkit-scrollbar-track {
+    background-color: #FFFFFF;
+    border: 1px solid #7BA2E7;
+}
+
+.windows-xp-theme ::-webkit-scrollbar-thumb {
+    background: linear-gradient(to right, #EEF3FB, #DCEAFD);
+    border: 1px solid #7BA2E7;
+    border-radius: 0;
+}
+
+.windows-xp-theme ::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(to right, #F2F7FE, #E6F0FE);
+}
+
+.windows-xp-theme ::-webkit-scrollbar-thumb:active {
+    background: linear-gradient(to right, #DCEAFD, #EEF3FB);
+}
+
+.windows-xp-theme :focus-visible {
+    outline: 2px solid var(--xp-blue);
+    outline-offset: -1px;
+}
+
+/* Dark and light mode overrides for XP theme */
+@media (prefers-color-scheme: dark) {
+    .windows-xp-theme .headerbar {
+        background: linear-gradient(to bottom, var(--xp-gradient-start), var(--xp-gradient-end));
+        border-bottom: 1px solid var(--xp-border);
+    }
+}
+
+@media (prefers-color-scheme: light) {
+    .windows-xp-theme .headerbar {
+        background: linear-gradient(to bottom, var(--xp-gradient-start), var(--xp-gradient-end));
+        border-bottom: 1px solid var(--xp-border);
+    }
 }

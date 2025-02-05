@@ -983,13 +983,40 @@ async function setSBFormTextPlayer() {
     send('set-mode', opMode);
 
     document.getElementById("dyneForm").innerHTML = `
-        <form onsubmit="return false;">
-            <label for="scriptureInput">Scripture:</label>
-            <input type="text" id="scriptureInput" class="input-field" placeholder="e.g., Genesis 1:1">
-            <ul id="bookSuggestions" style="list-style-type: none; padding: 0; margin-top: 5px; border: 1px solid #ccc; background-color: white; width: 200px; position: absolute; display: none; max-height: 200px; overflow-y: auto;"></ul>
-            <div id="versesDisplay" style="width: 1200px;height: 200px; overflow-y: scroll; background-color: #f8f8f8; padding: 10px;"></div>
-        </form>
+        <div class="media-container">
+            <div class="scripture-panel" style="overflow-y: scroll; width: 50vw; overflow-x: hidden; position: relative;">
+                <div id="versesDisplay" class="verses-container"></div>
+            </div>
+            <div class="control-panel" style=">
+                <div class="control-group">
+                <div class="control-group" style="position: sticky; top: 0; background: white; z-index: 10; padding-bottom: 10px;">
+                    <span class="control-label">Scripture</span>
+                    <input type="text" class="url-input" id="scriptureInput" class="input-field" placeholder="e.g., Genesis 1:1">
+                    <ul id="bookSuggestions" class="suggestions-list" style="max-height: 250px; max-width: 265px; overflow-y: auto; position: absolute; background-color: white; border: 1px solid #ccc; width: 100%; display: none;"></ul>
+                </div>
+                <span class="control-label">Display</span>
+                <select name="dspSelct" id="dspSelct" class="display-select">
+                    <option value="" disabled>--Select Display Device--</option>
+                </select>
+                </div>
+            </div>
+        </div>
     `;
+
+    populateDisplaySelect();
+
+    const isActiveMW = isActiveMediaWindow();
+
+    let plyBtn = document.getElementById("mediaWindowPlayButton");
+    if (!isActiveMW && !playingMediaAudioOnly) {
+        isPlaying = false;
+    } else {
+        isPlaying = true;
+        send('close-media-window', 0);
+    }
+    updateDynUI();
+    plyBtn.addEventListener("click", playMedia, { passive: true });
+
 
     const scriptureInput = document.getElementById('scriptureInput');
     const versesDisplay = document.getElementById('versesDisplay');
