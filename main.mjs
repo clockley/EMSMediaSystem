@@ -743,7 +743,7 @@ function createHelpWindow() {
       navigateOnDragDrop: false,
       spellcheck: false,
       preload: `${import.meta.dirname}/help_preload.mjs`,
-      devTools: true
+      devTools: false
     }
   });
 
@@ -834,6 +834,16 @@ function setIPC() {
     senderWindow.minimize();
   });
 
+  ipcMain.on('load-theme', (event, theme) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    senderWindow.webContents.executeJavaScript(`document.body.classList.add('${theme}')`);
+  });
+
+  ipcMain.on('remove-theme', (event, theme) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    senderWindow.webContents.executeJavaScript(`document.body.classList.remove('${theme}')`);
+  });
+
   ipcMain.on('maximize-window', (event) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
 
@@ -858,6 +868,20 @@ function setIPC() {
 }
 
 app.once('browser-window-created', setIPC);
+
+app.on('browser-window-created', (event, window) => {
+  window.webContents.on('did-finish-load', () => {
+    //window.webContents.executeJavaScript(`document.body.classList.add('windows-xp-theme')`);
+    //theme.load(window);
+  });
+});
+
+function loadTheme() {
+  const windows = BrowserWindow.getAllWindows();
+  windows.forEach((win, index) => {
+    theme.load(win);
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

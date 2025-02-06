@@ -7,54 +7,69 @@
     <title>About</title>
     <link rel="stylesheet" href="main.css">
     <style>
-.about-content {
-    text-align: center;
-    padding: var(--adw-spacing);
-    background: var(--adw-card-bg);
-    border-radius: var(--adw-radius-lg);
-}
+        .windows-xp-theme {
+            --adw-accent: #0055EA;
+            --adw-accent-hover: #0066FF;
+            --adw-bg: #ECE9D8;
+            --adw-card-bg: #FFFFFF;
+            --adw-border: #7BA2E7;
+            --adw-text: #000000;
+            --adw-text-muted: #666666;
+            --xp-blue: #0055EA;
+            --xp-gradient-start: #2A5AE0;
+            --xp-gradient-end: #0F3ACC;
+            --xp-border: #225AE5;
+            --adw-radius-sm: 3px;
+            --adw-radius-lg: 6px;
+        }
 
-.about-logo {
-    width: 96px;
-    height: 96px;
-    margin-bottom: var(--spacing-m);
-    user-select: none;
-    pointer-events: none;
-}
+        .about-content {
+            text-align: center;
+            padding: var(--adw-spacing);
+            background: var(--adw-card-bg);
+            border-radius: var(--adw-radius-lg);
+        }
 
-.about-name {
-    font-size: 18px;
-    font-weight: bold;
-    color: var(--adw-text);
-}
+        .about-logo {
+            width: 96px;
+            height: 96px;
+            margin-bottom: var(--spacing-m);
+            user-select: none;
+            pointer-events: none;
+        }
 
-.about-version {
-    font-size: 14px;
-    color: var(--adw-text-muted);
-}
+        .about-name {
+            font-size: 18px;
+            font-weight: bold;
+            color: var(--adw-text);
+        }
 
-.about-section {
-    margin-top: var(--spacing-m);
-    font-size: 14px;
-    color: var(--adw-text);
-}
+        .about-version {
+            font-size: 14px;
+            color: var(--adw-text-muted);
+        }
 
-.about-grid {
-    margin-top: var(--spacing-m);
-    font-size: 13px;
-    color: var(--adw-text-muted);
-}
+        .about-section {
+            margin-top: var(--spacing-m);
+            font-size: 14px;
+            color: var(--adw-text);
+        }
 
-.about-link {
-    color: var(--adw-accent);
-    text-decoration: none;
-    font-weight: bold;
-}
+        .about-grid {
+            margin-top: var(--spacing-m);
+            font-size: 13px;
+            color: var(--adw-text-muted);
+        }
 
-.about-link:hover {
-    text-decoration: underline;
-}
+        .about-link {
+            color: var(--adw-accent);
+            text-decoration: none;
+            font-weight: bold;
+        }
 
+        .about-link:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 
@@ -67,7 +82,7 @@
                 <div class="window-controls">
                     <button onclick="window.close()" class="window-control close" aria-label="Close">
                         <svg width="16" height="16" viewBox="0 0 16 16">
-                            <path d="M5 5l6 6m0-6l-6 6" stroke="currentColor" stroke-width="1.5"/>
+                            <path d="M5 5l6 6m0-6l-6 6" stroke="currentColor" stroke-width="1.5" />
                         </svg>
                     </button>
                 </div>
@@ -81,17 +96,20 @@
             <div class="about-version">6.1.0</div>
 
             <div class="about-section">
-                <p>EMS is a media player with a dual-window design, letting you control playback from a management window while displaying content on a separate screen.</p>
+                <p>EMS is a media player with a dual-window design, letting you control playback from a management
+                    window while displaying content on a separate screen.</p>
             </div>
 
             <div class="about-grid">
                 <div class="about-row">
-                    <a target="_blank" href="https://github.com/clockley/EMSMediaSystem" class="about-link">GitHub Repository</a>
+                    <a target="_blank" href="https://github.com/clockley/EMSMediaSystem" class="about-link">GitHub
+                        Repository</a>
                 </div>
                 <div class="about-row">
                     <span>© 2019-2025 Christian Lockley</span><br>
                     <span>This program comes with absolutely no warranty.</span><br>
-                    <span>See the <a target="_blank" href="https://gnu.org/licenses/gpl-3.0.html" class="about-link">GNU General Public License, version 3 or later</a> for details.</span>
+                    <span>See the <a target="_blank" href="https://gnu.org/licenses/gpl-3.0.html" class="about-link">GNU
+                            General Public License, version 3 or later</a> for details.</span>
                 </div>
             </div>
         </main>
