@@ -66,22 +66,22 @@ class PIDController {
 
         this.adaptiveCoefficients = {
             kP: {
-                value: 0.6,
-                minValue: 0.3,
-                maxValue: 0.9,
-                adjustmentRate: 0.01
-            },
-            kI: {
-                value: 0.08,
-                minValue: 0.02,
-                maxValue: 0.2,
+                value: 0.5,
+                minValue: 0.2,
+                maxValue: 0.8,
                 adjustmentRate: 0.005
             },
+            kI: {
+                value: 0.05,
+                minValue: 0.01,
+                maxValue: 0.15,
+                adjustmentRate: 0.0025
+            },
             kD: {
-                value: 0.12,
-                minValue: 0.05,
-                maxValue: 0.2,
-                adjustmentRate: 0.01
+                value: 0.15,
+                minValue: 0.08,
+                maxValue: 0.25,
+                adjustmentRate: 0.005
             }
         };
 
@@ -981,6 +981,10 @@ async function setSBFormTextPlayer() {
     }
     opMode = TEXTPLAYER;
     send('set-mode', opMode);
+
+    if (isActiveMediaWindow()) {
+        
+    }
 
     document.getElementById("dyneForm").innerHTML = `
         <div class="media-container">
