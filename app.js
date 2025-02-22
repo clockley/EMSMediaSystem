@@ -1426,7 +1426,9 @@ function setSBFormMediaPlayer() {
     opMode = MEDIAPLAYER;
     send('set-mode', opMode);
     document.getElementById("dyneForm").innerHTML = generateMediaFormHTML(video);
-
+    document.getElementById("dyneForm").innerHTML = generateMediaFormHTML(video);
+    mediaCntDn.appendChild(textNode);
+    mediaCntDn.style.color = "#5c87b2";
     installDisplayChangeHandler();
     populateDisplaySelect();
 
@@ -1695,7 +1697,10 @@ function cleanRefs() {
     if (mdFile) {
         mdFile.removeEventListener("change", saveMediaFile);
     }
-
+    let mcd = document.getElementById("mediaCntDn");
+    if (mcd && mcd.contains(textNode)) {
+        mcd.removeChild(textNode);
+    }
     document.getElementById("dyneForm").innerHTML = '';
 }
 
