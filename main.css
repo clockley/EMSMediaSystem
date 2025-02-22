@@ -1,20 +1,6 @@
 @font-face {
-    font-family: 'Cantarell';
-    src: url('./fonts/cantarell/Cantarell-Regular.otf') format('opentype');
-    font-weight: normal;
-    font-style: normal;
-    font-display: swap;
-}
-
-@font-face {
-    font-family: 'Cantarell';
-    src: url('./fonts/cantarell/Cantarell-Bold.otf') format('opentype');
-    font-weight: 700;
-}
-
-@font-face {
-    font-family: 'Inter';
-    src: url('./fonts/Inter-4.1/Inter-Regular.otf') format('opentype');
+    font-family: 'Adwaita';
+    src: url('./fonts/Adwaita/AdwaitaSans-Regular.ttf') format('truetype');
     font-weight: 400;
 }
 
@@ -129,7 +115,7 @@ button,
 body {
     user-select: none;
     overflow-y: auto;
-    font-family: "Cantarell";
+    font-family: "Adwaita";
     color: var(--adw-text);
     margin: 0;
     padding: 0;
@@ -451,7 +437,7 @@ video::-webkit-media-controls-volume-control-hover-background {
     justify-content: center;
     text-align: center;
     color: var(--adw-text);
-    font-family: "Inter";
+    font-family: "Adwaita";
     font-weight: 400;
     font-feature-settings: "tnum" 1, "ss01" 1;
 }
@@ -785,7 +771,7 @@ button:focus-visible,
     list-style: none;
     margin: 8px 0 0;
     width: 200px;
-    font-family: "Cantarell", sans-serif;
+    font-family: "Adwaita", sans-serif;
     font-size: 14px;
 }
 
