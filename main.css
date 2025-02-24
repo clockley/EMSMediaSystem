@@ -457,6 +457,7 @@ button:focus-visible,
     color: CanvasColor;
     /* Light text for better contrast */
     padding: 6px;
+    padding-bottom: 0px;
     margin-top: -1px;
     height: 45px;
     display: flex;
