@@ -374,10 +374,7 @@ video {
 /* Video area */
 .video-wrapper {
     background: black;
-    /* Video background should be black */
-    border-radius: 12px;
     margin-top: 0;
-    border-radius: 12px;
     overflow: hidden;
     flex: 1;
     position: relative;
