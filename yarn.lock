@@ -1383,19 +1383,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"electron-nightly@npm:^36.0.0-nightly":
-  version: 36.0.0-nightly.20250123
-  resolution: "electron-nightly@npm:36.0.0-nightly.20250123"
-  dependencies:
-    "@electron/get": "npm:^2.0.0"
-    "@types/node": "npm:^22.7.7"
-    extract-zip: "npm:^2.0.1"
-  bin:
-    electron: cli.js
-  checksum: 10c0/3a7e297d82e6c6618bd4fdc0bcf4615370f913d1396c3a5d662c1e5e2533e0383c512305b2c3555971b1d18acac7b633a70086a84143926e91b5762a51d6d18f
-  languageName: node
-  linkType: hard
-
 "electron-publish@npm:25.1.7":
   version: 25.1.7
   resolution: "electron-publish@npm:25.1.7"
@@ -1408,6 +1395,19 @@ __metadata:
     lazy-val: "npm:^1.0.5"
     mime: "npm:^2.5.2"
   checksum: 10c0/cdb58049c24b38ba7879514224cfd2245fd364e125391ed6e12eeed2a96d95ede192a1ad961ff1287f344ca7b3b62e1096ce4a4c41be40fd402d0688fcf5c505
+  languageName: node
+  linkType: hard
+
+"electron@npm:^35.0.0":
+  version: 35.0.0
+  resolution: "electron@npm:35.0.0"
+  dependencies:
+    "@electron/get": "npm:^2.0.0"
+    "@types/node": "npm:^22.7.7"
+    extract-zip: "npm:^2.0.1"
+  bin:
+    electron: cli.js
+  checksum: 10c0/2d02050ff2c7fc7bb6974c349d494f7dfe21f5a97faff2ea61a112832dd9d3e9c1fd18952e4bbcbbb14cc77e15b9e8e6cd63a46cb127a9af1614198fa7c5ee30
   languageName: node
   linkType: hard
 
@@ -1432,8 +1432,8 @@ __metadata:
     atem-connection: "npm:^3.5.0"
     bonjour: "npm:^3.5.0"
     concurrently: "npm:^9.1.0"
+    electron: "npm:^35.0.0"
     electron-builder: "npm:^25.0.0"
-    electron-nightly: "npm:^36.0.0-nightly"
     hls.js: "npm:^1.6.0-beta.1"
     write-file-atomic: "npm:^6.0.0"
   languageName: unknown
