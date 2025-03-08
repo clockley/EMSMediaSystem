@@ -4,7 +4,7 @@
   "description": "A simple media player",
   "main": "main.mjs",
   "scripts": {
-    "start": "node node_modules/electron-nightly/cli.js .",
+    "start": "electron .",
     "dist": "electron-builder",
     "dist-win": "electron-builder --win",
     "dist-linux": "electron-builder --linux",
@@ -14,8 +14,8 @@
   "license": "GPL-3.0-or-later",
   "devDependencies": {
     "concurrently": "^9.1.0",
-    "electron-builder": "^25.0.0",
-    "electron-nightly": "^36.0.0-nightly"
+    "electron": "^35.0.0",
+    "electron-builder": "^25.0.0"
   },
   "dependencies": {
     "atem-connection": "^3.5.0",
