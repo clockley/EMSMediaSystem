@@ -670,7 +670,6 @@ async function handleMediaWindowClosed(event, id) {
     handleImageDisplay(isImgFile, imgEle);
 
     resetVideoState();
-    resetMediaCountdown();
 
     updatePlayButtonOnMediaWindow();
     masterPauseState = false;
@@ -723,8 +722,6 @@ function resetVideoState() {
     }
 }
 
-function resetMediaCountdown() {
-}
 
 function updatePlayButtonOnMediaWindow() {
     const playButton = document.getElementById("mediaWindowPlayButton");

@@ -14,7 +14,7 @@
   "license": "GPL-3.0-or-later",
   "devDependencies": {
     "concurrently": "^9.1.0",
-    "electron": "^35.0.0",
+    "electron": "^35.0.1",
     "electron-builder": "^25.0.0"
   },
   "dependencies": {
@@ -51,5 +51,5 @@
       "allowToChangeInstallationDirectory": false
     }
   },
-  "packageManager": "yarn@4.5.3"
+  "packageManager": "yarn@4.7.0"
 }
