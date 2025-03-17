@@ -260,6 +260,9 @@ class PIDController {
     }
 
     calculateHistoricalAdjustment(timeDifference, deltaTime) {
+        if (timeDifference !== timeDifference || deltaTime !== deltaTime || deltaTime <= 0) {
+            return 0;
+        }
         this.integral += timeDifference * deltaTime;
         this.integral = (this.integral < -this.maxIntegralError) ? -this.maxIntegralError :
             (this.integral > this.maxIntegralError) ? this.maxIntegralError : this.integral;
