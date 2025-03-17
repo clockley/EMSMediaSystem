@@ -249,7 +249,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
 
     mediaWindow = new BrowserWindow(finalWindowOptions);
     //mediaWindow.openDevTools()
-    mediaWindow.loadFile("media.html");
+    await mediaWindow.loadFile("media.html");
     mediaWindow.on('closed', () => {
       if (win) win.webContents.send('media-window-closed', mediaWindow.id);
       stopMediaPlaybackPowerHint();
