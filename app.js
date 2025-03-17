@@ -1529,12 +1529,13 @@ function removeFileProtocol(filePath) {
 function saveMediaFile() {
     textNode.data = "";
     const mdfileElement = document.getElementById("mdFile");
-    if (!mdfileElement || mdfileElement.value === "" ||
-        (mdfileElement.files && mdfileElement.files.length === 0)) {
-        return;
+    if (mediaPlayerInputState.filePaths.length < 1) {
+        if (!mdfileElement || mdfileElement.value === "" ||
+            (mdfileElement.files && mdfileElement.files.length === 0)) {
+            return;
+        }
     }
-
-    if (encodeURI(getPathForFile(mdfileElement.files[0])) === removeFileProtocol(video.src)) {
+    if (encodeURI(mediaPlayerInputState.filePaths[0]) === removeFileProtocol(video.src)) {
         return;
     }
 
