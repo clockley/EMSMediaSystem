@@ -53,10 +53,10 @@ const invoke = ipcRenderer.invoke;
 const on = ipcRenderer.on;
 const getPathForFile = webUtils.getPathForFile;
 const mediaPlayerInputState = {
-    fileInpt: null,
+    filePaths: [],
     urlInpt: null,
     clear() {
-        this.fileInpt = null;
+        this.filePaths = [];
         this.urlInpt = null;
     }
 };
@@ -861,10 +861,10 @@ function playMedia(e) {
     }
     const iM = isImg(mediaFile);
     if (iM && mdFile.files.length === 0 && video.style.display === 'none') {
-        mdFile.files = mediaPlayerInputState.fileInpt;
+        // No need to set files since we're using paths
     }
 
-    if (mdFile.value === "" && !playingMediaAudioOnly) {
+    if (mdFile.value === "" && !playingMediaAudioOnly && mediaPlayerInputState.filePaths.length === 0) {
         if (isPlaying) {
             isPlaying = false;
             send('close-media-window', 0);
@@ -875,13 +875,11 @@ function playMedia(e) {
             updateDynUI();
             localTimeStampUpdateIsRunning = false;
             return;
-        } else if (opMode === MEDIAPLAYER && !isPlaying && video.src !== null && video.src !== '' && mediaPlayerInputState.fileInpt != null) {
-            let t1 = mediaPlayerInputState.fileInpt[0].name;
-            let t2 = getHostnameOrBasename(normalizedPathname)
+        } else if (opMode === MEDIAPLAYER && !isPlaying && video.src !== null && video.src !== '' && mediaPlayerInputState.filePaths.length > 0) {
+            let t1 = getHostnameOrBasename(mediaPlayerInputState.filePaths[0]);
+            let t2 = getHostnameOrBasename(normalizedPathname);
             if (t1 == null || t2 == null || t1 !== t2) {
                 return;
-            } else {
-                mdFile.files = mediaPlayerInputState.fileInpt;
             }
         } else {
             return;
@@ -890,7 +888,7 @@ function playMedia(e) {
 
     if (!isPlaying) {
         isPlaying = true;
-        updateDynUI()
+        updateDynUI();
         if (opMode === MEDIAPLAYER) {
             if (iM) {
                 createMediaWindow();
@@ -935,7 +933,6 @@ function playMedia(e) {
             removeFilenameFromTitlebar();
             activeLiveStream = false;
             saveMediaFile();
-
             audioOnlyFile = false;
         }
         localTimeStampUpdateIsRunning = false;
@@ -1083,7 +1080,7 @@ async function setSBFormTextPlayer() {
     send('set-mode', opMode);
 
     if (isActiveMediaWindow()) {
-        
+
     }
 
     document.getElementById("dyneForm").innerHTML = `
@@ -1426,7 +1423,6 @@ function setSBFormMediaPlayer() {
     opMode = MEDIAPLAYER;
     send('set-mode', opMode);
     document.getElementById("dyneForm").innerHTML = generateMediaFormHTML(video);
-    document.getElementById("dyneForm").innerHTML = generateMediaFormHTML(video);
     mediaCntDn.appendChild(textNode);
     mediaCntDn.style.color = "#5c87b2";
     installDisplayChangeHandler();
@@ -1446,13 +1442,14 @@ function setSBFormMediaPlayer() {
             document.querySelector('.file-input-label span').innerText = 'Open';
         }
 
+        // Call restoreMediaFile but it won't set input value
         restoreMediaFile();
         updateTimestamp();
     }
 
     const loopctl = document.getElementById("mdLpCtlr");
     if (video.loop === true) {
-        document.getElementById("mdLpCtlr").checked = true
+        document.getElementById("mdLpCtlr").checked = true;
     }
     loopctl.addEventListener('change', loopCtlHandler);
 
@@ -1465,7 +1462,7 @@ function setSBFormMediaPlayer() {
     } else {
         isPlaying = true;
         if (typeof currentMediaFile === 'undefined') {
-            currentMediaFile = mdFile.files
+            currentMediaFile = mdFile.files;
         } else {
             mdFile.files = currentMediaFile;
         }
@@ -1482,10 +1479,10 @@ function setSBFormMediaPlayer() {
             }
             if (video !== null) {
                 if (!isActiveMW) {
-                    if (!mdFile.value.includes("fake")) {
+                    if (!mdFile.value.includes("fake") && mdFile.value !== "") {
                         mediaFile = mdFile.value;
-                    } else {
-                        mediaFile = document.getElementById("YtPlyrRBtnFrmID").checked === true ? mdFile.value : getPathForFile(mdFile.files[0]);
+                    } else if (mediaPlayerInputState.filePaths.length > 0) {
+                        mediaFile = mediaPlayerInputState.filePaths[0];
                     }
                 }
                 const isImgFile = isImg(mediaFile);
@@ -1523,7 +1520,6 @@ function setSBFormMediaPlayer() {
     if (isImg(mediaFile)) {
         document.getElementById("preview").parentNode.appendChild(img);
     }
-    //console.timeEnd("start");
 }
 
 function removeFileProtocol(filePath) {
@@ -1559,7 +1555,10 @@ function saveMediaFile() {
 
         mediaPlayerInputState.clear();
 
-        mediaPlayerInputState.fileInpt = mdfileElement.files;
+        // Store pathnames as strings in array
+        mediaPlayerInputState.filePaths = Array.from(mdfileElement.files).map(file =>
+            getPathForFile(file)
+        );
         mediaPlayerInputState.urlInpt = mdfileElement.value.toLowerCase();
     }
     const isActiveMW = isActiveMediaWindow();
@@ -1567,7 +1566,9 @@ function saveMediaFile() {
         return;
     }
 
-    mediaFile = opMode === STREAMPLAYER ? document.getElementById("mdFile").value : getPathForFile(document.getElementById("mdFile").files[0]);
+    mediaFile = opMode === STREAMPLAYER ?
+        document.getElementById("mdFile").value :
+        mediaPlayerInputState.filePaths[0];
 
     if (mediaFile) {
         const fileNameSpan = document.querySelector('.file-input-label span');
@@ -1634,11 +1635,18 @@ function saveMediaFile() {
 }
 
 function restoreMediaFile() {
-    if (mediaPlayerInputState.fileInpt != null && document.getElementById("mdFile") != null) {
-        if (document.getElementById("YtPlyrRBtnFrmID") != null && document.getElementById("YtPlyrRBtnFrmID").checked) {
+    // Don't attempt to set the file input value directly
+    // Just ensure mediaFile is set if we have paths stored
+    if (mediaPlayerInputState.filePaths.length > 0) {
+        if (opMode === STREAMPLAYER && document.getElementById("mdFile") && mediaPlayerInputState.urlInpt) {
             document.getElementById("mdFile").value = mediaPlayerInputState.urlInpt;
-        } else {
-            document.getElementById("mdFile").files = mediaPlayerInputState.fileInpt;
+        } else if (opMode === MEDIAPLAYER) {
+            mediaFile = mediaPlayerInputState.filePaths[0];
+            // Update the UI label if it exists
+            const fileNameSpan = document.querySelector('.file-input-label span');
+            if (fileNameSpan) {
+                fileNameSpan.textContent = getHostnameOrBasename(mediaFile);
+            }
         }
     }
 }
@@ -2085,7 +2093,7 @@ function isLiveStream(mediaFile) {
 async function createMediaWindow() {
     const ts = await invoke('get-system-time');
     let birth = ts.systemTime + ((Date.now() - ts.ipcTimestamp) * .001) + ((performance.now() * .001) - itc) + '';
-    mediaFile = opMode === STREAMPLAYER ? document.getElementById("mdFile").value : getPathForFile(document.getElementById("mdFile").files[0]);
+    mediaFile = opMode === STREAMPLAYER ? document.getElementById("mdFile").value : mediaPlayerInputState.filePaths[0];
     var liveStreamMode = isLiveStream(mediaFile);
     var selectedIndex = document.getElementById("dspSelct").selectedIndex - 1;
     activeLiveStream = liveStreamMode;
