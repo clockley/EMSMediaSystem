@@ -1398,16 +1398,16 @@ __metadata:
   languageName: node
   linkType: hard
 
-"electron@npm:^35.0.1":
-  version: 35.0.1
-  resolution: "electron@npm:35.0.1"
+"electron@npm:^35.0.3":
+  version: 35.0.3
+  resolution: "electron@npm:35.0.3"
   dependencies:
     "@electron/get": "npm:^2.0.0"
     "@types/node": "npm:^22.7.7"
     extract-zip: "npm:^2.0.1"
   bin:
     electron: cli.js
-  checksum: 10c0/6b4443d837c9759c49f3dcf580138656aae82c7816facf5c301ed223630fd2dc78312bb56d49e9ad3600396dee79f06808f95bb093e368e587a47be771945934
+  checksum: 10c0/ea1941b2e56cdc26ab75d83fd10b4a24a9789c196a41abb62e2e7b0363b408ecbf762a43fe194ddeaf65a902316d4838bf23488f844d373073b26061465c2d20
   languageName: node
   linkType: hard
 
@@ -1432,7 +1432,7 @@ __metadata:
     atem-connection: "npm:^3.5.0"
     bonjour: "npm:^3.5.0"
     concurrently: "npm:^9.1.0"
-    electron: "npm:^35.0.1"
+    electron: "npm:^35.0.3"
     electron-builder: "npm:^25.0.0"
     hls.js: "npm:^1.6.0-beta.1"
     write-file-atomic: "npm:^6.0.0"
