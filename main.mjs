@@ -19,7 +19,7 @@ process.env.NODE_COMPILE_CACHE = enableCompileCache().directory;
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session, shell } from 'electron/main';
 import { readdir, readFile } from 'fs/promises';
 import settings from './settings.mjs'
-const sessionID = process.hrtime.bigint().toString(36) + Math.random().toString(36).substr(2, 9);
+let sessionID = 0;
 const isDevMode = process.env.ems_dev === 'true';
 const openDevConsole = process.env.ems_dev_console === 'true';
 let lastKnownDisplayState = null;
@@ -863,6 +863,9 @@ function setIPC() {
     createHelpWindow();
   });
   ipcMain.handle('get-session-id', () => {
+    if (sessionID === 0) {
+      sessionID = process.hrtime.bigint().toString(36) + Math.random().toString(36).substr(2, 9);
+    }
     return sessionID;
   });
 }
