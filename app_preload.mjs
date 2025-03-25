@@ -19,31 +19,52 @@ import { readFile } from 'fs/promises';
 import { Bible } from './Bible.mjs';
 import { Script } from 'vm';
 
-async function executeWasmScript() {
-  const wasmExecScript = await readFile(`${import.meta.dirname}/wasm_exec.js`, 'utf8');
-  new Script(wasmExecScript).runInThisContext();
-}
-
-// Execute WASM script during preload
-await executeWasmScript();
-
+let isInitialized = false;
+let initPromise = null;
 let bibleInstance = null;
-let bibleAPI = null;
 
-function initializeBible() {
-  if (!bibleInstance) {
-    bibleInstance = new Bible();
-    bibleAPI = {
-      getBooks: () => bibleInstance.getBooks(),
-      getVersions: () => bibleInstance.getVersions(),
-      getText: (version, book, verse) => bibleInstance.getText(version, book, verse),
-      getBookInfo: (version, name) => bibleInstance.getBookInfo(version, name),
-      getChapterInfo: (version, name, chapterNumber) => bibleInstance.getChapterInfo(version, name, chapterNumber),
-      init: () => bibleInstance.init()
-    };
+async function initialize() {
+  if (isInitialized) return;
+  if (!initPromise) {
+    initPromise = (async () => {
+      // Load WASM script
+      const wasmExecScript = await readFile(`${import.meta.dirname}/wasm_exec.js`, 'utf8');
+      new Script(wasmExecScript).runInThisContext();
+      
+      // Initialize Bible
+      bibleInstance = new Bible();
+      await bibleInstance.init();
+      isInitialized = true;
+    })();
   }
-  return bibleAPI;
+  return initPromise;
 }
+
+const bibleAPI = {
+  getBooks: () => {
+    if (!isInitialized) throw new Error('Bible API not initialized');
+    return bibleInstance.getBooks();
+  },
+  getVersions: () => {
+    if (!isInitialized) throw new Error('Bible API not initialized');
+    return bibleInstance.getVersions();
+  },
+  getText: (version, book, verse) => {
+    if (!isInitialized) throw new Error('Bible API not initialized');
+    return bibleInstance.getText(version, book, verse);
+  },
+  getBookInfo: (version, name) => {
+    if (!isInitialized) throw new Error('Bible API not initialized');
+    return bibleInstance.getBookInfo(version, name);
+  },
+  getChapterInfo: (version, name, chapterNumber) => {
+    if (!isInitialized) throw new Error('Bible API not initialized');
+    return bibleInstance.getChapterInfo(version, name, chapterNumber);
+  }
+};
+
+// Initialize immediately but don't block preload
+initialize().catch(console.error);
 
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
@@ -53,15 +74,8 @@ contextBridge.exposeInMainWorld('electron', {
     invoke: ipcRenderer.invoke.bind(ipcRenderer),
   },
   __dirname: import.meta.dirname,
-  bibleAPI: {
-    getBooks: () => initializeBible().getBooks(),
-    getVersions: () => initializeBible().getVersions(),
-    getText: (version, book, verse) => initializeBible().getText(version, book, verse),
-    getBookInfo: (version, name) => initializeBible().getBookInfo(version, name),
-    getChapterInfo: (version, name, chapterNumber) => initializeBible().getChapterInfo(version, name, chapterNumber),
-    init: () => initializeBible().init()
-  },
-  webUtils: webUtils
+  bibleAPI,
+  webUtils
 });
 
 contextBridge.exposeInMainWorld('windowControls', {
@@ -70,5 +84,8 @@ contextBridge.exposeInMainWorld('windowControls', {
   onMaximizeChange: (callback) => ipcRenderer.on('maximize-change', callback)
 });
 
-Object.freeze(window.electron);
-Object.freeze(window.windowControls);
+// Freeze objects after initialization
+initialize().then(() => {
+  Object.freeze(window.electron);
+  Object.freeze(window.windowControls);
+}).catch(console.error);
