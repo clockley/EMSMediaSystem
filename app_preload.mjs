@@ -19,29 +19,31 @@ import { readFile } from 'fs/promises';
 import { Bible } from './Bible.mjs';
 import { Script } from 'vm';
 
-async function initializeBible() {
-  const bible = new Bible();
-  const bibleAPI = {
-    getBooks: () => bible.getBooks(),
-    getVersions: () => bible.getVersions(),
-    getText: (version, book, verse) => bible.getText(version, book, verse),
-    getBookInfo: (version, name) => bible.getBookInfo(version, name),
-    getChapterInfo: (version, name, chapterNumber) => bible.getChapterInfo(version, name, chapterNumber),
-    init: () => bible.init()
-  };
-
-  return bibleAPI;
-}
-
 async function executeWasmScript() {
   const wasmExecScript = await readFile(`${import.meta.dirname}/wasm_exec.js`, 'utf8');
   new Script(wasmExecScript).runInThisContext();
 }
 
-// Execute WASM script and initialize Bible in parallel
-const [bibleAPI] = await Promise.all([
-  executeWasmScript().then(() => initializeBible())
-]);
+// Execute WASM script during preload
+await executeWasmScript();
+
+let bibleInstance = null;
+let bibleAPI = null;
+
+function initializeBible() {
+  if (!bibleInstance) {
+    bibleInstance = new Bible();
+    bibleAPI = {
+      getBooks: () => bibleInstance.getBooks(),
+      getVersions: () => bibleInstance.getVersions(),
+      getText: (version, book, verse) => bibleInstance.getText(version, book, verse),
+      getBookInfo: (version, name) => bibleInstance.getBookInfo(version, name),
+      getChapterInfo: (version, name, chapterNumber) => bibleInstance.getChapterInfo(version, name, chapterNumber),
+      init: () => bibleInstance.init()
+    };
+  }
+  return bibleAPI;
+}
 
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
@@ -51,7 +53,14 @@ contextBridge.exposeInMainWorld('electron', {
     invoke: ipcRenderer.invoke.bind(ipcRenderer),
   },
   __dirname: import.meta.dirname,
-  bibleAPI: bibleAPI,
+  bibleAPI: {
+    getBooks: () => initializeBible().getBooks(),
+    getVersions: () => initializeBible().getVersions(),
+    getText: (version, book, verse) => initializeBible().getText(version, book, verse),
+    getBookInfo: (version, name) => initializeBible().getBookInfo(version, name),
+    getChapterInfo: (version, name, chapterNumber) => initializeBible().getChapterInfo(version, name, chapterNumber),
+    init: () => initializeBible().init()
+  },
   webUtils: webUtils
 });
 
