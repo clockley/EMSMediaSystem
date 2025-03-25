@@ -1531,9 +1531,6 @@ function saveMediaFile() {
             return;
         }
     }
-    if (encodeURI(mediaPlayerInputState.filePaths[0]) === removeFileProtocol(video.src)) {
-        return;
-    }
 
     if (playingMediaAudioOnly && opMode === MEDIAPLAYER) {
         if (mdfileElement.files[0].length === 0) {
