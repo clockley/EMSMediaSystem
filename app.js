@@ -1755,7 +1755,7 @@ function playLocalMedia(event) {
         updateDynUI();
         updateTimestamp();
         if (!playingMediaAudioOnly) {
-            let t1 = encodeURI(mediaPlayerInputState.fileInpt[0].name);
+            let t1 = encodeURI(mediaPlayerInputState.fileInpt);
             let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
             if (t1 != null && t2 != null && t1 === t2) {
                 document.getElementById("mdFile").files = mediaPlayerInputState.fileInpt;
