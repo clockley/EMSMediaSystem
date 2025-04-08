@@ -14,13 +14,13 @@
   "license": "GPL-3.0-or-later",
   "devDependencies": {
     "concurrently": "^9.1.0",
-    "electron": "^35.0.3",
+    "electron": "^35.1.4",
     "electron-builder": "^25.0.0"
   },
   "dependencies": {
     "atem-connection": "^3.5.0",
     "bonjour": "^3.5.0",
-    "hls.js": "^1.6.0-beta.1",
+    "hls.js": "^1.6.1",
     "write-file-atomic": "^6.0.0"
   },
   "build": {

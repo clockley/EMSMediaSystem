@@ -1398,16 +1398,16 @@ __metadata:
   languageName: node
   linkType: hard
 
-"electron@npm:^35.0.3":
-  version: 35.0.3
-  resolution: "electron@npm:35.0.3"
+"electron@npm:^35.1.4":
+  version: 35.1.4
+  resolution: "electron@npm:35.1.4"
   dependencies:
     "@electron/get": "npm:^2.0.0"
     "@types/node": "npm:^22.7.7"
     extract-zip: "npm:^2.0.1"
   bin:
     electron: cli.js
-  checksum: 10c0/ea1941b2e56cdc26ab75d83fd10b4a24a9789c196a41abb62e2e7b0363b408ecbf762a43fe194ddeaf65a902316d4838bf23488f844d373073b26061465c2d20
+  checksum: 10c0/260e206882c96c175165f8c941598e4434534b325af8974ba7412343a4c26b462ff1661cfd463b10b5d8cb09f3989a6f00fdfdb1f41bc8ee3cc9d616f978b6b9
   languageName: node
   linkType: hard
 
@@ -1432,9 +1432,9 @@ __metadata:
     atem-connection: "npm:^3.5.0"
     bonjour: "npm:^3.5.0"
     concurrently: "npm:^9.1.0"
-    electron: "npm:^35.0.3"
+    electron: "npm:^35.1.4"
     electron-builder: "npm:^25.0.0"
-    hls.js: "npm:^1.6.0-beta.1"
+    hls.js: "npm:^1.6.1"
     write-file-atomic: "npm:^6.0.0"
   languageName: unknown
   linkType: soft
@@ -1902,10 +1902,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"hls.js@npm:^1.6.0-beta.1":
-  version: 1.6.0-beta.2.0.canary.10863
-  resolution: "hls.js@npm:1.6.0-beta.2.0.canary.10863"
-  checksum: 10c0/d82bb9134c0cbe83b918bbb33f92ee04e780b82104b9b29facc320813cdf4e898a0a55c5c57cd7e2f32a3234aa77931ea9e7b9a803548f3fe2af4b074822ffbb
+"hls.js@npm:^1.6.1":
+  version: 1.6.1
+  resolution: "hls.js@npm:1.6.1"
+  checksum: 10c0/6ee8b038d9cbd9cd61330f145adca0db06cfee76090cc76b4e0e0bf6e81e7d2eedb788f69e2e85a730534631a9b47e301bed3ddbc737ea0697d22ee0ae2037b0
   languageName: node
   linkType: hard
 
