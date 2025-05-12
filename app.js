@@ -1431,11 +1431,13 @@ function setSBFormMediaPlayer() {
             const fileNameSpan = document.querySelector('.file-input-label span');
             if (fileNameSpan) {
                 fileNameSpan.textContent = getHostnameOrBasename(mediaFile);
+                fileNameSpan.title = getHostnameOrBasename(mediaFile);
             }
         }
 
         if (isLiveStream(document.querySelector('.file-input-label span').innerText)) {
             document.querySelector('.file-input-label span').innerText = 'Open';
+            document.querySelector('.file-input-label span').title = 'Open';
         }
 
         // Call restoreMediaFile but it won't set input value
@@ -1568,6 +1570,7 @@ function saveMediaFile() {
         const fileNameSpan = document.querySelector('.file-input-label span');
         if (fileNameSpan) {
             fileNameSpan.textContent = getHostnameOrBasename(mediaFile);
+            fileNameSpan.title = getHostnameOrBasename(mediaFile);
         }
     }
 
