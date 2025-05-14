@@ -155,8 +155,7 @@ class PIDController {
                 : 0;
 
             for (let i = 0; i < 10; i++) {
-                const bufferIdx = (startIdx + i) % this.maxHistoryLength;
-                const currentTimeDiff = this.diffArray[bufferIdx];
+                const currentTimeDiff = this.diffArray[(startIdx + i) % this.maxHistoryLength];
                 sumTimeDifference += currentTimeDiff;
                 variance += currentTimeDiff * currentTimeDiff;
 
