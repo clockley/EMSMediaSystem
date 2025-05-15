@@ -121,7 +121,7 @@ class PIDController {
         this.fastSyncThreshold = 1;
         this.maxFastSyncRate = 2;
 
-        this.maxHistoryLength = 30;
+        this.maxHistoryLength = 32;
         this.isFirstAdjustment = true;
 
         // Pre-allocate arrays for history
@@ -130,56 +130,52 @@ class PIDController {
         this.responseArray = new Float64Array(this.maxHistoryLength);
         this.historyIndex = 0;
         this.historySize = 0;
+        this.MASK = 31;
+        this.TREND_MASK = 15;
+        this._trendBuffer = new Float64Array(16);
+        this._trendPos = 0;
+
+        this._rollingSum = 0;
+        this._rollingSquareSum = 0;
+        this._rollingTrend = 0;
     }
 
     updateSystemMetrics(timeDifference, timestamp) {
+        const oldDiff = this.diffArray[this.historyIndex] || 0;
+
         this.timeArray[this.historyIndex] = timestamp;
         this.diffArray[this.historyIndex] = timeDifference;
-        this.responseArray[this.historyIndex] = this.historySize > 0
-            ? timestamp - this.timeArray[(this.historyIndex - 1 + this.maxHistoryLength) % this.maxHistoryLength]
-            : 0;
+        this.responseArray[this.historyIndex] = this.historySize > 0 ? timestamp - this.timeArray[(this.historyIndex - 1) & this.MASK] : 0;
 
-        this.historyIndex = (this.historyIndex + 1) % this.maxHistoryLength;
-        if (this.historySize < this.maxHistoryLength) {
-            this.historySize++;
-        }
+        this.historyIndex = (this.historyIndex + 1) & this.MASK;
+        if (this.historySize < this.maxHistoryLength) this.historySize++;
 
+        // Rolling updates
         if (this.historySize >= 10) {
-            let variance = 0;
-            let trend = 0;
-            let sumTimeDifference = 0;
+            const pos = this._trendPos;
+            const prevIndex = (pos - 1 + 16) & this.TREND_MASK;
+            const prev = this._trendBuffer[prevIndex] || 0;
+            const replaced = this._trendBuffer[pos];
+            this._trendBuffer[pos] = timeDifference;
+            this._trendPos = (pos + 1) & this.TREND_MASK;
 
-            const startIdx = (this.historyIndex - 10 + this.maxHistoryLength) % this.maxHistoryLength;
-            let previousTimeDiff = startIdx > 0
-                ? this.diffArray[(startIdx - 1 + this.maxHistoryLength) % this.maxHistoryLength]
-                : 0;
+            // Update rolling sums
+            this._rollingSum += timeDifference - oldDiff;
+            this._rollingSquareSum += (timeDifference * timeDifference) - (oldDiff * oldDiff);
+            this._rollingTrend += (timeDifference - prev) - (replaced - prev);
 
-            for (let i = 0; i < 10; i++) {
-                const currentTimeDiff = this.diffArray[(startIdx + i) % this.maxHistoryLength];
-                sumTimeDifference += currentTimeDiff;
-                variance += currentTimeDiff * currentTimeDiff;
+            const mean = this._rollingSum / 10;
+            const variance = (this._rollingSquareSum / 10) - (mean * mean);
+            const trend = this._rollingTrend / 9;
 
-                if (i > 0) {
-                    trend += currentTimeDiff - previousTimeDiff;
-                }
-                previousTimeDiff = currentTimeDiff;
-            }
-
-            const mean = sumTimeDifference / 10;
-            variance = (variance / 10) - (mean * mean);
-            trend = trend / 9;
-
-            if (variance > 0.1 && this.overshoots > 3) {
-                this.currentPattern = this.patterns.OSCILLATING;
-            } else if (trend > 0.05 || this.avgResponseTime > 0.15) {
-                this.currentPattern = this.patterns.LAGGING;
-            } else if (this.systemLag > 100 || this.avgResponseTime > 0.2) {
-                this.currentPattern = this.patterns.SYSTEM_STRESS;
-            } else {
-                this.currentPattern = this.patterns.STABLE;
-            }
+            this.currentPattern =
+                (variance > 0.1 && this.overshoots > 3) ? this.patterns.OSCILLATING :
+                    (trend > 0.05 || this.avgResponseTime > 0.15) ? this.patterns.LAGGING :
+                        (this.systemLag > 100 || this.avgResponseTime > 0.2) ? this.patterns.SYSTEM_STRESS :
+                            this.patterns.STABLE;
         }
     }
+
 
     detectPattern() {
         if (this.historySize < 10) return;
@@ -390,10 +386,9 @@ class PIDController {
 }
 let pidController;
 
-const PAD = ['00', '01', '02', '03', '04', '05', '06', '07', '08', '09'];
-
 const NUM_BUFFER = new Int32Array(4);
 const REM_BUFFER = new Int32Array(1);
+let usePad0, usePad1, usePad2, mask0, mask1, mask2, idx0, idx1, idx2;
 
 function getHostnameOrBasename(input) {
     // Check if input contains a protocol-like prefix (http://, https://, ftp://, etc.)
@@ -499,6 +494,15 @@ function update(time) {
             NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
             NUM_BUFFER[2] = REM_BUFFER[0] % 60;
             NUM_BUFFER[3] = ((SECONDSFLOAT - (SECONDSFLOAT | 0)) * 1000 + 0.5) | 0;
+            usePad0 = (NUM_BUFFER[0] < 10) | 0;
+            mask0 = -usePad0;
+            idx0 = NUM_BUFFER[0] * 2;
+            usePad1 = (NUM_BUFFER[1] < 10) | 0;
+            mask1 = -usePad1;
+            idx1 = NUM_BUFFER[1] * 2;
+            usePad2 = (NUM_BUFFER[2] < 10) | 0;
+            mask2 = -usePad2;
+            idx2 = NUM_BUFFER[2] * 2;
             if (!updatePending[0]) {
                 updatePending[0] = 1;
                 requestAnimationFrame(updateCountdownNode);
@@ -538,33 +542,37 @@ function updateTimestamp() {
 
 let lastUpdateTime = 0;
 
-const STRING_BUFFER = new Array(20);
-const COLON = ':';
-const DOT = '.';
-const ZERO = '0';
-const DOUBLE_ZERO = '00';
+const STRING_BUFFER = new Uint16Array(20);
+const ZERO = '0'.charCodeAt(0);
+STRING_BUFFER[2] = STRING_BUFFER[5] = ':'.charCodeAt(0);
+STRING_BUFFER[8] = '.'.charCodeAt(0);
+const PAD_CODES = new Uint16Array(128);
+for (let i = 0; i < 64; i++) {
+    PAD_CODES[i * 2] = 48 + ((i / 10) | 0);
+    PAD_CODES[i * 2 + 1] = 48 + (i % 10);
+}
 
 function updateCountdownNode() {
-    STRING_BUFFER[0] = NUM_BUFFER[0] < 10 ? PAD[NUM_BUFFER[0] & 63] : NUM_BUFFER[0] & 63;
-    STRING_BUFFER[1] = COLON;
+    STRING_BUFFER[0] = (PAD_CODES[idx0] & mask0) | ((ZERO + ((NUM_BUFFER[0]  / 10) | 0)) & ~mask0);
+    STRING_BUFFER[1] = (PAD_CODES[idx0 + 1] & mask0) | ((ZERO + (NUM_BUFFER[0] % 10)) & ~mask0);
 
-    STRING_BUFFER[3] = NUM_BUFFER[1] < 10 ? PAD[NUM_BUFFER[1]] : NUM_BUFFER[1];
-    STRING_BUFFER[4] = COLON;
+    STRING_BUFFER[3] = (PAD_CODES[idx1] & mask1) | ((ZERO + ((NUM_BUFFER[1] / 10) | 0)) & ~mask1);
+    STRING_BUFFER[4] = (PAD_CODES[idx1 + 1] & mask1) | ((ZERO + (NUM_BUFFER[1] % 10)) & ~mask1);
 
-    STRING_BUFFER[5] = NUM_BUFFER[2] < 10 ? PAD[NUM_BUFFER[2]] : NUM_BUFFER[2];
-    STRING_BUFFER[6] = DOT;
-    STRING_BUFFER.length = 7;
-    if (NUM_BUFFER[3] < 10) {
-        STRING_BUFFER[++STRING_BUFFER.length] = DOUBLE_ZERO;
-        STRING_BUFFER[++STRING_BUFFER.length] = NUM_BUFFER[3];
-    } else if (NUM_BUFFER[3] < 100) {
-        STRING_BUFFER[++STRING_BUFFER.length] = ZERO;
-        STRING_BUFFER[++STRING_BUFFER.length] = NUM_BUFFER[3];
-    } else {
-        STRING_BUFFER[++STRING_BUFFER.length] = NUM_BUFFER[3];
-    }
+    STRING_BUFFER[6] = (PAD_CODES[idx2] & mask2) | ((ZERO + ((NUM_BUFFER[2] / 10) | 0)) & ~mask2);
+    STRING_BUFFER[7] = (PAD_CODES[idx2 + 1] & mask2) | ((ZERO + (NUM_BUFFER[2] % 10)) & ~mask2);
 
-    textNode.data = STRING_BUFFER.join('');
+    STRING_BUFFER[9] = ZERO + ((NUM_BUFFER[3] / 100) | 0);
+    STRING_BUFFER[10] = ZERO + (((NUM_BUFFER[3] / 10) | 0) % 10);
+    STRING_BUFFER[11] = ZERO + (NUM_BUFFER[3] % 10);
+
+    textNode.data = String.fromCharCode(
+        STRING_BUFFER[0], STRING_BUFFER[1], STRING_BUFFER[2],
+        STRING_BUFFER[3], STRING_BUFFER[4], STRING_BUFFER[5],
+        STRING_BUFFER[6], STRING_BUFFER[7], STRING_BUFFER[8],
+        STRING_BUFFER[9], STRING_BUFFER[10], STRING_BUFFER[11]
+    );
+
     updatePending[0] = 0;
 }
 
