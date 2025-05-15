@@ -488,21 +488,31 @@ function removeFilenameFromTitlebar() {
 function update(time) {
     if (time - lastUpdateTimeLocalPlayer >= 33.33) {
         if (opMode === MEDIAPLAYER) {
-            SECONDSFLOAT[0] = video.duration - video.currentTime;
-            NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
-            REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
-            NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
-            NUM_BUFFER[2] = REM_BUFFER[0] % 60;
-            NUM_BUFFER[3] = ((SECONDSFLOAT - (SECONDSFLOAT | 0)) * 1000 + 0.5) | 0;
-            usePad0 = (NUM_BUFFER[0] < 10) | 0;
-            mask0 = -usePad0;
-            idx0 = NUM_BUFFER[0] * 2;
-            usePad1 = (NUM_BUFFER[1] < 10) | 0;
-            mask1 = -usePad1;
-            idx1 = NUM_BUFFER[1] * 2;
-            usePad2 = (NUM_BUFFER[2] < 10) | 0;
-            mask2 = -usePad2;
-            idx2 = NUM_BUFFER[2] * 2;
+            const currentTime = video.currentTime;
+            const duration = video.duration;
+            const secondsFloat = duration - currentTime;
+            const totalSeconds = secondsFloat | 0;
+
+            const hours = (totalSeconds / 3600) | 0;
+            const rem = totalSeconds % 3600;
+            const minutes = (rem / 60) | 0;
+            const seconds = rem % 60;
+
+            const fractional = secondsFloat - totalSeconds;
+            const milliseconds = (fractional * 1000 + 0.5) | 0;
+
+            NUM_BUFFER[0] = hours;
+            NUM_BUFFER[1] = minutes;
+            NUM_BUFFER[2] = seconds;
+            NUM_BUFFER[3] = milliseconds;
+
+            mask0 = hours < 10;
+            idx0 = hours * 2;
+            mask1 = minutes < 10;
+            idx1 = minutes * 2;
+            mask2 = seconds < 10;
+            idx2 = seconds * 2;
+
             if (!updatePending[0]) {
                 updatePending[0] = 1;
                 requestAnimationFrame(updateCountdownNode);
@@ -513,11 +523,8 @@ function update(time) {
         }
         lastUpdateTimeLocalPlayer = time;
     }
-    if (!video.paused) {
-        requestAnimationFrame(update);
-    } else {
-        localTimeStampUpdateIsRunning = false;
-    }
+
+    video.paused ? (localTimeStampUpdateIsRunning = false) : requestAnimationFrame(update);
 }
 
 function updateTimestamp() {
@@ -553,14 +560,17 @@ for (let i = 0; i < 64; i++) {
 }
 
 function updateCountdownNode() {
-    STRING_BUFFER[0] = (PAD_CODES[idx0] & mask0) | ((ZERO + ((NUM_BUFFER[0]  / 10) | 0)) & ~mask0);
-    STRING_BUFFER[1] = (PAD_CODES[idx0 + 1] & mask0) | ((ZERO + (NUM_BUFFER[0] % 10)) & ~mask0);
+    let tens = (NUM_BUFFER[0] / 10) | 0, units = NUM_BUFFER[0] % 10;
+    STRING_BUFFER[0] = mask0 ? PAD_CODES[idx0] : ZERO + tens;
+    STRING_BUFFER[1] = mask0 ? PAD_CODES[idx0 + 1] : ZERO + units;
 
-    STRING_BUFFER[3] = (PAD_CODES[idx1] & mask1) | ((ZERO + ((NUM_BUFFER[1] / 10) | 0)) & ~mask1);
-    STRING_BUFFER[4] = (PAD_CODES[idx1 + 1] & mask1) | ((ZERO + (NUM_BUFFER[1] % 10)) & ~mask1);
+    tens = (NUM_BUFFER[1] / 10) | 0, units = NUM_BUFFER[1] % 10;
+    STRING_BUFFER[3] = mask1 ? PAD_CODES[idx1] : ZERO + tens;
+    STRING_BUFFER[4] = mask1 ? PAD_CODES[idx1 + 1] : ZERO + units;
 
-    STRING_BUFFER[6] = (PAD_CODES[idx2] & mask2) | ((ZERO + ((NUM_BUFFER[2] / 10) | 0)) & ~mask2);
-    STRING_BUFFER[7] = (PAD_CODES[idx2 + 1] & mask2) | ((ZERO + (NUM_BUFFER[2] % 10)) & ~mask2);
+    tens = (NUM_BUFFER[2] / 10) | 0, units = NUM_BUFFER[2] % 10;
+    STRING_BUFFER[6] = mask2 ? PAD_CODES[idx2] : ZERO + tens;
+    STRING_BUFFER[7] = mask2 ? PAD_CODES[idx2 + 1] : ZERO + units;
 
     STRING_BUFFER[9] = ZERO + ((NUM_BUFFER[3] / 100) | 0);
     STRING_BUFFER[10] = ZERO + (((NUM_BUFFER[3] / 10) | 0) % 10);
