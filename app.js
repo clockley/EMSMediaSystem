@@ -560,14 +560,17 @@ for (let i = 0; i < 64; i++) {
 }
 
 function updateCountdownNode() {
-    STRING_BUFFER[0] = mask0 ? PAD_CODES[idx0] : ZERO + ((NUM_BUFFER[0] / 10) | 0);
-    STRING_BUFFER[1] = mask0 ? PAD_CODES[idx0 + 1] : ZERO + (NUM_BUFFER[0] % 10);
+    let tens = (NUM_BUFFER[0] / 10) | 0, units = NUM_BUFFER[0] % 10;
+    STRING_BUFFER[0] = mask0 ? PAD_CODES[idx0] : ZERO + tens;
+    STRING_BUFFER[1] = mask0 ? PAD_CODES[idx0 + 1] : ZERO + units;
 
-    STRING_BUFFER[3] = mask1 ? PAD_CODES[idx1] : ZERO + ((NUM_BUFFER[1] / 10) | 0);
-    STRING_BUFFER[4] = mask1 ? PAD_CODES[idx1 + 1] : ZERO + (NUM_BUFFER[1] % 10);
+    tens = (NUM_BUFFER[1] / 10) | 0, units = NUM_BUFFER[1] % 10;
+    STRING_BUFFER[3] = mask1 ? PAD_CODES[idx1] : ZERO + tens;
+    STRING_BUFFER[4] = mask1 ? PAD_CODES[idx1 + 1] : ZERO + units;
 
-    STRING_BUFFER[6] = mask2 ? PAD_CODES[idx2] : ZERO + ((NUM_BUFFER[2] / 10) | 0);
-    STRING_BUFFER[7] = mask2 ? PAD_CODES[idx2 + 1] : ZERO + (NUM_BUFFER[2] % 10);
+    tens = (NUM_BUFFER[2] / 10) | 0, units = NUM_BUFFER[2] % 10;
+    STRING_BUFFER[6] = mask2 ? PAD_CODES[idx2] : ZERO + tens;
+    STRING_BUFFER[7] = mask2 ? PAD_CODES[idx2 + 1] : ZERO + units;
 
     STRING_BUFFER[9] = ZERO + ((NUM_BUFFER[3] / 100) | 0);
     STRING_BUFFER[10] = ZERO + (((NUM_BUFFER[3] / 10) | 0) % 10);
