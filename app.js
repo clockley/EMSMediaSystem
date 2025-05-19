@@ -33,7 +33,6 @@ var audioOnlyFile = false;
 var opMode = -1;
 var localTimeStampUpdateIsRunning = false;
 var mediaFile;
-var currentMediaFile;
 var fileEnded = false;
 var mediaSessionPause = false;
 let isPlaying = false;
@@ -926,13 +925,11 @@ function playMedia(e) {
             if (document.getElementById("mdLpCtlr"))
                 video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
-            currentMediaFile = mdFile.files;
             video.play();
             updateTimestamp();
             return;
         }
 
-        currentMediaFile = mdFile.files;
         createMediaWindow();
     } else {
         startTime = 0;
@@ -1476,11 +1473,6 @@ function setSBFormMediaPlayer() {
         isPlaying = false;
     } else {
         isPlaying = true;
-        if (typeof currentMediaFile === 'undefined') {
-            currentMediaFile = mdFile.files;
-        } else {
-            mdFile.files = currentMediaFile;
-        }
     }
     updateDynUI();
     plyBtn.addEventListener("click", playMedia, { passive: true });
