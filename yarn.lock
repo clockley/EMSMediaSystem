@@ -1434,7 +1434,7 @@ __metadata:
     concurrently: "npm:^9.1.0"
     electron: "npm:^36.3.2"
     electron-builder: "npm:^25.0.0"
-    hls.js: "npm:^1.6.1"
+    hls.js: "npm:^1.6.3"
     write-file-atomic: "npm:^6.0.0"
   languageName: unknown
   linkType: soft
@@ -1902,10 +1902,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"hls.js@npm:^1.6.1":
-  version: 1.6.1
-  resolution: "hls.js@npm:1.6.1"
-  checksum: 10c0/6ee8b038d9cbd9cd61330f145adca0db06cfee76090cc76b4e0e0bf6e81e7d2eedb788f69e2e85a730534631a9b47e301bed3ddbc737ea0697d22ee0ae2037b0
+"hls.js@npm:^1.6.3":
+  version: 1.6.3
+  resolution: "hls.js@npm:1.6.3"
+  checksum: 10c0/865bdb06b2e915817df6fde818a7136307032e36c9020989f13be5fc4663f7c028329f145dcfd0acda03ae6c8162a72b98abd75c796377a07e5a7fb9cfbaf1ad
   languageName: node
   linkType: hard
 
