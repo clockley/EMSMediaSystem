@@ -497,8 +497,8 @@ function update(time) {
             const minutes = (rem / 60) | 0;
             const seconds = rem % 60;
 
-            const fractional = secondsFloat - totalSeconds;
-            const milliseconds = (fractional * 1000 + 0.5) | 0;
+            const fractional = Math.abs(secondsFloat - totalSeconds);
+            const milliseconds = Math.min(999, Math.max(0, (fractional * 1000 + 0.5) | 0));
 
             NUM_BUFFER[0] = hours;
             NUM_BUFFER[1] = minutes;
