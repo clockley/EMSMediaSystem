@@ -876,9 +876,6 @@ function playMedia(e) {
         }
     }
     const iM = isImg(mediaFile);
-    if (iM && mdFile.files.length === 0 && video.style.display === 'none') {
-        // No need to set files since we're using paths
-    }
 
     if (mdFile.value === "" && !playingMediaAudioOnly && mediaPlayerInputState.filePaths.length === 0) {
         if (isPlaying) {
