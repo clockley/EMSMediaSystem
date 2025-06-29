@@ -14,8 +14,8 @@ You should have received a copy of the GNU General Public License
 along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { enableCompileCache } from 'module';
-process.env.NODE_COMPILE_CACHE = enableCompileCache().directory;
+//import { enableCompileCache } from 'module';
+//process.env.NODE_COMPILE_CACHE = enableCompileCache().directory;
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session, shell } from 'electron/main';
 import { readdir, readFile } from 'fs/promises';
 import settings from './settings.mjs'
