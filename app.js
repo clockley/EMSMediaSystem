@@ -30,7 +30,7 @@ var startTime = 0;
 var prePathname = '';
 var playingMediaAudioOnly = false;
 var audioOnlyFile = false;
-var opMode = -1;
+var currentMode = -1;
 var localTimeStampUpdateIsRunning = false;
 var mediaFile;
 var fileEnded = false;
@@ -486,7 +486,7 @@ function removeFilenameFromTitlebar() {
 
 function update(time) {
     if (time - lastUpdateTimeLocalPlayer >= 33.33) {
-        if (opMode === MEDIAPLAYER) {
+        if (currentMode === MEDIAPLAYER) {
             const currentTime = video.currentTime;
             const duration = video.duration;
             const secondsFloat = duration - currentTime;
@@ -531,7 +531,7 @@ function updateTimestamp() {
         return;
     }
 
-    if (opMode !== MEDIAPLAYER) {
+    if (currentMode !== MEDIAPLAYER) {
         localTimeStampUpdateIsRunning = false;
         return;
     }
@@ -589,7 +589,7 @@ let now = 0;
 function handleTimeMessage(_, message) {
     now = Date.now();
 
-    if (opMode === MEDIAPLAYER) {
+    if (currentMode === MEDIAPLAYER) {
         SECONDSFLOAT[0] = message[0] - message[1];
         NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
         REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
@@ -698,7 +698,7 @@ async function handleMediaWindowClosed(event, id) {
 }
 
 function isAudioFile() {
-    return opMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
+    return currentMode === MEDIAPLAYER && video.videoTracks && video.videoTracks.length === 0;
 }
 
 function handleMediaPlayback(isImgFile) {
@@ -853,14 +853,14 @@ function playMedia(e) {
         startTime = video.currentTime;
     }
     targetTime = startTime;
-    if (e === undefined && audioOnlyFile && opMode === MEDIAPLAYER) {
+    if (e === undefined && audioOnlyFile && currentMode === MEDIAPLAYER) {
         e = {};
         e.target = document.getElementById("mediaWindowPlayButton");
     }
     fileEnded = false;
     let normalizedPathname = decodeURI(removeFileProtocol(video.src));
 
-    if (opMode === MEDIAPLAYER && mediaFile !== normalizedPathname) {
+    if (currentMode === MEDIAPLAYER && mediaFile !== normalizedPathname) {
         saveMediaFile();
     }
 
@@ -871,7 +871,7 @@ function playMedia(e) {
     const mdFile = document.getElementById("mdFile");
 
     if (video && (mediaFile !== normalizedPathname)) {
-        if (isPlaying === false && mdFile.value === "" && opMode !== MEDIAPLAYER) {
+        if (isPlaying === false && mdFile.value === "" && currentMode !== MEDIAPLAYER) {
             return;
         }
     }
@@ -888,7 +888,7 @@ function playMedia(e) {
             updateDynUI();
             localTimeStampUpdateIsRunning = false;
             return;
-        } else if (opMode === MEDIAPLAYER && !isPlaying && video.src !== null && video.src !== '' && mediaPlayerInputState.filePaths.length > 0) {
+        } else if (currentMode === MEDIAPLAYER && !isPlaying && video.src !== null && video.src !== '' && mediaPlayerInputState.filePaths.length > 0) {
             let t1 = getHostnameOrBasename(mediaPlayerInputState.filePaths[0]);
             let t2 = getHostnameOrBasename(normalizedPathname);
             if (t1 == null || t2 == null || t1 !== t2) {
@@ -902,7 +902,7 @@ function playMedia(e) {
     if (!isPlaying) {
         isPlaying = true;
         updateDynUI();
-        if (opMode === MEDIAPLAYER) {
+        if (currentMode === MEDIAPLAYER) {
             if (iM) {
                 createMediaWindow();
                 video.currentTime = 0;
@@ -910,7 +910,7 @@ function playMedia(e) {
                     video.src = '';
                 return;
             }
-        } else if (opMode === STREAMPLAYER) {
+        } else if (currentMode === STREAMPLAYER) {
             audioOnlyFile = false;
             createMediaWindow();
             return;
@@ -1007,11 +1007,11 @@ async function populateDisplaySelect() {
 }
 
 function setSBFormStreamPlayer() {
-    if (opMode === STREAMPLAYER) {
+    if (currentMode === STREAMPLAYER) {
         return;
     }
-    opMode = STREAMPLAYER;
-    send('set-mode', opMode);
+    currentMode = STREAMPLAYER;
+    send('set-mode', currentMode);
 
     document.getElementById("dyneForm").innerHTML = `
     <div class="media-container">
@@ -1084,11 +1084,11 @@ function setSBFormStreamPlayer() {
 
 
 async function setSBFormTextPlayer() {
-    if (opMode === TEXTPLAYER) {
+    if (currentMode === TEXTPLAYER) {
         return;
     }
-    opMode = TEXTPLAYER;
-    send('set-mode', opMode);
+    currentMode = TEXTPLAYER;
+    send('set-mode', currentMode);
 
     if (isActiveMediaWindow()) {
 
@@ -1424,11 +1424,11 @@ function loopCtlHandler(event) {
 }
 
 function setSBFormMediaPlayer() {
-    if (opMode === MEDIAPLAYER) {
+    if (currentMode === MEDIAPLAYER) {
         return;
     }
-    opMode = MEDIAPLAYER;
-    send('set-mode', opMode);
+    currentMode = MEDIAPLAYER;
+    send('set-mode', currentMode);
     document.getElementById("dyneForm").innerHTML = generateMediaFormHTML(video);
     mediaCntDn.appendChild(textNode);
     mediaCntDn.style.color = "#5c87b2";
@@ -1540,7 +1540,7 @@ function saveMediaFile() {
         }
     }
 
-    if (playingMediaAudioOnly && opMode === MEDIAPLAYER) {
+    if (playingMediaAudioOnly && currentMode === MEDIAPLAYER) {
         if (mdfileElement.files[0].length === 0) {
             return;
         }
@@ -1568,7 +1568,7 @@ function saveMediaFile() {
         return;
     }
 
-    mediaFile = opMode === STREAMPLAYER ?
+    mediaFile = currentMode === STREAMPLAYER ?
         document.getElementById("mdFile").value :
         mediaPlayerInputState.filePaths[0];
 
@@ -1641,9 +1641,9 @@ function restoreMediaFile() {
     // Don't attempt to set the file input value directly
     // Just ensure mediaFile is set if we have paths stored
     if (mediaPlayerInputState.filePaths.length > 0) {
-        if (opMode === STREAMPLAYER && document.getElementById("mdFile") && mediaPlayerInputState.urlInpt) {
+        if (currentMode === STREAMPLAYER && document.getElementById("mdFile") && mediaPlayerInputState.urlInpt) {
             document.getElementById("mdFile").value = mediaPlayerInputState.urlInpt;
-        } else if (opMode === MEDIAPLAYER) {
+        } else if (currentMode === MEDIAPLAYER) {
             mediaFile = mediaPlayerInputState.filePaths[0];
             // Update the UI label if it exists
             const fileNameSpan = document.querySelector('.file-input-label span');
@@ -1717,7 +1717,7 @@ function cleanRefs() {
 
 function installEvents() {
     document.getElementById("MdPlyrRBtnFrmID").addEventListener('click', () => {
-        if (opMode === MEDIAPLAYER) {
+        if (currentMode === MEDIAPLAYER) {
             return;
         }
         cleanRefs();
@@ -1725,7 +1725,7 @@ function installEvents() {
     }, { passive: true });
 
     document.getElementById("YtPlyrRBtnFrmID").addEventListener('click', () => {
-        if (opMode === STREAMPLAYER) {
+        if (currentMode === STREAMPLAYER) {
             return;
         }
         cleanRefs();
@@ -1733,7 +1733,7 @@ function installEvents() {
     }, { passive: true });
 
     document.getElementById("TxtPlyrRBtnFrmID")?.addEventListener('click', () => {
-        if (opMode === TEXTPLAYER) {
+        if (currentMode === TEXTPLAYER) {
             return;
         }
         cleanRefs();
@@ -1950,7 +1950,7 @@ function handleVolumeChange(event) {
     if (event.target.id === 'volume-slider' && !isLiveStream(mediaFile)) {
         return;
     }
-    if (opMode === STREAMPLAYER) {
+    if (currentMode === STREAMPLAYER) {
         streamVolume = event.target.value;
         vlCtl(streamVolume);
         return;
@@ -2096,7 +2096,7 @@ function isLiveStream(mediaFile) {
 async function createMediaWindow() {
     const ts = await invoke('get-system-time');
     let birth = ts.systemTime + ((Date.now() - ts.ipcTimestamp) * .001) + ((performance.now() * .001) - itc) + '';
-    mediaFile = opMode === STREAMPLAYER ? document.getElementById("mdFile").value : mediaPlayerInputState.filePaths[0];
+    mediaFile = currentMode === STREAMPLAYER ? document.getElementById("mdFile").value : mediaPlayerInputState.filePaths[0];
     var liveStreamMode = isLiveStream(mediaFile);
     var selectedIndex = document.getElementById("dspSelct").selectedIndex - 1;
     activeLiveStream = liveStreamMode;
@@ -2124,7 +2124,7 @@ async function createMediaWindow() {
         playingMediaAudioOnly = false;
     }
     let strtVl = 0;
-    if (opMode === MEDIAPLAYER) {
+    if (currentMode === MEDIAPLAYER) {
         strtVl = video.volume;
     } else {
         strtVl = streamVolume;
@@ -2182,7 +2182,7 @@ async function createMediaWindow() {
     if (document.getElementById("autoPlayCtl")?.checked !== undefined && document.getElementById("autoPlayCtl").checked) {
         pidSeeking = true;
         unPauseMedia();
-        if (opMode !== STREAMPLAYER) {
+        if (currentMode !== STREAMPLAYER) {
             if (video !== null && !isImgFile) {
                 pidSeeking = true;
                 await video.play();
