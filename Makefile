@@ -16,10 +16,6 @@ CSS_MIN_MAP = src/main.min.css.map
 HTML_SRC = src/index.html
 HTML_PROD = src/index.prod.html
 
-# Temporary files
-TEMP_CSS = /tmp/minified_$(shell date +%s).css
-TEMP_HTML = /tmp/html_with_css_$(shell date +%s).html
-
 # Colors for output
 COLOR_GREEN = \033[0;32m
 COLOR_BLUE = \033[0;34m
@@ -53,21 +49,26 @@ $(CSS_MIN_MAP): $(CSS_SRC)
 	@echo "$(COLOR_BLUE)Generating CSS source map...$(COLOR_RESET)"
 	@$(NODE) -e "const csso = require('csso'); const fs = require('fs'); const css = fs.readFileSync('$(CSS_SRC)', 'utf8'); const result = csso.minify(css, { sourceMap: true, filename: '$(CSS_SRC)' }); fs.writeFileSync('$(CSS_MIN_MAP)', result.map.toString());"
 
-# Rule: HTML build (with inlined minified CSS)
+# Rule: HTML build (with inlined minified CSS using awk and stdin)
 $(HTML_PROD): $(HTML_SRC) $(CSS_SRC) $(CSS_MIN_MAP)
 	@echo "$(COLOR_BLUE)Building production HTML with inlined CSS...$(COLOR_RESET)"
-	@# Generate minified CSS with source map reference
-	@$(NODE) -e "const csso = require('csso'); const fs = require('fs'); const css = fs.readFileSync('$(CSS_SRC)', 'utf8'); const result = csso.minify(css, { sourceMap: true, filename: '$(CSS_SRC)' }); const minifiedCSS = result.css + '\n/*# sourceMappingURL=$(CSS_MIN_MAP) */'; fs.writeFileSync('$(TEMP_CSS)', minifiedCSS);"
-	@# Inline minified CSS into HTML using awk
-	@awk '/<link.*$(notdir $(CSS_SRC)).*>/ { \
-		print "<style>"; \
-		while ((getline line < "$(TEMP_CSS)") > 0) print line; \
-		close("$(TEMP_CSS)"); \
-		print "</style>"; \
-		next; \
-	} { print }' $(HTML_SRC) | \
+	@$(NODE) -e "\
+		const csso = require('csso'); \
+		const fs = require('fs'); \
+		const css = fs.readFileSync('$(CSS_SRC)', 'utf8'); \
+		const result = csso.minify(css, { sourceMap: true, filename: '$(CSS_SRC)' }); \
+		console.log(result.css + '\n/*# sourceMappingURL=$(CSS_MIN_MAP) */');" | \
+	awk -v pat="$(notdir $(CSS_SRC))" ' \
+		BEGIN { css_line_count = 0; while ((getline line < "-") > 0) css[css_line_count++] = line } \
+		FNR==1 { close("-") } \
+		{ \
+			if ($$0 ~ "<link" && $$0 ~ pat) { \
+				print "<style>"; \
+				for (i = 0; i < css_line_count; ++i) print css[i]; \
+				print "</style>"; \
+			} else print $$0; \
+		}' $(HTML_SRC) | \
 	$(HTML_MINIFIER) --collapse-whitespace --remove-comments --minify-css false --minify-js true > $(HTML_PROD)
-	@rm -f $(TEMP_CSS)
 	@echo "$(COLOR_GREEN)✓ Created $(HTML_PROD)$(COLOR_RESET)"
 
 # Rule: Minify all JS/MJS files (parallelized by make with -j)
@@ -78,7 +79,7 @@ js-minify: $(MINIFIED_JS_FILES)
 # Pattern rule to minify .js files
 %.min.js: %.js
 	@echo "$(COLOR_YELLOW)Minifying $< → $@$(COLOR_RESET)"
-	@npx terser "$<" \
+	@$(TERSER) "$<" \
 		--source-map "filename=$(notdir $<),url=$(notdir $@).map" \
 		--compress \
 		--mangle \
@@ -87,7 +88,7 @@ js-minify: $(MINIFIED_JS_FILES)
 # Pattern rule to minify .mjs files
 %.min.mjs: %.mjs
 	@echo "$(COLOR_YELLOW)Minifying $< → $@$(COLOR_RESET)"
-	@npx terser "$<" \
+	@$(TERSER) "$<" \
 		--source-map "filename=$(notdir $<),url=$(notdir $@).map" \
 		--compress \
 		--mangle \
@@ -97,7 +98,7 @@ js-minify: $(MINIFIED_JS_FILES)
 .PHONY: clean
 clean:
 	@echo "$(COLOR_BLUE)Cleaning build artifacts...$(COLOR_RESET)"
-	@rm -f $(HTML_PROD) $(CSS_MIN_MAP) $(TEMP_CSS) $(TEMP_HTML)
+	@rm -f $(HTML_PROD) $(CSS_MIN_MAP)
 	@find . \( $(EXCLUDES) \) -prune -o -type f \( -name "*.min.js" -o -name "*.min.mjs" -o -name "*.min.js.map" -o -name "*.min.mjs.map" \) -print0 | xargs -0 rm -f
 	@echo "$(COLOR_GREEN)✓ Clean complete$(COLOR_RESET)"
 
