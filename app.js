@@ -2151,7 +2151,7 @@ async function createMediaWindow() {
                 `__autoplay=${document.getElementById("autoPlayCtl")?.checked !== undefined && document.getElementById("autoPlayCtl").checked}`,
                 birth
             ],
-            preload: `${__dirname}/media_preload.js`,
+            preload: `${__dirname}/media_preload.min.js`,
             devTools: false
         }
     };
