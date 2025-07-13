@@ -11,10 +11,10 @@ NODE = node
 EXCLUDES = -path "./node_modules/*" -o -path "./fonts/*" -o -path "./dist/*"
 
 # Source and target files
-CSS_SRC = main.css
-CSS_MIN_MAP = main.min.css.map
-HTML_SRC = index.html
-HTML_PROD = index.prod.html
+CSS_SRC = src/main.css
+CSS_MIN_MAP = src/main.min.css.map
+HTML_SRC = src/index.html
+HTML_PROD = src/index.prod.html
 
 # Temporary files
 TEMP_CSS = /tmp/minified_$(shell date +%s).css
@@ -28,7 +28,7 @@ COLOR_RED = \033[0;31m
 COLOR_RESET = \033[0m
 
 # Find all JS/MJS source files excluding minified and excluded directories
-JS_FILES := $(shell find . \( $(EXCLUDES) \) -prune -o -type f \( -name "*.js" -o -name "*.mjs" \) ! -name "*.min.*" -print)
+JS_FILES := $(shell find ./src \( $(EXCLUDES) \) -prune -o -type f \( -name "*.js" -o -name "*.mjs" \) ! -name "*.min.*" -print)
 
 # Corresponding minified files
 MINIFIED_JS_FILES := $(patsubst %.js,%.min.js,$(patsubst %.mjs,%.min.mjs,$(JS_FILES)))
@@ -59,7 +59,7 @@ $(HTML_PROD): $(HTML_SRC) $(CSS_SRC) $(CSS_MIN_MAP)
 	@# Generate minified CSS with source map reference
 	@$(NODE) -e "const csso = require('csso'); const fs = require('fs'); const css = fs.readFileSync('$(CSS_SRC)', 'utf8'); const result = csso.minify(css, { sourceMap: true, filename: '$(CSS_SRC)' }); const minifiedCSS = result.css + '\n/*# sourceMappingURL=$(CSS_MIN_MAP) */'; fs.writeFileSync('$(TEMP_CSS)', minifiedCSS);"
 	@# Inline minified CSS into HTML using awk
-	@awk '/<link.*$(CSS_SRC).*>/ { \
+	@awk '/<link.*$(notdir $(CSS_SRC)).*>/ { \
 		print "<style>"; \
 		while ((getline line < "$(TEMP_CSS)") > 0) print line; \
 		close("$(TEMP_CSS)"); \
