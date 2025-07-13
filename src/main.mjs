@@ -173,7 +173,7 @@ function createWindow() {
     await settings.flush();
   });
 
-  measurePerformanceAsync('Loading index.html', win.loadFile.bind(win, 'index.prod.html'));
+  measurePerformanceAsync('Loading index.prod.html', win.loadFile.bind(win, 'src/index.prod.html'));
 }
 
 function startMediaPlaybackPowerHint() {
@@ -249,7 +249,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
 
     mediaWindow = new BrowserWindow(finalWindowOptions);
     //mediaWindow.openDevTools()
-    await mediaWindow.loadFile("media.html");
+    await mediaWindow.loadFile("src/media.prod.html");
     mediaWindow.on('closed', () => {
       if (win) win.webContents.send('media-window-closed', mediaWindow.id);
       stopMediaPlaybackPowerHint();
@@ -747,7 +747,7 @@ function createHelpWindow() {
     }
   });
 
-  helpWindow.loadFile('help.html');
+  helpWindow.loadFile('src/help.prod.html');
 
   helpWindow.on('move', checkHelpWindowState);
   helpWindow.on('resize', checkHelpWindowState);
@@ -787,7 +787,7 @@ function createAboutWindow(parentWindow) {
     }
   });
 
-  aboutWindow.loadFile('about.html');
+  aboutWindow.loadFile('src/about.prod.html');
 
   // Position it centered relative to parent
   aboutWindow.once('ready-to-show', () => {

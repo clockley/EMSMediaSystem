@@ -2,7 +2,7 @@
   "name": "emsmediasystem",
   "version": "6.1.5",
   "description": "A simple media player",
-  "main": "main.mjs",
+  "main": "src/main.mjs",
   "scripts": {
     "start": "make -j && electron .",
     "dist": "make -j && electron-builder",
@@ -32,12 +32,11 @@
     "appId": "com.ejaxmediasystem.app",
     "productName": "EMS Media System",
     "files": [
-      "**/*",
-      "fonts/*",
+      "src/**/*",
+      "fonts/**/*",
       "node_modules/**/*",
       "index.prod.html",
       "!index.html",
-      "!main.css",
       "!**/*.map",
       "!build-artifacts",
       "!dist"
@@ -63,7 +62,7 @@
     },
     "extraResources": [
       {
-        "from": "main.css",
+        "from": "src/main.css",
         "to": ""
       }
     ]
