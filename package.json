@@ -8,7 +8,7 @@
     "dist": "make -j && electron-builder",
     "dist-win": "make -j && electron-builder --win",
     "dist-linux": "make -j && electron-builder --linux",
-    "dist-all": "concurrently \"yarn dist-win\" \"yarn dist-linux\"",
+    "dist-all": "make -j && concurrently \"electron-builder --win\" \"electron-builder --linux\"",
     "build-code": "make -j",
     "clean": "make clean"
   },
