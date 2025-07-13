@@ -173,7 +173,7 @@ function createWindow() {
     await settings.flush();
   });
 
-  measurePerformanceAsync('Loading index.html', win.loadFile.bind(win, 'index.html'));
+  measurePerformanceAsync('Loading index.html', win.loadFile.bind(win, 'index.prod.html'));
 }
 
 function startMediaPlaybackPowerHint() {
@@ -742,7 +742,7 @@ function createHelpWindow() {
       sandbox: false,
       navigateOnDragDrop: false,
       spellcheck: false,
-      preload: `${import.meta.dirname}/help_preload.mjs`,
+      preload: `${import.meta.dirname}/help_preload.min.mjs`,
       devTools: false
     }
   });
@@ -944,7 +944,7 @@ const mainWindowOptions = {
     backgroundThrottling: false,
     experimentalFeatures: true,
     autoplayPolicy: 'no-user-gesture-required',
-    preload: `${import.meta.dirname}/app_preload.mjs`,
+    preload: `${import.meta.dirname}/app_preload.min.mjs`,
     devTools: isDevMode
   }
 };

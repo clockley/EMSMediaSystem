@@ -1,21 +1,26 @@
 {
   "name": "emsmediasystem",
-  "version": "6.1.4",
+  "version": "6.1.5",
   "description": "A simple media player",
   "main": "main.mjs",
   "scripts": {
-    "start": "electron .",
-    "dist": "electron-builder",
-    "dist-win": "electron-builder --win",
-    "dist-linux": "electron-builder --linux",
-    "dist-all": "concurrently \"yarn dist-win\" \"yarn dist-linux\""
+    "start": "make -j && electron .",
+    "dist": "make -j && electron-builder",
+    "dist-win": "make -j && electron-builder --win",
+    "dist-linux": "make -j && electron-builder --linux",
+    "dist-all": "concurrently \"yarn dist-win\" \"yarn dist-linux\"",
+    "build-code": "make -j",
+    "clean": "make clean"
   },
   "author": "Christian Lockley",
   "license": "GPL-3.0-or-later",
   "devDependencies": {
     "concurrently": "^9.1.0",
+    "csso": "^5.0.5",
     "electron": "^34.0.0",
-    "electron-builder": "^25.0.0"
+    "electron-builder": "^25.0.0",
+    "html-minifier-terser": "^6.0.0",
+    "terser": "^5.43.1"
   },
   "dependencies": {
     "atem-connection": "^3.5.0",
@@ -29,7 +34,13 @@
     "files": [
       "**/*",
       "fonts/*",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "index.prod.html",
+      "!index.html",
+      "!main.css",
+      "!**/*.map",
+      "!build-artifacts",
+      "!dist"
     ],
     "win": {
       "target": [
@@ -49,7 +60,13 @@
       "perMachine": false,
       "allowElevation": true,
       "allowToChangeInstallationDirectory": false
-    }
+    },
+    "extraResources": [
+      {
+        "from": "main.css",
+        "to": ""
+      }
+    ]
   },
   "packageManager": "yarn@4.7.0"
 }
