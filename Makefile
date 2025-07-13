@@ -13,8 +13,16 @@ EXCLUDES = -path "./node_modules/*" -o -path "./fonts/*" -o -path "./dist/*"
 # Source and target files
 CSS_SRC = src/main.css
 CSS_MIN_MAP = src/main.min.css.map
-HTML_SRC = src/index.html
-HTML_PROD = src/index.prod.html
+
+# Find all HTML source files (except .prod.html)
+HTML_FILES := $(shell find ./src -type f -name "*.html" ! -name "*.prod.html")
+# Corresponding prod HTML files
+HTML_PROD_FILES := $(HTML_FILES:.html=.prod.html)
+
+# Find all JS/MJS source files excluding minified and excluded directories
+JS_FILES := $(shell find ./src \( $(EXCLUDES) \) -prune -o -type f \( -name "*.js" -o -name "*.mjs" \) ! -name "*.min.*" -print)
+# Corresponding minified files
+MINIFIED_JS_FILES := $(patsubst %.js,%.min.js,$(patsubst %.mjs,%.min.mjs,$(JS_FILES)))
 
 # Colors for output
 COLOR_GREEN = \033[0;32m
@@ -23,15 +31,9 @@ COLOR_YELLOW = \033[1;33m
 COLOR_RED = \033[0;31m
 COLOR_RESET = \033[0m
 
-# Find all JS/MJS source files excluding minified and excluded directories
-JS_FILES := $(shell find ./src \( $(EXCLUDES) \) -prune -o -type f \( -name "*.js" -o -name "*.mjs" \) ! -name "*.min.*" -print)
-
-# Corresponding minified files
-MINIFIED_JS_FILES := $(patsubst %.js,%.min.js,$(patsubst %.mjs,%.min.mjs,$(JS_FILES)))
-
 # Default target: generate CSS map first, then run js-minify and HTML build in parallel
 .PHONY: all
-all: check-deps $(CSS_MIN_MAP) js-minify $(HTML_PROD)
+all: check-deps $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES)
 	@echo "$(COLOR_GREEN)✓ Build complete!$(COLOR_RESET)"
 
 # Rule: Check dependencies
@@ -49,9 +51,9 @@ $(CSS_MIN_MAP): $(CSS_SRC)
 	@echo "$(COLOR_BLUE)Generating CSS source map...$(COLOR_RESET)"
 	@$(NODE) -e "const csso = require('csso'); const fs = require('fs'); const css = fs.readFileSync('$(CSS_SRC)', 'utf8'); const result = csso.minify(css, { sourceMap: true, filename: '$(CSS_SRC)' }); fs.writeFileSync('$(CSS_MIN_MAP)', result.map.toString());"
 
-# Rule: HTML build (with inlined minified CSS using awk and stdin)
-$(HTML_PROD): $(HTML_SRC) $(CSS_SRC) $(CSS_MIN_MAP)
-	@echo "$(COLOR_BLUE)Building production HTML with inlined CSS...$(COLOR_RESET)"
+# Pattern rule: build any .prod.html from corresponding .html with inlined CSS
+%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP)
+	@echo "$(COLOR_BLUE)Building production HTML for $< with inlined CSS...$(COLOR_RESET)"
 	@$(NODE) -e "\
 		const csso = require('csso'); \
 		const fs = require('fs'); \
@@ -67,9 +69,9 @@ $(HTML_PROD): $(HTML_SRC) $(CSS_SRC) $(CSS_MIN_MAP)
 				for (i = 0; i < css_line_count; ++i) print css[i]; \
 				print "</style>"; \
 			} else print $$0; \
-		}' $(HTML_SRC) | \
-	$(HTML_MINIFIER) --collapse-whitespace --remove-comments --minify-css false --minify-js true > $(HTML_PROD)
-	@echo "$(COLOR_GREEN)✓ Created $(HTML_PROD)$(COLOR_RESET)"
+		}' $< | \
+	$(HTML_MINIFIER) --collapse-whitespace --remove-comments --minify-css false --minify-js true > $@
+	@echo "$(COLOR_GREEN)✓ Created $@$(COLOR_RESET)"
 
 # Rule: Minify all JS/MJS files (parallelized by make with -j)
 .PHONY: js-minify
@@ -98,7 +100,8 @@ js-minify: $(MINIFIED_JS_FILES)
 .PHONY: clean
 clean:
 	@echo "$(COLOR_BLUE)Cleaning build artifacts...$(COLOR_RESET)"
-	@rm -f $(HTML_PROD) $(CSS_MIN_MAP)
+	@rm -f $(CSS_MIN_MAP)
+	@rm -f $(HTML_PROD_FILES)
 	@find . \( $(EXCLUDES) \) -prune -o -type f \( -name "*.min.js" -o -name "*.min.mjs" -o -name "*.min.js.map" -o -name "*.min.mjs.map" \) -print0 | xargs -0 rm -f
 	@echo "$(COLOR_GREEN)✓ Clean complete$(COLOR_RESET)"
 
@@ -112,9 +115,9 @@ status:
 	@echo "$(COLOR_BLUE)Build Status:$(COLOR_RESET)"
 	@echo "Source files:"
 	@echo "  CSS: $(CSS_SRC) $(if $(wildcard $(CSS_SRC)),$(COLOR_GREEN)[exists]$(COLOR_RESET),$(COLOR_RED)[missing]$(COLOR_RESET))"
-	@echo "  HTML: $(HTML_SRC) $(if $(wildcard $(HTML_SRC)),$(COLOR_GREEN)[exists]$(COLOR_RESET),$(COLOR_RED)[missing]$(COLOR_RESET))"
+	@echo "  HTML files: $(HTML_FILES)"
 	@echo "Build artifacts:"
-	@echo "  Production HTML: $(HTML_PROD) $(if $(wildcard $(HTML_PROD)),$(COLOR_GREEN)[exists]$(COLOR_RESET),$(COLOR_YELLOW)[not built]$(COLOR_RESET))"
+	@echo "  Production HTML files: $(HTML_PROD_FILES) $(if $(wildcard $(HTML_PROD_FILES)),$(COLOR_GREEN)[exists]$(COLOR_RESET),$(COLOR_YELLOW)[not built]$(COLOR_RESET))"
 	@echo "  CSS Map: $(CSS_MIN_MAP) $(if $(wildcard $(CSS_MIN_MAP)),$(COLOR_GREEN)[exists]$(COLOR_RESET),$(COLOR_YELLOW)[not built]$(COLOR_RESET))"
 
 # Rule: Show help
