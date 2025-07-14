@@ -2191,6 +2191,7 @@ async function createMediaWindow() {
     }
     if (document.getElementById("autoPlayCtl")?.checked !== undefined && !document.getElementById("autoPlayCtl").checked) {
         pauseMedia();
+        video.pause();
     }
 }
 
