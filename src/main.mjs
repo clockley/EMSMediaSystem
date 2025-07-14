@@ -723,6 +723,7 @@ function createHelpWindow() {
     helpWindowX = ovrdHWindBnd.x;
     helpWindowY = ovrdHWindBnd.y;
   }
+
   helpWindow = new BrowserWindow({
     width: ovrdHWindBnd.width,
     height: ovrdHWindBnd.height,
@@ -748,7 +749,7 @@ function createHelpWindow() {
     }
   });
 
-  helpWindow.loadFile('src/help.prod.html');
+  helpWindow.loadFile('derived/src/help.prod.html');
 
   helpWindow.on('move', checkHelpWindowState);
   helpWindow.on('resize', checkHelpWindowState);
