@@ -949,5 +949,3 @@ const mainWindowOptions = {
     devTools: isDevMode
   }
 };
-
-console.log(`${path.dirname(import.meta.dirname)}/derived/src/app_preload.min.mjs`)
