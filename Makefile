@@ -10,6 +10,9 @@ NODE = node
 # Output directory for derived files
 DERIVED_DIR = derived
 
+# Output directory for dist files
+DIST_DIR = dist
+
 # Directories to exclude from JS/MJS search
 EXCLUDES = -path "./node_modules/*" -o -path "./fonts/*" -o -path "./dist/*"
 
@@ -100,6 +103,7 @@ $(DERIVED_DIR)/%.min.mjs: %.mjs | $(DERIVED_DIR)
 clean:
 	@echo "$(COLOR_BLUE)Cleaning build artifacts...$(COLOR_RESET)"
 	@rm -rf $(DERIVED_DIR)
+	@rm -rf $(DIST_DIR)
 	@echo "$(COLOR_GREEN)✓ Clean complete$(COLOR_RESET)"
 
 # Rule: Force rebuild
