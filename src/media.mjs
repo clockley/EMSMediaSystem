@@ -193,7 +193,7 @@ async function loadMedia() {
         }
 
         mediaFile = video.src;
-        const { default: hls } = await import('../node_modules/hls.js/dist/hls.mjs');
+        const { default: hls } = await import('../../node_modules/hls.js/dist/hls.mjs');
         h = new hls();
         h.loadSource(mediaFile);
     } else {
