@@ -16,7 +16,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron/renderer';
 import { readFile } from 'fs/promises';
-import { Bible } from './Bible.mjs';
+import { Bible } from './Bible.min.mjs';
 import { Script } from 'vm';
 
 let isInitialized = false;
@@ -28,7 +28,7 @@ async function initialize() {
   if (!initPromise) {
     initPromise = (async () => {
       // Load WASM script
-      const wasmExecScript = await readFile(`${import.meta.dirname}/wasm_exec.js`, 'utf8');
+      const wasmExecScript = await readFile(`${import.meta.dirname}/wasm_exec.min.js`, 'utf8');
       new Script(wasmExecScript).runInThisContext();
       
       // Initialize Bible

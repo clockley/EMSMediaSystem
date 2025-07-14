@@ -2152,7 +2152,7 @@ async function createMediaWindow() {
                 birth
             ],
             preload: `${__dirname}/media_preload.min.js`,
-            devTools: !false
+            devTools: false
         }
     };
 

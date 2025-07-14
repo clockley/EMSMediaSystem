@@ -36,6 +36,7 @@
       "fonts/**/*",
       "node_modules/**/*",
       "index.prod.html",
+      "derived/**/*",
       "!index.html",
       "!**/*.map",
       "!build-artifacts",

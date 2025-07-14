@@ -24,7 +24,7 @@ export class Bible {
 
     async init() {
         const go = new Go();
-        const result = await WebAssembly.instantiate(await fs.readFile(path.join(__dirname, 'main.wasm')), go.importObject);
+        const result = await WebAssembly.instantiate(await fs.readFile(path.join(path.dirname(path.dirname(__dirname)), 'src/main.wasm')), go.importObject);
         go.run(result.instance);
         this.initialized = true;
         await this.ensureInitialized();
