@@ -1,5 +1,6 @@
 # Copyright (C) 2025 Christian Lockley
 # Licensed under GNU General Public License v3
+#TODO: Add derived file path fixups for css, html, js and mjs files. This is needed to prevent refrencing the derived files in the source code.
 
 # Tools
 TERSER = npx terser
