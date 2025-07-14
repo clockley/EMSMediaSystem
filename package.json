@@ -9,7 +9,6 @@
     "dist-win": "make -j && electron-builder --win",
     "dist-linux": "make -j && electron-builder --linux",
     "dist-all": "make -j && concurrently \"electron-builder --win\" \"electron-builder --linux\"",
-    "build-code": "make -j",
     "clean": "make clean"
   },
   "author": "Christian Lockley",
