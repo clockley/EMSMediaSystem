@@ -788,7 +788,7 @@ function createAboutWindow(parentWindow) {
     }
   });
 
-  aboutWindow.loadFile('src/about.prod.html');
+  aboutWindow.loadFile('derived/src/about.prod.html');
 
   // Position it centered relative to parent
   aboutWindow.once('ready-to-show', () => {
