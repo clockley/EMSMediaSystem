@@ -5,6 +5,7 @@
   "main": "src/main.mjs",
   "scripts": {
     "start": "make -j && electron .",
+    "build": "make -j",
     "dist": "make -j && electron-builder",
     "dist-win": "make -j && electron-builder --win",
     "dist-linux": "make -j && electron-builder --linux",
