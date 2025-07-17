@@ -24,8 +24,12 @@ CSS_MIN_MAP = $(DERIVED_DIR)/main.min.css.map
 ifeq ($(OS),Windows_NT)
    WINDOWS = 1
    NO_COLOR = 1
+   MKDIR = powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path"
+   RMDIR = powershell -NoProfile -c "Remove-Item -Recurse -Force -Path"
 else
    WINDOWS = 0
+   MKDIR = mkdir -p
+   RMDIR = rm -rf
 endif
 
 ifeq ($(WINDOWS), 1)
@@ -81,7 +85,7 @@ all: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES)
 
 # Ensure derived directory exists
 $(DERIVED_DIR):
-	@mkdir -p $(DERIVED_DIR)
+	@$(MKDIR) $(DERIVED_DIR)
 
 # Rule: Check dependencies
 .PHONY: check-deps
@@ -99,6 +103,13 @@ $(CSS_MIN_MAP): $(CSS_SRC)
 	@$(NODE) -e "const csso = require('csso'); const fs = require('fs'); const css = fs.readFileSync('$(CSS_SRC)', 'utf8'); const result = csso.minify(css, { sourceMap: true, filename: '$(CSS_SRC)' }); fs.writeFileSync('$(CSS_MIN_MAP)', result.map.toString());"
 
 # Pattern rule: build .prod.html
+ifeq ($(WINDOWS), 1)
+$(DERIVED_DIR)/%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+	@echo "$(COLOR_BLUE)Building production HTML for $< with inlined CSS...$(COLOR_RESET)"
+	powershell -NoProfile -ExecutionPolicy Bypass -File build-scripts/embed-css.ps1 -HtmlFile "$<" -CssFile "$(CSS_SRC)" -OutputFile "$@" -CssMapFile "$(CSS_MIN_MAP)"
+	@echo "$(COLOR_GREEN)$(TICK) Created $@$(COLOR_RESET)"
+else
 $(DERIVED_DIR)/%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP)
 	@mkdir -p $(dir $@)
 	@echo "$(COLOR_BLUE)Building production HTML for $< with inlined CSS...$(COLOR_RESET)"
@@ -109,6 +120,7 @@ $(DERIVED_DIR)/%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP)
 		{ if ($$0 ~ "<link" && $$0 ~ pat) { print "<style>"; for (i = 0; i < css_line_count; ++i) print css[i]; print "</style>"; } else print $$0; }' $< | \
 	$(HTML_MINIFIER) --collapse-whitespace --remove-comments --minify-css false --minify-js true > $@
 	@echo "$(COLOR_GREEN)$(TICK) Created $@$(COLOR_RESET)"
+endif
 
 # Rule: Minify all JS/MJS files
 .PHONY: js-minify
@@ -117,7 +129,11 @@ js-minify: $(MINIFIED_JS_FILES)
 
 # Pattern rule to minify .js files
 $(DERIVED_DIR)/%.min.js: %.js | $(DERIVED_DIR)
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+else
 	@mkdir -p $(dir $@)
+endif
 	@echo "$(COLOR_YELLOW)Minifying $< → $@$(COLOR_RESET)"
 	@$(TERSER) "$<" \
 		--source-map "filename=$(notdir $<),url=$(notdir $@).map" \
@@ -127,7 +143,11 @@ $(DERIVED_DIR)/%.min.js: %.js | $(DERIVED_DIR)
 
 # Pattern rule to minify .mjs files
 $(DERIVED_DIR)/%.min.mjs: %.mjs | $(DERIVED_DIR)
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+else
 	@mkdir -p $(dir $@)
+endif
 	@echo "$(COLOR_YELLOW)Minifying $< → $@$(COLOR_RESET)"
 	@$(TERSER) "$<" \
 		--source-map "filename=$(notdir $<),url=$(notdir $@).map" \
@@ -139,8 +159,13 @@ $(DERIVED_DIR)/%.min.mjs: %.mjs | $(DERIVED_DIR)
 .PHONY: clean
 clean:
 	@echo "$(COLOR_BLUE)Cleaning build artifacts...$(COLOR_RESET)"
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "if (Test-Path '$(DERIVED_DIR)') { Remove-Item -Recurse -Force -Path '$(DERIVED_DIR)' }" 2>nul || true
+	@powershell -NoProfile -c "if (Test-Path '$(DIST_DIR)') { Remove-Item -Recurse -Force -Path '$(DIST_DIR)' }" 2>nul || true
+else
 	@rm -rf $(DERIVED_DIR)
 	@rm -rf $(DIST_DIR)
+endif
 	@echo "$(COLOR_GREEN)$(TICK) Clean complete$(COLOR_RESET)"
 
 # Rule: Force rebuild
