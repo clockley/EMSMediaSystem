@@ -21,27 +21,63 @@ EXCLUDES = -path "./node_modules/*" -o -path "./fonts/*" -o -path "./dist/*"
 CSS_SRC = src/main.css
 CSS_MIN_MAP = $(DERIVED_DIR)/main.min.css.map
 
-# Find all HTML source files (except .prod.html)
-HTML_FILES := $(shell find ./src -type f -name "*.html" ! -name "*.prod.html")
+ifeq ($(OS),Windows_NT)
+   WINDOWS = 1
+   NO_COLOR = 1
+else
+   WINDOWS = 0
+endif
+
+ifeq ($(WINDOWS), 1)
+    HTML_FILES := $(shell powershell -NoProfile -c '\
+    $$files = Get-ChildItem -Recurse -File -Filter "*.html" src; \
+    $$files = $$files | Where-Object { $$_.Name -notlike "*.prod.html" }; \
+    foreach ($$f in $$files) { "./" + $$f.FullName.Substring((Get-Location).Path.Length + 1).Replace("\\","/") }')
+else
+    HTML_FILES := $(shell find ./src -type f -name "*.html" ! -name "*.prod.html")
+endif
+
+ifeq ($(NO_COLOR), 1)
+    COLOR_GREEN =
+    COLOR_BLUE =
+    COLOR_YELLOW =
+    COLOR_RED =
+    COLOR_RESET =
+    TICK = [OK]
+else
+    COLOR_GREEN = \033[0;32m
+    COLOR_BLUE = \033[0;34m
+    COLOR_YELLOW = \033[1;33m
+    COLOR_RED = \033[0;31m
+    COLOR_RESET = \033[0m
+    TICK = ✓
+endif
+
 # Corresponding prod HTML files in derived directory
 HTML_PROD_FILES := $(patsubst %.html,$(DERIVED_DIR)/%.prod.html,$(HTML_FILES))
 
-# Find all JS/MJS source files excluding minified and excluded directories
-JS_FILES := $(shell find ./src \( $(EXCLUDES) \) -prune -o -type f \( -name "*.js" -o -name "*.mjs" \) ! -name "*.min.*" -print)
+ifeq ($(WINDOWS), 1)
+    JS_FILES := $(shell powershell -NoProfile -c '\
+    $$files = Get-ChildItem -Recurse -File src | Where-Object { \
+        ($$_.Extension -eq ".js" -or $$_.Extension -eq ".mjs") -and \
+        $$_.Name -notlike "*.min.*" -and \
+        $$_.FullName -notlike "*node_modules*" -and \
+        $$_.FullName -notlike "*\.git*" -and \
+        $$_.FullName -notlike "*build*" -and \
+        $$_.FullName -notlike "*dist*" \
+    }; \
+    foreach ($$f in $$files) { "./" + $$f.FullName.Substring((Get-Location).Path.Length + 1).Replace("\\","/") }')
+else
+    JS_FILES := $(shell find ./src \( $(EXCLUDES) \) -prune -o -type f \( -name "*.js" -o -name "*.mjs" \) ! -name "*.min.*" -print)
+endif
+
 # Corresponding minified files in derived directory
 MINIFIED_JS_FILES := $(patsubst %.js,$(DERIVED_DIR)/%.min.js,$(patsubst %.mjs,$(DERIVED_DIR)/%.min.mjs,$(JS_FILES)))
-
-# Colors for output
-COLOR_GREEN = \033[0;32m
-COLOR_BLUE = \033[0;34m
-COLOR_YELLOW = \033[1;33m
-COLOR_RED = \033[0;31m
-COLOR_RESET = \033[0m
 
 # Default target
 .PHONY: all
 all: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES)
-	@echo "$(COLOR_GREEN)✓ Build complete!$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)$($(TICK)) Build complete!$(COLOR_RESET)"
 
 # Ensure derived directory exists
 $(DERIVED_DIR):
@@ -72,12 +108,12 @@ $(DERIVED_DIR)/%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP)
 		FNR==1 { close("-") } \
 		{ if ($$0 ~ "<link" && $$0 ~ pat) { print "<style>"; for (i = 0; i < css_line_count; ++i) print css[i]; print "</style>"; } else print $$0; }' $< | \
 	$(HTML_MINIFIER) --collapse-whitespace --remove-comments --minify-css false --minify-js true > $@
-	@echo "$(COLOR_GREEN)✓ Created $@$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)$(TICK) Created $@$(COLOR_RESET)"
 
 # Rule: Minify all JS/MJS files
 .PHONY: js-minify
 js-minify: $(MINIFIED_JS_FILES)
-	@echo "$(COLOR_GREEN)✓ Minified all JS/MJS files$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)$(TICK) Minified all JS/MJS files$(COLOR_RESET)"
 
 # Pattern rule to minify .js files
 $(DERIVED_DIR)/%.min.js: %.js | $(DERIVED_DIR)
@@ -105,7 +141,7 @@ clean:
 	@echo "$(COLOR_BLUE)Cleaning build artifacts...$(COLOR_RESET)"
 	@rm -rf $(DERIVED_DIR)
 	@rm -rf $(DIST_DIR)
-	@echo "$(COLOR_GREEN)✓ Clean complete$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)$(TICK) Clean complete$(COLOR_RESET)"
 
 # Rule: Force rebuild
 .PHONY: rebuild
