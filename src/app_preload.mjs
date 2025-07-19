@@ -63,9 +63,6 @@ const bibleAPI = {
   }
 };
 
-// Initialize immediately but don't block preload
-initialize().catch(console.error);
-
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
     send: ipcRenderer.send.bind(ipcRenderer),
