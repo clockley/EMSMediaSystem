@@ -19,7 +19,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session, shell } from 'electron/main';
 import { readdir, readFile } from 'fs/promises';
 import path from 'path';
-import settings from './settings.mjs'
+import settings from './settings.min.mjs'
 let sessionID = 0;
 const isDevMode = process.env.ems_dev === 'true';
 const openDevConsole = process.env.ems_dev_console === 'true';
@@ -174,7 +174,7 @@ function createWindow() {
     await settings.flush();
   });
 
-  measurePerformanceAsync('Loading index.prod.html', win.loadFile.bind(win, `${path.dirname(import.meta.dirname)}/derived/src/index.prod.html`));
+  measurePerformanceAsync('Loading index.prod.html', win.loadFile.bind(win, `${path.dirname(import.meta.dirname)}/src/index.prod.html`));
 }
 
 function startMediaPlaybackPowerHint() {
@@ -744,7 +744,7 @@ function createHelpWindow() {
       sandbox: false,
       navigateOnDragDrop: false,
       spellcheck: false,
-      preload: `${path.dirname(import.meta.dirname)}/derived/src/help_preload.min.mjs`,
+      preload: `${path.dirname(import.meta.dirname)}/src/help_preload.min.mjs`,
       devTools: false
     }
   });
@@ -946,7 +946,7 @@ const mainWindowOptions = {
     backgroundThrottling: false,
     experimentalFeatures: true,
     autoplayPolicy: 'no-user-gesture-required',
-    preload: `${path.dirname(import.meta.dirname)}/derived/src/app_preload.min.mjs`,
+    preload: `${path.dirname(import.meta.dirname)}/src/app_preload.min.mjs`,
     devTools: isDevMode
   }
 };

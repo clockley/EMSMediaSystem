@@ -2,7 +2,7 @@
   "name": "emsmediasystem",
   "version": "6.1.6",
   "description": "A simple media player",
-  "main": "src/main.mjs",
+  "main": "derived/src/main.min.mjs",
   "scripts": {
     "start": "make -j && electron .",
     "build": "make -j",
