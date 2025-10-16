@@ -708,58 +708,66 @@ async function getSystemTIme() {
 
 function createHelpWindow() {
   if (helpWindow != null && !helpWindow?.isDestroyed()) {
-    if (helpWindow.isMinimized()) {
-      helpWindow.restore();
-    }
-    helpWindow.focus();
-    return;
-  }
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { x, y, width } = primaryDisplay.workArea;
-  let helpWindowX = x + 50;
-  let helpWindowY = y + 50;
-  let ovrdHWindBnd = getHelpWindowBounds();
-  if (ovrdHWindBnd != undefined) {
-    helpWindowX = ovrdHWindBnd.x;
-    helpWindowY = ovrdHWindBnd.y;
+      if (helpWindow.isMinimized()) {
+          helpWindow.restore();
+      }
+      helpWindow.focus();
+      return;
   }
 
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { x, y, width } = primaryDisplay.workArea;
+  
+  let helpWindowX = x + 50;
+  let helpWindowY = y + 50;
+  let helpWindowWidth = 800;  // Default width
+  let helpWindowHeight = 600; // Default height
+  
+  let ovrdHWindBnd = getHelpWindowBounds();
+  if (ovrdHWindBnd != undefined) {
+      helpWindowX = ovrdHWindBnd.x;
+      helpWindowY = ovrdHWindBnd.y;
+      helpWindowWidth = ovrdHWindBnd.width;
+      helpWindowHeight = ovrdHWindBnd.height;
+  }
+  
   helpWindow = new BrowserWindow({
-    width: ovrdHWindBnd.width,
-    height: ovrdHWindBnd.height,
-    minWidth: 700,
-    minHeight: 600,
-    resizable: true,
-    minimizable: false,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    x: helpWindowX,
-    y: helpWindowY,
-    title: "Help",
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      webviewTag: false,
-      sandbox: false,
-      navigateOnDragDrop: false,
-      spellcheck: false,
-      preload: `${path.dirname(import.meta.dirname)}/src/help_preload.min.mjs`,
-      devTools: false
-    }
+      width: helpWindowWidth,
+      height: helpWindowHeight,
+      minWidth: 700,
+      minHeight: 600,
+      resizable: true,
+      minimizable: false,
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      x: helpWindowX,
+      y: helpWindowY,
+      title: "Help",
+      webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          webviewTag: false,
+          sandbox: false,
+          navigateOnDragDrop: false,
+          spellcheck: false,
+          preload: `${path.dirname(import.meta.dirname)}/src/help_preload.min.mjs`,
+          devTools: false
+      }
   });
 
   helpWindow.loadFile('derived/src/help.prod.html');
-
+  
   helpWindow.on('move', checkHelpWindowState);
   helpWindow.on('resize', checkHelpWindowState);
   helpWindow.on('maximize', handleMaximizeChangeHelpWindow.bind(null, true));
   helpWindow.on('unmaximize', handleMaximizeChangeHelpWindow.bind(null, false));
+  
   helpWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: 'deny' };
+      shell.openExternal(url);
+      return { action: 'deny' };
   });
-
+  
   return helpWindow;
 }
 
