@@ -18,12 +18,12 @@
     "concurrently": "^9.1.0",
     "csso": "^5.0.5",
     "electron": "^34.0.0",
-    "electron-builder": "^25.0.0",
+    "electron-builder": "^26.1.0",
     "html-minifier-terser": "^6.0.0",
     "terser": "^5.43.1"
   },
   "dependencies": {
-    "atem-connection": "^3.5.0",
+    "atem-connection": "^3.6.0",
     "bonjour": "^3.5.0",
     "hls.js": "^1.6.3",
     "write-file-atomic": "^6.0.0"
