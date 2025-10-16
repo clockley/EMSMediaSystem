@@ -485,45 +485,32 @@ function removeFilenameFromTitlebar() {
 }
 
 function update(time) {
-    if (time - lastUpdateTimeLocalPlayer >= 33.33) {
-        if (currentMode === MEDIAPLAYER) {
-            const currentTime = video.currentTime;
-            const duration = video.duration;
-            const secondsFloat = duration - currentTime;
-            const totalSeconds = secondsFloat | 0;
+    if (video.paused | (currentMode !== MEDIAPLAYER)) {
+        localTimeStampUpdateIsRunning = 0;
+        return;
+    }
 
-            const hours = (totalSeconds / 3600) | 0;
-            const rem = totalSeconds % 3600;
-            const minutes = (rem / 60) | 0;
-            const seconds = rem % 60;
+    if (time - lastUpdateTimeLocalPlayer > 33) {
+        NUM_BUFFER[3] = video.duration - video.currentTime;
 
-            const fractional = Math.abs(secondsFloat - totalSeconds);
-            const milliseconds = Math.min(999, Math.max(0, (fractional * 1000 + 0.5) | 0));
+        NUM_BUFFER[0] = (NUM_BUFFER[3] * 0.000277777777778) | 0;
+        NUM_BUFFER[1] = ((NUM_BUFFER[3] - NUM_BUFFER[0] * 3600) * 0.0166666666667) | 0;
+        NUM_BUFFER[2] = (NUM_BUFFER[3] | 0) - NUM_BUFFER[0] * 3600 - NUM_BUFFER[1] * 60;
+        NUM_BUFFER[3] = ((NUM_BUFFER[3] - (NUM_BUFFER[3] | 0)) * 1000) | 0;
 
-            NUM_BUFFER[0] = hours;
-            NUM_BUFFER[1] = minutes;
-            NUM_BUFFER[2] = seconds;
-            NUM_BUFFER[3] = milliseconds;
+        idx0 = NUM_BUFFER[0] << 1;
+        mask0 = NUM_BUFFER[0] < 10;
+        idx1 = NUM_BUFFER[1] << 1;
+        mask1 = NUM_BUFFER[1] < 10;
+        idx2 = NUM_BUFFER[2] << 1;
+        mask2 = NUM_BUFFER[2] < 10;
 
-            mask0 = hours < 10;
-            idx0 = hours * 2;
-            mask1 = minutes < 10;
-            idx1 = minutes * 2;
-            mask2 = seconds < 10;
-            idx2 = seconds * 2;
-
-            if (!updatePending[0]) {
-                updatePending[0] = 1;
-                requestAnimationFrame(updateCountdownNode);
-            }
-        } else {
-            localTimeStampUpdateIsRunning = false;
-            return;
-        }
+        updatePending[0] = 1;
+        requestAnimationFrame(updateCountdownNode);
         lastUpdateTimeLocalPlayer = time;
     }
 
-    video.paused ? (localTimeStampUpdateIsRunning = false) : requestAnimationFrame(update);
+    requestAnimationFrame(update);
 }
 
 function updateTimestamp() {
@@ -1979,9 +1966,17 @@ function filesArrayToFileList(filesArray) {
     return dataTransfer.files; // Returns a FileList
 }
 
-function loadOpMode(mode) {
-    const execute = () => {
-        //hamburger
+async function loadOpMode(mode) {
+    const execute = async () => {
+        // Wait for preload context to be ready
+        while (!window.electron || !window.electron.ipcRenderer || !windowControls) {
+            await new Promise(r => setTimeout(r, 10));
+        }
+
+        // Wait a microtask so DOM is stable
+        await new Promise(r => setTimeout(r, 0));
+
+        // Hamburger menu setup
         const hamburgerButton = document.getElementById('hamburgerMenuButton');
         const dropdownMenu = document.getElementById('gtkDropdownMenu');
 
@@ -1995,6 +1990,7 @@ function loadOpMode(mode) {
                 dropdownMenu.classList.add('hidden');
             }
         });
+
         const menuItems = dropdownMenu.querySelectorAll('.menu-item');
         menuItems.forEach(item => {
             item.addEventListener('click', () => {
@@ -2014,6 +2010,8 @@ function loadOpMode(mode) {
         windowControls.onMaximizeChange((event, isMaximized) => {
             maximizeButton.setAttribute('data-maximized', isMaximized);
         });
+
+        // Mode setup
         if (mode === STREAMPLAYER) {
             document.getElementById("YtPlyrRBtnFrmID").checked = true;
             setSBFormStreamPlayer();
@@ -2026,32 +2024,21 @@ function loadOpMode(mode) {
             installPreviewEventHandlers();
         }
 
-
-        document.addEventListener("dragover", (event) => {
-            event.preventDefault(); // Allow drop
-        });
-
+        // Drag and drop behavior
+        document.addEventListener("dragover", (event) => event.preventDefault());
         document.addEventListener("dragstart", (event) => {
             if (event.target.tagName === "IMG" || event.target.tagName === "A") {
                 event.preventDefault();
             }
         });
-
         document.addEventListener("drop", (event) => {
             event.preventDefault();
 
             const allowedTypes = [
-                "video/mp4",
-                "video/x-m4v",
-                "audio/x-m4a",
-                "image/jpeg",
-                "image/png",
-                "image/gif",
-                "image/webp",
-                "image/bmp",
-                "image/svg+xml"
+                "video/mp4", "video/x-m4v", "audio/x-m4a",
+                "image/jpeg", "image/png", "image/gif",
+                "image/webp", "image/bmp", "image/svg+xml"
             ];
-
             const allowedExtensions = [
                 ".mp4", ".m4v", ".mp3", ".wav", ".flac", ".m4a",
                 ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"
@@ -2060,7 +2047,6 @@ function loadOpMode(mode) {
             const files = Array.from(event.dataTransfer.files).filter((file) => {
                 const mimeType = file.type;
                 const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
-
                 return (
                     allowedTypes.includes(mimeType) ||
                     mimeType.startsWith('video/') ||
@@ -2079,6 +2065,7 @@ function loadOpMode(mode) {
         });
     };
 
+    // Wait until DOM is ready, then execute
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
         execute();
     } else {
