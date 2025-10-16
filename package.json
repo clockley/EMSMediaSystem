@@ -7,9 +7,9 @@
     "start": "make -j && electron .",
     "build": "make -j",
     "dist": "make -j && electron-builder",
-    "dist-win": "make -j && electron-builder --win",
-    "dist-linux": "make -j && electron-builder --linux",
-    "dist-all": "make -j && concurrently \"electron-builder --win\" \"electron-builder --linux\"",
+    "dist-win": "make -j && electron-builder --win --publish=never",
+    "dist-linux": "make -j && electron-builder --linux --publish=never",
+    "dist-all": "make -j && concurrently \"electron-builder --win --publish=never\" \"electron-builder --linux --publish=never\"",
     "clean": "make clean"
   },
   "author": "Christian Lockley",
