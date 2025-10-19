@@ -14,7 +14,6 @@ You should have received a copy of the GNU General Public License
 along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
-
 const { contextBridge, ipcRenderer } = require('electron/renderer');
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -25,12 +24,25 @@ window.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-contextBridge.exposeInMainWorld('electron', {
-    ipcRenderer: {
-        send: ipcRenderer.send.bind(ipcRenderer),
-        on: ipcRenderer.on.bind(ipcRenderer),
-        invoke: ipcRenderer.invoke.bind(ipcRenderer)
-    },
-    argv: process.argv,
-    birth: process.argv[process.argv.length-1]
-});
+(async () => {
+    const { AudioLimiter } = await import(`./audioLimiter.min.mjs`);
+
+    contextBridge.exposeInMainWorld('electron', {
+        ipcRenderer: {
+            send: ipcRenderer.send.bind(ipcRenderer),
+            on: ipcRenderer.on.bind(ipcRenderer),
+            invoke: ipcRenderer.invoke.bind(ipcRenderer)
+        },
+        argv: process.argv,
+        birth: process.argv[process.argv.length - 1],
+
+        createAudioLimiter: (thresholdDb) => {
+            const limiter = new AudioLimiter(thresholdDb);
+            return {
+                attach: (mediaEl) => limiter.attach(mediaEl),
+                dispose: () => limiter.dispose()
+            };
+        }
+    });
+})();
+

@@ -18,6 +18,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron/renderer';
 import { readFile } from 'fs/promises';
 import { Bible } from './Bible.min.mjs';
 import { Script } from 'vm';
+import { AudioLimiter } from './audioLimiter.min.mjs';
 
 let isInitialized = false;
 let initPromise = null;
@@ -72,7 +73,14 @@ contextBridge.exposeInMainWorld('electron', {
   },
   __dirname: import.meta.dirname,
   bibleAPI,
-  webUtils
+  webUtils,
+  createAudioLimiter: (thresholdDb) => {
+    const limiter = new AudioLimiter(thresholdDb);
+    return {
+      attach: (mediaEl) => limiter.attach(mediaEl),
+      dispose: () => limiter.dispose()
+    };
+  }
 });
 
 contextBridge.exposeInMainWorld('windowControls', {

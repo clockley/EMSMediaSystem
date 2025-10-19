@@ -18,7 +18,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 
-const { ipcRenderer, __dirname, bibleAPI, webUtils } = window.electron;
+const { ipcRenderer, __dirname, bibleAPI, webUtils, createAudioLimiter } = window.electron;
 
 var pidSeeking = false;
 var streamVolume = 1;
@@ -44,7 +44,7 @@ let isActiveMediaWindowCache = false;
 const SECONDS = new Int32Array(1);
 const SECONDSFLOAT = new Float64Array(1);
 const textNode = document.createTextNode('');
-
+const limiter = createAudioLimiter(-3, 0.95, 6);
 const updatePending = new Int32Array(1);
 
 const send = ipcRenderer.send;
@@ -1442,6 +1442,8 @@ function setSBFormMediaPlayer() {
         restoreMediaFile();
         updateTimestamp();
     }
+
+    limiter.attach(video);
 
     const loopctl = document.getElementById("mdLpCtlr");
     if (video.loop === true) {
