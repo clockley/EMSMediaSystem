@@ -172,7 +172,7 @@ async function loadMedia() {
     } else {
         installICPHandlers();
     }
-    createAudioLimiter(-6, 0.95, 6).attach(video);
+    createAudioLimiter(-3, 0.95, 6).attach(video);
     video.volume = strtvl;
     video.setAttribute("loop", loopFile);
     video.src = mediaFile;
