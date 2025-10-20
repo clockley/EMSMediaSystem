@@ -19,17 +19,11 @@ export class AudioLimiter {
     #compressor;
     #gain;
     #ceilingGain;
-    #attachedElements = new WeakSet();
+    #sources = new WeakMap();
 
-    /**
-     * @param {number} thresholdDb - Compressor threshold in dB (default -6)
-     * @param {number} outputGain - Master output gain (default 0.95)
-     * @param {number} knee - Soft knee width in dB (default 6)
-     */
     constructor(thresholdDb = -3, outputGain = 0.95, knee = 6) {
         this.#ctx = new (window.AudioContext || window.webkitAudioContext)();
 
-        // Compressor / Limiter with soft knee
         this.#compressor = this.#ctx.createDynamicsCompressor();
         this.#compressor.threshold.setValueAtTime(thresholdDb, this.#ctx.currentTime);
         this.#compressor.knee.setValueAtTime(knee, this.#ctx.currentTime);
@@ -37,11 +31,9 @@ export class AudioLimiter {
         this.#compressor.attack.setValueAtTime(0.003, this.#ctx.currentTime);
         this.#compressor.release.setValueAtTime(0.25, this.#ctx.currentTime);
 
-        // Ceiling gain node to prevent 0 dBFS clipping
         this.#ceilingGain = this.#ctx.createGain();
         this.#ceilingGain.gain.setValueAtTime(outputGain, this.#ctx.currentTime);
 
-        // Connect: Compressor → Ceiling Gain → Destination
         this.#compressor.connect(this.#ceilingGain);
         this.#ceilingGain.connect(this.#ctx.destination);
     }
@@ -55,32 +47,46 @@ export class AudioLimiter {
             throw new TypeError('Expected an HTMLMediaElement');
         }
 
-        if (this.#attachedElements.has(mediaEl)) return;
+        let record = this.#sources.get(mediaEl);
 
-        const source = this.#ctx.createMediaElementSource(mediaEl);
-        source.connect(this.#compressor);
-        this.#attachedElements.add(mediaEl);
+        // If the source is missing or disconnected, recreate it
+        if (!record || record.disconnected) {
+            const source = this.#ctx.createMediaElementSource(mediaEl);
+            source.connect(this.#compressor);
+
+            // Setup mutation observer
+            const observer = new MutationObserver(() => {
+                if (!document.contains(mediaEl)) {
+                    try { source.disconnect(); } catch { }
+                    record.disconnected = true;
+                } else if (record.disconnected) {
+                    // If element was reattached, reconnect it
+                    try { source.connect(this.#compressor); } catch { }
+                    record.disconnected = false;
+                }
+            });
+
+            observer.observe(document, { childList: true, subtree: true });
+            record = { source, observer, disconnected: false };
+            this.#sources.set(mediaEl, record);
+        }
 
         if (this.#ctx.state === 'suspended') {
             this.#ctx.resume().catch(err =>
                 console.warn('AudioContext resume failed:', err)
             );
         }
-
-        // Cleanup when element is removed from DOM
-        const observer = new MutationObserver(() => {
-            if (!document.contains(mediaEl)) {
-                try { source.disconnect(); } catch { }
-                observer.disconnect();
-            }
-        });
-        observer.observe(document, { childList: true, subtree: true });
     }
 
     /**
      * Dispose the limiter and close AudioContext
      */
     async dispose() {
+        for (const [el, { source, observer }] of this.#sources.entries()) {
+            try { source.disconnect(); } catch { }
+            observer?.disconnect?.();
+        }
+        this.#sources = new WeakMap();
         try { await this.#ctx.close(); } catch (e) {
             console.warn('Error closing AudioContext:', e);
         }
