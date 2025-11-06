@@ -18,7 +18,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 
-const { ipcRenderer, __dirname, bibleAPI, webUtils, createAudioLimiter } = window.electron;
+const { ipcRenderer, __dirname, bibleAPI, webUtils} = window.electron;
 
 var pidSeeking = false;
 var streamVolume = 1;
@@ -44,7 +44,6 @@ let isActiveMediaWindowCache = false;
 const SECONDS = new Int32Array(1);
 const SECONDSFLOAT = new Float64Array(1);
 const textNode = document.createTextNode('');
-const limiter = createAudioLimiter(-3, 0.95, 6);
 const updatePending = new Int32Array(1);
 
 const send = ipcRenderer.send;
@@ -1321,77 +1320,82 @@ async function setSBFormTextPlayer() {
 
 function generateMediaFormHTML(video = null) {
     return `
-<div class="media-container">
-  <form onsubmit="return false;" class="control-panel">
-    <div class="control-group">
-      <span class="control-label">Media</span>
-      <label class="file-input-label">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
-        <path 
-            fill="none"
-            stroke="currentColor" 
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M2.5 2.5h11a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"
-        />
-        <circle 
-            cx="5.5" 
-            cy="5.5" 
-            r="1" 
-            fill="currentColor"
-        />
-        <path 
-            fill="none"
-            stroke="currentColor" 
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            d="M3.5 11.5l2.5-2.5c.4-.4 1-.4 1.4 0l2.1 2.1m-1-1l1-1c.4-.4 1-.4 1.4 0l2.1 2.1"
-        />
-        </svg>
-        <span>Open</span>
-        <input type="file" class="file-input" name="mdFile" id="mdFile"
-               accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
-      </label>
-    </div>
-    
-    <div class="control-group">
-      <span class="control-label">Display</span>
-      <div class="display-select-group">
-        <select name="dspSelct" id="dspSelct" class="display-select">
-          <option value="" disabled>--Select Display Device--</option>
-        </select>
+  <div class="media-container">
+    <form onsubmit="return false;" class="control-panel">
+      <div class="control-group">
+        <span class="control-label">Media</span>
+        <label class="file-input-label">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+            <path 
+              fill="none"
+              stroke="currentColor" 
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M2.5 2.5h11a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"
+            />
+            <circle cx="5.5" cy="5.5" r="1" fill="currentColor"/>
+            <path 
+              fill="none"
+              stroke="currentColor" 
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M3.5 11.5l2.5-2.5c.4-.4 1-.4 1.4 0l2.1 2.1m-1-1l1-1c.4-.4 1-.4 1.4 0l2.1 2.1"
+            />
+          </svg>
+          <span>Open</span>
+          <input type="file" class="file-input" name="mdFile" id="mdFile"
+                 accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
+        </label>
       </div>
+      
+      <div class="control-group">
+        <span class="control-label">Display</span>
+        <div class="display-select-group">
+          <select name="dspSelct" id="dspSelct" class="display-select">
+            <option value="" disabled>--Select Display Device--</option>
+          </select>
+        </div>
+      </div>
+  
+      <div class="control-group">
+        <div class="loop-control">
+          <span class="control-label">Autoplay</span>
+          <label class="switch">
+            <input type="checkbox" checked name="autoPlayCtl" id="autoPlayCtl">
+            <span class="switch-track"></span>
+            <span class="switch-thumb"></span>
+          </label>
+        </div>
+        <div class="loop-control">
+          <span class="control-label">Repeat</span>
+          <label class="switch">
+            <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr" ${video?.loop ? 'checked' : ''}>
+            <span class="switch-track"></span>
+            <span class="switch-thumb"></span>
+          </label>
+        </div>
+        <!-- Fadeout control -->
+        <div class="loop-control fadeout-control">
+          <span class="control-label">Fadeout</span>
+          <div class="fadeout-ui">
+            <input type="number" id="fadeoutTime" min="0" max="10" step="0.5" value="3"
+              class="fadeout-input" title="Fadeout duration (seconds)">
+            <button id="fadeoutBtn" type="button" class="fadeout-button">Start</button>
+          </div>
+        </div>
+      </div>
+  
+      <div id="mediaCntDn"></div>
+    </form>
+  
+    <div class="video-wrapper">
+      <video id="preview" disablePictureInPicture controls></video>
     </div>
-    <div class="control-group">
-        <div class="control-group">
-            <div class="loop-control">
-                <span class="control-label">Autoplay</span>
-                <label class="switch">
-                <input type="checkbox" checked name="autoPlayCtl" id="autoPlayCtl"'}>
-                <span class="switch-track"></span>
-                <span class="switch-thumb"></span>
-                </label>
-            </div>
-            <div class="loop-control">
-                <span class="control-label">Repeat</span>
-                <label class="switch">
-                <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr" ${video?.loop ? 'checked' : ''}>
-                <span class="switch-track"></span>
-                <span class="switch-thumb"></span>
-                </label>
-            </div>
-    </div>
-    </div>
-    <div id="mediaCntDn"></div>
-  </form>
-
-  <div class="video-wrapper">
-    <video id="preview" disablePictureInPicture controls></video>
-  </div>
-</div>`;
-}
+  </div>`;
+  }
+  
 
 function installDisplayChangeHandler() {
     if (installDisplayChangeHandler.initialized) return;
@@ -1442,8 +1446,6 @@ function setSBFormMediaPlayer() {
         restoreMediaFile();
         updateTimestamp();
     }
-
-    limiter.attach(video);
 
     const loopctl = document.getElementById("mdLpCtlr");
     if (video.loop === true) {
@@ -2141,7 +2143,7 @@ async function createMediaWindow() {
                 birth
             ],
             preload: `${__dirname}/media_preload.min.js`,
-            devTools: false
+            devTools: true
         }
     };
 

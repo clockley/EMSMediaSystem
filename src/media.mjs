@@ -14,7 +14,7 @@ You should have received a copy of the GNU General Public License
 along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
-const { ipcRenderer, argv, birth, createAudioLimiter } = window.electron;
+const { ipcRenderer, argv, birth, FadeOut } = window.electron;
 const { video } = window.api;
 var img = null;
 var mediaFile;
@@ -172,7 +172,6 @@ async function loadMedia() {
     } else {
         installICPHandlers();
     }
-    createAudioLimiter(-3, 0.95, 6).attach(video);
     video.volume = strtvl;
     video.setAttribute("loop", loopFile);
     video.src = mediaFile;

@@ -18,7 +18,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron/renderer';
 import { readFile } from 'fs/promises';
 import { Bible } from './Bible.min.mjs';
 import { Script } from 'vm';
-import { AudioLimiter } from './audioLimiter.min.mjs';
+import { FadeOut } from './audioFx.min.mjs';
 
 let isInitialized = false;
 let initPromise = null;
@@ -74,11 +74,15 @@ contextBridge.exposeInMainWorld('electron', {
   __dirname: import.meta.dirname,
   bibleAPI,
   webUtils,
-  createAudioLimiter: (thresholdDb) => {
-    const limiter = new AudioLimiter(thresholdDb);
+
+  createFadeOut: (duration = 3, debug = false) => {
+    const fade = new FadeOut(duration, debug);
     return {
-      attach: (mediaEl) => limiter.attach(mediaEl),
-      dispose: () => limiter.dispose()
+      attach: (mediaEl, limiter = null) => fade.attach(mediaEl, limiter),
+      fade: (mediaEl, onComplete) => fade.fade(mediaEl, onComplete),
+      cancel: (mediaEl) => fade.cancel(mediaEl),
+      detach: (mediaEl) => fade.detach(mediaEl),
+      detachAll: () => fade.detachAll()
     };
   }
 });
