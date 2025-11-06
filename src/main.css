@@ -1033,3 +1033,49 @@ ul {
         border-bottom: 1px solid var(--xp-border);
     }
 }
+
+
+.fadeout-control {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  
+  .fadeout-ui {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  
+  .fadeout-input {
+    width: 60px;
+    padding: 4px 8px;
+    border: 1px solid var(--adw-border);
+    border-radius: var(--adw-radius-sm);
+    background-color: var(--adw-card-bg);
+    color: var(--adw-text);
+    font-size: 13px;
+    text-align: center;
+  }
+  
+  .fadeout-input:focus {
+    outline: 2px solid var(--adw-accent);
+    outline-offset: 1px;
+  }
+  
+  .fadeout-button {
+    background: var(--adw-accent);
+    color: white;
+    border: none;
+    border-radius: var(--adw-radius-sm);
+    padding: 4px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background-color 120ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  
+  .fadeout-button:hover {
+    background: var(--adw-accent-hover);
+  }
+  

@@ -25,7 +25,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 (async () => {
-    const { AudioLimiter } = await import(`./audioLimiter.min.mjs`);
+    const { AudioLimiter } = await import(`./audioFx.min.mjs`);
 
     contextBridge.exposeInMainWorld('electron', {
         ipcRenderer: {
@@ -36,11 +36,14 @@ window.addEventListener('DOMContentLoaded', () => {
         argv: process.argv,
         birth: process.argv[process.argv.length - 1],
 
-        createAudioLimiter: (thresholdDb) => {
-            const limiter = new AudioLimiter(thresholdDb);
+        createFadeOut: (duration = 3, debug = false) => {
+            const fade = new FadeOut(duration, debug);
             return {
-                attach: (mediaEl) => limiter.attach(mediaEl),
-                dispose: () => limiter.dispose()
+                attach: (mediaEl, limiter = null) => fade.attach(mediaEl, limiter),
+                fade: (mediaEl, onComplete) => fade.fade(mediaEl, onComplete),
+                cancel: (mediaEl) => fade.cancel(mediaEl),
+                detach: (mediaEl) => fade.detach(mediaEl),
+                detachAll: () => fade.detachAll()
             };
         }
     });
