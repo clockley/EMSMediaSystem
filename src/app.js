@@ -1459,6 +1459,9 @@ function setSBFormMediaPlayer() {
         isPlaying = true;
     }
     updateDynUI();
+    if (video != null) {
+        video.volume = .7;
+    }
     plyBtn.addEventListener("click", playMedia, { passive: true });
     let isImgFile;
     if (mdFile !== null) {
