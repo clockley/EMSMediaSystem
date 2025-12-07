@@ -1,60 +1,90 @@
+// audioFx.js - Combined Audio FX utilities
 /**
- * FadeOut class - Smoothly fades out media elements
- * Handles both volume and opacity transitions
+ * Attach a cubic soft-clip WaveShaper to a video element.
+ * Fails gracefully if already attached.
+ * @param {HTMLMediaElement} videoElement
+ * @param {number} [gain=1.0] Optional pre-gain multiplier before wave shaping
+ * @param {number} [curveLength=16384] Resolution of the WaveShaper curve
+ * @returns {{ audioCtx: AudioContext, gainNode: GainNode, waveshaper: WaveShaperNode }}
  */
+
+// WeakMap to track attached elements
+const _attachedCubicElements = new WeakMap();
+
+export function attachCubicWaveShaper(videoElement, gain = 1.0, curveLength = 16384) {
+  if (!videoElement) throw new Error("Video element is required.");
+
+  // Check if already attached
+  if (_attachedCubicElements.has(videoElement)) {
+    console.warn('Cubic waveshaper is already attached to this element.');
+    return _attachedCubicElements.get(videoElement);
+  }
+
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  // Create source from video element
+  const source = audioCtx.createMediaElementSource(videoElement);
+
+  // Optional gain node before shaping
+  const gainNode = audioCtx.createGain();
+  gainNode.gain.value = gain;
+
+  // Create WaveShaperNode
+  const waveshaper = audioCtx.createWaveShaper();
+  waveshaper.curve = makeCubicCurve(curveLength);
+  waveshaper.oversample = '4x';
+
+  // Connect nodes: Video -> Gain -> WaveShaper -> Destination
+  source.connect(gainNode).connect(waveshaper).connect(audioCtx.destination);
+
+  // Track this attachment
+  _attachedCubicElements.set(videoElement, { audioCtx, gainNode, waveshaper });
+
+  return { audioCtx, gainNode, waveshaper };
+}
+
+/**
+* Generate a cubic soft-clipping curve: y = x - x^3/3
+* @param {number} length Length of the curve array
+* @returns {Float32Array}
+*/
+function makeCubicCurve(length = 16384) {
+  const curve = new Float32Array(length);
+  for (let i = 0; i < length; i++) {
+    const x = (i * 2) / length - 1;
+    curve[i] = x - (x * x * x) / 3;
+  }
+  return curve;
+}
+
+/**
+* FadeOut class - Smoothly fades out media elements
+*/
 export class FadeOut {
-  /** @type {WeakMap<HTMLMediaElement, {intervalId: number|null}>} */
   #mediaElements = new WeakMap();
-  
-  /** @type {number} */
   #duration;
-  
-  /** @type {number} */
   #interval = 50;
-  
-  /** @type {boolean} */
   #debug = false;
 
-  /**
-   * Creates a new FadeOut instance
-   * @param {number} [duration=3] - Duration of the fade in seconds
-   * @param {boolean} [debug=false] - Enable debug logging
-   */
   constructor(duration = 3, debug = false) {
     this.#duration = duration;
     this.#debug = debug;
   }
 
-  /**
-   * Attach a media element to enable fade-out functionality
-   * @param {HTMLMediaElement} mediaEl - The audio or video element to attach
-   * @throws {TypeError} If mediaEl is not an HTMLMediaElement
-   */
   attach(mediaEl) {
     if (!(mediaEl instanceof HTMLMediaElement)) {
       throw new TypeError('Expected an HTMLMediaElement');
     }
-
     if (!this.#mediaElements.has(mediaEl)) {
-      this.#mediaElements.set(mediaEl, { 
-        intervalId: null
-      });
+      this.#mediaElements.set(mediaEl, { intervalId: null });
     }
   }
 
-  /**
-   * Start fading out the media element
-   * @param {HTMLMediaElement} mediaEl - The media element to fade out
-   * @param {Function} [onComplete=null] - Callback function to execute when fade completes
-   * @returns {void}
-   */
   fade(mediaEl, onComplete = null) {
     const record = this.#mediaElements.get(mediaEl);
     if (!record) return;
 
-    if (record.intervalId !== null) {
-      clearInterval(record.intervalId);
-    }
+    if (record.intervalId !== null) clearInterval(record.intervalId);
 
     const initialVolume = mediaEl.volume;
     if (initialVolume <= 0) return;
@@ -88,44 +118,25 @@ export class FadeOut {
         mediaEl.dispatchEvent(new Event('ended'));
         mediaEl.style.opacity = 1;
 
-        if (this.#debug) {
-          console.log('[FadeOut] Fade complete, media paused');
-        }
-
+        if (this.#debug) console.log('[FadeOut] Fade complete, media paused');
         if (typeof onComplete === 'function') onComplete();
       }
     }, this.#interval);
   }
 
-  /**
-   * Cancel an in-progress fade
-   * @param {HTMLMediaElement} mediaEl - The media element to cancel fade for
-   * @returns {void}
-   */
   cancel(mediaEl) {
     const record = this.#mediaElements.get(mediaEl);
-    if (!record) return;
-
-    if (record.intervalId !== null) {
+    if (record && record.intervalId !== null) {
       clearInterval(record.intervalId);
       record.intervalId = null;
     }
   }
 
-  /**
-   * Detach a media element and cancel any in-progress fade
-   * @param {HTMLMediaElement} mediaEl - The media element to detach
-   * @returns {void}
-   */
   detach(mediaEl) {
     this.cancel(mediaEl);
     this.#mediaElements.delete(mediaEl);
   }
 
-  /**
-   * Detach all media elements
-   * @returns {void}
-   */
   detachAll() {
     for (const mediaEl of this.#mediaElements.keys()) {
       this.detach(mediaEl);
