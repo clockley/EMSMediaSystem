@@ -18,7 +18,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 
-const { ipcRenderer, __dirname, bibleAPI, webUtils} = window.electron;
+const { ipcRenderer, __dirname, bibleAPI, webUtils, attachCubicWaveShaper} = window.electron;
 
 var pidSeeking = false;
 var streamVolume = 1;
@@ -1447,6 +1447,8 @@ function setSBFormMediaPlayer() {
         updateTimestamp();
     }
 
+    attachCubicWaveShaper(video);
+
     const loopctl = document.getElementById("mdLpCtlr");
     if (video.loop === true) {
         document.getElementById("mdLpCtlr").checked = true;
@@ -2143,7 +2145,7 @@ async function createMediaWindow() {
                 birth
             ],
             preload: `${__dirname}/media_preload.min.js`,
-            devTools: true
+            devTools: false
         }
     };
 

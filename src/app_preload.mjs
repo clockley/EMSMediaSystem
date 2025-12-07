@@ -18,7 +18,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron/renderer';
 import { readFile } from 'fs/promises';
 import { Bible } from './Bible.min.mjs';
 import { Script } from 'vm';
-import { FadeOut } from './audioFx.min.mjs';
+import { FadeOut, attachCubicWaveShaper } from './audioFx.min.mjs';
 
 let isInitialized = false;
 let initPromise = null;
@@ -74,6 +74,7 @@ contextBridge.exposeInMainWorld('electron', {
   __dirname: import.meta.dirname,
   bibleAPI,
   webUtils,
+  attachCubicWaveShaper,
 
   createFadeOut: (duration = 3, debug = false) => {
     const fade = new FadeOut(duration, debug);

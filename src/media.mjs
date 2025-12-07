@@ -14,7 +14,7 @@ You should have received a copy of the GNU General Public License
 along with this library. If not, see <https://www.gnu.org/licenses/>.
 */
 
-const { ipcRenderer, argv, birth, FadeOut } = window.electron;
+const { ipcRenderer, argv, birth, FadeOut, attachCubicWaveShaper } = window.electron;
 const { video } = window.api;
 var img = null;
 var mediaFile;
@@ -175,6 +175,7 @@ async function loadMedia() {
     video.volume = strtvl;
     video.setAttribute("loop", loopFile);
     video.src = mediaFile;
+    attachCubicWaveShaper(video);
     if (autoPlay) {
         video.play();
     }

@@ -25,7 +25,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 (async () => {
-    const { AudioLimiter } = await import(`./audioFx.min.mjs`);
+    const { attachCubicWaveShaper } = await import(`./audioFx.min.mjs`);
 
     contextBridge.exposeInMainWorld('electron', {
         ipcRenderer: {
@@ -33,6 +33,7 @@ window.addEventListener('DOMContentLoaded', () => {
             on: ipcRenderer.on.bind(ipcRenderer),
             invoke: ipcRenderer.invoke.bind(ipcRenderer)
         },
+        attachCubicWaveShaper,
         argv: process.argv,
         birth: process.argv[process.argv.length - 1],
 
