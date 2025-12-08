@@ -38,6 +38,7 @@ var mediaSessionPause = false;
 let isPlaying = false;
 let img = null;
 let itc = 0;
+let hasShownPreviewWarning = false;
 const MEDIAPLAYER = 0, STREAMPLAYER = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
 const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 let isActiveMediaWindowCache = false;
@@ -481,6 +482,83 @@ function addFilenameToTitlebar(path) {
 
 function removeFilenameFromTitlebar() {
     document.title = "EMS Media System";
+}
+
+let toastTimer = null;
+
+function resetPreviewWarningState() {
+    hasShownPreviewWarning = false;
+}
+
+function showPreviewWarningToast() {
+    // 1. Safety Check: Ensure video element exists
+    if (!video) return;
+
+    if (hasShownPreviewWarning) {
+        return; 
+    }
+
+    // 3. Find target container (Video parent)
+    // We attach to the parentNode so the absolute positioning is relative to the container, not the window
+    const container = video.parentNode;
+    
+    // Ensure container has relative positioning for the absolute toast to work
+    if (window.getComputedStyle(container).position === 'static') {
+        container.style.position = 'relative';
+    }
+
+    // 4. Create or Select the Toast Element
+    let toast = container.querySelector('.gnome-osd-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.className = 'gnome-osd-toast';
+        container.appendChild(toast);
+    }
+
+    // 5. Set Text (GNOME HID Compliant Message)
+    toast.textContent = "Preview Mode – Press \"Start Presentation\" to display on the selected monitor.";
+
+    // 6. Manage Animation and Timer
+    // Force a reflow to ensure the transition triggers if element was just added
+    void toast.offsetWidth; 
+    
+    // Show the toast
+    requestAnimationFrame(() => {
+        toast.classList.add('visible');
+    });
+
+    // Clear any existing timer to prevent premature removal
+    if (toastTimer) {
+        clearTimeout(toastTimer);
+    }
+
+    // Set 5-second timer to remove
+    toastTimer = setTimeout(() => {
+        // Check if the toast element still exists in the DOM before manipulating classes
+        if (!toast || !toast.parentNode) {
+            toastTimer = null;
+            return; // Exit if the toast or its parent is already gone
+        }
+        
+        toast.classList.remove('visible');
+        
+        // Wait for CSS transition (250ms) to finish before removing from DOM
+        setTimeout(() => {
+            // Double-check the parent's existence right before removal
+            if (toast && toast.parentNode) {
+                // Use try...catch as a final safety measure against unexpected detachment
+                try {
+                    toast.parentNode.removeChild(toast);
+                } catch (e) {
+                    // Log the error if removal fails, but continue the cleanup
+                    // console.error("Toast removal failed:", e);
+                }
+            }
+            toastTimer = null;
+        }, 250);
+    }, 5000);
+
+    hasShownPreviewWarning = true;
 }
 
 function update(time) {
@@ -1524,6 +1602,7 @@ function removeFileProtocol(filePath) {
 }
 
 function saveMediaFile() {
+    resetPreviewWarningState();
     textNode.data = "";
     const mdfileElement = document.getElementById("mdFile");
     if (mediaPlayerInputState.filePaths.length < 1) {
@@ -1764,6 +1843,9 @@ function playLocalMedia(event) {
     if (isActiveMediaWindow()) {
         unPauseMedia(event);
         return;
+    } else {
+        if (!audioOnlyFile)
+            showPreviewWarningToast();
     }
 
     let mediaScrnPlyBtn = document.getElementById("mediaWindowPlayButton");

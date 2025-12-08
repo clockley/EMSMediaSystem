@@ -1079,3 +1079,45 @@ ul {
     background: var(--adw-accent-hover);
   }
   
+
+/* GNOME/GTK4 Style Toast Notification */
+.gnome-osd-toast {
+    position: absolute;
+    top: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 24px;
+    border-radius: 99px; /* Pill shape */
+    font-family: 'Cantarell', 'Inter', system-ui, sans-serif; /* GNOME standard fonts */
+    font-size: 15px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.25s ease, top 0.25s cubic-bezier(0, 0, 0.2, 1);
+    z-index: 2147483647; /* Max z-index to stay on top */
+    pointer-events: none; /* Let clicks pass through to video */
+    user-select: none;
+    backdrop-filter: blur(10px); /* Glass effect */
+    white-space: nowrap;
+
+    /* Default (Dark Mode) - Adwaita Dark */
+    background-color: rgba(45, 45, 45, 0.95);
+    color: #ffffff;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Light Mode Override - Adwaita Light */
+@media (prefers-color-scheme: light) {
+    .gnome-osd-toast {
+        background-color: rgba(255, 255, 255, 0.95);
+        color: #2e3436; /* GNOME Dark Slate */
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+        border: 1px solid rgba(0, 0, 0, 0.1);
+    }
+}
+
+/* Animation State */
+.gnome-osd-toast.visible {
+    opacity: 1;
+    top: 48px; /* Slide down slightly */
+}
