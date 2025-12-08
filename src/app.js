@@ -581,7 +581,7 @@ function handleTimeMessage(_, message) {
         REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
         NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
         NUM_BUFFER[2] = REM_BUFFER[0] % 60;
-        NUM_BUFFER[3] = ((SECONDSFLOAT - (SECONDSFLOAT | 0)) * 1000 + 0.5) | 0;
+        NUM_BUFFER[3] = ((SECONDSFLOAT[0] - (SECONDSFLOAT[0] | 0)) * 1000 + 0.5) | 0;
         if (!updatePending[0]) {
             updatePending[0] = 1;
             requestAnimationFrame(updateCountdownNode);
