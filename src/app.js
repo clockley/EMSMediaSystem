@@ -1376,7 +1376,7 @@ function generateMediaFormHTML(video = null) {
             <span class="switch-thumb"></span>
           </label>
         </div>
-        <!-- Fadeout control -->
+        <!-- Fadeout control
         <div class="loop-control fadeout-control">
           <span class="control-label">Fadeout</span>
           <div class="fadeout-ui">
@@ -1384,7 +1384,7 @@ function generateMediaFormHTML(video = null) {
               class="fadeout-input" title="Fadeout duration (seconds)">
             <button id="fadeoutBtn" type="button" class="fadeout-button">Start</button>
           </div>
-        </div>
+        </div> -->
       </div>
   
       <div id="mediaCntDn"></div>
