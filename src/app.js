@@ -18,7 +18,7 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 
-const { ipcRenderer, __dirname, bibleAPI, webUtils, attachCubicWaveShaper} = window.electron;
+const { ipcRenderer, __dirname, bibleAPI, webUtils, attachCubicWaveShaper } = window.electron;
 
 var pidSeeking = false;
 var streamVolume = 1;
@@ -1394,8 +1394,8 @@ function generateMediaFormHTML(video = null) {
       <video id="preview" disablePictureInPicture controls></video>
     </div>
   </div>`;
-  }
-  
+}
+
 
 function installDisplayChangeHandler() {
     if (installDisplayChangeHandler.initialized) return;
@@ -1974,108 +1974,220 @@ function filesArrayToFileList(filesArray) {
 
 async function loadOpMode(mode) {
     const execute = async () => {
-        // Wait for preload context to be ready
-        while (!window.electron || !window.electron.ipcRenderer || !windowControls) {
-            await new Promise(r => setTimeout(r, 10));
-        }
+        try {
+            // Show loading indicator
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'loading-indicator';
+            loadingDiv.style.cssText = `
+          position: fixed;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          text-align: center;
+          z-index: 10000;
+          color: #5c87b2;
+          font-family: system-ui, -apple-system, sans-serif;
+        `;
+            loadingDiv.innerHTML = `
+          <div class="spinner" style="
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #5c87b2;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+          "></div>
+          <div>Loading...</div>
+        `;
 
-        // Wait a microtask so DOM is stable
-        await new Promise(r => setTimeout(r, 0));
-
-        // Hamburger menu setup
-        const hamburgerButton = document.getElementById('hamburgerMenuButton');
-        const dropdownMenu = document.getElementById('gtkDropdownMenu');
-
-        hamburgerButton.addEventListener('click', () => {
-            dropdownMenu.classList.toggle('hidden');
-        });
-
-        // Close the menu when clicking outside
-        document.addEventListener('click', (event) => {
-            if (!hamburgerButton.contains(event.target) && !dropdownMenu.contains(event.target)) {
-                dropdownMenu.classList.add('hidden');
+            // Add spinner animation
+            if (!document.querySelector('#spinner-style')) {
+                const style = document.createElement('style');
+                style.id = 'spinner-style';
+                style.textContent = `
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
             }
-        });
-
-        const menuItems = dropdownMenu.querySelectorAll('.menu-item');
-        menuItems.forEach(item => {
-            item.addEventListener('click', () => {
-                dropdownMenu.classList.add('hidden');
-            });
-        });
-
-        // Window control functionality
-        const minimizeButton = document.querySelector('.window-control.minimize');
-        const maximizeButton = document.querySelector('.window-control.maximize');
-        const closeButton = document.querySelector('.window-control.close');
-
-        minimizeButton.addEventListener('click', windowControls.minimize);
-        maximizeButton.addEventListener('click', windowControls.maximize);
-        closeButton.addEventListener('click', close);
-
-        windowControls.onMaximizeChange((event, isMaximized) => {
-            maximizeButton.setAttribute('data-maximized', isMaximized);
-        });
-
-        // Mode setup
-        if (mode === STREAMPLAYER) {
-            document.getElementById("YtPlyrRBtnFrmID").checked = true;
-            setSBFormStreamPlayer();
-        } else if (mode === TEXTPLAYER) {
-            document.getElementById("TxtPlyrRBtnFrmID").checked = true;
-            setSBFormTextPlayer();
-        } else {
-            document.getElementById("MdPlyrRBtnFrmID").checked = true;
-            setSBFormMediaPlayer();
-            installPreviewEventHandlers();
-        }
-
-        // Drag and drop behavior
-        document.addEventListener("dragover", (event) => event.preventDefault());
-        document.addEventListener("dragstart", (event) => {
-            if (event.target.tagName === "IMG" || event.target.tagName === "A") {
-                event.preventDefault();
+          `;
+                document.head.appendChild(style);
             }
-        });
-        document.addEventListener("drop", (event) => {
-            event.preventDefault();
 
-            const allowedTypes = [
-                "video/mp4", "video/x-m4v", "audio/x-m4a",
-                "image/jpeg", "image/png", "image/gif",
-                "image/webp", "image/bmp", "image/svg+xml"
-            ];
-            const allowedExtensions = [
-                ".mp4", ".m4v", ".mp3", ".wav", ".flac", ".m4a",
-                ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"
-            ];
+            document.body.appendChild(loadingDiv);
 
-            const files = Array.from(event.dataTransfer.files).filter((file) => {
-                const mimeType = file.type;
-                const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
-                return (
-                    allowedTypes.includes(mimeType) ||
-                    mimeType.startsWith('video/') ||
-                    mimeType.startsWith('audio/') ||
-                    mimeType.startsWith('image/') ||
-                    allowedExtensions.includes(ext)
-                );
+            // Wait for preload context to be ready with timeout
+            const maxWaitTime = 30000; // 30 seconds
+            const startTime = Date.now();
+
+            while (!window.electron || !window.electron.ipcRenderer || !windowControls) {
+                if (Date.now() - startTime > maxWaitTime) {
+                    throw new Error('Timeout waiting for preload context');
+                }
+                await new Promise(r => setTimeout(r, 50)); // Check every 50ms instead of 10ms
+            }
+
+            // Wait for DOM to be stable
+            await new Promise(r => setTimeout(r, 0));
+
+            // Remove loading indicator
+            loadingDiv.remove();
+
+            // Hamburger menu setup
+            const hamburgerButton = document.getElementById('hamburgerMenuButton');
+            const dropdownMenu = document.getElementById('gtkDropdownMenu');
+
+            if (!hamburgerButton || !dropdownMenu) {
+                throw new Error('Required DOM elements not found');
+            }
+
+            hamburgerButton.addEventListener('click', () => {
+                dropdownMenu.classList.toggle('hidden');
             });
 
-            if (files.length > 0) {
-                document.getElementById("mdFile").files = filesArrayToFileList(files);
-                saveMediaFile();
+            // Close the menu when clicking outside
+            document.addEventListener('click', (event) => {
+                if (!hamburgerButton.contains(event.target) && !dropdownMenu.contains(event.target)) {
+                    dropdownMenu.classList.add('hidden');
+                }
+            });
+
+            const menuItems = dropdownMenu.querySelectorAll('.menu-item');
+            menuItems.forEach(item => {
+                item.addEventListener('click', () => {
+                    dropdownMenu.classList.add('hidden');
+                });
+            });
+
+            // Window control functionality
+            const minimizeButton = document.querySelector('.window-control.minimize');
+            const maximizeButton = document.querySelector('.window-control.maximize');
+            const closeButton = document.querySelector('.window-control.close');
+
+            if (!minimizeButton || !maximizeButton || !closeButton) {
+                throw new Error('Window control buttons not found');
+            }
+
+            minimizeButton.addEventListener('click', windowControls.minimize);
+            maximizeButton.addEventListener('click', windowControls.maximize);
+            closeButton.addEventListener('click', close);
+
+            windowControls.onMaximizeChange((event, isMaximized) => {
+                maximizeButton.setAttribute('data-maximized', isMaximized);
+            });
+
+            // Mode setup
+            if (mode === STREAMPLAYER) {
+                document.getElementById("YtPlyrRBtnFrmID").checked = true;
+                setSBFormStreamPlayer();
+            } else if (mode === TEXTPLAYER) {
+                document.getElementById("TxtPlyrRBtnFrmID").checked = true;
+
+                // For text player, ensure Bible API is ready before initializing
+                try {
+                    await window.electron.bibleAPI.waitForReady();
+                    setSBFormTextPlayer();
+                } catch (error) {
+                    console.error('Failed to initialize Bible API:', error);
+                    // Fall back to media player mode
+                    document.getElementById("MdPlyrRBtnFrmID").checked = true;
+                    setSBFormMediaPlayer();
+                    installPreviewEventHandlers();
+                }
             } else {
-                console.warn("No valid files were dropped.");
+                document.getElementById("MdPlyrRBtnFrmID").checked = true;
+                setSBFormMediaPlayer();
+                installPreviewEventHandlers();
             }
-        });
+
+            // Drag and drop behavior
+            document.addEventListener("dragover", (event) => event.preventDefault());
+            document.addEventListener("dragstart", (event) => {
+                if (event.target.tagName === "IMG" || event.target.tagName === "A") {
+                    event.preventDefault();
+                }
+            });
+            document.addEventListener("drop", (event) => {
+                event.preventDefault();
+
+                const allowedTypes = [
+                    "video/mp4", "video/x-m4v", "audio/x-m4a",
+                    "image/jpeg", "image/png", "image/gif",
+                    "image/webp", "image/bmp", "image/svg+xml"
+                ];
+                const allowedExtensions = [
+                    ".mp4", ".m4v", ".mp3", ".wav", ".flac", ".m4a",
+                    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"
+                ];
+
+                const files = Array.from(event.dataTransfer.files).filter((file) => {
+                    const mimeType = file.type;
+                    const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
+                    return (
+                        allowedTypes.includes(mimeType) ||
+                        mimeType.startsWith('video/') ||
+                        mimeType.startsWith('audio/') ||
+                        mimeType.startsWith('image/') ||
+                        allowedExtensions.includes(ext)
+                    );
+                });
+
+                if (files.length > 0) {
+                    document.getElementById("mdFile").files = filesArrayToFileList(files);
+                    saveMediaFile();
+                } else {
+                    console.warn("No valid files were dropped.");
+                }
+            });
+
+            console.log('Application initialized successfully');
+
+        } catch (error) {
+            console.error('Failed to initialize application:', error);
+
+            // Show error message to user
+            document.body.innerHTML = `
+          <div style="
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            padding: 20px;
+            background: white;
+            border: 2px solid #d32f2f;
+            border-radius: 8px;
+            max-width: 400px;
+          ">
+            <h2 style="color: #d32f2f; margin-top: 0;">Initialization Error</h2>
+            <p>${error.message}</p>
+            <p style="font-size: 0.9em; color: #666;">
+              Please try restarting the application.
+            </p>
+            <button onclick="location.reload()" style="
+              padding: 8px 16px;
+              background: #5c87b2;
+              color: white;
+              border: none;
+              border-radius: 4px;
+              cursor: pointer;
+              margin-top: 10px;
+            ">Reload</button>
+          </div>
+        `;
+        }
     };
 
     // Wait until DOM is ready, then execute
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
-        execute();
+        await execute();
     } else {
-        document.addEventListener('DOMContentLoaded', execute, { once: true });
+        await new Promise(resolve => {
+            document.addEventListener('DOMContentLoaded', async () => {
+                await execute();
+                resolve();
+            }, { once: true });
+        });
     }
 }
 
