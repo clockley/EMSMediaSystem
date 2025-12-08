@@ -779,6 +779,7 @@ function handleImageDisplay(isImgFile, imgEle) {
         imgEle.remove();
         document.getElementById("preview").style.display = '';
     } else if (isImgFile) {
+        resetPreviewWarningState();
         if (imgEle) {
             imgEle.src = mediaFile;
         } else {
@@ -1677,6 +1678,7 @@ function saveMediaFile() {
         img.setAttribute("id", "preview");
         document.getElementById("preview").style.display = 'none';
         document.getElementById("preview").parentNode.appendChild(img);
+        showPreviewWarningToast();
         return;
     }
     let liveStream = isLiveStream(mediaFile);
