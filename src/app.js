@@ -495,13 +495,13 @@ function showPreviewWarningToast() {
     if (!video) return;
 
     if (hasShownPreviewWarning) {
-        return; 
+        return;
     }
 
     // 3. Find target container (Video parent)
     // We attach to the parentNode so the absolute positioning is relative to the container, not the window
     const container = video.parentNode;
-    
+
     // Ensure container has relative positioning for the absolute toast to work
     if (window.getComputedStyle(container).position === 'static') {
         container.style.position = 'relative';
@@ -520,8 +520,8 @@ function showPreviewWarningToast() {
 
     // 6. Manage Animation and Timer
     // Force a reflow to ensure the transition triggers if element was just added
-    void toast.offsetWidth; 
-    
+    void toast.offsetWidth;
+
     // Show the toast
     requestAnimationFrame(() => {
         toast.classList.add('visible');
@@ -539,9 +539,9 @@ function showPreviewWarningToast() {
             toastTimer = null;
             return; // Exit if the toast or its parent is already gone
         }
-        
+
         toast.classList.remove('visible');
-        
+
         // Wait for CSS transition (250ms) to finish before removing from DOM
         setTimeout(() => {
             // Double-check the parent's existence right before removal
