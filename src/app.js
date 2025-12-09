@@ -446,6 +446,11 @@ function setupCustomMediaControls() {
     durationTimeDisplay = document.getElementById('durationTime');
     repeatButton = document.getElementById('mediaWindowRepeatButton');
     video = document.getElementById('preview');
+    const overlay = document.getElementById('customControls');
+
+    if (overlay) {
+        overlay.style.display = "none";
+    }
 
     if (!video || !timeline || !playPauseBtn) {
         console.error("Missing custom media controls");
@@ -453,6 +458,7 @@ function setupCustomMediaControls() {
     }
 
     let isDragging = false; // Track drag interaction
+    let wasPlayingBeforeDrag = false;
 
     // --- Format time utility ---
     const fmt = (sec) => {
@@ -478,51 +484,61 @@ function setupCustomMediaControls() {
         playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
     });
 
-    // --- METADATA LOADED ---
+    // --- METADATA LOADED (Duration Check for Visibility) ---
     video.addEventListener('loadedmetadata', () => {
         timeline.min = 0;
         timeline.max = 100;
         timeline.value = 0;
-        timeline.disabled = false;
-    
+
+        const hasSeekableMedia = isFinite(video.duration) && video.duration > 0;
+        timeline.disabled = !hasSeekableMedia;
+
         currentTimeDisplay.textContent = "0:00";
         durationTimeDisplay.textContent = fmt(video.duration);
-    
+
         playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`; // Play icon
-    
-        const overlay = document.getElementById('customControls');
+
         if (overlay) {
-            overlay.style.visibility =
-                (video.videoTracks && video.videoTracks.length > 0)
-                    ? "visible"
-                    : "hidden";
+            overlay.style.display = "";
+            overlay.style.visibility = hasSeekableMedia ? "visible" : "hidden";
         }
-    
+
         repeatButton.classList.toggle('active', video.loop);
     });
 
-    // --- DRAGGING THE TIMELINE ---
-    timeline.addEventListener('mousedown', () => { 
+    // --- DRAGGING THE TIMELINE (HYBRID LIVE SCRUBBING) ---
+    timeline.addEventListener('mousedown', () => {
         if (!video.duration) return;
-        isDragging = true; 
+        wasPlayingBeforeDrag = !video.paused;
+        isDragging = true;
+        // Pause playback for stable seeking
+        video.pause();
     });
-    timeline.addEventListener('touchstart', () => { 
+    timeline.addEventListener('touchstart', () => {
         if (!video.duration) return;
-        isDragging = true; 
+        wasPlayingBeforeDrag = !video.paused;
+        isDragging = true;
+        // Pause playback for stable seeking
+        video.pause();
     });
 
+    // Seek immediately on 'input' for live frame updates
     timeline.addEventListener('input', () => {
-        // Stop time update if video isn't loaded/duration isn't set
-        if (!video.duration) return; 
-        const t = (timeline.value / 100) * video.duration;
-        currentTimeDisplay.textContent = fmt(t); // update live while dragging
+        if (!video.duration) return;
+        const seekTime = (timeline.value / 100) * video.duration;
+
+        video.currentTime = seekTime;
+
+        currentTimeDisplay.textContent = fmt(seekTime);
     });
 
     timeline.addEventListener('change', () => {
-        if (!video.duration) return;
-        const seekTime = (timeline.value / 100) * video.duration;
-        video.currentTime = seekTime; // final seek
         isDragging = false;
+
+        if (wasPlayingBeforeDrag) {
+            // Use .catch() for promise errors if browser auto-play is blocked (common with video.play())
+            video.play().catch(e => console.error("Failed to resume playback after seek:", e));
+        }
     });
 
     document.addEventListener('mouseup', () => (isDragging = false));
@@ -534,7 +550,6 @@ function setupCustomMediaControls() {
 
         currentTimeDisplay.textContent = fmt(video.currentTime);
 
-        // Update slider ONLY if user is not dragging
         if (!isDragging) {
             timeline.value = (video.currentTime / video.duration) * 100;
         }
@@ -545,7 +560,6 @@ function setupCustomMediaControls() {
         video.loop = !video.loop;
         repeatButton.classList.toggle('active', video.loop);
 
-        // Sync main loop control if it exists
         const mainLoop = document.getElementById('mdLpCtlr');
         if (mainLoop) mainLoop.checked = video.loop;
 
@@ -577,7 +591,7 @@ function setupGtkVolumeControl() {
 
     // Initialize slider value based on current video volume (or 100 if undefined)
     slider.value = Math.round((video.volume || 1) * 100);
-    
+
     // Initial mute state check
     if (video.muted) slider.value = 0;
 
@@ -585,7 +599,7 @@ function setupGtkVolumeControl() {
     function updateIcon(v) {
         // --- 1. Define the GTK4 Symbolic Icon paths (16x16 viewBox) ---
         const CONE_PATH = `<path d="M 1 5 L 4 5 L 7 2 L 7 14 L 4 11 L 1 11 Z"/>`;
-        
+
         // Arcs are stroked paths with 'fill="none"'
         const ARC_1 = `<path id="arc1" d="M 9 7.5 C 9.5 7.5 9.5 8.5 9 8.5" fill="none" stroke="currentColor" stroke-width="1"/>`;
         const ARC_2 = `<path id="arc2" d="M 10 6 C 11 6 11 10 10 10" fill="none" stroke="currentColor" stroke-width="1"/>`;
@@ -594,17 +608,17 @@ function setupGtkVolumeControl() {
         // --- 2. Update Icon based on volume/mute state ---
         if (video.muted || v == 0) {
             // Muted Icon: Cone + Mute Cross
-            icon.innerHTML = CONE_PATH + 
-                             `<line x1="8" y1="2" x2="16" y2="14" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>`;
+            icon.innerHTML = CONE_PATH +
+                `<line x1="8" y1="2" x2="16" y2="14" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>`;
         } else {
             // Volume Icon: Cone + Arcs (all paths)
             icon.innerHTML = CONE_PATH + ARC_1 + ARC_2 + ARC_3;
-            
+
             // Re-query the arcs after setting innerHTML
             const arc1 = document.getElementById('arc1');
             const arc2 = document.getElementById('arc2');
             const arc3 = document.getElementById('arc3');
-            
+
             // Set default display to none for fine control
             if (arc1) arc1.style.display = 'none';
             if (arc2) arc2.style.display = 'none';
@@ -630,10 +644,10 @@ function setupGtkVolumeControl() {
     slider.addEventListener('input', () => {
         const v = slider.value / 100;
         video.volume = v;
-        
+
         // If the user moves the slider from 0, unmute the video
-        if (v > 0) video.muted = false; 
-        
+        if (v > 0) video.muted = false;
+
         updateIcon(slider.value);
     });
 
@@ -1132,6 +1146,7 @@ function handleCanPlayThrough(e, resolve) {
     }
     video.currentTime = 0;
     audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
+
     resolve(video);
 }
 
@@ -1178,6 +1193,7 @@ function playMedia(e) {
 
     if (video && !audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
         audioOnlyFile = true;
+        document.getElementById('customControls').style.visibility = '';
     }
 
     const mdFile = document.getElementById("mdFile");
@@ -1927,6 +1943,7 @@ function saveMediaFile() {
     if ((iM = isImg(mediaFile))) {
         playingMediaAudioOnly = false;
         audioOnlyFile = false;
+        document.getElementById('customControls').style.display = "none";
     }
 
     if (iM && !document.querySelector('img') && (!isActiveMW)) {
@@ -2054,9 +2071,9 @@ function cleanRefs() {
 
     if (playPauseBtn) playPauseBtn.removeEventListener('click', unPauseMedia);
     if (playPauseBtn) playPauseBtn.removeEventListener('click', pauseMedia);
-    if (timeline) timeline.removeEventListener('change', () => {});
-    if (timeline) timeline.removeEventListener('input', () => {});
-    if (repeatButton) repeatButton.removeEventListener('click', () => {});
+    if (timeline) timeline.removeEventListener('change', () => { });
+    if (timeline) timeline.removeEventListener('input', () => { });
+    if (repeatButton) repeatButton.removeEventListener('click', () => { });
     playPauseBtn = null;
     playPauseIcon = null;
     timeline = null;
@@ -2105,6 +2122,7 @@ function playLocalMedia(event) {
     mediaSessionPause = false;
     if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
         audioOnlyFile = true;
+        document.getElementById('customControls').style.visibility = '';
     }
     if (audioOnlyFile) {
         send("localMediaState", 0, "play");
@@ -2136,6 +2154,7 @@ function playLocalMedia(event) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
             }
             audioOnlyFile = true;
+            document.getElementById('customControls').style.visibility = '';
             playingMediaAudioOnly = true;
             updateTimestamp();
             return;
