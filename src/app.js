@@ -516,7 +516,7 @@ function showPreviewWarningToast() {
     }
 
     // 5. Set Text (GNOME HID Compliant Message)
-    toast.textContent = "Press \"Start Presentation\" to display on the selected monitor.";
+    toast.textContent = "Press \"Start Presentation\" to display on the selected display.";
 
     // 6. Manage Animation and Timer
     // Force a reflow to ensure the transition triggers if element was just added
