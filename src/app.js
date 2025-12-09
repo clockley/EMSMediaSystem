@@ -1949,7 +1949,9 @@ function saveMediaFile() {
         }
 
         mediaPlayerInputState.clear();
-        showGnomeToast("File queued for playback");
+        if (isActiveMediaWindow()) {
+            showGnomeToast("File queued for playback");
+        }
 
         // Store pathnames as strings in array
         mediaPlayerInputState.filePaths = Array.from(mdfileElement.files).map(file =>
