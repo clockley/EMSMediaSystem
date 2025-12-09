@@ -9,6 +9,38 @@
     transition: none;
 }
 
+/* Force GTK-style cursor behavior in Electron (no pointer hand) */
+button,
+.window-control,
+#mediaWindowPlayButton,
+.title-button,
+.display-select,
+.file-input-label,
+.loop-control,
+.switch,
+.switch-track,
+.switch-thumb,
+#mdLpCtlr,
+.tab,
+.tabs input[type="radio"],
+.hamburger-menu,
+.gtk-dropdown .menu-item,
+video,
+video::-webkit-media-controls-panel,
+video::-webkit-media-controls-play-button,
+video::-webkit-media-controls-volume-slider,
+video::-webkit-media-controls-mute-button,
+video::-webkit-media-controls-timeline,
+video::-webkit-media-controls-timeline-container,
+video::-webkit-media-controls-volume-control-container,
+video::-webkit-media-controls-volume-control-hover-background,
+video::-webkit-media-controls-current-time-display,
+video::-webkit-media-controls-time-remaining-display,
+video::-webkit-media-controls-fullscreen-button,
+video::-webkit-media-controls-toggle-closed-captions-button {
+    cursor: default !important;
+}
+
 /* Button and clickable elements */
 button,
 .window-control,
@@ -43,12 +75,19 @@ button,
 }
 
 :root {
-    --adw-accent: #3584e4;
-    --adw-accent-hover: #1c71d8;
-    --adw-bg: #f6f5f4;
-    --adw-card-bg: #ffffff;
-    --adw-border: #d3d3d3;
-    --adw-text: #2e3436;
+    --accent-bg-color: #3584e4;
+    --accent-bg-color-hover: #1c71d8;
+    --window-bg-color: #f6f5f4;
+    --card-bg-color: #ffffff;
+    --border-color: #d3d3d3;
+    --window-fg-color: #2e3436;
+    --view-bg-color: #ffffff;
+    --view-fg-color: rgb(0 0 6 / 80%);
+    --headerbar-bg-color: #ffffff;
+    --headerbar-fg-color: rgb(0 0 6 / 80%);
+    --headerbar-backdrop-color: #fafafb;
+    --headerbar-shade-color: rgb(0 0 6 / 12%);
+    --card-shade-color: rgb(0 0 6 / 7%);
     --adw-radius-sm: 6px;
     --adw-radius-lg: 12px;
     --adw-spacing: 24px;
@@ -75,7 +114,7 @@ button,
     left: 8px;
     right: 8px;
     bottom: 8px;
-    background: var(--adw-bg);
+    background: var(--window-bg-color);
     border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 0 8px 2px rgba(0, 0, 0, 0.15),
@@ -117,7 +156,7 @@ body {
     user-select: none;
     overflow-y: auto;
     font-family: "Adwaita";
-    color: var(--adw-text);
+    color: var(--window-fg-color);
     margin: 0;
     padding: 0;
     color-scheme: light dark;
@@ -148,7 +187,7 @@ footer {
 }
 
 .media-container {
-    background: var(--adw-bg);
+    background: var(--window-bg-color);
     padding: 16px 24px;
     height: calc(100vh - 45px - 37px - 32px);
     display: flex;
@@ -170,12 +209,12 @@ footer {
 
 .control-label {
     font-weight: 700;
-    color: var(--adw-text);
+    color: var(--window-fg-color);
     font-size: 14px;
 }
 
 .control-panel {
-    background: var(--adw-card-bg);
+    background: var(--card-bg-color);
     border-radius: 12px;
     padding: 16px;
     display: flex;
@@ -197,21 +236,29 @@ footer {
 }
 
 .file-input-label {
-    cursor: default !important;
+    cursor: pointer;
     font-weight: 400;
     display: inline-flex;
     align-items: center;
     gap: 8px;
     padding: 8px 12px;
-    border: 1px solid var(--adw-border);
+    border: 1px solid var(--border-color);
     border-radius: var(--adw-radius-sm);
-    background: linear-gradient(to bottom, #ffffff, #f6f6f6);
-    cursor: pointer;
+    background: var(--card-bg-color);
+    /* Flat, not gradient */
     transition: all 0.2s ease;
     min-height: 36px;
     width: 100%;
     box-sizing: border-box;
     overflow: hidden;
+}
+
+.file-input-label:hover {
+    background: color-mix(in srgb, var(--card-bg-color) 95%, var(--window-fg-color));
+}
+
+.file-input-label:active {
+    background: color-mix(in srgb, var(--card-bg-color) 90%, var(--window-fg-color));
 }
 
 .file-input-label span {
@@ -221,21 +268,12 @@ footer {
     flex: 1;
 }
 
-.file-input-label:hover {
-    background: linear-gradient(to bottom, #f9f9f9, #f1f1f1);
-    border-color: #bbb;
-}
-
-.file-input-label:active {
-    background: #ebebeb;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
-}
 
 .file-input-label svg {
     flex-shrink: 0;
     width: 16px;
     height: 16px;
-    color: var(--adw-text);
+    color: var(--window-fg-color);
 }
 
 .file-input {
@@ -252,14 +290,14 @@ footer {
 
 /* Display select */
 .display-select {
-    cursor: default !important;
+
     appearance: none;
     width: 100%;
     padding: 8px 12px;
-    border: 1px solid var(--adw-border);
+    border: 1px solid var(--border-color);
     border-radius: 6px;
-    background-color: var(--adw-card-bg);
-    color: var(--adw-text);
+    background-color: var(--card-bg-color);
+    color: var(--window-fg-color);
     font-size: 14px;
     line-height: 1.5;
     cursor: pointer;
@@ -271,45 +309,45 @@ footer {
 }
 
 .display-select:hover {
-    border-color: var(--adw-border);
-    background-color: color-mix(in srgb, var(--adw-card-bg) 95%, var(--adw-text));
+    border-color: var(--border-color);
+    background-color: color-mix(in srgb, var(--card-bg-color) 95%, var(--window-fg-color));
 }
 
 /* Loop control */
 .loop-control {
-    cursor: default !important;
+
     display: flex;
     align-items: center;
     justify-content: space-between;
 }
 
 .switch {
-    cursor: default !important;
+
     position: relative;
     display: inline-block;
     width: 48px;
     height: 26px;
 }
 
-#mdLpCtlr {
-    cursor: default !important;
-}
 
 .switch-track {
-    cursor: default !important;
-    position: absolute;
     cursor: pointer;
+    position: absolute;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: #cdcdcd;
+    background-color: color-mix(in srgb, currentColor 20%, transparent);
     border-radius: 13px;
     transition: 0.2s;
 }
 
+.switch input:checked+.switch-track {
+    background-color: var(--accent-bg-color);
+}
+
 .switch-thumb {
-    cursor: default !important;
+
     position: absolute;
     height: 22px;
     width: 22px;
@@ -322,18 +360,18 @@ footer {
 }
 
 .switch input:checked+.switch-track {
-    cursor: default !important;
-    background-color: var(--adw-accent);
+
+    background-color: var(--accent-bg-color);
 }
 
 .switch input:checked+.switch-track+.switch-thumb {
-    cursor: default !important;
+
     transform: translateX(22px);
 }
 
 /* Button styling */
 #mediaWindowPlayButton {
-    cursor: default !important;
+
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -368,9 +406,7 @@ footer {
     height: 16px;
 }
 
-video {
-    cursor: default !important;
-}
+video {}
 
 /* Video area */
 .video-wrapper {
@@ -390,21 +426,15 @@ video::-webkit-media-controls-timeline,
 video::-webkit-media-controls-current-time-display,
 video::-webkit-media-controls-time-remaining-display,
 video::-webkit-media-controls-fullscreen-button,
-video::-webkit-media-controls-toggle-closed-captions-button {
-    cursor: default !important;
-}
+video::-webkit-media-controls-toggle-closed-captions-button {}
 
 /* For the timeline/progress bar specifically */
 video::-webkit-media-controls-timeline-container,
-video::-webkit-media-controls-timeline {
-    cursor: default !important;
-}
+video::-webkit-media-controls-timeline {}
 
 /* For the volume slider */
 video::-webkit-media-controls-volume-control-container,
-video::-webkit-media-controls-volume-control-hover-background {
-    cursor: default !important;
-}
+video::-webkit-media-controls-volume-control-hover-background {}
 
 #preview {
     position: absolute;
@@ -434,7 +464,7 @@ video::-webkit-media-controls-volume-control-hover-background {
     display: flex;
     justify-content: center;
     text-align: center;
-    color: var(--adw-text);
+    color: var(--window-fg-color);
     font-family: "Adwaita";
     font-weight: 400;
     font-feature-settings: "tnum" 1, "ss01" 1;
@@ -445,15 +475,15 @@ button:focus-visible,
 .file-input-label:focus-visible,
 .display-select:focus-visible,
 .switch input:focus-visible+.switch-track {
-    outline: 2px solid var(--adw-accent);
+    outline: 2px solid var(--accent-bg-color);
     outline-offset: 2px;
 }
 
 .headerbar {
-    background: linear-gradient(to bottom, #1e1e1e, #2a2a2a);
-    /* Dark GNOME-style gradient */
-    color: CanvasColor;
-    /* Light text for better contrast */
+    /* REMOVE the gradient and hardcoded colors */
+    background: var(--headerbar-bg-color);
+    color: var(--headerbar-fg-color);
+    border-bottom: 1px solid var(--border-color);
     padding: 6px;
     padding-bottom: 0px;
     margin-top: -1px;
@@ -462,33 +492,34 @@ button:focus-visible,
     justify-content: space-between;
     align-items: center;
     -webkit-app-region: drag;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    /* Lighter shadow */
     position: fixed;
     top: 0px;
-    /* Match window-container top margin */
     left: 8px;
-    /* Match window-container left margin */
     right: 8px;
     z-index: 1000;
     border-top-left-radius: 12px;
     border-top-right-radius: 12px;
-    border-bottom: 1px solid #BCBCBC;
-    font-weight: 700;
-    /* Slightly bold text for clarity */
+    font-weight: 400;
+    /* Normal weight, not 700 */
     font-size: 14px;
 }
 
 @media (prefers-color-scheme: dark) {
-    .headerbar {
-        border-bottom: 1px solid #181818;
-        background: linear-gradient(to bottom, #1e1e1e, #1e1e1e);
-        color: #ffffff;
-    }
-}
-
-@media (prefers-color-scheme: light) {
-    .headerbar {
-        background: linear-gradient(to bottom, #e4e4e4, #d7d7d7);
+    :root {
+        --window-bg-color: #222226;
+        --window-fg-color: #ffffff;
+        --view-bg-color: #1d1d20;
+        --view-fg-color: #ffffff;
+        --card-bg-color: rgb(255 255 255 / 8%);
+        --card-fg-color: #ffffff;
+        --headerbar-bg-color: #2e2e32;
+        --headerbar-fg-color: #ffffff;
+        --headerbar-backdrop-color: #222226;
+        --headerbar-shade-color: rgb(0 0 6 / 36%);
+        --card-shade-color: rgb(0 0 6 / 36%);
+        --border-color: color-mix(in srgb, currentColor 15%, transparent);
     }
 }
 
@@ -515,7 +546,7 @@ button:focus-visible,
 }
 
 .tabs {
-    cursor: default !important;
+
     display: flex;
     align-items: stretch;
     height: 100%;
@@ -526,7 +557,7 @@ button:focus-visible,
 }
 
 .tabs input[type="radio"] {
-    cursor: default !important;
+
     position: absolute;
     opacity: 0;
     width: 0;
@@ -535,7 +566,7 @@ button:focus-visible,
 }
 
 .tab {
-    cursor: default !important;
+
     padding: 0 16px;
     height: calc(100% - 6px);
     margin-top: 6px;
@@ -548,13 +579,13 @@ button:focus-visible,
 }
 
 .tabs input[type="radio"]:checked+.tab {
-    cursor: default !important;
+
     color: CanvasText;
     background: color-mix(in srgb, CanvasText 8%, transparent);
 }
 
 .tab:hover:not(:checked + .tab) {
-    cursor: default !important;
+
     background: color-mix(in srgb, CanvasText 5%, transparent);
 }
 
@@ -633,7 +664,7 @@ button:focus-visible,
 }
 
 .file-input {
-    cursor: default !important;
+
     position: absolute;
     width: 1px;
     height: 1px;
@@ -667,38 +698,38 @@ button:focus-visible,
     width: 100%;
     padding: 8px 16px 8px 40px;
     /* Increased left padding for icon */
-    border: 1px solid var(--adw-border);
+    border: 1px solid var(--border-color);
     border-radius: var(--adw-radius-sm);
-    background-color: var(--adw-card-bg);
+    background-color: var(--card-bg-color);
     background-image:
         url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z'/%3E%3Cpath stroke='currentColor' stroke-width='1.5' stroke-linecap='round' d='M5.5 12.5h5'/%3E%3C/svg%3E"),
         url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%232e3436' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 6.5l4.5 4.5 4.5-4.5'/%3E%3C/svg%3E");
     background-position: 12px center, right 8px center;
     background-repeat: no-repeat, no-repeat;
     background-size: 16px, 16px;
-    color: var(--adw-text);
+    color: var(--window-fg-color);
     appearance: none;
 }
 
 /* Style for dropdown options */
 .display-select option {
-    color: var(--adw-text);
-    background: var(--adw-card-bg);
+    color: var(--window-fg-color);
+    background: var(--card-bg-color);
 }
 
 .url-input {
     width: 100%;
     padding: 8px 12px;
     font-size: 14px;
-    border: 1px solid var(--adw-border);
+    border: 1px solid var(--border-color);
     border-radius: var(--adw-radius-sm);
-    background: var(--adw-card-bg);
-    color: var(--adw-text);
+    background: var(--card-bg-color);
+    color: var(--window-fg-color);
     transition: all 0.2s ease;
 }
 
 .url-input:focus {
-    border-color: var(--adw-accent);
+    border-color: var(--accent-bg-color);
     outline: none;
 }
 
@@ -717,7 +748,7 @@ button:focus-visible,
 }
 
 :focus-visible {
-    outline: 2px solid var(--adw-accent);
+    outline: 2px solid var(--accent-bg-color);
     outline-offset: -1px;
     border-radius: var(--adw-radius-sm);
 }
@@ -849,7 +880,7 @@ button:focus-visible,
 
 ::-webkit-scrollbar-thumb {
     background-color: #919191;
-    border: 3px solid var(--adw-bg);
+    border: 3px solid var(--window-bg-color);
     border-radius: 8px;
     min-height: 40px;
 }
@@ -867,205 +898,37 @@ ul {
     list-style-type: none;
 }
 
-/* Windows XP Theme */
-.windows-xp-theme {
-    --adw-accent: #0055EA;
-    --adw-accent-hover: #0066FF;
-    --adw-bg: #ECE9D8;
-    --adw-card-bg: #FFFFFF;
-    --adw-border: #7BA2E7;
-    --adw-text: #000000;
-    --xp-blue: #0055EA;
-    --xp-gradient-start: #2A5AE0;
-    --xp-gradient-end: #0F3ACC;
-    --xp-border: #225AE5;
-    --adw-radius-sm: 3px;
-    --adw-radius-lg: 6px;
-}
-
-.windows-xp-theme .window-container {
-    background: var(--adw-bg);
-    border: 1px solid #808080;
-    box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.windows-xp-theme .headerbar {
-    background: linear-gradient(to bottom, var(--xp-gradient-start), var(--xp-gradient-end));
-    border-bottom: 1px solid var(--xp-border);
-    color: #FFFFFF;
-    font-weight: bold;
-}
-
-.windows-xp-theme .control-panel {
-    background: var(--adw-card-bg);
-    border: 1px solid #919B9C;
-    box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.windows-xp-theme #mediaWindowPlayButton,
-.windows-xp-theme .window-control,
-.windows-xp-theme .title-button {
-    background: linear-gradient(to bottom, #EEF3FB, #DCEAFD);
-    border: 1px solid #7BA2E7;
-    color: #000000;
-}
-
-.windows-xp-theme #mediaWindowPlayButton:hover,
-.windows-xp-theme .window-control:hover,
-.windows-xp-theme .title-button:hover {
-    background: linear-gradient(to bottom, #F2F7FE, #E6F0FE);
-    border-color: var(--xp-blue);
-}
-
-.windows-xp-theme #mediaWindowPlayButton:active,
-.windows-xp-theme .window-control:active,
-.windows-xp-theme .title-button:active {
-    background: linear-gradient(to bottom, #DCEAFD, #EEF3FB);
-    border-color: var(--xp-blue);
-}
-
-.windows-xp-theme .display-select {
-    background-color: #FFFFFF;
-    border: 1px solid #7BA2E7;
-    color: #000000;
-}
-
-.windows-xp-theme .display-select:hover {
-    border-color: var(--xp-blue);
-}
-
-.windows-xp-theme .switch-track {
-    background-color: #D4D0C8;
-    border: 1px solid #808080;
-}
-
-.windows-xp-theme .switch input:checked + .switch-track {
-    background-color: var(--xp-blue);
-}
-
-.windows-xp-theme .switch-thumb {
-    background: linear-gradient(to bottom, #FFFFFF, #F0F0F0);
-    border: 1px solid #808080;
-    box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
-}
-
-.windows-xp-theme .file-input-label {
-    background: linear-gradient(to bottom, #EEF3FB, #DCEAFD);
-    border: 1px solid #7BA2E7;
-    color: #000000;
-}
-
-.windows-xp-theme .file-input-label:hover {
-    background: linear-gradient(to bottom, #F2F7FE, #E6F0FE);
-    border-color: var(--xp-blue);
-}
-
-.windows-xp-theme .file-input-label:active {
-    background: linear-gradient(to bottom, #DCEAFD, #EEF3FB);
-}
-
-.windows-xp-theme .tab {
-    background: transparent;
-    color: rgba(255, 255, 255, 0.8);
-}
-
-.windows-xp-theme .tabs input[type="radio"]:checked + .tab {
-    background: rgba(255, 255, 255, 0.15);
-    color: #FFFFFF;
-}
-
-.windows-xp-theme .gtk-dropdown {
-    background: #FFFFFF;
-    border: 1px solid #7BA2E7;
-    box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.windows-xp-theme .gtk-dropdown .menu-item {
-    color: #000000;
-}
-
-.windows-xp-theme .gtk-dropdown .menu-item:hover {
-    background: var(--xp-blue);
-    color: #FFFFFF;
-}
-
-.windows-xp-theme ::-webkit-scrollbar {
-    width: 16px;
-    height: 16px;
-    background-color: #ECE9D8;
-}
-
-.windows-xp-theme ::-webkit-scrollbar-track {
-    background-color: #FFFFFF;
-    border: 1px solid #7BA2E7;
-}
-
-.windows-xp-theme ::-webkit-scrollbar-thumb {
-    background: linear-gradient(to right, #EEF3FB, #DCEAFD);
-    border: 1px solid #7BA2E7;
-    border-radius: 0;
-}
-
-.windows-xp-theme ::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(to right, #F2F7FE, #E6F0FE);
-}
-
-.windows-xp-theme ::-webkit-scrollbar-thumb:active {
-    background: linear-gradient(to right, #DCEAFD, #EEF3FB);
-}
-
-.windows-xp-theme :focus-visible {
-    outline: 2px solid var(--xp-blue);
-    outline-offset: -1px;
-}
-
-/* Dark and light mode overrides for XP theme */
-@media (prefers-color-scheme: dark) {
-    .windows-xp-theme .headerbar {
-        background: linear-gradient(to bottom, var(--xp-gradient-start), var(--xp-gradient-end));
-        border-bottom: 1px solid var(--xp-border);
-    }
-}
-
-@media (prefers-color-scheme: light) {
-    .windows-xp-theme .headerbar {
-        background: linear-gradient(to bottom, var(--xp-gradient-start), var(--xp-gradient-end));
-        border-bottom: 1px solid var(--xp-border);
-    }
-}
-
-
 .fadeout-control {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-  }
-  
-  .fadeout-ui {
+}
+
+.fadeout-ui {
     display: flex;
     align-items: center;
     gap: 6px;
-  }
-  
-  .fadeout-input {
+}
+
+.fadeout-input {
     width: 60px;
     padding: 4px 8px;
-    border: 1px solid var(--adw-border);
+    border: 1px solid var(--border-color);
     border-radius: var(--adw-radius-sm);
-    background-color: var(--adw-card-bg);
-    color: var(--adw-text);
+    background-color: var(--card-bg-color);
+    color: var(--window-fg-color);
     font-size: 13px;
     text-align: center;
-  }
-  
-  .fadeout-input:focus {
-    outline: 2px solid var(--adw-accent);
+}
+
+.fadeout-input:focus {
+    outline: 2px solid var(--accent-bg-color);
     outline-offset: 1px;
-  }
-  
-  .fadeout-button {
-    background: var(--adw-accent);
+}
+
+.fadeout-button {
+    background: var(--accent-bg-color);
     color: white;
     border: none;
     border-radius: var(--adw-radius-sm);
@@ -1073,12 +936,12 @@ ul {
     font-size: 13px;
     cursor: pointer;
     transition: background-color 120ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
-  }
-  
-  .fadeout-button:hover {
-    background: var(--adw-accent-hover);
-  }
-  
+}
+
+.fadeout-button:hover {
+    background: var(--accent-bg-color-hover);
+}
+
 
 /* GNOME/GTK4 Style Toast Notification */
 .gnome-osd-toast {
@@ -1087,16 +950,21 @@ ul {
     left: 50%;
     transform: translateX(-50%);
     padding: 12px 24px;
-    border-radius: 99px; /* Pill shape */
-    font-family: 'Cantarell', 'Inter', system-ui, sans-serif; /* GNOME standard fonts */
+    border-radius: 99px;
+    /* Pill shape */
+    font-family: 'Cantarell', 'Inter', system-ui, sans-serif;
+    /* GNOME standard fonts */
     font-size: 15px;
     font-weight: 600;
     opacity: 0;
     transition: opacity 0.25s ease, top 0.25s cubic-bezier(0, 0, 0.2, 1);
-    z-index: 2147483647; /* Max z-index to stay on top */
-    pointer-events: none; /* Let clicks pass through to video */
+    z-index: 2147483647;
+    /* Max z-index to stay on top */
+    pointer-events: none;
+    /* Let clicks pass through to video */
     user-select: none;
-    backdrop-filter: blur(10px); /* Glass effect */
+    backdrop-filter: blur(10px);
+    /* Glass effect */
     white-space: nowrap;
 
     /* Default (Dark Mode) - Adwaita Dark */
@@ -1110,7 +978,8 @@ ul {
 @media (prefers-color-scheme: light) {
     .gnome-osd-toast {
         background-color: rgba(255, 255, 255, 0.95);
-        color: #2e3436; /* GNOME Dark Slate */
+        color: #2e3436;
+        /* GNOME Dark Slate */
         box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
         border: 1px solid rgba(0, 0, 0, 0.1);
     }
@@ -1119,5 +988,367 @@ ul {
 /* Animation State */
 .gnome-osd-toast.visible {
     opacity: 1;
-    top: 48px; /* Slide down slightly */
+    top: 48px;
+    /* Slide down slightly */
+}
+
+/* --- Video Wrapper and View Area Styling --- */
+.video-wrapper {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    /* This sets the background color for the empty state */
+    background: var(--view-bg-color, #1d1d20);
+}
+
+#preview {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    background: transparent; /* Ensure the video element itself is transparent */
+}
+
+/* --- Custom Controls Bar Styling (Adwaita Fidelity) --- */
+.controls-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 48px;
+    
+    /* GTK-style flat, semi-transparent background - NO GRADIENT */
+    background-color: color-mix(in srgb, var(--window-bg-color, black) 90%, transparent);
+    backdrop-filter: blur(8px);
+    border-top: 1px solid color-mix(in srgb, var(--border-color, white) 20%, transparent);
+    color: var(--window-fg-color, white);
+}
+
+/* GTK Button Style */
+.control-button {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: background-color 75ms cubic-bezier(0, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.control-button:hover {
+    background: color-mix(in srgb, currentColor 15%, transparent);
+}
+.control-button svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+}
+
+/* Timeline Slider (Adwaita Range Input) */
+.timeline-slider {
+    flex-grow: 1;
+    -webkit-appearance: none;
+    height: 8px;
+    background: color-mix(in srgb, currentColor 10%, transparent);
+    border-radius: 4px;
+    cursor: pointer;
+    margin: 0 8px;
+}
+
+.timeline-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    background: var(--accent-bg-color, #3584e4); 
+    border-radius: 50%;
+    cursor: grab;
+}
+
+/* Time display */
+.time-display {
+    font-family: 'Adwaita', sans-serif;
+    font-size: 14px;
+    font-feature-settings: "tnum" 1; 
+    flex-shrink: 0;
+}
+
+/*
+ * --- INTEGRATED HELP FILE STYLES ---
+ * Adwaita-compliant styles for the help page.
+ * NOTE: Variables like --adw-bg, --adw-card-bg, --adw-text are aliased
+ * to the :root variables (--window-bg-color, --card-bg-color, --window-fg-color)
+ * defined above.
+ */
+
+/* Mapping Adwaita vars used in the help file to the main.css :root variables */
+:root {
+    --adw-bg: var(--window-bg-color);
+    --adw-card-bg: var(--card-bg-color);
+    --adw-accent: var(--accent-bg-color);
+    --adw-text: var(--window-fg-color);
+    --adw-radius-sm: var(--adw-radius-sm);
+    --adw-radius-lg: var(--adw-radius-lg);
+    --spacing-s: var(--spacing-s);
+    --spacing-l: var(--spacing-l);
+    --spacing-xl: var(--spacing-xl);
+}
+
+
+/* Help Page Main Content Styles */
+.help-page-main {
+    padding: 24px;
+    overflow-y: scroll;
+    height: calc(100vh - 75px);
+    background: var(--adw-bg); 
+    position: relative;
+    box-sizing: border-box;
+}
+
+.content-section {
+    background: var(--adw-card-bg); 
+    padding: var(--spacing-xl, 24px); 
+    border-radius: var(--adw-radius-lg, 12px);
+    margin-bottom: var(--spacing-xl, 24px);
+}
+
+.help-page-main h1,
+.help-page-main h2,
+.help-page-main h3 {
+    color: var(--adw-text); 
+    margin-top: 0;
+}
+
+.feature {
+    background: var(--adw-bg); 
+    border-radius: var(--adw-radius-sm, 6px);
+    padding: var(--spacing-l, 16px); 
+    margin-bottom: var(--spacing-l, 16px);
+}
+
+.tip {
+    background: var(--adw-accent);
+    /* FIX: Set to the theme's default light text color, ensuring contrast over dark accent. */
+    color: #FFFFFF; 
+    border-radius: var(--adw-radius-sm, 6px);
+    padding: var(--spacing-l, 16px);
+    margin: var(--spacing-l, 16px) 0;
+}
+
+.help-page-main ul,
+.help-page-main ol {
+    padding-left: var(--spacing-xl, 24px);
+}
+
+.help-page-main li {
+    margin-bottom: var(--spacing-s, 8px);
+}
+
+/* Table of Contents styles */
+.toc {
+    background: var(--adw-bg);
+    border-radius: var(--adw-radius-sm, 6px);
+    padding: var(--spacing-l, 16px);
+    margin-bottom: var(--spacing-xl, 24px);
+}
+
+.toc ul {
+    list-style-type: none;
+    padding-left: 0;
+}
+
+.toc li {
+    margin-bottom: var(--spacing-s, 8px);
+}
+
+.toc a {
+    color: var(--adw-accent);
+    text-decoration: none;
+    -webkit-user-drag: none;
+}
+
+.toc a:hover {
+    text-decoration: underline;
+}
+
+/* GTK3-style scrollbar for Help Page (Keeping the light mode default for all scrollbars) */
+/* The main scrollbar styles are already defined earlier in the file, which should apply here too. */
+
+/* Dark mode scrollbar specific overrides (already defined in the main file) */
+@media (prefers-color-scheme: dark) {
+    ::-webkit-scrollbar-thumb {
+        background-color: #919191; 
+        border: 3px solid var(--window-bg-color);
+    }
+}
+
+/* --- GTK-Style Repeat Button (#mediaWindowRepeatButton) --- */
+#mediaWindowRepeatButton {
+    /* Inherit base button styles (size, padding, corners) */
+    background-color: transparent; 
+    border: none;
+    color: #dfdfdf; /* Default icon color (white/light gray) */
+    cursor: pointer;
+    padding: 0;
+    margin: 0 5px;
+    transition: all 0.15s ease-in-out;
+}
+
+#mediaWindowRepeatButton:hover {
+    /* GTK-style hover color */
+    color: #4c4c4c; 
+}
+
+/* Style for when the loop is active (visually pressed/toggled) */
+#mediaWindowRepeatButton.active {
+    /* GTK-style accent color for active state */
+    color: #4c4c4c; 
+    /* Slight background change for active state */
+    background-color: #6a6a6a; 
+    border-radius: 4px;
+}
+
+.gtk-volume-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: 8px;
+  }
+  
+  /* Adwaita symbolic button */
+  #gtkVolBtn svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+  }
+  
+/* ===================================================
+   GTK4-STYLE VOLUME CONTROL CSS (Final with all fixes)
+   =================================================== */
+
+/* Container for the Volume Popover (Acts as the interaction area) */
+.gtk-volume-popover {
+    position: relative;
+    display: flex; 
+    align-items: center; 
+    justify-content: center;
+}
+
+/* Container for the vertical slider that 'pops' up */
+.gtk-volume-slider-container {
+    position: absolute;
+    bottom: 100%; 
+    
+    /* Centering Fix 1: Use Flexbox to center the slider inside the container */
+    display: flex;
+    justify-content: center; 
+
+    /* Ensure the container itself is centered above the button */
+    left: 50%;
+    transform: translateX(-50%); 
+    
+    /* 🛑 FIX: Padding adjusted to make the thumb align with the top edge */
+    padding: 8px 5px 10px 5px; /* Top: 8px (half of 16px thumb), Bottom: 10px */
+    height: 128px; /* Adjusted height: 120 + 8 = 128px */
+    width: 30px;
+    
+    background: rgba(40, 40, 40, 0.9); 
+    border-radius: 6px;
+    margin-bottom: 5px; 
+    
+    opacity: 0;
+    pointer-events: none; 
+    transform: translate(-50%, 10px); 
+    transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+}
+
+/* Show the slider container on hover/focus of the PARENT GROUP */
+.gtk-volume-popover:hover .gtk-volume-slider-container,
+.gtk-volume-popover:focus-within .gtk-volume-slider-container {
+    opacity: 1;
+    pointer-events: auto; 
+    transform: translate(-50%, 0); 
+}
+
+/* Create the Connecting Triangle (Totem-style) */
+.gtk-volume-slider-container::after {
+    content: '';
+    position: absolute;
+    bottom: -8px; 
+    left: 50%;
+    transform: translateX(-50%);
+    
+    width: 0;
+    height: 0;
+    border-left: 8px solid transparent;
+    border-right: 8px solid transparent;
+    border-top: 8px solid rgba(40, 40, 40, 0.9); 
+    
+    opacity: inherit; 
+    transition: opacity 0.2s ease-out;
+}
+
+/* ---------------------------------------------------
+   VERTICAL SLIDER STYLES (.gtk-volume-slider-vertical)
+   --------------------------------------------------- */
+
+.gtk-volume-slider-vertical {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 4px; 
+    /* Height remains 100% of the adjusted container height */
+    height: 100%; 
+    
+    background: rgba(255, 255, 255, 0.3); 
+    border-radius: 999px;
+    cursor: pointer;
+    
+    /* 100% at Top Fix: Reverse the vertical direction */
+    transform: rotate(180deg); 
+    
+    writing-mode: vertical-lr; 
+}
+
+/* Vertical Slider Track (Webkit) */
+.gtk-volume-slider-vertical::-webkit-slider-runnable-track {
+    width: 4px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* Vertical Slider Thumb (GTK style) */
+.gtk-volume-slider-vertical::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    
+    width: 16px; 
+    height: 16px;
+    
+    background: white; 
+    border-radius: 50%;
+    
+    /* Centering: Centers the 16px thumb on the 4px track after 180deg rotation */
+    margin-top: -6px; 
+    margin-left: -6px; 
+    
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.05);
+    transition: all 0.2s ease-out;
+}
+
+/* HOVER State */
+.gtk-volume-slider-vertical::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+/* FOCUS State (GTK blue ring) */
+.gtk-volume-slider-vertical:focus::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px rgba(52, 131, 235, 0.5), 
+                0 1px 2px rgba(0, 0, 0, 0.2); 
 }
