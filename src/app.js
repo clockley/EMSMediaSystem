@@ -750,6 +750,45 @@ function resetPreviewWarningState() {
     hasShownPreviewWarning = false;
 }
 
+function showGnomeToast(message, duration = 3000) {
+    let toast = document.getElementById('gnomeToast');
+    const FADE_OUT_DURATION = 300;
+
+    // 1. Create the toast element if it doesn't exist (Dynamic Creation)
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'gnomeToast';
+        // The 'gnome-osd-toast' class contains all the required styling, position, and transition properties
+        toast.className = 'gnome-osd-toast';
+        document.body.appendChild(toast);
+    }
+
+    // 2. Preempt Existing Toast: Clear any running timer
+    if (toastTimer) {
+        clearTimeout(toastTimer);
+    }
+
+    // 3. Update Content and Make Visible
+    toast.textContent = message;
+
+    // Ensure the toast is ready to transition in
+    toast.style.display = 'block';
+    toast.classList.add('visible');
+
+    // 4. Set New Timer to Hide the Toast
+    toastTimer = setTimeout(() => {
+        // Start the fade-out/slide-up transition
+        toast.classList.remove('visible');
+
+        // After the transition finishes, hide the element entirely to be safe
+        setTimeout(() => {
+            toast.style.display = 'none';
+        }, FADE_OUT_DURATION);
+
+        toastTimer = null;
+    }, duration);
+}
+
 function showPreviewWarningToast() {
     // 1. Safety Check: Ensure video element exists
     if (!video) return;
@@ -1910,6 +1949,7 @@ function saveMediaFile() {
         }
 
         mediaPlayerInputState.clear();
+        showGnomeToast("File queued for playback");
 
         // Store pathnames as strings in array
         mediaPlayerInputState.filePaths = Array.from(mdfileElement.files).map(file =>
