@@ -39,6 +39,12 @@ let isPlaying = false;
 let img = null;
 let itc = 0;
 let hasShownPreviewWarning = false;
+let playPauseBtn;
+let playPauseIcon;
+let timeline;
+let currentTimeDisplay;
+let durationTimeDisplay;
+let repeatButton;
 const MEDIAPLAYER = 0, STREAMPLAYER = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
 const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 let isActiveMediaWindowCache = false;
@@ -422,6 +428,246 @@ function isActiveMediaWindow() {
     return isActiveMediaWindowCache;
 }
 
+function formatTime(seconds) {
+    if (isNaN(seconds) || seconds < 0) {
+        return "0:00";
+    }
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function setupCustomMediaControls() {
+    playPauseBtn = document.getElementById('playPauseBtn');
+    playPauseIcon = document.getElementById('playPauseIcon');
+    timeline = document.getElementById('timeline');
+    timeline.disabled = true;
+    currentTimeDisplay = document.getElementById('currentTime');
+    durationTimeDisplay = document.getElementById('durationTime');
+    repeatButton = document.getElementById('mediaWindowRepeatButton');
+    video = document.getElementById('preview');
+
+    if (!video || !timeline || !playPauseBtn) {
+        console.error("Missing custom media controls");
+        return;
+    }
+
+    let isDragging = false; // Track drag interaction
+
+    // --- Format time utility ---
+    const fmt = (sec) => {
+        if (!isFinite(sec) || sec < 0) return "0:00";
+        const m = Math.floor(sec / 60);
+        const s = Math.floor(sec % 60);
+        return `${m}:${s.toString().padStart(2, '0')}`;
+    };
+
+    // --- PLAY / PAUSE ---
+    playPauseBtn.addEventListener('click', () => {
+        if (video.paused) video.play();
+        else video.pause();
+    });
+
+    video.addEventListener('play', () => {
+        if (video.src === '') return;
+        playPauseIcon.innerHTML = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
+    });
+
+    video.addEventListener('pause', () => {
+        // Play icon
+        playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
+    });
+
+    // --- METADATA LOADED ---
+    video.addEventListener('loadedmetadata', () => {
+        timeline.min = 0;
+        timeline.max = 100;
+        timeline.value = 0;
+        timeline.disabled = false;
+    
+        currentTimeDisplay.textContent = "0:00";
+        durationTimeDisplay.textContent = fmt(video.duration);
+    
+        playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`; // Play icon
+    
+        const overlay = document.getElementById('customControls');
+        if (overlay) {
+            overlay.style.visibility =
+                (video.videoTracks && video.videoTracks.length > 0)
+                    ? "visible"
+                    : "hidden";
+        }
+    
+        repeatButton.classList.toggle('active', video.loop);
+    });
+
+    // --- DRAGGING THE TIMELINE ---
+    timeline.addEventListener('mousedown', () => { 
+        if (!video.duration) return;
+        isDragging = true; 
+    });
+    timeline.addEventListener('touchstart', () => { 
+        if (!video.duration) return;
+        isDragging = true; 
+    });
+
+    timeline.addEventListener('input', () => {
+        // Stop time update if video isn't loaded/duration isn't set
+        if (!video.duration) return; 
+        const t = (timeline.value / 100) * video.duration;
+        currentTimeDisplay.textContent = fmt(t); // update live while dragging
+    });
+
+    timeline.addEventListener('change', () => {
+        if (!video.duration) return;
+        const seekTime = (timeline.value / 100) * video.duration;
+        video.currentTime = seekTime; // final seek
+        isDragging = false;
+    });
+
+    document.addEventListener('mouseup', () => (isDragging = false));
+    document.addEventListener('touchend', () => (isDragging = false));
+
+    // --- TIMEUPDATE ---
+    video.addEventListener('timeupdate', () => {
+        if (!video.duration) return;
+
+        currentTimeDisplay.textContent = fmt(video.currentTime);
+
+        // Update slider ONLY if user is not dragging
+        if (!isDragging) {
+            timeline.value = (video.currentTime / video.duration) * 100;
+        }
+    });
+
+    // --- LOOP / REPEAT ---
+    repeatButton.addEventListener('click', () => {
+        video.loop = !video.loop;
+        repeatButton.classList.toggle('active', video.loop);
+
+        // Sync main loop control if it exists
+        const mainLoop = document.getElementById('mdLpCtlr');
+        if (mainLoop) mainLoop.checked = video.loop;
+
+        send('media-set-loop', video.loop);
+    });
+
+    // --- END OF VIDEO ---
+    video.addEventListener('ended', () => {
+        if (!video.loop) {
+            video.currentTime = 0;
+            video.pause();
+            timeline.value = 0;
+            currentTimeDisplay.textContent = "0:00";
+        }
+    });
+}
+
+function setupGtkVolumeControl() {
+    // 1. Get DOM references
+    const video = document.getElementById('preview');
+    const slider = document.getElementById('gtkVolSlider');
+    const icon = document.getElementById('gtkVolIcon');
+    const button = document.getElementById('gtkVolBtn');
+
+    if (!video || !slider || !icon || !button) {
+        console.error("Missing GTK Volume Control elements.");
+        return;
+    }
+
+    // Initialize slider value based on current video volume (or 100 if undefined)
+    slider.value = Math.round((video.volume || 1) * 100);
+    
+    // Initial mute state check
+    if (video.muted) slider.value = 0;
+
+    // Helper function to update the icon's appearance
+    function updateIcon(v) {
+        // --- 1. Define the GTK4 Symbolic Icon paths (16x16 viewBox) ---
+        const CONE_PATH = `<path d="M 1 5 L 4 5 L 7 2 L 7 14 L 4 11 L 1 11 Z"/>`;
+        
+        // Arcs are stroked paths with 'fill="none"'
+        const ARC_1 = `<path id="arc1" d="M 9 7.5 C 9.5 7.5 9.5 8.5 9 8.5" fill="none" stroke="currentColor" stroke-width="1"/>`;
+        const ARC_2 = `<path id="arc2" d="M 10 6 C 11 6 11 10 10 10" fill="none" stroke="currentColor" stroke-width="1"/>`;
+        const ARC_3 = `<path id="arc3" d="M 12 4 C 14 4 14 12 12 12" fill="none" stroke="currentColor" stroke-width="1"/>`;
+
+        // --- 2. Update Icon based on volume/mute state ---
+        if (video.muted || v == 0) {
+            // Muted Icon: Cone + Mute Cross
+            icon.innerHTML = CONE_PATH + 
+                             `<line x1="8" y1="2" x2="16" y2="14" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>`;
+        } else {
+            // Volume Icon: Cone + Arcs (all paths)
+            icon.innerHTML = CONE_PATH + ARC_1 + ARC_2 + ARC_3;
+            
+            // Re-query the arcs after setting innerHTML
+            const arc1 = document.getElementById('arc1');
+            const arc2 = document.getElementById('arc2');
+            const arc3 = document.getElementById('arc3');
+            
+            // Set default display to none for fine control
+            if (arc1) arc1.style.display = 'none';
+            if (arc2) arc2.style.display = 'none';
+            if (arc3) arc3.style.display = 'none';
+
+            // Show arcs based on volume thresholds
+            if (v > 1) { // Low volume: Show Arc 1
+                if (arc1) arc1.style.display = 'block';
+            }
+            if (v > 33) { // Medium volume: Show Arc 2
+                if (arc2) arc2.style.display = 'block';
+            }
+            if (v > 66) { // High volume: Show Arc 3
+                if (arc3) arc3.style.display = 'block';
+            }
+        }
+    }
+
+
+    // --- EVENT LISTENERS ---
+
+    // 1. Slider Input Handler (User adjusts volume)
+    slider.addEventListener('input', () => {
+        const v = slider.value / 100;
+        video.volume = v;
+        
+        // If the user moves the slider from 0, unmute the video
+        if (v > 0) video.muted = false; 
+        
+        updateIcon(slider.value);
+    });
+
+    // 2. Volume Change Handler (Sync with programmatic changes/mute)
+    video.addEventListener('volumechange', () => {
+        // Update slider position if mute state changes or volume changes elsewhere
+        if (video.muted) {
+            slider.value = 0;
+        } else {
+            slider.value = Math.round(video.volume * 100);
+        }
+        updateIcon(slider.value);
+    });
+
+    // 3. Mute/Unmute Button Click Handler
+    let lastVolume = slider.value / 100; // Store last known non-zero volume
+
+    button.addEventListener('click', () => {
+        if (video.muted) {
+            // UNMUTE: Restore to last volume (or default to 100%)
+            video.volume = lastVolume > 0 ? lastVolume : 1;
+            video.muted = false;
+        } else {
+            // MUTE: Store current volume before muting
+            lastVolume = video.volume;
+            video.muted = true;
+        }
+        // The 'volumechange' event handles the UI update via updateIcon
+    });
+
+    // Initial icon setup on load
+    updateIcon(slider.value);
+}
+
 let lastUpdateTimeLocalPlayer = 0;
 
 function getAudioDevices() {
@@ -493,6 +739,7 @@ function resetPreviewWarningState() {
 function showPreviewWarningToast() {
     // 1. Safety Check: Ensure video element exists
     if (!video) return;
+    if (video.src === '') return;
 
     if (hasShownPreviewWarning) {
         return;
@@ -1447,30 +1694,51 @@ function generateMediaFormHTML(video = null) {
             <span class="switch-thumb"></span>
           </label>
         </div>
-        <div class="loop-control">
-          <span class="control-label">Repeat</span>
-          <label class="switch">
-            <input type="checkbox" name="mdLpCtlr" id="mdLpCtlr" ${video?.loop ? 'checked' : ''}>
-            <span class="switch-track"></span>
-            <span class="switch-thumb"></span>
-          </label>
         </div>
-        <!-- Fadeout control
-        <div class="loop-control fadeout-control">
-          <span class="control-label">Fadeout</span>
-          <div class="fadeout-ui">
-            <input type="number" id="fadeoutTime" min="0" max="10" step="0.5" value="3"
-              class="fadeout-input" title="Fadeout duration (seconds)">
-            <button id="fadeoutBtn" type="button" class="fadeout-button">Start</button>
-          </div>
-        </div> -->
-      </div>
   
       <div id="mediaCntDn"></div>
     </form>
   
     <div class="video-wrapper">
-      <video id="preview" disablePictureInPicture controls></video>
+      <video id="preview" disablePictureInPicture controls=false></video>
+
+      <div id="customControls" class="controls-overlay">
+
+        <button class="control-button custom-media-control" id="mediaWindowRepeatButton" title="Repeat (Toggle Loop)">
+            <svg viewBox="0 0 24 24">
+                <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v3z"/>
+            </svg>
+        </button>
+
+        <button class="control-button" id="playPauseBtn">
+            <svg viewBox="0 0 24 24" id="playPauseIcon"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+
+        <span class="time-display" id="currentTime">0:00</span>
+        <input type="range" min="0" max="100" value="0" step="0.1" class="timeline-slider" id="timeline" disabled>
+        <span class="time-display" id="durationTime">0:00</span>
+
+        <div class="gtk-volume-popover" id="gtkVolPopover">
+        <button class="gtk-control-btn" id="gtkVolBtn" aria-label="Volume">
+            <svg id="gtkVolIcon" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M 1 5 L 4 5 L 7 2 L 7 14 L 4 11 L 1 11 Z"/> 
+                <path d="M 9 7.5 C 9.5 7.5 9.5 8.5 9 8.5" fill="none" stroke="currentColor" stroke-width="1" id="arc1"/>
+                <path d="M 10 6 C 11 6 11 10 10 10" fill="none" stroke="currentColor" stroke-width="1" id="arc2"/>
+                <path d="M 12 4 C 14 4 14 12 12 12" fill="none" stroke="currentColor" stroke-width="1" id="arc3"/>
+            </svg>
+        </button>
+
+          <div class="gtk-volume-slider-container">
+            <input id="gtkVolSlider"
+                   type="range"
+                   min="0" max="100" value="100"
+                   step="1"
+                   orient="vertical"
+                   class="gtk-volume-slider-vertical">
+          </div>
+        </div>
+
+      </div>
     </div>
   </div>`;
 }
@@ -1527,12 +1795,8 @@ function setSBFormMediaPlayer() {
     }
 
     attachCubicWaveShaper(video);
-
-    const loopctl = document.getElementById("mdLpCtlr");
-    if (video.loop === true) {
-        document.getElementById("mdLpCtlr").checked = true;
-    }
-    loopctl.addEventListener('change', loopCtlHandler);
+    setupCustomMediaControls();
+    setupGtkVolumeControl();
 
     const mdFile = document.getElementById("mdFile");
     mdFile.addEventListener("change", saveMediaFile);
@@ -1544,6 +1808,7 @@ function setSBFormMediaPlayer() {
         isPlaying = true;
     }
     updateDynUI();
+    video.controls = false;
     plyBtn.addEventListener("click", playMedia, { passive: true });
     let isImgFile;
     if (mdFile !== null) {
@@ -1699,7 +1964,7 @@ function saveMediaFile() {
                 }
                 video.id = "preview";
                 video.currentTime = startTime;
-                video.controlsList = "noplaybackrate";
+                video.controls = false
                 if (document.getElementById("mdLpCtlr") !== null) {
                     video.loop = document.getElementById("mdLpCtlr").checked;
                 }
@@ -1786,6 +2051,19 @@ function cleanRefs() {
     if (mcd && mcd.contains(textNode)) {
         mcd.removeChild(textNode);
     }
+
+    if (playPauseBtn) playPauseBtn.removeEventListener('click', unPauseMedia);
+    if (playPauseBtn) playPauseBtn.removeEventListener('click', pauseMedia);
+    if (timeline) timeline.removeEventListener('change', () => {});
+    if (timeline) timeline.removeEventListener('input', () => {});
+    if (repeatButton) repeatButton.removeEventListener('click', () => {});
+    playPauseBtn = null;
+    playPauseIcon = null;
+    timeline = null;
+    currentTimeDisplay = null;
+    durationTimeDisplay = null;
+    repeatButton = null;
+
     document.getElementById("dyneForm").innerHTML = '';
 }
 
