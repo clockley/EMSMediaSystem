@@ -37,7 +37,11 @@ video::-webkit-media-controls-volume-control-hover-background,
 video::-webkit-media-controls-current-time-display,
 video::-webkit-media-controls-time-remaining-display,
 video::-webkit-media-controls-fullscreen-button,
-video::-webkit-media-controls-toggle-closed-captions-button {
+video::-webkit-media-controls-toggle-closed-captions-button,
+.timeline-slider,
+.timeline-slider::-webkit-slider-thumb,
+.gtk-volume-slider-vertical,
+.gtk-volume-slider-vertical::-webkit-slider-thumb {
     cursor: default !important;
 }
 
@@ -1026,6 +1030,17 @@ ul {
     backdrop-filter: blur(8px);
     border-top: 1px solid color-mix(in srgb, var(--border-color, white) 20%, transparent);
     color: var(--window-fg-color, white);
+
+    transition: opacity 250ms ease-out, transform 250ms ease-out; /* Smooth animation */
+    opacity: 0; /* Initially hidden */
+    transform: translateY(100%); /* Start 100% of its height below its normal position */
+    pointer-events: none; /* Disable interaction when hidden */
+}
+
+.video-wrapper:hover .controls-overlay {
+    opacity: 1; /* Fully visible */
+    transform: translateY(0); /* Return to its natural position at the bottom */
+    pointer-events: auto; /* Re-enable interaction */
 }
 
 /* GTK Button Style */
