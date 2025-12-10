@@ -1933,8 +1933,19 @@ function setSBFormMediaPlayer() {
         restoreMediaFile();
         updateTimestamp();
     }
+    invoke('get-platform')
+        .then(operatingSystem => {
+            attachCubicWaveShaper(
+                video,
+                undefined,
+                undefined,
+                operatingSystem
+            );
+        })
+        .catch(error => {
+            console.error("Failed to get platform, skipping audio setup:", error);
+        });
 
-    attachCubicWaveShaper(video);
 
     const mdFile = document.getElementById("mdFile");
     mdFile.addEventListener("change", saveMediaFile);
