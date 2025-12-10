@@ -992,7 +992,8 @@ ul {
     height: 100%;
     object-fit: contain;
     display: block;
-    background: transparent; /* Ensure the video element itself is transparent */
+    background: transparent;
+    /* Ensure the video element itself is transparent */
 }
 
 /* --- Custom Controls Bar Styling (Adwaita Fidelity) --- */
@@ -1006,23 +1007,30 @@ ul {
     align-items: center;
     gap: 12px;
     height: 48px;
-    
+
     /* GTK-style flat, semi-transparent background - NO GRADIENT */
     background-color: color-mix(in srgb, var(--window-bg-color, black) 90%, transparent);
     backdrop-filter: blur(8px);
     border-top: 1px solid color-mix(in srgb, var(--border-color, white) 20%, transparent);
     color: var(--window-fg-color, white);
 
-    transition: opacity 250ms ease-out, transform 250ms ease-out; /* Smooth animation */
-    opacity: 0; /* Initially hidden */
-    transform: translateY(100%); /* Start 100% of its height below its normal position */
-    pointer-events: none; /* Disable interaction when hidden */
+    transition: opacity 250ms ease-out, transform 250ms ease-out;
+    /* Smooth animation */
+    opacity: 0;
+    /* Initially hidden */
+    transform: translateY(100%);
+    /* Start 100% of its height below its normal position */
+    pointer-events: none;
+    /* Disable interaction when hidden */
 }
 
 .video-wrapper:hover .controls-overlay {
-    opacity: 1; /* Fully visible */
-    transform: translateY(0); /* Return to its natural position at the bottom */
-    pointer-events: auto; /* Re-enable interaction */
+    opacity: 1;
+    /* Fully visible */
+    transform: translateY(0);
+    /* Return to its natural position at the bottom */
+    pointer-events: auto;
+    /* Re-enable interaction */
 }
 
 /* GTK Button Style */
@@ -1039,32 +1047,56 @@ ul {
     justify-content: center;
     flex-shrink: 0;
 }
+
 .control-button:hover {
     background: color-mix(in srgb, currentColor 15%, transparent);
 }
+
 .control-button svg {
     width: 20px;
     height: 20px;
     fill: currentColor;
 }
 
-/* Timeline Slider (Adwaita Range Input) */
 .timeline-slider {
-    flex-grow: 1;
-    -webkit-appearance: none;
-    height: 8px;
-    background: color-mix(in srgb, currentColor 10%, transparent);
-    border-radius: 4px;
+    /* Set the overall height of the element to be large (e.g., 20px). 
+       This is the total height that will register a click for seeking. */
+    height: 20px;
+
+    /* Ensure no unwanted vertical space from margins/padding */
+    margin: 0;
+    padding: 0;
+
+    /* Ensure the slider uses all available width */
+    width: 100%;
+
     cursor: pointer;
-    margin: 0 8px;
 }
 
+/* Style the TRACK to be small and centered within the larger 20px element */
+.timeline-slider::-webkit-slider-runnable-track {
+    /* The small, visible line height */
+    height: 4px;
+
+    /* Center the 4px track within the 20px element height: (20-4)/2 = 8px margin */
+    margin-top: 8px;
+    margin-bottom: 8px;
+
+    /* Other visual styles (adjust as needed for your theme) */
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 999px;
+}
+
+/* Style the THUMB (Puck) to be correctly centered over the thin track */
 .timeline-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 14px;
-    height: 14px;
-    background: var(--accent-bg-color, #3584e4); 
-    border-radius: 50%;
+    /* Assuming your thumb is 16px tall (standard size or based on your volume slider) */
+    /* Center it over the 4px track: -((16px - 4px) / 2) = -6px margin-top */
+    margin-top: -6px;
+
+    /* Ensure it has a strong z-index so it's easily visible/draggable */
+    position: relative;
+    z-index: 2;
+
     cursor: grab;
 }
 
@@ -1072,7 +1104,7 @@ ul {
 .time-display {
     font-family: 'Adwaita', sans-serif;
     font-size: 14px;
-    font-feature-settings: "tnum" 1; 
+    font-feature-settings: "tnum" 1;
     flex-shrink: 0;
 }
 
@@ -1103,14 +1135,14 @@ ul {
     padding: 24px;
     overflow-y: scroll;
     height: calc(100vh - 75px);
-    background: var(--adw-bg); 
+    background: var(--adw-bg);
     position: relative;
     box-sizing: border-box;
 }
 
 .content-section {
-    background: var(--adw-card-bg); 
-    padding: var(--spacing-xl, 24px); 
+    background: var(--adw-card-bg);
+    padding: var(--spacing-xl, 24px);
     border-radius: var(--adw-radius-lg, 12px);
     margin-bottom: var(--spacing-xl, 24px);
 }
@@ -1118,21 +1150,21 @@ ul {
 .help-page-main h1,
 .help-page-main h2,
 .help-page-main h3 {
-    color: var(--adw-text); 
+    color: var(--adw-text);
     margin-top: 0;
 }
 
 .feature {
-    background: var(--adw-bg); 
+    background: var(--adw-bg);
     border-radius: var(--adw-radius-sm, 6px);
-    padding: var(--spacing-l, 16px); 
+    padding: var(--spacing-l, 16px);
     margin-bottom: var(--spacing-l, 16px);
 }
 
 .tip {
     background: var(--adw-accent);
     /* FIX: Set to the theme's default light text color, ensuring contrast over dark accent. */
-    color: #FFFFFF; 
+    color: #FFFFFF;
     border-radius: var(--adw-radius-sm, 6px);
     padding: var(--spacing-l, 16px);
     margin: var(--spacing-l, 16px) 0;
@@ -1180,7 +1212,7 @@ ul {
 /* Dark mode scrollbar specific overrides (already defined in the main file) */
 @media (prefers-color-scheme: dark) {
     ::-webkit-scrollbar-thumb {
-        background-color: #919191; 
+        background-color: #919191;
         border: 3px solid var(--window-bg-color);
     }
 }
@@ -1188,9 +1220,10 @@ ul {
 /* --- GTK-Style Repeat Button (#mediaWindowRepeatButton) --- */
 #mediaWindowRepeatButton {
     /* Inherit base button styles (size, padding, corners) */
-    background-color: transparent; 
+    background-color: transparent;
     border: none;
-    color: #dfdfdf; /* Default icon color (white/light gray) */
+    color: #dfdfdf;
+    /* Default icon color (white/light gray) */
     cursor: pointer;
     padding: 0;
     margin: 0 5px;
@@ -1199,15 +1232,15 @@ ul {
 
 #mediaWindowRepeatButton:hover {
     /* GTK-style hover color */
-    color: #4c4c4c; 
+    color: #4c4c4c;
 }
 
 /* Style for when the loop is active (visually pressed/toggled) */
 #mediaWindowRepeatButton.active {
     /* GTK-style accent color for active state */
-    color: #4c4c4c; 
+    color: #4c4c4c;
     /* Slight background change for active state */
-    background-color: #6a6a6a; 
+    background-color: #6a6a6a;
     border-radius: 4px;
 }
 
@@ -1216,15 +1249,15 @@ ul {
     align-items: center;
     gap: 8px;
     margin-left: 8px;
-  }
-  
-  /* Adwaita symbolic button */
-  #gtkVolBtn svg {
+}
+
+/* Adwaita symbolic button */
+#gtkVolBtn svg {
     width: 18px;
     height: 18px;
     fill: currentColor;
-  }
-  
+}
+
 /* ===================================================
    GTK4-STYLE VOLUME CONTROL CSS (Final with all fixes)
    =================================================== */
@@ -1232,36 +1265,38 @@ ul {
 /* Container for the Volume Popover (Acts as the interaction area) */
 .gtk-volume-popover {
     position: relative;
-    display: flex; 
-    align-items: center; 
+    display: flex;
+    align-items: center;
     justify-content: center;
 }
 
 /* Container for the vertical slider that 'pops' up */
 .gtk-volume-slider-container {
     position: absolute;
-    bottom: 100%; 
-    
+    bottom: 100%;
+
     /* Centering Fix 1: Use Flexbox to center the slider inside the container */
     display: flex;
-    justify-content: center; 
+    justify-content: center;
 
     /* Ensure the container itself is centered above the button */
     left: 50%;
-    transform: translateX(-50%); 
-    
+    transform: translateX(-50%);
+
     /* 🛑 FIX: Padding adjusted to make the thumb align with the top edge */
-    padding: 8px 5px 10px 5px; /* Top: 8px (half of 16px thumb), Bottom: 10px */
-    height: 128px; /* Adjusted height: 120 + 8 = 128px */
+    padding: 8px 5px 10px 5px;
+    /* Top: 8px (half of 16px thumb), Bottom: 10px */
+    height: 128px;
+    /* Adjusted height: 120 + 8 = 128px */
     width: 30px;
-    
-    background: rgba(40, 40, 40, 0.9); 
+
+    background: rgba(40, 40, 40, 0.9);
     border-radius: 6px;
-    margin-bottom: 5px; 
-    
+    margin-bottom: 5px;
+
     opacity: 0;
-    pointer-events: none; 
-    transform: translate(-50%, 10px); 
+    pointer-events: none;
+    transform: translate(-50%, 10px);
     transition: opacity 0.2s ease-out, transform 0.2s ease-out;
 }
 
@@ -1269,25 +1304,25 @@ ul {
 .gtk-volume-popover:hover .gtk-volume-slider-container,
 .gtk-volume-popover:focus-within .gtk-volume-slider-container {
     opacity: 1;
-    pointer-events: auto; 
-    transform: translate(-50%, 0); 
+    pointer-events: auto;
+    transform: translate(-50%, 0);
 }
 
 /* Create the Connecting Triangle (Totem-style) */
 .gtk-volume-slider-container::after {
     content: '';
     position: absolute;
-    bottom: -8px; 
+    bottom: -8px;
     left: 50%;
     transform: translateX(-50%);
-    
+
     width: 0;
     height: 0;
     border-left: 8px solid transparent;
     border-right: 8px solid transparent;
-    border-top: 8px solid rgba(40, 40, 40, 0.9); 
-    
-    opacity: inherit; 
+    border-top: 8px solid rgba(40, 40, 40, 0.9);
+
+    opacity: inherit;
     transition: opacity 0.2s ease-out;
 }
 
@@ -1298,18 +1333,18 @@ ul {
 .gtk-volume-slider-vertical {
     -webkit-appearance: none;
     appearance: none;
-    width: 4px; 
+    width: 4px;
     /* Height remains 100% of the adjusted container height */
-    height: 100%; 
-    
-    background: rgba(255, 255, 255, 0.3); 
+    height: 100%;
+
+    background: rgba(255, 255, 255, 0.3);
     border-radius: 999px;
     cursor: pointer;
-    
+
     /* 100% at Top Fix: Reverse the vertical direction */
-    transform: rotate(180deg); 
-    
-    writing-mode: vertical-lr; 
+    transform: rotate(180deg);
+
+    writing-mode: vertical-lr;
 }
 
 /* Vertical Slider Track (Webkit) */
@@ -1323,17 +1358,17 @@ ul {
 .gtk-volume-slider-vertical::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    
-    width: 16px; 
+
+    width: 16px;
     height: 16px;
-    
-    background: white; 
+
+    background: white;
     border-radius: 50%;
-    
+
     /* Centering: Centers the 16px thumb on the 4px track after 180deg rotation */
-    margin-top: -6px; 
-    margin-left: -6px; 
-    
+    margin-top: -6px;
+    margin-left: -6px;
+
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.05);
     transition: all 0.2s ease-out;
 }
@@ -1346,6 +1381,6 @@ ul {
 
 /* FOCUS State (GTK blue ring) */
 .gtk-volume-slider-vertical:focus::-webkit-slider-thumb {
-    box-shadow: 0 0 0 3px rgba(52, 131, 235, 0.5), 
-                0 1px 2px rgba(0, 0, 0, 0.2); 
+    box-shadow: 0 0 0 3px rgba(52, 131, 235, 0.5),
+        0 1px 2px rgba(0, 0, 0, 0.2);
 }
