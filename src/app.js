@@ -2202,7 +2202,9 @@ function playLocalMedia(event) {
                 video.loop = document.getElementById("mdLpCtlr").checked;
             }
             audioOnlyFile = true;
-            document.getElementById('customControls').style.visibility = '';
+            if (document.getElementById('volumeControl')) {
+                document.getElementById('customControls').style.visibility = '';
+            }
             playingMediaAudioOnly = true;
             updateTimestamp();
             return;
