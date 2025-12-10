@@ -23,11 +23,11 @@ function isWindowsOS() {
  * Attach cubic soft-clip WaveShaper with gain compensation,
  * but only if the user is on a Windows OS to mitigate audio clipping issues.
  * * @param {HTMLMediaElement} videoElement
- * @param {number} [inputGain=0.9] Pre-gain multiplier (e.g., 0.75 for safe headroom)
+ * @param {number} [inputGain=0.8] Pre-gain multiplier (e.g., 0.8 for safe headroom)
  * @param {number} [curveLength=32768] Resolution of the WaveShaper curve
  * @returns {object} Contains the audio nodes if attached, otherwise a minimal object.
  */
-export function attachCubicWaveShaper(videoElement, inputGain = 0.9, curveLength = 32768) {
+export function attachCubicWaveShaper(videoElement, inputGain = 0.8, curveLength = 32768) {
   if (!videoElement) throw new Error("Video element is required.");
 
   // Check if already attached
@@ -44,7 +44,7 @@ export function attachCubicWaveShaper(videoElement, inputGain = 0.9, curveLength
 
     // 1. INPUT (Pre-Waveshaper) GAIN NODE
     const inputGainNode = audioCtx.createGain();
-    inputGainNode.gain.value = inputGain; // Default: 0.75
+    inputGainNode.gain.value = inputGain;
 
     // WAVESHAPER NODE
     const waveshaper = audioCtx.createWaveShaper();
