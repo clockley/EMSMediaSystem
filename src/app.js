@@ -498,6 +498,7 @@ function setupCustomMediaControls() {
     videoWrapper = document.querySelector('.video-wrapper');
     controlsOverlay = document.querySelector('.controls-overlay');
     const overlay = document.getElementById('customControls');
+    const clickTarget = videoWrapper || video;
 
     if (overlay) {
         overlay.style.display = "none";
@@ -643,6 +644,21 @@ function setupCustomMediaControls() {
             currentTimeDisplay.textContent = "0:00";
         }
     });
+
+    if (clickTarget) {
+        clickTarget.addEventListener('click', (event) => {
+            const isControl = event.target.closest('#customControls');
+
+            if (!isControl) {
+                if (video.paused) {
+                    video.play();
+                } else {
+                    video.pause();
+                }
+            }
+            event.stopPropagation();
+        });
+    }
 }
 
 function setupGtkVolumeControl() {
