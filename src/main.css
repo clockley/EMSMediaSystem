@@ -422,24 +422,6 @@ video {}
     height: 100%;
 }
 
-video::-webkit-media-controls-panel,
-video::-webkit-media-controls-play-button,
-video::-webkit-media-controls-volume-slider,
-video::-webkit-media-controls-mute-button,
-video::-webkit-media-controls-timeline,
-video::-webkit-media-controls-current-time-display,
-video::-webkit-media-controls-time-remaining-display,
-video::-webkit-media-controls-fullscreen-button,
-video::-webkit-media-controls-toggle-closed-captions-button {}
-
-/* For the timeline/progress bar specifically */
-video::-webkit-media-controls-timeline-container,
-video::-webkit-media-controls-timeline {}
-
-/* For the volume slider */
-video::-webkit-media-controls-volume-control-container,
-video::-webkit-media-controls-volume-control-hover-background {}
-
 #preview {
     position: absolute;
     top: 0;
