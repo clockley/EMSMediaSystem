@@ -475,17 +475,20 @@ function setupCustomMediaControls() {
     });
 
     video.addEventListener('play', () => {
-        if (video.src === '') return;
+        if (video.src === '' || currentMode !== MEDIAPLAYER) return;
         playPauseIcon.innerHTML = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
     });
 
     video.addEventListener('pause', () => {
         // Play icon
+        if (playPauseIcon === null) return;
         playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
     });
 
-    // --- METADATA LOADED (Duration Check for Visibility) ---
     video.addEventListener('loadedmetadata', () => {
+        if (currentMode !== MEDIAPLAYER) {
+            return;
+        }
         timeline.min = 0;
         timeline.max = 100;
         timeline.value = 0;
@@ -546,9 +549,10 @@ function setupCustomMediaControls() {
 
     // --- TIMEUPDATE ---
     video.addEventListener('timeupdate', () => {
-        if (!video.duration) return;
-
-        currentTimeDisplay.textContent = fmt(video.currentTime);
+        if (!video.duration || timeline === null) return;
+        if (currentTimeDisplay !== null) {
+            currentTimeDisplay.textContent = fmt(video.currentTime);
+        }
 
         if (!isDragging) {
             timeline.value = (video.currentTime / video.duration) * 100;
@@ -1850,8 +1854,6 @@ function setSBFormMediaPlayer() {
     }
 
     attachCubicWaveShaper(video);
-    setupCustomMediaControls();
-    setupGtkVolumeControl();
 
     const mdFile = document.getElementById("mdFile");
     mdFile.addEventListener("change", saveMediaFile);
@@ -1908,6 +1910,11 @@ function setSBFormMediaPlayer() {
             document.getElementById("preview").parentNode.appendChild(img);
             return;
         }
+    }
+    setupCustomMediaControls();
+    setupGtkVolumeControl();
+    if (isFinite(video.duration) && video.duration > 0) {
+        document.getElementById('customControls').style.display='';
     }
     if (encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
         saveMediaFile();
@@ -1985,7 +1992,6 @@ function saveMediaFile() {
     if ((iM = isImg(mediaFile))) {
         playingMediaAudioOnly = false;
         audioOnlyFile = false;
-        document.getElementById('customControls').style.display = "none";
     }
 
     if (iM && !document.querySelector('img') && (!isActiveMW)) {
