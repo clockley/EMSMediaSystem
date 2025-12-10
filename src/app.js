@@ -482,7 +482,7 @@ function modeChangeFixups(error) {
 }
 
 function preModeChangeFixups() {
-    if (encodeURI(mediaFile) !== getHostnameOrBasename(video.src) && !(playingMediaAudioOnly || video.paused)) {
+    if (!isActiveMediaWindow() && encodeURI(mediaFile) !== getHostnameOrBasename(video.src) && !(playingMediaAudioOnly || video.paused)) {
         video.src = encodeURI(mediaFile);
     }
 }
