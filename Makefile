@@ -8,16 +8,13 @@ TERSER = npx terser
 HTML_MINIFIER = npx html-minifier-terser
 CSSO = npx csso
 NODE = node
-ICON_SRC = src/icon.png
+# ICON_SRC = src/icon.png # Covered by general image search
 
 # Output directory for derived files
 DERIVED_DIR = derived
 
 # Output directory for dist files
 DIST_DIR = dist
-
-ICON_DEST = $(DERIVED_DIR)/$(ICON_SRC)
-DERIVED_RESOURCES = $(ICON_DEST)
 
 # Directories to exclude from JS/MJS search
 EXCLUDES = -path "./node_modules/*" -o -path "./fonts/*" -o -path "./dist/*"
@@ -26,26 +23,59 @@ EXCLUDES = -path "./node_modules/*" -o -path "./fonts/*" -o -path "./dist/*"
 CSS_SRC = src/main.css
 CSS_MIN_MAP = $(DERIVED_DIR)/main.min.css.map
 
+# --- Platform Setup and File Finding ---
+
 ifeq ($(OS),Windows_NT)
   WINDOWS = 1
   NO_COLOR = 1
   MKDIR = powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path"
   RMDIR = powershell -NoProfile -c "Remove-Item -Recurse -Force -Path"
-else
-  WINDOWS = 0
-  MKDIR = mkdir -p
-  RMDIR = rm -rf
-endif
 
-ifeq ($(WINDOWS), 1)
+  IMAGE_SRC := $(shell powershell -NoProfile -c ' \
+  $$files = Get-ChildItem -Recurse -File -Filter "*.svg" -Path src; \
+  $$files += Get-ChildItem -Recurse -File -Filter "*.png" -Path src; \
+  $$files += Get-ChildItem -Recurse -File -Filter "*.ico" -Path src; \
+  $$files = $$files | Where-Object { \
+  $$_.FullName -notlike "*node_modules*" -and \
+  $$_.FullName -notlike "*\.git*" -and \
+  $$_.FullName -notlike "*build*" -and \
+  $$_.FullName -notlike "*dist*" \
+  }; \
+  foreach ($$f in $$files) { "./" + $$f.FullName.Substring((Get-Location).Path.Length + 1).Replace("\\","/") }')
+
   HTML_FILES := $(shell powershell -NoProfile -c ' \
   $$files = Get-ChildItem -Recurse -File -Filter "*.html" src; \
   $$files = $$files | Where-Object { $$_.Name -notlike "*.prod.html" }; \
   foreach ($$f in $$files) { "./" + $$f.FullName.Substring((Get-Location).Path.Length + 1).Replace("\\","/") }')
+
+  JS_FILES := $(shell powershell -NoProfile -c ' \
+  $$files = Get-ChildItem -Recurse -File src | Where-Object { \
+  ($$_.Extension -eq ".js" -or $$_.Extension -eq ".mjs") -and \
+  $$_.Name -notlike "*.min.*" -and \
+  $$_.FullName -notlike "*node_modules*" -and \
+  $$_.FullName -notlike "*\.git*" -and \
+  $$_.FullName -notlike "*build*" -and \
+  $$_.FullName -notlike "*dist*" \
+  }; \
+  foreach ($$f in $$files) { "./" + $$f.FullName.Substring((Get-Location).Path.Length + 1).Replace("\\","/") }')
 else
+  WINDOWS = 0
+  MKDIR = mkdir -p
+  RMDIR = rm -rf
+
+  IMAGE_SRC := $(shell find ./src \( $(EXCLUDES) \) -prune -o -type f \( -name "*.svg" -o -name "*.png" -o -name "*.ico" \) -print)
+
   HTML_FILES := $(shell find ./src -type f -name "*.html" ! -name "*.prod.html")
+
+  JS_FILES := $(shell find ./src \( $(EXCLUDES) \) -prune -o -type f \( -name "*.js" -o -name "*.mjs" \) ! -name "*.min.*" -print)
 endif
 
+# Corresponding destination files in derived directory.
+# Maps "./src/path/file.ext" to "derived/src/path/file.ext"
+IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
+DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all images
+
+# --- Color Definitions (Unchanged) ---
 ifeq ($(NO_COLOR), 1)
   COLOR_GREEN =
   COLOR_BLUE =
@@ -65,21 +95,6 @@ endif
 # Corresponding prod HTML files in derived directory
 HTML_PROD_FILES := $(patsubst %.html,$(DERIVED_DIR)/%.prod.html,$(HTML_FILES))
 
-ifeq ($(WINDOWS), 1)
-  JS_FILES := $(shell powershell -NoProfile -c ' \
-  $$files = Get-ChildItem -Recurse -File src | Where-Object { \
-  ($$_.Extension -eq ".js" -or $$_.Extension -eq ".mjs") -and \
-  $$_.Name -notlike "*.min.*" -and \
-  $$_.FullName -notlike "*node_modules*" -and \
-  $$_.FullName -notlike "*\.git*" -and \
-  $$_.FullName -notlike "*build*" -and \
-  $$_.FullName -notlike "*dist*" \
-  }; \
-  foreach ($$f in $$files) { "./" + $$f.FullName.Substring((Get-Location).Path.Length + 1).Replace("\\","/") }')
-else
-  JS_FILES := $(shell find ./src \( $(EXCLUDES) \) -prune -o -type f \( -name "*.js" -o -name "*.mjs" \) ! -name "*.min.*" -print)
-endif
-
 # Corresponding minified files in derived directory
 MINIFIED_JS_FILES := $(patsubst %.js,$(DERIVED_DIR)/%.min.js,$(patsubst %.mjs,$(DERIVED_DIR)/%.min.mjs,$(JS_FILES)))
 
@@ -91,7 +106,15 @@ all: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DER
 $(DERIVED_DIR):
 	@$(MKDIR) $(DERIVED_DIR)
 
-$(ICON_DEST): $(ICON_SRC) | $(DERIVED_DIR)
+# --- Pattern Rules for Copying Images (FIXED) ---
+
+# This rule explicitly handles the copying for SVG, PNG, and ICO files
+# by creating a pattern rule for each suffix. This avoids the shell
+# complexity of the previous general rule and is more robust.
+
+# Rule for SVG files
+$(DERIVED_DIR)/%.svg: %.svg | $(DERIVED_DIR)
+	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 else
@@ -100,6 +123,32 @@ endif
 	@echo "$(COLOR_YELLOW)Copying $< → $@$(COLOR_RESET)"
 	@cp "$<" "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Copied $@$(COLOR_RESET)"
+
+# Rule for PNG files
+$(DERIVED_DIR)/%.png: %.png | $(DERIVED_DIR)
+	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+else
+	@mkdir -p $(dir $@)
+endif
+	@echo "$(COLOR_YELLOW)Copying $< → $@$(COLOR_RESET)"
+	@cp "$<" "$@"
+	@echo "$(COLOR_GREEN)$(TICK) Copied $@$(COLOR_RESET)"
+
+# Rule for ICO files
+$(DERIVED_DIR)/%.ico: %.ico | $(DERIVED_DIR)
+	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+else
+	@mkdir -p $(dir $@)
+endif
+	@echo "$(COLOR_YELLOW)Copying $< → $@$(COLOR_RESET)"
+	@cp "$<" "$@"
+	@echo "$(COLOR_GREEN)$(TICK) Copied $@$(COLOR_RESET)"
+
+# --- Other Rules (Unchanged) ---
 
 # Rule: Check dependencies
 check-deps:
