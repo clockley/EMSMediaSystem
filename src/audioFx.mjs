@@ -11,7 +11,23 @@
 // WeakMap to track attached elements
 const _attachedCubicElements = new WeakMap();
 
-export function attachCubicWaveShaper(videoElement, gain = 1.0, curveLength = 32768) {
+/**
+ * Checks if the current environment is running on a Windows OS.
+ * @returns {boolean} True if running on Windows.
+ */
+function isWindowsOS() {
+  return navigator.userAgent.indexOf('Win') !== -1;
+}
+
+/**
+ * Attach cubic soft-clip WaveShaper with gain compensation,
+ * but only if the user is on a Windows OS to mitigate audio clipping issues.
+ * * @param {HTMLMediaElement} videoElement
+ * @param {number} [inputGain=0.9] Pre-gain multiplier (e.g., 0.75 for safe headroom)
+ * @param {number} [curveLength=32768] Resolution of the WaveShaper curve
+ * @returns {object} Contains the audio nodes if attached, otherwise a minimal object.
+ */
+export function attachCubicWaveShaper(videoElement, inputGain = 0.9, curveLength = 32768) {
   if (!videoElement) throw new Error("Video element is required.");
 
   // Check if already attached
@@ -21,28 +37,47 @@ export function attachCubicWaveShaper(videoElement, gain = 1.0, curveLength = 32
   }
 
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-
-  // Create source from video element
   const source = audioCtx.createMediaElementSource(videoElement);
+  
+  if (isWindowsOS()) {
+    console.log("Windows OS detected. Activating cubic soft-clipper with gain compensation.");
 
-  // Optional gain node before shaping
-  const gainNode = audioCtx.createGain();
-  gainNode.gain.value = gain;
+    // 1. INPUT (Pre-Waveshaper) GAIN NODE
+    const inputGainNode = audioCtx.createGain();
+    inputGainNode.gain.value = inputGain; // Default: 0.75
 
-  // Create WaveShaperNode
-  const waveshaper = audioCtx.createWaveShaper();
-  waveshaper.curve = makeCubicCurve(curveLength);
-  waveshaper.oversample = '4x';
+    // WAVESHAPER NODE
+    const waveshaper = audioCtx.createWaveShaper();
+    waveshaper.curve = makeCubicCurve(curveLength);
+    waveshaper.oversample = '4x';
 
-  // Connect nodes: Video -> Gain -> WaveShaper -> Destination
-  source.connect(gainNode).connect(waveshaper).connect(audioCtx.destination);
+    // 2. OUTPUT (Makeup) GAIN NODE
+    const outputGainNode = audioCtx.createGain();
+    const makeupGain = 1.0 / inputGain; 
+    outputGainNode.gain.value = makeupGain; 
 
-  // Track this attachment
-  _attachedCubicElements.set(videoElement, { audioCtx, gainNode, waveshaper });
+    // Connect nodes: Video -> InputGain -> WaveShaper -> OutputGain -> Destination
+    source
+      .connect(inputGainNode)
+      .connect(waveshaper)
+      .connect(outputGainNode)
+      .connect(audioCtx.destination);
+      
+    const result = { audioCtx, inputGainNode, waveshaper, outputGainNode };
+    _attachedCubicElements.set(videoElement, result);
+    return result;
 
-  return { audioCtx, gainNode, waveshaper };
+  } else {
+    console.log("Non-Windows OS detected. Bypassing soft-clipper; connecting source directly to destination.");
+    
+     source.connect(audioCtx.destination);
+    
+    // Return a minimal object and track the element to prevent re-attachment
+    const result = { audioCtx, inputGainNode: null, waveshaper: null, outputGainNode: null };
+    _attachedCubicElements.set(videoElement, result);
+    return result;
+  }
 }
-
 /**
 * Generate a cubic soft-clipping curve: y = x - x^3/3
 * @param {number} length Length of the curve array
