@@ -175,7 +175,18 @@ async function loadMedia() {
     video.volume = strtvl;
     video.setAttribute("loop", loopFile);
     video.src = mediaFile;
-    attachCubicWaveShaper(video);
+    ipcRenderer.invoke('get-platform')
+        .then(operatingSystem => {
+            attachCubicWaveShaper(
+                video,
+                undefined,
+                undefined,
+                operatingSystem
+            );
+        })
+        .catch(error => {
+            console.error("Failed to get platform, skipping audio setup:", error);
+        });
     if (autoPlay) {
         video.play();
     }

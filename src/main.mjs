@@ -818,8 +818,13 @@ function createAboutWindow(parentWindow) {
   return aboutWindow;
 }
 
+function getPlatform() {
+  return process.platform;
+}
+
 function setIPC() {
   ipcMain.handle('get-system-time', getSystemTIme);
+  ipcMain.handle('get-platform', getPlatform);
   ipcMain.on('set-mode', handleSetMode);
   ipcMain.handle('get-setting', getSetting);
   ipcMain.handle('get-all-displays', handleGetAllDisplays);

@@ -12,14 +12,6 @@
 const _attachedCubicElements = new WeakMap();
 
 /**
- * Checks if the current environment is running on a Windows OS.
- * @returns {boolean} True if running on Windows.
- */
-function isWindowsOS() {
-  return navigator.userAgent.indexOf('Win') !== -1;
-}
-
-/**
  * Attach cubic soft-clip WaveShaper with gain compensation,
  * but only if the user is on a Windows OS to mitigate audio clipping issues.
  * * @param {HTMLMediaElement} videoElement
@@ -27,7 +19,7 @@ function isWindowsOS() {
  * @param {number} [curveLength=32768] Resolution of the WaveShaper curve
  * @returns {object} Contains the audio nodes if attached, otherwise a minimal object.
  */
-export function attachCubicWaveShaper(videoElement, inputGain = 0.8, curveLength = 32768) {
+export function attachCubicWaveShaper(videoElement, inputGain = 0.8, curveLength = 32768, platform = 'win32') {
   if (!videoElement) throw new Error("Video element is required.");
 
   // Check if already attached
@@ -39,7 +31,7 @@ export function attachCubicWaveShaper(videoElement, inputGain = 0.8, curveLength
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const source = audioCtx.createMediaElementSource(videoElement);
   
-  if (isWindowsOS()) {
+  if (platform === 'win32') {
     console.log("Windows OS detected. Activating cubic soft-clipper with gain compensation.");
 
     // 1. INPUT (Pre-Waveshaper) GAIN NODE
