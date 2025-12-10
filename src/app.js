@@ -472,11 +472,25 @@ function enableTabFocus() {
     });
 }
 
+function modeChangeFixups(error) {
+    // We should not get here under normal circumstances
+    console.error("Error playing media after mode change fixup:", error);
+    if (encodeURI(mediaFile) !== getHostnameOrBasename(video.src)) {
+        video.src = encodeURI(mediaFile);
+        video.play().catch(e => console.error("Error playing media after mode change fixup:", e));
+    }
+}
+
+function preModeChangeFixups() {
+    if (encodeURI(mediaFile) !== getHostnameOrBasename(video.src)) {
+        video.src = encodeURI(mediaFile);
+    }
+}
+
 function setupCustomMediaControls() {
     playPauseBtn = document.getElementById('playPauseBtn');
     playPauseIcon = document.getElementById('playPauseIcon');
     timeline = document.getElementById('timeline');
-    timeline.disabled = true;
     currentTimeDisplay = document.getElementById('currentTime');
     durationTimeDisplay = document.getElementById('durationTime');
     repeatButton = document.getElementById('mediaWindowRepeatButton');
@@ -548,7 +562,6 @@ function setupCustomMediaControls() {
         timeline.value = 0;
 
         const hasSeekableMedia = isFinite(video.duration) && video.duration > 0;
-        timeline.disabled = !hasSeekableMedia;
 
         currentTimeDisplay.textContent = "0:00";
         durationTimeDisplay.textContent = fmt(video.duration);
@@ -594,7 +607,7 @@ function setupCustomMediaControls() {
 
         if (wasPlayingBeforeDrag) {
             // Use .catch() for promise errors if browser auto-play is blocked (common with video.play())
-            video.play().catch(e => console.error("Failed to resume playback after seek:", e));
+            video.play().catch(e => modeChangeFixups(e));
         }
     });
 
@@ -626,7 +639,7 @@ function setupCustomMediaControls() {
 
     // --- END OF VIDEO ---
     video.addEventListener('ended', () => {
-        if (!video.loop) {
+        if (!video.loop && currentMode === MEDIAPLAYER) {
             video.currentTime = 0;
             video.pause();
             timeline.value = 0;
@@ -1828,7 +1841,7 @@ function generateMediaFormHTML(video = null) {
         </button>
 
         <span class="time-display" id="currentTime">0:00</span>
-        <input type="range" min="0" max="100" value="0" step="0.1" class="timeline-slider" id="timeline" disabled>
+        <input type="range" min="0" max="100" value="0" step="0.1" class="timeline-slider" id="timeline">
         <span class="time-display" id="durationTime">0:00</span>
 
         <div class="gtk-volume-popover" id="gtkVolPopover">
@@ -1970,7 +1983,7 @@ function setSBFormMediaPlayer() {
     if (isFinite(video.duration) && video.duration > 0) {
         document.getElementById('customControls').style.display = '';
         timelineSync();
-        timeline.disabled = false;
+
     }
     if (encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
         saveMediaFile();
@@ -2195,6 +2208,9 @@ function installEvents() {
             return;
         }
         cleanRefs();
+        if (mediaFile != null && mediaFile != '' && !isLiveStream(mediaFile)) {
+            preModeChangeFixups();
+        }
         setSBFormMediaPlayer();
     }, { passive: true });
 
