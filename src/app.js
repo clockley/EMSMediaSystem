@@ -2000,6 +2000,7 @@ function saveMediaFile() {
         if (mdfileElement.files[0].length === 0) {
             return;
         }
+        showGnomeToast("File queued for playback");
         mediaFile = getPathForFile(mdfileElement.files[0]);
         return;
     }
@@ -2012,7 +2013,7 @@ function saveMediaFile() {
         }
 
         mediaPlayerInputState.clear();
-        if (isActiveMediaWindow()) {
+        if (isActiveMediaWindow() || (audioOnlyFile && video && !video.paused)) {
             showGnomeToast("File queued for playback");
         }
 
