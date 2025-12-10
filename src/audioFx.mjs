@@ -11,7 +11,7 @@
 // WeakMap to track attached elements
 const _attachedCubicElements = new WeakMap();
 
-export function attachCubicWaveShaper(videoElement, gain = 1.0, curveLength = 16384) {
+export function attachCubicWaveShaper(videoElement, gain = 1.0, curveLength = 32768) {
   if (!videoElement) throw new Error("Video element is required.");
 
   // Check if already attached
@@ -48,7 +48,7 @@ export function attachCubicWaveShaper(videoElement, gain = 1.0, curveLength = 16
 * @param {number} length Length of the curve array
 * @returns {Float32Array}
 */
-function makeCubicCurve(length = 16384) {
+function makeCubicCurve(length = 32768) {
   const curve = new Float32Array(length);
   for (let i = 0; i < length; i++) {
     const x = (i * 2) / length - 1;
