@@ -52,7 +52,9 @@ const SECONDS = new Int32Array(1);
 const SECONDSFLOAT = new Float64Array(1);
 const textNode = document.createTextNode('');
 const updatePending = new Int32Array(1);
-
+let videoWrapper;
+let focusableControls;
+let controlsOverlay;
 const send = ipcRenderer.send;
 const invoke = ipcRenderer.invoke;
 const on = ipcRenderer.on;
@@ -449,6 +451,27 @@ function timelineSync() {
     }
 }
 
+function getFocusableControls() {
+    if (!focusableControls) {
+        focusableControls = controlsOverlay.querySelectorAll(
+            'button, input[type="range"]'
+        );
+    }
+    return focusableControls;
+}
+
+function disableTabFocus() {
+    getFocusableControls().forEach(el => {
+        el.setAttribute('tabindex', '-1');
+    });
+}
+
+function enableTabFocus() {
+    getFocusableControls().forEach(el => {
+        el.setAttribute('tabindex', '0');
+    });
+}
+
 function setupCustomMediaControls() {
     playPauseBtn = document.getElementById('playPauseBtn');
     playPauseIcon = document.getElementById('playPauseIcon');
@@ -458,6 +481,8 @@ function setupCustomMediaControls() {
     durationTimeDisplay = document.getElementById('durationTime');
     repeatButton = document.getElementById('mediaWindowRepeatButton');
     video = document.getElementById('preview');
+    videoWrapper = document.querySelector('.video-wrapper');
+    controlsOverlay = document.querySelector('.controls-overlay');
     const overlay = document.getElementById('customControls');
 
     if (overlay) {
@@ -479,6 +504,23 @@ function setupCustomMediaControls() {
         const s = Math.floor(sec % 60);
         return `${m}:${s.toString().padStart(2, '0')}`;
     };
+
+    if (videoWrapper && controlsOverlay) {
+
+        // 1. Initial State: Controls are hidden, so remove them from the tab sequence.
+        disableTabFocus();
+
+        // 2. Event Handlers: Use mouseenter/mouseleave to control the tabindex.
+        videoWrapper.addEventListener('mouseenter', () => {
+            enableTabFocus();
+        });
+
+        videoWrapper.addEventListener('mouseleave', () => {
+            // Wait for the CSS fade-out animation (250ms) to complete before
+            // removing the elements from the tab order. Use a small buffer (e.g., 300ms).
+            setTimeout(disableTabFocus, 300);
+        });
+    }
 
     // --- PLAY / PAUSE ---
     playPauseBtn.addEventListener('click', () => {
@@ -1926,7 +1968,7 @@ function setSBFormMediaPlayer() {
     setupCustomMediaControls();
     setupGtkVolumeControl();
     if (isFinite(video.duration) && video.duration > 0) {
-        document.getElementById('customControls').style.display='';
+        document.getElementById('customControls').style.display = '';
         timelineSync();
         timeline.disabled = false;
     }
