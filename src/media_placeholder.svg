@@ -18,13 +18,38 @@
     }
   </style>
 
-  <!-- Increasing + decreasing line bars creating a waveform -->
-  <rect x="2.8"  y="7" width="1.4" height="2" rx="0.7"/>
-  <rect x="4.6"  y="6" width="1.4" height="4" rx="0.7"/>
-  <rect x="6.4"  y="4" width="1.4" height="8" rx="0.7"/>
-  <rect x="8.2"  y="3" width="1.4" height="10" rx="0.7"/>
-  <rect x="10.0" y="4" width="1.4" height="8" rx="0.7"/>
-  <rect x="11.8" y="6" width="1.4" height="4" rx="0.7"/>
-  <rect x="13.6" y="7" width="1.4" height="2" rx="0.7"/>
+  <rect x="2.8" y="7" width="1.4" height="2" rx="0.7">
+    <animate attributeName="height" values="2; 6; 2" dur="37.0s" repeatCount="indefinite" begin="1.5s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+    <animate attributeName="y" values="7; 5; 7" dur="37.0s" repeatCount="indefinite" begin="1.5s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+  </rect>
 
+  <rect x="4.6" y="6" width="1.4" height="4" rx="0.7">
+    <animate attributeName="height" values="4; 10; 4" dur="34.0s" repeatCount="indefinite" begin="0.0s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+    <animate attributeName="y" values="6; 3; 6" dur="34.0s" repeatCount="indefinite" begin="0.0s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+  </rect>
+
+  <rect x="6.4" y="5" width="1.4" height="6" rx="0.7">
+    <animate attributeName="height" values="6; 14; 6" dur="38.0s" repeatCount="indefinite" begin="4.0s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+    <animate attributeName="y" values="5; 1; 5" dur="38.0s" repeatCount="indefinite" begin="4.0s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+  </rect>
+
+  <rect x="8.2" y="4" width="1.4" height="8" rx="0.7">
+    <animate attributeName="height" values="8; 16; 8" dur="33.0s" repeatCount="indefinite" begin="2.0s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+    <animate attributeName="y" values="4; 0; 4" dur="33.0s" repeatCount="indefinite" begin="2.0s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+  </rect>
+
+  <rect x="10.0" y="5" width="1.4" height="6" rx="0.7">
+    <animate attributeName="height" values="6; 14; 6" dur="39.0s" repeatCount="indefinite" begin="3.0s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+    <animate attributeName="y" values="5; 1; 5" dur="39.0s" repeatCount="indefinite" begin="3.0s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+  </rect>
+
+  <rect x="11.8" y="6" width="1.4" height="4" rx="0.7">
+    <animate attributeName="height" values="4; 10; 4" dur="35.0s" repeatCount="indefinite" begin="5.0s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+    <animate attributeName="y" values="6; 3; 6" dur="35.0s" repeatCount="indefinite" begin="5.0s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+  </rect>
+
+  <rect x="13.6" y="7" width="1.4" height="2" rx="0.7">
+    <animate attributeName="height" values="2; 6; 2" dur="40.0s" repeatCount="indefinite" begin="2.5s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+    <animate attributeName="y" values="7; 5; 7" dur="40.0s" repeatCount="indefinite" begin="2.5s" calcMode="spline" keySplines=".5 .5 0 1; 0 0 .5 .5"/>
+  </rect>
 </svg>
