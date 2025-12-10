@@ -482,7 +482,7 @@ function modeChangeFixups(error) {
 }
 
 function preModeChangeFixups() {
-    if (encodeURI(mediaFile) !== getHostnameOrBasename(video.src)) {
+    if (encodeURI(mediaFile) !== getHostnameOrBasename(video.src) && !(playingMediaAudioOnly || video.paused)) {
         video.src = encodeURI(mediaFile);
     }
 }
@@ -2010,7 +2010,7 @@ function saveMediaFile() {
     }
 
     if (playingMediaAudioOnly && currentMode === MEDIAPLAYER) {
-        if (mdfileElement.files[0].length === 0) {
+        if (mdfileElement.files[0] == null || mdfileElement.files[0].length === 0) {
             return;
         }
         showGnomeToast("File queued for playback");
@@ -2235,6 +2235,10 @@ function installEvents() {
 }
 
 function playLocalMedia(event) {
+    if (currentMode !== MEDIAPLAYER) {
+        return;
+    }
+
     if (!isActiveMediaWindow()) {
         if (video.audioTracks.length !== 0) {
             video.audioTracks[0].enabled = true;
@@ -2243,7 +2247,9 @@ function playLocalMedia(event) {
     mediaSessionPause = false;
     if (!audioOnlyFile && video.readyState && video.videoTracks && video.videoTracks.length === 0) {
         audioOnlyFile = true;
-        document.getElementById('customControls').style.visibility = '';
+        if (currentMode === MEDIAPLAYER) {
+            document.getElementById('customControls').style.visibility = '';
+        }
     }
     if (audioOnlyFile) {
         send("localMediaState", 0, "play");
@@ -2368,7 +2374,6 @@ function endLocalMedia() {
         updateDynUI();
     }
     if (playingMediaAudioOnly) {
-        video.src = '';
         playingMediaAudioOnly = false;
 
         if (video !== null) {
