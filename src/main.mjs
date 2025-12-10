@@ -28,6 +28,8 @@ let wasDisplayDisconnected = false;
 let aboutWindow = null;
 let helpWindow = null;
 app.commandLine.appendSwitch('js-flags', '--maglev --no-use-osr');
+app.commandLine.appendSwitch('enable-features', 'CustomizableSelectElement');
+
 settings.init(app.getPath('userData'));
 
 if (isDevMode) {
