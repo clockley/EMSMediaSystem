@@ -680,27 +680,159 @@ button:focus-visible,
     background: color-mix(in srgb, CanvasText 10%, transparent);
 }
 
+/* Display Select - GTK Native Style */
+
 .display-select {
+    /* Try modern first, fallback to none */
+    appearance: base-select;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+
     width: 100%;
-    padding: 8px 16px 8px 40px;
-    /* Increased left padding for icon */
+    min-width: 280px;
+    padding: 8px 36px 8px 40px;
+    /* Increased right padding for arrow, left for icon */
     border: 1px solid var(--border-color);
     border-radius: var(--adw-radius-sm);
     background-color: var(--card-bg-color);
-    background-image:
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z'/%3E%3Cpath stroke='currentColor' stroke-width='1.5' stroke-linecap='round' d='M5.5 12.5h5'/%3E%3C/svg%3E"),
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%232e3436' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 6.5l4.5 4.5 4.5-4.5'/%3E%3C/svg%3E");
-    background-position: 12px center, right 8px center;
-    background-repeat: no-repeat, no-repeat;
-    background-size: 16px, 16px;
     color: var(--window-fg-color);
-    appearance: none;
+    font-size: 14px;
+    line-height: 1.5;
+    cursor: pointer;
+    transition: all 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+
+    /* Custom icons - positioned to not overlap text */
+    background-image:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%232e3436' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z'/%3E%3Cpath stroke='%232e3436' stroke-width='1.5' stroke-linecap='round' d='M5.5 12.5h5'/%3E%3C/svg%3E"),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%232e3436' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 6.5l4.5 4.5 4.5-4.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat, no-repeat;
+    background-size: 16px 16px, 16px 16px;
+    background-position: 12px center, calc(100% - 12px) center;
 }
 
-/* Style for dropdown options */
+/* Dark mode icons */
+@media (prefers-color-scheme: dark) {
+    .display-select {
+        background-image:
+            url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M2.5 3.5h11a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z'/%3E%3Cpath stroke='%23ffffff' stroke-width='1.5' stroke-linecap='round' d='M5.5 12.5h5'/%3E%3C/svg%3E"),
+            url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 6.5l4.5 4.5 4.5-4.5'/%3E%3C/svg%3E");
+    }
+}
+
+.display-select:hover {
+    background-color: color-mix(in srgb, var(--card-bg-color) 95%, var(--window-fg-color));
+}
+
+.display-select:focus {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: -1px;
+}
+
+/* Modern select picker styling (Chrome 131+) */
+.display-select::picker(select) {
+    /* GTK4 popover background - darker in dark mode */
+    background: var(--window-bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--adw-radius-lg);
+    padding: 6px 0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    min-width: anchor-size(width);
+    /* Match button width automatically */
+    margin-top: 4px;
+}
+
+@media (prefers-color-scheme: dark) {
+    .display-select::picker(select) {
+        /* GTK4 dark mode uses a slightly lighter shade for popovers */
+        background: #2e2e32;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    }
+}
+
+/* Style individual options in modern mode */
 .display-select option {
+    padding: 6px 16px;
     color: var(--window-fg-color);
-    background: var(--card-bg-color);
+    background: transparent;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+/* GTK-style subtle hover */
+.display-select option:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+@media (prefers-color-scheme: light) {
+    .display-select option:hover {
+        background: rgba(0, 0, 0, 0.04);
+    }
+}
+
+/* GTK-style subtle selection (not bright blue) */
+.display-select option:checked {
+    background: rgba(255, 255, 255, 0.08);
+    font-weight: normal;
+}
+
+@media (prefers-color-scheme: light) {
+    .display-select option:checked {
+        background: rgba(0, 0, 0, 0.06);
+    }
+}
+
+/* Disabled option */
+.display-select option:disabled {
+    color: color-mix(in srgb, var(--window-fg-color) 50%, transparent);
+    cursor: not-allowed;
+}
+
+/* Hidden/disabled first option styling */
+.display-select option[disabled] {
+    /* GTK style - muted but visible text */
+    color: #888888;
+    /* Light mode: medium gray */
+    background: transparent;
+}
+
+@media (prefers-color-scheme: dark) {
+    .display-select option[disabled] {
+        color: #a0a0a0;
+        /* Dark mode: lighter gray for visibility */
+    }
+}
+
+/* Make sure disabled option doesn't get hover styles */
+.display-select option[disabled]:hover {
+    background: transparent;
+    cursor: default;
+}
+
+/* Fallback for older browsers - WebKit scrollbar styling */
+.display-select::picker(select)::-webkit-scrollbar {
+    width: 12px;
+}
+
+.display-select::picker(select)::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 8px;
+    margin: 3px;
+}
+
+.display-select::picker(select)::-webkit-scrollbar-thumb {
+    background: #919191;
+    border: 3px solid var(--card-bg-color);
+    border-radius: 8px;
+    min-height: 40px;
+}
+
+.display-select::picker(select)::-webkit-scrollbar-thumb:hover {
+    background: #757575;
+}
+
+/* Remove extra wrapper if not needed */
+.display-select-group {
+    display: contents;
 }
 
 .url-input {
