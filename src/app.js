@@ -631,9 +631,6 @@ function setupCustomMediaControls() {
         video.loop = !video.loop;
         repeatButton.classList.toggle('active', video.loop);
 
-        const mainLoop = document.getElementById('mdLpCtlr');
-        if (mainLoop) mainLoop.checked = video.loop;
-
         send('media-set-loop', video.loop);
     });
 
@@ -1157,7 +1154,8 @@ function handleImageDisplay(isImgFile, imgEle) {
             if ((imgEle = document.querySelector('img')) !== null) {
                 imgEle.remove();
             }
-            video.src = '';
+            video.removeAttribute('src');
+            video.load();
             img = document.createElement('img');
             img.src = mediaFile;
             img.setAttribute("id", "preview");
@@ -1344,8 +1342,10 @@ function playMedia(e) {
             if (iM) {
                 createMediaWindow();
                 video.currentTime = 0;
-                if (!video.paused)
-                    video.src = '';
+                if (!video.paused) {
+                    video.removeAttribute('src');
+                    video.load();
+                }
                 return;
             }
         } else if (currentMode === STREAMPLAYER) {
@@ -1357,8 +1357,6 @@ function playMedia(e) {
             send("localMediaState", 0, "play");
             addFilenameToTitlebar(normalizedPathname);
             isPlaying = true;
-            if (document.getElementById("mdLpCtlr"))
-                video.loop = document.getElementById("mdLpCtlr").checked;
             playingMediaAudioOnly = true;
             video.play();
             updateTimestamp();
@@ -1970,7 +1968,8 @@ function setSBFormMediaPlayer() {
 
         if (isImgFile && !document.querySelector('img')) {
             img = document.createElement('img');
-            video.src = '';
+            video.removeAttribute('src');
+            video.load();
             img.src = mediaFile;
             img.setAttribute("id", "preview");
             document.getElementById("preview").style.display = 'none';
@@ -2073,7 +2072,8 @@ function saveMediaFile() {
             }
         }
         img = document.createElement('img');
-        video.src = '';
+        video.removeAttribute('src');
+        video.load();
         img.src = mediaFile;
         img.setAttribute("id", "preview");
         document.getElementById("preview").style.display = 'none';
@@ -2100,9 +2100,6 @@ function saveMediaFile() {
                 video.id = "preview";
                 video.currentTime = startTime;
                 video.controls = false
-                if (document.getElementById("mdLpCtlr") !== null) {
-                    video.loop = document.getElementById("mdLpCtlr").checked;
-                }
                 if (uncachedLoad) {
                     video.load();
                 }
@@ -2170,12 +2167,6 @@ function cleanRefs() {
     if (playButton) {
         playButton.removeEventListener("click", playMedia);
         playButton = null;
-    }
-
-    let loopctl = document.getElementById("mdLpCtlr");
-    if (loopctl) {
-        loopctl.removeEventListener("change", loopCtlHandler);
-        loopctl = null;
     }
 
     let mdFile = document.getElementById("mdFile");
@@ -2277,9 +2268,6 @@ function playLocalMedia(event) {
     if (mediaScrnPlyBtn && audioOnlyFile) {
         if (isPlaying) {
             fileEnded = false;
-            if (document.getElementById("mdLpCtlr")) {
-                video.loop = document.getElementById("mdLpCtlr").checked;
-            }
             audioOnlyFile = true;
             if (document.getElementById('volumeControl')) {
                 document.getElementById('customControls').style.visibility = '';
@@ -2301,9 +2289,6 @@ function playLocalMedia(event) {
     masterPauseState = false;
     updateTimestamp();
     if (audioOnlyFile) {
-        if (document.getElementById("mdLpCtlr")) {
-            video.loop = document.getElementById("mdLpCtlr").checked;
-        }
         if (document.getElementById('volumeControl')) {
             video.volume = document.getElementById('volumeControl').value;
         }
@@ -2361,12 +2346,6 @@ function seekingLocalMedia(e) {
 
 function endLocalMedia() {
     textNode.data = "";
-    if (video.loop && video.currentTime >= video.duration) {
-        video.currentTime = 0;
-        playLocalMedia();
-        return;
-    }
-
     isPlaying = false;
     updateDynUI();
     audioOnlyFile = false;
@@ -2717,18 +2696,19 @@ async function createMediaWindow() {
 
     if (liveStreamMode === true) {
         if (video && !isImg(video.src)) {
-            video.src = '';
+            video.removeAttribute('src');
+            video.load();
         }
     }
 
     const isImgFile = isImg(mediaFile);
 
     if (audioOnlyFile && !isActiveMediaWindow()) {
-        video.loop = document.getElementById("mdLpCtlr").checked;
         if (!isImgFile) {
             await video.play();
         } else {
-            video.src = '';
+            video.removeAttribute('src');
+            video.load();
         }
         playingMediaAudioOnly = true;
         if (playingMediaAudioOnly)
@@ -2760,7 +2740,7 @@ async function createMediaWindow() {
                 '__mediafile-ems=' + encodeURIComponent(mediaFile),
                 startTime !== 0 ? '__start-time=' + startTime : "",
                 strtVl !== 1 ? '__start-vol=' + strtVl : "",
-                document.getElementById("mdLpCtlr") !== null ? (document.getElementById("mdLpCtlr").checked ? '__media-loop=true' : '') : "",
+                video.loop ? '__media-loop=true' : '',
                 liveStreamMode ? '__live-stream=' + liveStreamMode : '', isImgFile ? "__isImg" : "",
                 `__autoplay=${document.getElementById("autoPlayCtl")?.checked !== undefined && document.getElementById("autoPlayCtl").checked}`,
                 birth
