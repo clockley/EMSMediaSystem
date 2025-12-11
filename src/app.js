@@ -1395,7 +1395,7 @@ async function playMedia(e) {
         playingMediaAudioOnly = false;
         if (!audioOnlyFile)
             activeLiveStream = true;
-        video.pause();
+        await video.pause();
         video.currentTime = 0;
         if (audioOnlyFile) {
             send("localMediaState", 0, "stop");
@@ -2829,7 +2829,7 @@ async function createMediaWindow() {
     }
     if (document.getElementById("autoPlayCtl")?.checked !== undefined && !document.getElementById("autoPlayCtl").checked) {
         pauseMedia();
-        video.pause();
+        await video.pause();
     }
 }
 
