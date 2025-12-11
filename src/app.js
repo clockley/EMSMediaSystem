@@ -1304,7 +1304,7 @@ function waitForMetadata() {
     });
 }
 
-function playMedia(e) {
+async function playMedia(e) {
     if (video) {
         itc = performance.now() * .001;
         startTime = video.currentTime;
@@ -1362,7 +1362,7 @@ function playMedia(e) {
         updateDynUI();
         if (currentMode === MEDIAPLAYER) {
             if (iM) {
-                createMediaWindow();
+                await createMediaWindow();
                 video.currentTime = 0;
                 if (!video.paused) {
                     video.removeAttribute('src');
@@ -1372,7 +1372,7 @@ function playMedia(e) {
             }
         } else if (currentMode === STREAMPLAYER) {
             audioOnlyFile = false;
-            createMediaWindow();
+            await createMediaWindow();
             return;
         }
         if (audioOnlyFile) {
@@ -1385,7 +1385,7 @@ function playMedia(e) {
             return;
         }
 
-        createMediaWindow();
+        await createMediaWindow();
     } else {
         startTime = 0;
         isPlaying = false;
@@ -2022,7 +2022,9 @@ function setSBFormMediaPlayer() {
     }
 
     if (currentMode == MEDIAPLAYER && isImg(mediaFile)) {
-        document.getElementById("preview").style.display='none';
+        if (document.getElementById("preview")) {
+            document.getElementById("preview").style.display='none';
+        }
         img = document.createElement('img');
         video.removeAttribute('src');
         video.load();
