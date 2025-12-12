@@ -538,9 +538,14 @@ function setupCustomMediaControls() {
     }
 
     // --- PLAY / PAUSE ---
-    playPauseBtn.addEventListener('click', () => {
-        if (video.paused) video.play();
-        else video.pause();
+    playPauseBtn.addEventListener('click', async () => {
+        if (video.src === '') return;
+
+        if (video.paused) {
+            await video.play();
+        } else {
+            await video.pause();
+        }
     });
 
     video.addEventListener('play', () => {
@@ -647,6 +652,7 @@ function setupCustomMediaControls() {
 
     if (clickTarget) {
         clickTarget.addEventListener('click', (event) => {
+            if (video.src === '') return;
             const isControl = event.target.closest('#customControls');
 
             if (!isControl) {
@@ -2158,7 +2164,7 @@ function restoreMediaFile() {
     if (mediaPlayerInputState.filePaths.length > 0) {
         if (currentMode === STREAMPLAYER && document.getElementById("mdFile") && mediaPlayerInputState.urlInpt) {
             document.getElementById("mdFile").value = mediaPlayerInputState.urlInpt;
-        } else if (currentMode === MEDIAPLAYER) {
+        } else if (currentMode === MEDIAPLAYER && (!playingMediaAudioOnly && !isActiveMediaWindow())) {
             mediaFile = mediaPlayerInputState.filePaths[0];
             // Update the UI label if it exists
             const fileNameSpan = document.querySelector('.file-input-label span');
