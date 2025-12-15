@@ -43,6 +43,7 @@ let playPauseBtn;
 let playPauseIcon;
 let timeline;
 let currentTimeDisplay;
+let volumePopupOpen = false;
 let durationTimeDisplay;
 let repeatButton;
 const MEDIAPLAYER = 0, STREAMPLAYER = 1, BULKMEDIAPLAYER = 5, TEXTPLAYER = 6;
@@ -533,7 +534,10 @@ function setupCustomMediaControls() {
         videoWrapper.addEventListener('mouseleave', () => {
             // Wait for the CSS fade-out animation (250ms) to complete before
             // removing the elements from the tab order. Use a small buffer (e.g., 300ms).
-            setTimeout(disableTabFocus, 300);
+            setTimeout(() => {
+                disableTabFocus();
+                closeVolumePopup();
+            }, 300);
         });
     }
 
@@ -667,6 +671,16 @@ function setupCustomMediaControls() {
     }
 }
 
+function closeVolumePopup() {
+    const slider = document.getElementById('gtkVolSlider');
+    if (!slider) return;
+
+    slider.blur();
+    volumePopupOpen = false;
+
+    slider.style.display = '';
+}
+
 function setupGtkVolumeControl() {
     // 1. Get DOM references
     const video = document.getElementById('preview');
@@ -678,6 +692,14 @@ function setupGtkVolumeControl() {
         console.error("Missing GTK Volume Control elements.");
         return;
     }
+
+    slider.addEventListener('mousedown', () => {
+        volumePopupOpen = true;
+    });
+    
+    slider.addEventListener('touchstart', () => {
+        volumePopupOpen = true;
+    });
 
     // Initialize slider value based on current video volume (or 100 if undefined)
     slider.value = Math.round((video.volume || 1) * 100);
