@@ -1207,6 +1207,8 @@ function handleImageDisplay(isImgFile, imgEle) {
             video.removeAttribute('src');
             video.load();
             img = document.createElement('img');
+            const overlay = document.getElementById('customControls');
+            overlay.style.visibility = "hidden";
             img.src = mediaFile;
             img.setAttribute("id", "preview");
             if (!document.getElementById("preview")) {
@@ -2031,6 +2033,8 @@ function setSBFormMediaPlayer() {
             img = document.createElement('img');
             video.removeAttribute('src');
             video.load();
+            const overlay = document.getElementById('customControls');
+            overlay.style.visibility = "hidden";
             img.src = mediaFile;
             img.setAttribute("id", "preview");
             document.getElementById("preview").style.display = 'none';
@@ -2056,6 +2060,8 @@ function setSBFormMediaPlayer() {
         img = document.createElement('img');
         video.removeAttribute('src');
         video.load();
+        const overlay = document.getElementById('customControls');
+        overlay.style.visibility = "hidden";
         img.src = mediaFile;
         img.setAttribute("id", "preview");
         document.getElementById("preview").style.display = 'none';
@@ -2146,6 +2152,8 @@ function saveMediaFile() {
         img = document.createElement('img');
         video.removeAttribute('src');
         video.load();
+        const overlay = document.getElementById('customControls');
+        overlay.style.visibility = "hidden";
         img.src = mediaFile;
         img.setAttribute("id", "preview");
         document.getElementById("preview").style.display = 'none';
