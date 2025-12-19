@@ -1,6 +1,6 @@
 {
   "name": "emsmediasystem",
-  "version": "6.2.1",
+  "version": "6.2.2",
   "description": "A simple media player",
   "main": "derived/src/main.min.mjs",
   "scripts": {
