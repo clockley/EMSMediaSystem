@@ -32,7 +32,7 @@
     "appId": "com.ejaxmediasystem.app",
     "productName": "EMS Media System",
     "files": [
-      "src/**/*",
+      "!src/**/*",
       "fonts/**/*",
       "node_modules/**/*",
       "index.prod.html",
