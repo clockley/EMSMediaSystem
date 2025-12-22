@@ -33,6 +33,7 @@
     "productName": "EMS Media System",
     "files": [
       "!src/**/*",
+      "!derived/src/*.map",
       "fonts/**/*",
       "node_modules/**/*",
       "index.prod.html",
