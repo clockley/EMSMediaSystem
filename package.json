@@ -19,7 +19,7 @@
     "csso": "^5.0.5",
     "electron": "^34.0.0",
     "electron-builder": "^26.1.0",
-    "html-minifier-terser": "^6.0.0",
+    "html-minifier-terser": "^7.0.0",
     "terser": "^5.43.1"
   },
   "dependencies": {
