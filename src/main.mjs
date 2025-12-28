@@ -1,40 +1,48 @@
 /*
 Copyright (C) 2019-2024 Christian Lockley
-This library is free software; you can redistribute it and/or modify it
-under the terms of the GNU General Public License as published by
-the Free Software Foundation; either version 3 of the License, or
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
 This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-Lesser General Public License for more details.
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with this library. If not, see <https://www.gnu.org/licenses/>.
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 //import { enableCompileCache } from 'module';
 //process.env.NODE_COMPILE_CACHE = enableCompileCache().directory;
-import { app, BrowserWindow, ipcMain, screen, powerSaveBlocker, session, shell } from 'electron/main';
-import { readdir, readFile } from 'fs/promises';
-import path from 'path';
-import settings from './settings.min.mjs'
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  screen,
+  powerSaveBlocker,
+  session,
+  shell,
+} from "electron/main";
+import { readdir, readFile } from "fs/promises";
+import path from "path";
+import settings from "./settings.min.mjs";
 let sessionID = 0;
-const isDevMode = process.env.ems_dev === 'true';
-const openDevConsole = process.env.ems_dev_console === 'true';
+const isDevMode = process.env.ems_dev === "true";
+const openDevConsole = process.env.ems_dev_console === "true";
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
 let aboutWindow = null;
 let helpWindow = null;
-app.commandLine.appendSwitch('js-flags', '--maglev --no-use-osr');
-app.commandLine.appendSwitch('enable-features', 'CustomizableSelectElement');
+app.commandLine.appendSwitch("js-flags", "--maglev --no-use-osr");
+app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
 
-settings.init(app.getPath('userData'));
+settings.init(app.getPath("userData"));
 
 if (isDevMode) {
   console.log(process.versions);
-
 }
 
 function measurePerformance(operation, func) {
@@ -64,31 +72,29 @@ async function measurePerformanceAsync(operation, func) {
 const appStartTime = isDevMode ? performance.now() : null;
 
 function getWindowBounds() {
-  return settings.getSync('windowBounds');
+  return settings.getSync("windowBounds");
 }
 
 //not ideal but this is necessary to keep compatibility with older config file
 function getHelpWindowBounds() {
-  return settings.getSync('windowHelpBounds');
+  return settings.getSync("windowHelpBounds");
 }
 
 let mediaWindow = null;
-let windowBounds = measurePerformance('Getting window bounds', getWindowBounds);
+let windowBounds = measurePerformance("Getting window bounds", getWindowBounds);
 let win = null;
 
 function saveWindowBounds(bounds) {
-  settings.set('windowBounds', bounds)
-    .catch(error => {
-      console.error('Error saving window bounds:', error);
-    });
-};
+  settings.set("windowBounds", bounds).catch((error) => {
+    console.error("Error saving window bounds:", error);
+  });
+}
 
 function saveHelpWindowBounds(bounds) {
-  settings.set('windowHelpBounds', bounds)
-    .catch(error => {
-      console.error('Error saving window bounds:', error);
-    });
-};
+  settings.set("windowHelpBounds", bounds).catch((error) => {
+    console.error("Error saving window bounds:", error);
+  });
+}
 
 async function checkHelpWindowState() {
   const bounds = helpWindow.getBounds();
@@ -96,7 +102,7 @@ async function checkHelpWindowState() {
   const targetScreen = screen.getDisplayMatching(bounds);
 
   if (helpWindow.isMaximized()) {
-    helpWindow.webContents.send('window-maximized', true);
+    helpWindow.webContents.send("window-maximized", true);
     return;
   }
 
@@ -105,14 +111,19 @@ async function checkHelpWindowState() {
   const touchingLeft = bounds.x === 0;
   const touchingTop = bounds.y === 0;
   const touchingRight = bounds.x + bounds.width === targetScreen.bounds.width;
-  const touchingBottom = bounds.y + bounds.height === targetScreen.bounds.height;
+  const touchingBottom =
+    bounds.y + bounds.height === targetScreen.bounds.height;
 
-  const edgeCount = [touchingLeft, touchingTop, touchingRight, touchingBottom]
-    .filter(Boolean).length;
+  const edgeCount = [
+    touchingLeft,
+    touchingTop,
+    touchingRight,
+    touchingBottom,
+  ].filter(Boolean).length;
 
-  const isTiled = edgeCount >= 2;  // Only consider it tiled if touching multiple edges
+  const isTiled = edgeCount >= 2; // Only consider it tiled if touching multiple edges
 
-  helpWindow.webContents.send('window-maximized', isTiled);
+  helpWindow.webContents.send("window-maximized", isTiled);
 }
 
 async function checkWindowState() {
@@ -121,7 +132,7 @@ async function checkWindowState() {
   const targetScreen = screen.getDisplayMatching(bounds);
 
   if (win.isMaximized()) {
-    win.webContents.send('window-maximized', true);
+    win.webContents.send("window-maximized", true);
     return;
   }
 
@@ -130,81 +141,106 @@ async function checkWindowState() {
   const touchingLeft = bounds.x === 0;
   const touchingTop = bounds.y === 0;
   const touchingRight = bounds.x + bounds.width === targetScreen.bounds.width;
-  const touchingBottom = bounds.y + bounds.height === targetScreen.bounds.height;
+  const touchingBottom =
+    bounds.y + bounds.height === targetScreen.bounds.height;
 
-  const edgeCount = [touchingLeft, touchingTop, touchingRight, touchingBottom]
-    .filter(Boolean).length;
+  const edgeCount = [
+    touchingLeft,
+    touchingTop,
+    touchingRight,
+    touchingBottom,
+  ].filter(Boolean).length;
 
-  const isTiled = edgeCount >= 2;  // Only consider it tiled if touching multiple edges
+  const isTiled = edgeCount >= 2; // Only consider it tiled if touching multiple edges
 
-  win.webContents.send('window-maximized', isTiled);
+  win.webContents.send("window-maximized", isTiled);
 }
 
 function lateInit() {
-  measurePerformance('Setting window aspect ratio', win.setAspectRatio.bind(win, 1.778));
+  measurePerformance(
+    "Setting window aspect ratio",
+    win.setAspectRatio.bind(win, 1.778),
+  );
   win.show();
 }
 
 function handleMaximizeChange(isMaximized) {
   saveWindowBounds();
-  win.setBackgroundColor('#00000000');
-  win?.webContents.send('maximize-change', isMaximized);
+  win.setBackgroundColor("#00000000");
+  win?.webContents.send("maximize-change", isMaximized);
 }
 
 function handleMaximizeChangeHelpWindow(isMaximized) {
   saveHelpWindowBounds();
-  helpWindow.setBackgroundColor('#00000000');
-  helpWindow?.webContents.send('maximize-change', isMaximized);
+  helpWindow.setBackgroundColor("#00000000");
+  helpWindow?.webContents.send("maximize-change", isMaximized);
 }
 
 function createWindow() {
-  win = measurePerformance('Creating BrowserWindow', () => new BrowserWindow(mainWindowOptions));
-  win.webContents.on('will-navigate', (event, url) => {
+  win = measurePerformance(
+    "Creating BrowserWindow",
+    () => new BrowserWindow(mainWindowOptions),
+  );
+  win.webContents.on("will-navigate", (event, url) => {
     event.preventDefault();
   });
   if (openDevConsole) {
     win.openDevTools();
   }
 
-  win.webContents.on('did-finish-load', lateInit);
-  win.on('maximize', handleMaximizeChange.bind(null, true));
-  win.on('unmaximize', handleMaximizeChange.bind(null, false));
+  win.webContents.on("did-finish-load", lateInit);
+  win.on("maximize", handleMaximizeChange.bind(null, true));
+  win.on("unmaximize", handleMaximizeChange.bind(null, false));
 
-  win.on('closed', async () => {
+  win.on("closed", async () => {
     win = null;
     app.quit();
     await settings.flush();
   });
 
-  measurePerformanceAsync('Loading index.prod.html', win.loadFile.bind(win, `${path.dirname(import.meta.dirname)}/src/index.prod.html`));
+  measurePerformanceAsync(
+    "Loading index.prod.html",
+    win.loadFile.bind(
+      win,
+      `${path.dirname(import.meta.dirname)}/src/index.prod.html`,
+    ),
+  );
 }
 
 function startMediaPlaybackPowerHint() {
-  measurePerformance('Enabling power save blocker', () => {
-    if (typeof startMediaPlaybackPowerHint.powerSaveBlockerId === 'undefined') {
-      startMediaPlaybackPowerHint.powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
-      console.log(`Power Save Blocker started: ${startMediaPlaybackPowerHint.powerSaveBlockerId}`);
+  measurePerformance("Enabling power save blocker", () => {
+    if (typeof startMediaPlaybackPowerHint.powerSaveBlockerId === "undefined") {
+      startMediaPlaybackPowerHint.powerSaveBlockerId = powerSaveBlocker.start(
+        "prevent-display-sleep",
+      );
+      console.log(
+        `Power Save Blocker started: ${startMediaPlaybackPowerHint.powerSaveBlockerId}`,
+      );
     } else {
-      console.log(`Power Save Blocker is already active: ${startMediaPlaybackPowerHint.powerSaveBlockerId}`);
+      console.log(
+        `Power Save Blocker is already active: ${startMediaPlaybackPowerHint.powerSaveBlockerId}`,
+      );
     }
   });
 }
 
 function stopMediaPlaybackPowerHint() {
-  measurePerformance('Disabling power save blocker', () => {
-    if (typeof startMediaPlaybackPowerHint.powerSaveBlockerId !== 'undefined') {
+  measurePerformance("Disabling power save blocker", () => {
+    if (typeof startMediaPlaybackPowerHint.powerSaveBlockerId !== "undefined") {
       powerSaveBlocker.stop(startMediaPlaybackPowerHint.powerSaveBlockerId);
-      console.log(`Power Save Blocker stopped: ${startMediaPlaybackPowerHint.powerSaveBlockerId}`);
+      console.log(
+        `Power Save Blocker stopped: ${startMediaPlaybackPowerHint.powerSaveBlockerId}`,
+      );
       startMediaPlaybackPowerHint.powerSaveBlockerId = undefined;
     } else {
-      console.log('No active Power Save Blocker to stop.');
+      console.log("No active Power Save Blocker to stop.");
     }
   });
 }
 
 function sendRemainingTime(event, arg) {
   let tarr = new Float64Array([arg[0], arg[1], arg[2]]);
-  win?.webContents.send('timeRemaining-message', tarr, [tarr]);
+  win?.webContents.send("timeRemaining-message", tarr, [tarr]);
 }
 
 function getSetting(_, setting) {
@@ -229,17 +265,18 @@ function localMediaStateUpdate(event, id, state) {
 }
 
 async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
-  return measurePerformance('Creating media window', async () => {
+  return measurePerformance("Creating media window", async () => {
     const displays = screen.getAllDisplays();
     // Use selected display or fall back
-    const targetDisplay = displays[displayIndex] ||
-      displays.find(d => d.bounds.x !== 0 || d.bounds.y !== 0) ||
+    const targetDisplay =
+      displays[displayIndex] ||
+      displays.find((d) => d.bounds.x !== 0 || d.bounds.y !== 0) ||
       displays[0];
 
     const finalWindowOptions = {
       ...windowOptions,
       backgroundThrottling: false,
-      backgroundColor: '#00000000',
+      backgroundColor: "#00000000",
       transparent: true,
       fullscreen: true,
       frame: false,
@@ -247,20 +284,20 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       x: targetDisplay.bounds.x,
       y: targetDisplay.bounds.y,
       width: targetDisplay.bounds.width,
-      height: targetDisplay.bounds.height
+      height: targetDisplay.bounds.height,
     };
 
     mediaWindow = new BrowserWindow(finalWindowOptions);
     //mediaWindow.openDevTools()
     await mediaWindow.loadFile("derived/src/media.prod.html");
-    mediaWindow.on('closed', () => {
-      if (win) win.webContents.send('media-window-closed', mediaWindow.id);
+    mediaWindow.on("closed", () => {
+      if (win) win.webContents.send("media-window-closed", mediaWindow.id);
       stopMediaPlaybackPowerHint();
     });
 
     // Save the selected display index
-    settings.set('lastDisplayIndex', displayIndex).catch(error => {
-      console.error('Error saving display preference:', error);
+    settings.set("lastDisplayIndex", displayIndex).catch((error) => {
+      console.error("Error saving display preference:", error);
     });
 
     return mediaWindow.id;
@@ -272,20 +309,21 @@ async function handleDisplayChange() {
 
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     const currentBounds = mediaWindow.getBounds();
-    const currentDisplayIndex = settings.getSync('lastDisplayIndex');
+    const currentDisplayIndex = settings.getSync("lastDisplayIndex");
 
     if (!lastKnownDisplayState) {
       lastKnownDisplayState = {
         bounds: currentBounds,
-        displayIndex: currentDisplayIndex
+        displayIndex: currentDisplayIndex,
       };
     }
 
-    const isOnValidDisplay = currentDisplays.some(display =>
-      currentBounds.x >= display.bounds.x &&
-      currentBounds.y >= display.bounds.y &&
-      currentBounds.x < display.bounds.x + display.bounds.width &&
-      currentBounds.y < display.bounds.y + display.bounds.height
+    const isOnValidDisplay = currentDisplays.some(
+      (display) =>
+        currentBounds.x >= display.bounds.x &&
+        currentBounds.y >= display.bounds.y &&
+        currentBounds.x < display.bounds.x + display.bounds.width &&
+        currentBounds.y < display.bounds.y + display.bounds.height,
     );
 
     if (!isOnValidDisplay) {
@@ -295,24 +333,28 @@ async function handleDisplayChange() {
         x: primaryDisplay.bounds.x,
         y: primaryDisplay.bounds.y,
         width: primaryDisplay.bounds.width,
-        height: primaryDisplay.bounds.height
+        height: primaryDisplay.bounds.height,
       });
 
-      await settings.set('lastMediaWindowBounds', lastKnownDisplayState.bounds);
-      await settings.set('lastDisplayIndex', lastKnownDisplayState.displayIndex);
+      await settings.set("lastMediaWindowBounds", lastKnownDisplayState.bounds);
+      await settings.set(
+        "lastDisplayIndex",
+        lastKnownDisplayState.displayIndex,
+      );
     } else if (wasDisplayDisconnected) {
-      const savedBounds = settings.getSync('lastMediaWindowBounds');
-      const savedDisplayIndex = settings.getSync('lastDisplayIndex');
+      const savedBounds = settings.getSync("lastMediaWindowBounds");
+      const savedDisplayIndex = settings.getSync("lastDisplayIndex");
 
       if (savedBounds && savedDisplayIndex !== undefined) {
         const targetDisplay = currentDisplays[savedDisplayIndex];
 
-        if (targetDisplay) {  // Ensure targetDisplay is defined
+        if (targetDisplay) {
+          // Ensure targetDisplay is defined
           mediaWindow.setBounds({
             x: targetDisplay.bounds.x,
             y: targetDisplay.bounds.y,
             width: targetDisplay.bounds.width,
-            height: targetDisplay.bounds.height
+            height: targetDisplay.bounds.height,
           });
           wasDisplayDisconnected = false;
           lastKnownDisplayState = null;
@@ -322,30 +364,32 @@ async function handleDisplayChange() {
   }
 
   if (win && !win.isDestroyed()) {
-    win.webContents.send('display-changed');
+    win.webContents.send("display-changed");
   }
 }
 
 function handlePlayCtl(event, cmd, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-    mediaWindow.send('play-ctl', cmd);
+    mediaWindow.send("play-ctl", cmd);
     startMediaPlaybackPowerHint();
   }
 }
 
 function handleRemotePlayPause(_, arg) {
-  win.webContents.send('remoteplaypause', arg);
+  win.webContents.send("remoteplaypause", arg);
 }
 
 function handlePlaybackStateChange(event, playbackState) {
   if (win) {
-    win.webContents.send('update-playback-state', playbackState);
+    win.webContents.send("update-playback-state", playbackState);
   }
 }
 
 async function handleGetMediaCurrentTime() {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-    return await mediaWindow.webContents.executeJavaScript('window.api.video.currentTime');
+    return await mediaWindow.webContents.executeJavaScript(
+      "window.api.video.currentTime",
+    );
   }
 }
 
@@ -353,51 +397,60 @@ async function handleSetLoopStatus(event, arg) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     if (arg !== undefined) {
       if (arg === true) {
-        await mediaWindow.webContents.executeJavaScript('window.api.video.loop=true');
+        await mediaWindow.webContents.executeJavaScript(
+          "window.api.video.loop=true",
+        );
       } else {
-        await mediaWindow.webContents.executeJavaScript('window.api.video.loop=false');
+        await mediaWindow.webContents.executeJavaScript(
+          "window.api.video.loop=false",
+        );
       }
     }
-    return await mediaWindow.webContents.executeJavaScript('window.api.video.loop');
+    return await mediaWindow.webContents.executeJavaScript(
+      "window.api.video.loop",
+    );
   }
 }
 
 function handleSetMode(event, arg) {
-  settings.set('operating-mode', arg)
-    .catch(error => {
-      console.error('Error saving window bounds:', error);
-    });
+  settings.set("operating-mode", arg).catch((error) => {
+    console.error("Error saving window bounds:", error);
+  });
 }
-
 
 function handleTimeGotoMessage(event, arg) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-    mediaWindow.send('timeGoto-message', arg);
+    mediaWindow.send("timeGoto-message", arg);
   }
 }
 
 function handleVlcl(event, v, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-    mediaWindow.send('vlcl', v);
+    mediaWindow.send("vlcl", v);
   }
 }
 
-const DRM_PATH = '/sys/class/drm';
+const DRM_PATH = "/sys/class/drm";
 
 function parseManufacturerId(edidBuffer) {
   try {
     const manBytes = edidBuffer.readUInt16BE(8);
-    if (manBytes === 0 || manBytes === 0xFFFF) return null;
+    if (manBytes === 0 || manBytes === 0xffff) return null;
 
     // Calculate ASCII codes and verify they're valid uppercase letters
-    const char1 = ((manBytes >> 10) & 0x1F) + 64;
-    const char2 = ((manBytes >> 5) & 0x1F) + 64;
-    const char3 = (manBytes & 0x1F) + 64;
+    const char1 = ((manBytes >> 10) & 0x1f) + 64;
+    const char2 = ((manBytes >> 5) & 0x1f) + 64;
+    const char3 = (manBytes & 0x1f) + 64;
 
     // Verify each character is a valid uppercase letter
-    if (char1 < 65 || char1 > 90 ||
-      char2 < 65 || char2 > 90 ||
-      char3 < 65 || char3 > 90) {
+    if (
+      char1 < 65 ||
+      char1 > 90 ||
+      char2 < 65 ||
+      char2 > 90 ||
+      char3 < 65 ||
+      char3 > 90
+    ) {
       return null;
     }
 
@@ -418,12 +471,13 @@ function parseDescriptorBlock(edidBuffer, blockStart) {
     const descriptorType = edidBuffer[blockStart + 3];
 
     // Parse text fields
-    if (descriptorType === 0xFC || descriptorType === 0xFF) { // Monitor name or Serial
-      let text = '';
+    if (descriptorType === 0xfc || descriptorType === 0xff) {
+      // Monitor name or Serial
+      let text = "";
       for (let i = 0; i < 13; i++) {
         const charCode = edidBuffer[blockStart + 5 + i];
         // Stop at terminator or invalid characters
-        if (charCode === 0x0A || charCode === 0x00 || charCode > 127) break;
+        if (charCode === 0x0a || charCode === 0x00 || charCode > 127) break;
         // Only accept printable ASCII
         if (charCode >= 32) {
           text += String.fromCharCode(charCode);
@@ -431,7 +485,7 @@ function parseDescriptorBlock(edidBuffer, blockStart) {
       }
       return {
         type: descriptorType,
-        text: text.trim()
+        text: text.trim(),
       };
     }
     return null;
@@ -442,21 +496,22 @@ function parseDescriptorBlock(edidBuffer, blockStart) {
 
 function validateResolution(width, height) {
   // Sanity check for reasonable resolution values
-  return width >= 640 && width <= 7680 &&
-    height >= 480 && height <= 4320;
+  return width >= 640 && width <= 7680 && height >= 480 && height <= 4320;
 }
 
 function parseEdid(edidBuffer) {
   try {
     // Verify buffer size
     if (!edidBuffer || edidBuffer.length < 128) {
-      throw new Error('EDID data too short');
+      throw new Error("EDID data too short");
     }
 
     // Verify EDID header
-    const header = Buffer.from([0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]);
+    const header = Buffer.from([
+      0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00,
+    ]);
     if (!edidBuffer.subarray(0, 8).equals(header)) {
-      throw new Error('Invalid EDID header');
+      throw new Error("Invalid EDID header");
     }
 
     // Parse with fallbacks for each section
@@ -466,7 +521,7 @@ function parseEdid(edidBuffer) {
       serialNumber: null,
       year: null,
       week: null,
-      resolution: null
+      resolution: null,
     };
 
     // Manufacturer ID
@@ -477,9 +532,9 @@ function parseEdid(edidBuffer) {
       try {
         const block = parseDescriptorBlock(edidBuffer, i);
         if (block) {
-          if (block.type === 0xFC && !result.modelName) {
+          if (block.type === 0xfc && !result.modelName) {
             result.modelName = block.text;
-          } else if (block.type === 0xFF && !result.serialNumber) {
+          } else if (block.type === 0xff && !result.serialNumber) {
             result.serialNumber = block.text;
           }
         }
@@ -494,7 +549,12 @@ function parseEdid(edidBuffer) {
       const year = edidBuffer[17] + 1990;
 
       // Validate date is reasonable
-      if (week >= 1 && week <= 53 && year >= 1990 && year <= new Date().getFullYear()) {
+      if (
+        week >= 1 &&
+        week <= 53 &&
+        year >= 1990 &&
+        year <= new Date().getFullYear()
+      ) {
         result.week = week;
         result.year = year;
       }
@@ -504,13 +564,13 @@ function parseEdid(edidBuffer) {
 
     // Resolution
     try {
-      const hPixels = ((edidBuffer[4] >> 4) & 0x0F) * 16 + edidBuffer[2];
-      const vPixels = ((edidBuffer[7] >> 4) & 0x0F) * 16 + edidBuffer[5];
+      const hPixels = ((edidBuffer[4] >> 4) & 0x0f) * 16 + edidBuffer[2];
+      const vPixels = ((edidBuffer[7] >> 4) & 0x0f) * 16 + edidBuffer[5];
 
       if (validateResolution(hPixels, vPixels)) {
         result.resolution = {
           width: hPixels,
-          height: vPixels
+          height: vPixels,
         };
       }
     } catch {
@@ -518,20 +578,20 @@ function parseEdid(edidBuffer) {
     }
 
     // Generate display name with fallbacks
-    let displayName = '';
-    if (result.manufacturer) displayName += result.manufacturer + ' ';
+    let displayName = "";
+    if (result.manufacturer) displayName += result.manufacturer + " ";
     if (result.modelName) {
       displayName += result.modelName;
     } else {
-      displayName += 'Display';
+      displayName += "Display";
     }
 
     return {
       ...result,
-      displayName: displayName.trim()
+      displayName: displayName.trim(),
     };
   } catch (error) {
-    console.error('EDID parse error:', error);
+    console.error("EDID parse error:", error);
     return null;
   }
 }
@@ -539,53 +599,59 @@ function parseEdid(edidBuffer) {
 async function getConnectedDisplays() {
   try {
     const entries = await readdir(DRM_PATH);
-    const displays = await Promise.all(entries.map(async (entry) => {
-      if (!entry.match(/card\d+[-\w]+/)) return null;
+    const displays = await Promise.all(
+      entries.map(async (entry) => {
+        if (!entry.match(/card\d+[-\w]+/)) return null;
 
-      const displayPath = DRM_PATH + '/' + entry;
-      try {
-        // Check if display is connected
-        const statusPath = displayPath + '/' + 'status';
-        const status = await readFile(statusPath, 'utf8').catch(() => 'disconnected');
-        if (status.trim() !== 'connected') return null;
-
-        // Try to read EDID
-        const edidPath = displayPath + '/' + 'edid';
-        let edidInfo = null;
-
+        const displayPath = DRM_PATH + "/" + entry;
         try {
-          const edidBuffer = await readFile(edidPath);
-          edidInfo = parseEdid(edidBuffer);
-        } catch (edidError) {
-          console.debug(`Failed to read EDID for ${entry}:`, edidError);
+          // Check if display is connected
+          const statusPath = displayPath + "/" + "status";
+          const status = await readFile(statusPath, "utf8").catch(
+            () => "disconnected",
+          );
+          if (status.trim() !== "connected") return null;
+
+          // Try to read EDID
+          const edidPath = displayPath + "/" + "edid";
+          let edidInfo = null;
+
+          try {
+            const edidBuffer = await readFile(edidPath);
+            edidInfo = parseEdid(edidBuffer);
+          } catch (edidError) {
+            console.debug(`Failed to read EDID for ${entry}:`, edidError);
+          }
+
+          const isInternalDisplay = entry.includes("eDP");
+          const name = edidInfo?.displayName || entry.replace(/^card\d+-/, "");
+
+          // Return all information without attempting to match displays yet
+          return {
+            path: displayPath,
+            name,
+            manufacturer: edidInfo?.manufacturer || null,
+            serialNumber: edidInfo?.serialNumber || null,
+            manufactureDate: edidInfo?.year
+              ? {
+                  year: edidInfo.year,
+                  week: edidInfo.week,
+                }
+              : null,
+            nativeResolution: edidInfo?.resolution || null,
+            internal: isInternalDisplay,
+            connector: entry,
+          };
+        } catch (error) {
+          console.debug(`Error processing display ${entry}:`, error);
+          return null;
         }
-
-        const isInternalDisplay = entry.includes('eDP');
-        const name = edidInfo?.displayName || entry.replace(/^card\d+-/, '');
-
-        // Return all information without attempting to match displays yet
-        return {
-          path: displayPath,
-          name,
-          manufacturer: edidInfo?.manufacturer || null,
-          serialNumber: edidInfo?.serialNumber || null,
-          manufactureDate: edidInfo?.year ? {
-            year: edidInfo.year,
-            week: edidInfo.week
-          } : null,
-          nativeResolution: edidInfo?.resolution || null,
-          internal: isInternalDisplay,
-          connector: entry
-        };
-      } catch (error) {
-        console.debug(`Error processing display ${entry}:`, error);
-        return null;
-      }
-    }));
+      }),
+    );
 
     return displays.filter(Boolean);
   } catch (error) {
-    console.error('Failed to get display info:', error);
+    console.error("Failed to get display info:", error);
     return [];
   }
 }
@@ -593,25 +659,27 @@ async function getConnectedDisplays() {
 async function handleGetAllDisplays() {
   const displays = screen.getAllDisplays();
   let edidDisplayInfo = [];
-  const savedDisplayIndex = settings.getSync('lastDisplayIndex');
+  const savedDisplayIndex = settings.getSync("lastDisplayIndex");
 
   let defaultDisplayIndex;
   if (savedDisplayIndex !== undefined && displays[savedDisplayIndex]) {
     defaultDisplayIndex = savedDisplayIndex;
   } else {
-    defaultDisplayIndex = displays.findIndex(d => d.bounds.x !== 0 || d.bounds.y !== 0);
+    defaultDisplayIndex = displays.findIndex(
+      (d) => d.bounds.x !== 0 || d.bounds.y !== 0,
+    );
     if (defaultDisplayIndex === -1) defaultDisplayIndex = 0;
   }
 
-  if (process.platform === 'linux') {
+  if (process.platform === "linux") {
     try {
       edidDisplayInfo = await getConnectedDisplays();
 
       // Sort EDID info to match Electron's display order
       edidDisplayInfo.sort((a, b) => {
         // Put internal display (eDP) first
-        const aIsInternal = a.connector.includes('eDP');
-        const bIsInternal = b.connector.includes('eDP');
+        const aIsInternal = a.connector.includes("eDP");
+        const bIsInternal = b.connector.includes("eDP");
         if (aIsInternal !== bIsInternal) return bIsInternal ? 1 : -1;
 
         // Then sort by connector number
@@ -620,40 +688,42 @@ async function handleGetAllDisplays() {
         return aNum - bNum;
       });
     } catch (error) {
-      console.error('Failed to get EDID info:', error);
+      console.error("Failed to get EDID info:", error);
     }
   }
 
   if (isDevMode) {
-    console.log('EDID Display Info:', edidDisplayInfo);
-    console.log('Electron Displays:', displays);
+    console.log("EDID Display Info:", edidDisplayInfo);
+    console.log("Electron Displays:", displays);
   }
 
   const displayOptions = displays.map((display, index) => {
     let name;
 
     switch (process.platform) {
-      case 'linux':
+      case "linux":
         // Match displays based on index after sorting
         const matchingDisplay = edidDisplayInfo[index];
 
         if (matchingDisplay) {
-          const manufacturer = matchingDisplay.manufacturer ? `${matchingDisplay.manufacturer} ` : '';
-          name = matchingDisplay.name.includes(manufacturer) ?
-            matchingDisplay.name :
-            `${manufacturer}${matchingDisplay.name}`;
+          const manufacturer = matchingDisplay.manufacturer
+            ? `${matchingDisplay.manufacturer} `
+            : "";
+          name = matchingDisplay.name.includes(manufacturer)
+            ? matchingDisplay.name
+            : `${manufacturer}${matchingDisplay.name}`;
         } else {
-          name = display.internal ? 'Internal Display' : 'External Display';
+          name = display.internal ? "Internal Display" : "External Display";
         }
         break;
 
-      case 'win32':
-      case 'darwin':
+      case "win32":
+      case "darwin":
         name = display.label;
         break;
 
       default:
-        name = display.label || 'Display';
+        name = display.label || "Display";
     }
 
     return {
@@ -667,35 +737,35 @@ async function handleGetAllDisplays() {
         x: display.bounds.x,
         y: display.bounds.y,
         width: display.bounds.width,
-        height: display.bounds.height
-      }
+        height: display.bounds.height,
+      },
     };
   });
 
   return {
     displays: displayOptions,
-    defaultDisplayIndex
+    defaultDisplayIndex,
   };
 }
 
 function handleSetDisplayIndex(event, index) {
-  settings.set('lastDisplayIndex', index)
-    .catch(error => {
-      console.error('Error saving display index:', error);
-    });
+  settings.set("lastDisplayIndex", index).catch((error) => {
+    console.error("Error saving display index:", error);
+  });
 
   // If there's an active media window, move it to the new display
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     const displays = screen.getAllDisplays();
-    const targetDisplay = displays[index] ||
-      displays.find(d => d.bounds.x !== 0 || d.bounds.y !== 0) ||
+    const targetDisplay =
+      displays[index] ||
+      displays.find((d) => d.bounds.x !== 0 || d.bounds.y !== 0) ||
       displays[0];
 
     mediaWindow.setBounds({
       x: targetDisplay.bounds.x,
       y: targetDisplay.bounds.y,
       width: targetDisplay.bounds.width,
-      height: targetDisplay.bounds.height
+      height: targetDisplay.bounds.height,
     });
   }
 }
@@ -703,8 +773,8 @@ function handleSetDisplayIndex(event, index) {
 async function getSystemTIme() {
   const [seconds, nanoseconds] = process.hrtime();
   return {
-    systemTime: seconds + (nanoseconds / 1e9),
-    ipcTimestamp: Date.now()
+    systemTime: seconds + nanoseconds / 1e9,
+    ipcTimestamp: Date.now(),
   };
 }
 
@@ -722,7 +792,7 @@ function createHelpWindow() {
 
   let helpWindowX = x + 50;
   let helpWindowY = y + 50;
-  let helpWindowWidth = 800;  // Default width
+  let helpWindowWidth = 800; // Default width
   let helpWindowHeight = 600; // Default height
 
   let ovrdHWindBnd = getHelpWindowBounds();
@@ -742,7 +812,7 @@ function createHelpWindow() {
     minimizable: false,
     frame: false,
     transparent: true,
-    backgroundColor: '#00000000',
+    backgroundColor: "#00000000",
     x: helpWindowX,
     y: helpWindowY,
     title: "Help",
@@ -754,20 +824,20 @@ function createHelpWindow() {
       navigateOnDragDrop: false,
       spellcheck: false,
       preload: `${path.dirname(import.meta.dirname)}/src/help_preload.min.mjs`,
-      devTools: false
-    }
+      devTools: false,
+    },
   });
 
-  helpWindow.loadFile('derived/src/help.prod.html');
+  helpWindow.loadFile("derived/src/help.prod.html");
 
-  helpWindow.on('move', checkHelpWindowState);
-  helpWindow.on('resize', checkHelpWindowState);
-  helpWindow.on('maximize', handleMaximizeChangeHelpWindow.bind(null, true));
-  helpWindow.on('unmaximize', handleMaximizeChangeHelpWindow.bind(null, false));
+  helpWindow.on("move", checkHelpWindowState);
+  helpWindow.on("resize", checkHelpWindowState);
+  helpWindow.on("maximize", handleMaximizeChangeHelpWindow.bind(null, true));
+  helpWindow.on("unmaximize", handleMaximizeChangeHelpWindow.bind(null, false));
 
   helpWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
-    return { action: 'deny' };
+    return { action: "deny" };
   });
 
   return helpWindow;
@@ -787,7 +857,7 @@ function createAboutWindow(parentWindow) {
     frame: false,
     transparent: true,
     show: false,
-    backgroundColor: '#00000000',
+    backgroundColor: "#00000000",
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -795,14 +865,14 @@ function createAboutWindow(parentWindow) {
       sandbox: true,
       navigateOnDragDrop: false,
       spellcheck: false,
-      devTools: false
-    }
+      devTools: false,
+    },
   });
 
-  aboutWindow.loadFile('derived/src/about.prod.html');
+  aboutWindow.loadFile("derived/src/about.prod.html");
 
   // Position it centered relative to parent
-  aboutWindow.once('ready-to-show', () => {
+  aboutWindow.once("ready-to-show", () => {
     const parentBounds = parentWindow.getBounds();
     const x = parentBounds.x + (parentBounds.width - 500) / 2;
     const y = parentBounds.y + (parentBounds.height - 480) / 2;
@@ -812,7 +882,7 @@ function createAboutWindow(parentWindow) {
 
   aboutWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
-    return { action: 'deny' };
+    return { action: "deny" };
   });
 
   return aboutWindow;
@@ -823,35 +893,35 @@ function getPlatform() {
 }
 
 function setIPC() {
-  ipcMain.handle('get-system-time', getSystemTIme);
-  ipcMain.handle('get-platform', getPlatform);
-  ipcMain.on('set-mode', handleSetMode);
-  ipcMain.handle('get-setting', getSetting);
-  ipcMain.handle('get-all-displays', handleGetAllDisplays);
-  ipcMain.on('remoteplaypause', handleRemotePlayPause);
-  ipcMain.on('localMediaState', localMediaStateUpdate);
-  ipcMain.on('playback-state-change', handlePlaybackStateChange);
-  ipcMain.handle('get-media-current-time', handleGetMediaCurrentTime);
-  ipcMain.handle('set-media-loop-status', handleSetLoopStatus);
-  ipcMain.on('close-media-window', handleCloseMediaWindow);
-  ipcMain.on('timeRemaining-message', sendRemainingTime);
-  ipcMain.on('vlcl', handleVlcl);
-  ipcMain.handle('create-media-window', handleCreateMediaWindow);
-  ipcMain.on('timeGoto-message', handleTimeGotoMessage);
-  ipcMain.on('play-ctl', handlePlayCtl);
-  ipcMain.on('set-display-index', handleSetDisplayIndex);
-  ipcMain.on('media-seekto', (event, seekTime) => {
-    win?.webContents.send('timeGoto-message', {
+  ipcMain.handle("get-system-time", getSystemTIme);
+  ipcMain.handle("get-platform", getPlatform);
+  ipcMain.on("set-mode", handleSetMode);
+  ipcMain.handle("get-setting", getSetting);
+  ipcMain.handle("get-all-displays", handleGetAllDisplays);
+  ipcMain.on("remoteplaypause", handleRemotePlayPause);
+  ipcMain.on("localMediaState", localMediaStateUpdate);
+  ipcMain.on("playback-state-change", handlePlaybackStateChange);
+  ipcMain.handle("get-media-current-time", handleGetMediaCurrentTime);
+  ipcMain.handle("set-media-loop-status", handleSetLoopStatus);
+  ipcMain.on("close-media-window", handleCloseMediaWindow);
+  ipcMain.on("timeRemaining-message", sendRemainingTime);
+  ipcMain.on("vlcl", handleVlcl);
+  ipcMain.handle("create-media-window", handleCreateMediaWindow);
+  ipcMain.on("timeGoto-message", handleTimeGotoMessage);
+  ipcMain.on("play-ctl", handlePlayCtl);
+  ipcMain.on("set-display-index", handleSetDisplayIndex);
+  ipcMain.on("media-seekto", (event, seekTime) => {
+    win?.webContents.send("timeGoto-message", {
       currentTime: seekTime,
-      timestamp: Date.now()
-    })
+      timestamp: Date.now(),
+    });
   });
-  ipcMain.on('minimize-window', (event) => {
+  ipcMain.on("minimize-window", (event) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
     senderWindow.minimize();
   });
 
-  ipcMain.on('maximize-window', (event) => {
+  ipcMain.on("maximize-window", (event) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
 
     if (senderWindow) {
@@ -862,32 +932,34 @@ function setIPC() {
       }
     }
   });
-  ipcMain.handle('open-about-window', (event) => {
+  ipcMain.handle("open-about-window", (event) => {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
     createAboutWindow(mainWindow);
   });
-  ipcMain.handle('open-help-window', (event) => {
+  ipcMain.handle("open-help-window", (event) => {
     createHelpWindow();
   });
-  ipcMain.handle('get-session-id', () => {
+  ipcMain.handle("get-session-id", () => {
     if (sessionID === 0) {
-      sessionID = process.hrtime.bigint().toString(36) + Math.random().toString(36).substr(2, 9);
+      sessionID =
+        process.hrtime.bigint().toString(36) +
+        Math.random().toString(36).substr(2, 9);
     }
     return sessionID;
   });
 }
 
-app.once('browser-window-created', setIPC);
+app.once("browser-window-created", setIPC);
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
     app.quit();
   }
 });
 
-app.on('activate', () => {
+app.on("activate", () => {
   if (!win) {
-    measurePerformance('Creating window on activate', createWindow);
+    measurePerformance("Creating window on activate", createWindow);
   }
 });
 
@@ -896,25 +968,27 @@ app.whenReady().then(async () => {
   const headersHandler = (details, callback) => {
     if (!details.responseHeaders) details.responseHeaders = {};
 
-    details.responseHeaders['Cross-Origin-Opener-Policy'] = ['same-origin'];
-    details.responseHeaders['Cross-Origin-Embedder-Policy'] = ['require-corp'];
+    details.responseHeaders["Cross-Origin-Opener-Policy"] = ["same-origin"];
+    details.responseHeaders["Cross-Origin-Embedder-Policy"] = ["require-corp"];
 
     callback({ responseHeaders: details.responseHeaders });
   };
 
   session.defaultSession.webRequest.onHeadersReceived(headersHandler);
-  measurePerformance('Creating window', createWindow);
+  measurePerformance("Creating window", createWindow);
   if (isDevMode) {
     const appReadyTime = performance.now();
-    console.log(`Application ready in ${(appReadyTime - appStartTime).toFixed(2)} ms`);
+    console.log(
+      `Application ready in ${(appReadyTime - appStartTime).toFixed(2)} ms`,
+    );
   }
 
-  win.on('move', checkWindowState);
-  win.on('resize', checkWindowState);
+  win.on("move", checkWindowState);
+  win.on("resize", checkWindowState);
 
-  screen.on('display-added', handleDisplayChange);
-  screen.on('display-removed', handleDisplayChange);
-  screen.on('display-metrics-changed', handleDisplayChange);
+  screen.on("display-added", handleDisplayChange);
+  screen.on("display-removed", handleDisplayChange);
+  screen.on("display-metrics-changed", handleDisplayChange);
 });
 
 const mainWindowOptions = {
@@ -932,12 +1006,12 @@ const mainWindowOptions = {
   webPreferences: {
     contextIsolation: true,
     nodeIntegration: true,
-    v8CacheOptions: 'bypassHeatCheck',
+    v8CacheOptions: "bypassHeatCheck",
     userGesture: true,
     backgroundThrottling: false,
     experimentalFeatures: true,
-    autoplayPolicy: 'no-user-gesture-required',
+    autoplayPolicy: "no-user-gesture-required",
     preload: `${path.dirname(import.meta.dirname)}/src/app_preload.min.mjs`,
-    devTools: isDevMode
-  }
+    devTools: isDevMode,
+  },
 };

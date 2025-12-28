@@ -1,3 +1,20 @@
+/*
+Copyright (C) 2019-2024 Christian Lockley
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
+
 // audioFx.js - Combined Audio FX utilities
 /**
  * Attach a cubic soft-clip WaveShaper to a video element.
@@ -19,20 +36,27 @@ const _attachedCubicElements = new WeakMap();
  * @param {number} [curveLength=32768] Resolution of the WaveShaper curve
  * @returns {object} Contains the audio nodes if attached, otherwise a minimal object.
  */
-export function attachCubicWaveShaper(videoElement, inputGain = 0.8, curveLength = 32768, platform = 'win32') {
+export function attachCubicWaveShaper(
+  videoElement,
+  inputGain = 0.8,
+  curveLength = 32768,
+  platform = "win32",
+) {
   if (!videoElement) throw new Error("Video element is required.");
 
   // Check if already attached
   if (_attachedCubicElements.has(videoElement)) {
-    console.warn('Cubic waveshaper is already attached to this element.');
+    console.warn("Cubic waveshaper is already attached to this element.");
     return _attachedCubicElements.get(videoElement);
   }
 
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   const source = audioCtx.createMediaElementSource(videoElement);
-  
-  if (platform === 'win32') {
-    console.log("Windows OS detected. Activating cubic soft-clipper with gain compensation.");
+
+  if (platform === "win32") {
+    console.log(
+      "Windows OS detected. Activating cubic soft-clipper with gain compensation.",
+    );
 
     // 1. INPUT (Pre-Waveshaper) GAIN NODE
     const inputGainNode = audioCtx.createGain();
@@ -41,12 +65,12 @@ export function attachCubicWaveShaper(videoElement, inputGain = 0.8, curveLength
     // WAVESHAPER NODE
     const waveshaper = audioCtx.createWaveShaper();
     waveshaper.curve = makeCubicCurve(curveLength);
-    waveshaper.oversample = '4x';
+    waveshaper.oversample = "4x";
 
     // 2. OUTPUT (Makeup) GAIN NODE
     const outputGainNode = audioCtx.createGain();
-    const makeupGain = 1.0 / inputGain; 
-    outputGainNode.gain.value = makeupGain; 
+    const makeupGain = 1.0 / inputGain;
+    outputGainNode.gain.value = makeupGain;
 
     // Connect nodes: Video -> InputGain -> WaveShaper -> OutputGain -> Destination
     source
@@ -54,27 +78,33 @@ export function attachCubicWaveShaper(videoElement, inputGain = 0.8, curveLength
       .connect(waveshaper)
       .connect(outputGainNode)
       .connect(audioCtx.destination);
-      
+
     const result = { audioCtx, inputGainNode, waveshaper, outputGainNode };
     _attachedCubicElements.set(videoElement, result);
     return result;
-
   } else {
-    console.log("Non-Windows OS detected. Bypassing soft-clipper; connecting source directly to destination.");
-    
-     source.connect(audioCtx.destination);
-    
+    console.log(
+      "Non-Windows OS detected. Bypassing soft-clipper; connecting source directly to destination.",
+    );
+
+    source.connect(audioCtx.destination);
+
     // Return a minimal object and track the element to prevent re-attachment
-    const result = { audioCtx, inputGainNode: null, waveshaper: null, outputGainNode: null };
+    const result = {
+      audioCtx,
+      inputGainNode: null,
+      waveshaper: null,
+      outputGainNode: null,
+    };
     _attachedCubicElements.set(videoElement, result);
     return result;
   }
 }
 /**
-* Generate a cubic soft-clipping curve: y = x - x^3/3
-* @param {number} length Length of the curve array
-* @returns {Float32Array}
-*/
+ * Generate a cubic soft-clipping curve: y = x - x^3/3
+ * @param {number} length Length of the curve array
+ * @returns {Float32Array}
+ */
 function makeCubicCurve(length = 32768) {
   const curve = new Float32Array(length);
   for (let i = 0; i < length; i++) {
@@ -85,8 +115,8 @@ function makeCubicCurve(length = 32768) {
 }
 
 /**
-* FadeOut class - Smoothly fades out media elements
-*/
+ * FadeOut class - Smoothly fades out media elements
+ */
 export class FadeOut {
   #mediaElements = new WeakMap();
   #duration;
@@ -100,7 +130,7 @@ export class FadeOut {
 
   attach(mediaEl) {
     if (!(mediaEl instanceof HTMLMediaElement)) {
-      throw new TypeError('Expected an HTMLMediaElement');
+      throw new TypeError("Expected an HTMLMediaElement");
     }
     if (!this.#mediaElements.has(mediaEl)) {
       this.#mediaElements.set(mediaEl, { intervalId: null });
@@ -132,7 +162,9 @@ export class FadeOut {
       mediaEl.style.opacity = newVolume;
 
       if (this.#debug) {
-        console.log(`[FadeOut] Volume: ${newVolume.toFixed(2)}, Opacity: ${newVolume.toFixed(2)}`);
+        console.log(
+          `[FadeOut] Volume: ${newVolume.toFixed(2)}, Opacity: ${newVolume.toFixed(2)}`,
+        );
       }
 
       if (newVolume <= 0 || currentStep >= steps) {
@@ -142,11 +174,11 @@ export class FadeOut {
         mediaEl.style.opacity = 0;
         mediaEl.pause();
         mediaEl.currentTime = mediaEl.duration;
-        mediaEl.dispatchEvent(new Event('ended'));
+        mediaEl.dispatchEvent(new Event("ended"));
         mediaEl.style.opacity = 1;
 
-        if (this.#debug) console.log('[FadeOut] Fade complete, media paused');
-        if (typeof onComplete === 'function') onComplete();
+        if (this.#debug) console.log("[FadeOut] Fade complete, media paused");
+        if (typeof onComplete === "function") onComplete();
       }
     }, this.#interval);
   }
@@ -175,13 +207,13 @@ export class FadeOut {
  * Usage example:
  * @example
  * import { FadeOut } from './fadeout.js';
- * 
+ *
  * const fadeOut = new FadeOut(3); // 3 second fade
  * const video = document.querySelector('video');
- * 
+ *
  * // Set safe volume to prevent distortion
  * video.volume = 0.7;
- * 
+ *
  * // Attach and fade when needed
  * fadeOut.attach(video);
  * fadeOut.fade(video, () => {
