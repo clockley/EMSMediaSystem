@@ -19,8 +19,54 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 
-const { ipcRenderer, __dirname, bibleAPI, webUtils, attachCubicWaveShaper } =
-  window.electron;
+let ipcRenderer;
+let bibleAPI;
+let webUtils;
+let attachCubicWaveShaper;
+let __dirname;
+
+let send;
+let invoke;
+let on;
+let getPathForFile;
+
+async function waitForPreloadBridge(maxWaitTime = 30000) {
+  const bridgeStartTime = Date.now();
+  while (
+    !window.electron ||
+    !window.electron.ipcRenderer ||
+    !windowControls
+  ) {
+    if (Date.now() - bridgeStartTime > maxWaitTime) {
+      throw new Error("Timeout waiting for preload context");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+function attachElectronBridge() {
+  const electron = window.electron;
+  if (
+    !electron ||
+    !electron.ipcRenderer ||
+    !electron.webUtils ||
+    typeof electron.attachCubicWaveShaper !== "function"
+  ) {
+    throw new Error("Electron preload bridge is incomplete");
+  }
+  ipcRenderer = electron.ipcRenderer;
+  bibleAPI = electron.bibleAPI;
+  webUtils = electron.webUtils;
+  attachCubicWaveShaper = electron.attachCubicWaveShaper;
+  __dirname = electron.__dirname;
+
+  send = ipcRenderer.send;
+  invoke = ipcRenderer.invoke;
+  on = ipcRenderer.on;
+  getPathForFile = webUtils.getPathForFile;
+
+  globalThis.invoke = invoke;
+}
 
 var pidSeeking = false;
 var streamVolume = 1;
@@ -61,10 +107,6 @@ const updatePending = new Int32Array(1);
 let videoWrapper;
 let focusableControls;
 let controlsOverlay;
-const send = ipcRenderer.send;
-const invoke = ipcRenderer.invoke;
-const on = ipcRenderer.on;
-const getPathForFile = webUtils.getPathForFile;
 const mediaPlayerInputState = {
   filePaths: [],
   urlInpt: null,
@@ -2837,20 +2879,7 @@ async function loadOpMode(mode) {
 
       document.body.appendChild(loadingDiv);
 
-      // Wait for preload context to be ready with timeout
-      const maxWaitTime = 30000; // 30 seconds
-      const startTime = Date.now();
-
-      while (
-        !window.electron ||
-        !window.electron.ipcRenderer ||
-        !windowControls
-      ) {
-        if (Date.now() - startTime > maxWaitTime) {
-          throw new Error("Timeout waiting for preload context");
-        }
-        await new Promise((r) => setTimeout(r, 50)); // Check every 50ms instead of 10ms
-      }
+      await waitForPreloadBridge();
 
       // Wait for DOM to be stable
       await new Promise((r) => setTimeout(r, 0));
@@ -3169,6 +3198,14 @@ async function createMediaWindow() {
   }
 }
 
-installIPCHandler();
-installEvents();
-invoke("get-setting", "operating-mode").then(loadOpMode);
+async function bootstrapRenderer() {
+  await waitForPreloadBridge();
+  attachElectronBridge();
+  installIPCHandler();
+  installEvents();
+  return invoke("get-setting", "operating-mode").then(loadOpMode);
+}
+
+bootstrapRenderer().catch((error) => {
+  console.error("Failed to bootstrap application:", error);
+});
