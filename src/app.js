@@ -124,8 +124,23 @@ let isQueuePlaying = false;
 let mediaPlaybackEndedPending = false;
 /** When set, closing the media window switches to this queue index instead of advancing/stopping. */
 let pendingQueueSwitchIndex = null;
+/**
+ * When true, the next media-window-closed finishes a full-queue clear (snapshot already taken;
+ * presentation was closed from the clear action).
+ */
+let pendingQueueClearPostClose = false;
+/**
+ * Snapshot for undo after "Clear" on the media queue (HIG: perform + restore).
+ * @type {null | { items: { path: string; name: string; type: string }[]; index: number; seekTime: number; wasPresentationActive: boolean }}
+ */
+let queueClearUndoSnapshot = null;
 /** After reorder drop, ignore the synthetic click on the row. */
 let ignoreNextQueueItemClick = false;
+
+function isQueueAutoAdvanceEnabled() {
+  const el = document.getElementById("queueAutoAdvanceCtl");
+  return !el || el.checked;
+}
 
 function classifyQueueMediaType(filePath) {
   if (imageRegex.test(filePath)) return "image";
@@ -175,13 +190,11 @@ function renderQueue() {
   if (mediaQueue.length === 0) {
     listContainer.innerHTML =
       '<div class="list-placeholder">No media in queue</div>';
-    return;
-  }
-
-  listContainer.innerHTML = mediaQueue
-    .map(
-      (item, index) =>
-        `<div class="queue-item${index === currentQueueIndex ? " active" : ""}" role="row" data-queue-index="${index}">
+  } else {
+    listContainer.innerHTML = mediaQueue
+      .map(
+        (item, index) =>
+          `<div class="queue-item${index === currentQueueIndex ? " active" : ""}" role="listitem" data-queue-index="${index}">
       <span class="queue-drag-handle" draggable="true" data-queue-index="${index}" title="Drag to reorder" aria-label="Drag to reorder">
         <svg width="12" height="16" viewBox="0 0 12 16" aria-hidden="true"><circle cx="3" cy="3" r="1.5" fill="currentColor"/><circle cx="9" cy="3" r="1.5" fill="currentColor"/><circle cx="3" cy="8" r="1.5" fill="currentColor"/><circle cx="9" cy="8" r="1.5" fill="currentColor"/><circle cx="3" cy="13" r="1.5" fill="currentColor"/><circle cx="9" cy="13" r="1.5" fill="currentColor"/></svg>
       </span>
@@ -189,8 +202,18 @@ function renderQueue() {
       <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
       <button type="button" class="remove-btn" draggable="false" data-queue-remove="${index}" title="Remove from queue" aria-label="Remove from queue">✕</button>
     </div>`,
-    )
-    .join("");
+      )
+      .join("");
+  }
+  updateClearQueueButtonState();
+}
+
+function updateClearQueueButtonState() {
+  const btn = document.getElementById("clearQueueBtn");
+  if (!btn) return;
+  const empty = mediaQueue.length === 0;
+  btn.disabled = empty;
+  btn.setAttribute("aria-disabled", empty ? "true" : "false");
 }
 
 function reorderMediaQueue(fromIndex, toIndex) {
@@ -222,12 +245,14 @@ function reorderMediaQueue(fromIndex, toIndex) {
     ignoreNextQueueItemClick = false;
   }, 400);
 
+  invalidateQueueUndoToastAfterMutation();
   renderQueue();
   saveMediaFile();
 }
 
 function enqueuePathsFromFilePicker(paths) {
   if (currentMode !== MEDIAPLAYER || !paths.length) return;
+  invalidateQueueUndoToastAfterMutation();
   for (const p of paths) {
     mediaQueue.push(createQueueEntry(p));
   }
@@ -242,6 +267,32 @@ function onMediaFileInputChanged() {
     );
   }
   saveMediaFile();
+}
+
+/** Electron open dialog preserves multi-selection order better than <input type="file">. */
+function installMediaOrderedOpenDialog() {
+  const label = document.querySelector(
+    ".control-panel--media .file-input-label",
+  );
+  if (!label || label.dataset.orderedOpenDialog === "1") return;
+  label.dataset.orderedOpenDialog = "1";
+  label.addEventListener(
+    "click",
+    async (e) => {
+      if (currentMode !== MEDIAPLAYER) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        const res = await invoke("show-media-files-dialog");
+        if (!res || res.canceled || !res.filePaths?.length) return;
+        enqueuePathsFromFilePicker(res.filePaths);
+        saveMediaFile();
+      } catch (err) {
+        console.error(err);
+      }
+    },
+    true,
+  );
 }
 
 const ALLOWED_DROP_MEDIA_TYPES = [
@@ -312,16 +363,199 @@ function applyDroppedFilesToMediaInput(files) {
   }
 }
 
-function onClearMediaQueueClick() {
-  clearMediaQueue();
-  saveMediaFile();
-}
-
 function clearMediaQueue() {
   mediaQueue = [];
   currentQueueIndex = -1;
   isQueuePlaying = false;
   renderQueue();
+}
+
+/** Stop local preview playback after the queue is cleared (HIG: no “ghost” audio/video). */
+function pauseLocalPreviewAfterQueueClear() {
+  if (playingMediaAudioOnly) {
+    send("localMediaState", 0, "stop");
+    playingMediaAudioOnly = false;
+  }
+  localTimeStampUpdateIsRunning = false;
+  if (video !== null && mediaFile && !isImg(mediaFile)) {
+    video.pause();
+    video.currentTime = 0;
+    targetTime = 0;
+    startTime = 0;
+  }
+}
+
+function discardQueueClearUndoSnapshot() {
+  queueClearUndoSnapshot = null;
+}
+
+async function captureQueueClearUndoState() {
+  let seekTime = 0;
+  if (isActiveMediaWindow()) {
+    try {
+      const t = await invoke("get-media-current-time");
+      seekTime = typeof t === "number" && Number.isFinite(t) ? t : 0;
+    } catch (err) {
+      console.error(err);
+      seekTime = 0;
+    }
+  }
+  queueClearUndoSnapshot = {
+    items: mediaQueue.map((x) => ({
+      path: x.path,
+      name: x.name,
+      type: x.type,
+    })),
+    index: currentQueueIndex,
+    seekTime,
+    wasPresentationActive: Boolean(
+      isQueuePlaying && isActiveMediaWindow() && isPlaying,
+    ),
+  };
+}
+
+function showQueueClearedUndoToast() {
+  showGnomeToast("Queue cleared", {
+    onUndo: () => {
+      void restoreQueueClearUndoSnapshot();
+    },
+    onUndoExpire: () => {
+      discardQueueClearUndoSnapshot();
+    },
+    duration: 10000,
+    undoStyle: "pill-accent",
+  });
+}
+
+async function finalizeQueueClearDestructive() {
+  pendingQueueSwitchIndex = null;
+  mediaPlaybackEndedPending = false;
+  pendingQueueClearPostClose = false;
+  isPlaying = false;
+  isQueuePlaying = false;
+  updateDynUI();
+  isActiveMediaWindowCache = false;
+  clearMediaQueue();
+  saveMediaFile();
+  pauseLocalPreviewAfterQueueClear();
+  showQueueClearedUndoToast();
+}
+
+async function resumeQueuePresentationAtTime(seekTime) {
+  const item =
+    currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+      ? mediaQueue[currentQueueIndex]
+      : null;
+  if (!item) return;
+
+  mediaPlaybackEndedPending = false;
+  await loadQueueItemIntoControlWindow(item);
+  renderQueue();
+
+  isQueuePlaying = true;
+  isPlaying = true;
+  updateDynUI();
+
+  const iM = isImg(mediaFile);
+  if (iM) {
+    await createMediaWindow();
+    if (video && !video.paused) {
+      video.removeAttribute("src");
+      video.load();
+    }
+    return;
+  }
+
+  const live = isLiveStream(mediaFile);
+  if (!live && video && seekTime > 0.05) {
+    const d = video.duration;
+    let safe = seekTime;
+    if (Number.isFinite(d) && d > 0) {
+      safe = Math.min(seekTime, Math.max(0, d - 0.25));
+    }
+    try {
+      await new Promise((resolve) => {
+        const done = () => resolve();
+        const t = window.setTimeout(done, 400);
+        const onSeeked = () => {
+          window.clearTimeout(t);
+          video.removeEventListener("seeked", onSeeked);
+          done();
+        };
+        video.addEventListener("seeked", onSeeked, { once: true });
+        video.currentTime = safe;
+      });
+      startTime = video.currentTime;
+      targetTime = startTime;
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  await createMediaWindow({ seekOnly: !live });
+}
+
+async function restoreQueueClearUndoSnapshot() {
+  const snap = queueClearUndoSnapshot;
+  if (!snap) return;
+  queueClearUndoSnapshot = null;
+
+  mediaQueue = snap.items.map((x) => ({
+    path: x.path,
+    name: x.name,
+    type: x.type,
+  }));
+  currentQueueIndex = snap.index;
+  if (mediaQueue.length === 0) {
+    currentQueueIndex = -1;
+  } else if (currentQueueIndex >= mediaQueue.length) {
+    currentQueueIndex = mediaQueue.length - 1;
+  } else if (currentQueueIndex < 0) {
+    currentQueueIndex = 0;
+  }
+
+  renderQueue();
+  saveMediaFile();
+
+  if (
+    snap.wasPresentationActive &&
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length
+  ) {
+    await resumeQueuePresentationAtTime(snap.seekTime);
+    return;
+  }
+
+  if (
+    currentMode === MEDIAPLAYER &&
+    mediaQueue.length > 0 &&
+    currentQueueIndex >= 0 &&
+    !isPlaying
+  ) {
+    void loadQueueItemIntoControlWindow(
+      mediaQueue[currentQueueIndex],
+    ).catch((err) => console.error(err));
+  }
+}
+
+async function onClearMediaQueueClick() {
+  if (mediaQueue.length === 0) return;
+  pendingQueueSwitchIndex = null;
+  await captureQueueClearUndoState();
+
+  if (isActiveMediaWindow()) {
+    pendingQueueClearPostClose = true;
+    isQueuePlaying = false;
+    isPlaying = false;
+    updateDynUI();
+    clearMediaQueue();
+    pauseLocalPreviewAfterQueueClear();
+    showQueueClearedUndoToast();
+    send("close-media-window", 0);
+    return;
+  }
+
+  await finalizeQueueClearDestructive();
 }
 
 function removeFromQueue(index) {
@@ -330,6 +564,7 @@ function removeFromQueue(index) {
     showGnomeToast("Stop the presentation to remove the current item");
     return;
   }
+  invalidateQueueUndoToastAfterMutation();
   mediaQueue.splice(index, 1);
   if (currentQueueIndex > index) currentQueueIndex--;
   else if (currentQueueIndex >= mediaQueue.length) currentQueueIndex = -1;
@@ -533,6 +768,7 @@ async function loadQueueItemIntoControlWindow(item) {
 
 async function playCurrentQueueItem() {
   mediaPlaybackEndedPending = false;
+  itc = performance.now() * 0.001;
   const item = mediaQueue[currentQueueIndex];
   if (!item) {
     isQueuePlaying = false;
@@ -1486,48 +1722,259 @@ function removeFilenameFromTitlebar() {
 }
 
 let toastTimer = null;
+/** Auto-hide deadline (ms since epoch) for interactive #gnomeToast hover pause. */
+let toastHideDeadline = 0;
+/** AbortController for mouseenter/mouseleave on interactive toast. */
+let toastHoverAbort = null;
+/** onUndoExpire while an interactive undo toast is active (cleared on undo or dismiss). */
+let activeInteractiveUndoExpire = null;
+
+let previewToastTimer = null;
 
 function resetPreviewWarningState() {
   hasShownPreviewWarning = false;
 }
 
-function showGnomeToast(message, duration = 3000) {
-  let toast = document.getElementById("gnomeToast");
-  const FADE_OUT_DURATION = 300;
+/**
+ * Dismisses a visible interactive undo toast: clears timers/hover, runs expire callback
+ * (discards undo snapshot), and removes toast content. Used before new toasts or when
+ * queue state changes and the old undo is no longer valid.
+ */
+function dismissInteractiveGnomeToastForReplacement() {
+  if (toastHoverAbort) {
+    toastHoverAbort.abort();
+    toastHoverAbort = null;
+  }
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+  toastHideDeadline = 0;
+  const toast = document.getElementById("gnomeToast");
+  const hadInteractive = toast?.classList.contains("gnome-osd-toast--interactive");
+  if (hadInteractive && typeof activeInteractiveUndoExpire === "function") {
+    const fn = activeInteractiveUndoExpire;
+    activeInteractiveUndoExpire = null;
+    fn();
+  } else {
+    activeInteractiveUndoExpire = null;
+  }
+  if (hadInteractive && toast) {
+    toast.classList.remove("visible");
+    toast.replaceChildren();
+    toast.classList.remove("gnome-osd-toast--interactive");
+    toast.style.display = "none";
+  }
+}
 
-  // 1. Create the toast element if it doesn't exist (Dynamic Creation)
+function invalidateQueueUndoToastAfterMutation() {
+  dismissInteractiveGnomeToastForReplacement();
+}
+
+/**
+ * @param {string} message
+ * @param {number | { onUndo?: () => void; onUndoExpire?: () => void; duration?: number; undoLabel?: string; undoStyle?: "pill-accent" }} [durationOrOptions]
+ */
+function showGnomeToast(message, durationOrOptions = 3000) {
+  const FADE_OUT_DURATION = 300;
+  let duration = 3000;
+  /** @type {(() => void) | null} */
+  let onUndo = null;
+  /** @type {(() => void) | null} */
+  let onUndoExpire = null;
+  let undoLabel = "Undo";
+  /** @type {"pill-accent" | null} */
+  let undoStyle = null;
+
+  if (typeof durationOrOptions === "number" && Number.isFinite(durationOrOptions)) {
+    duration = durationOrOptions;
+  } else if (
+    durationOrOptions &&
+    typeof durationOrOptions === "object" &&
+    typeof durationOrOptions.onUndo === "function"
+  ) {
+    onUndo = durationOrOptions.onUndo;
+    duration =
+      typeof durationOrOptions.duration === "number"
+        ? durationOrOptions.duration
+        : 10000;
+    if (typeof durationOrOptions.undoLabel === "string") {
+      undoLabel = durationOrOptions.undoLabel;
+    }
+    if (typeof durationOrOptions.onUndoExpire === "function") {
+      onUndoExpire = durationOrOptions.onUndoExpire;
+    }
+    if (durationOrOptions.undoStyle === "pill-accent") {
+      undoStyle = "pill-accent";
+    }
+  }
+
+  const interactive = onUndo !== null;
+  /** @type {((ms: number) => void) | null} */
+  let startInteractiveAutoHide = null;
+
+  let toast = document.getElementById("gnomeToast");
   if (!toast) {
     toast = document.createElement("div");
     toast.id = "gnomeToast";
-    // The 'gnome-osd-toast' class contains all the required styling, position, and transition properties
     toast.className = "gnome-osd-toast";
     document.body.appendChild(toast);
   }
 
-  // 2. Preempt Existing Toast: Clear any running timer
+  dismissInteractiveGnomeToastForReplacement();
+
   if (toastTimer) {
     clearTimeout(toastTimer);
+    toastTimer = null;
   }
+  toastHideDeadline = 0;
 
-  // 3. Update Content and Make Visible
-  toast.textContent = message;
+  toast.setAttribute("role", "status");
+  toast.setAttribute("aria-live", "polite");
+  toast.setAttribute("aria-atomic", "true");
 
-  // Ensure the toast is ready to transition in
-  toast.style.display = "block";
-  toast.classList.add("visible");
-
-  // 4. Set New Timer to Hide the Toast
-  toastTimer = setTimeout(() => {
-    // Start the fade-out/slide-up transition
+  const dismissAfterUndo = () => {
+    if (toastHoverAbort) {
+      toastHoverAbort.abort();
+      toastHoverAbort = null;
+    }
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    toastHideDeadline = 0;
+    activeInteractiveUndoExpire = null;
     toast.classList.remove("visible");
-
-    // After the transition finishes, hide the element entirely to be safe
     setTimeout(() => {
       toast.style.display = "none";
+      toast.replaceChildren();
+      toast.classList.remove("gnome-osd-toast--interactive");
     }, FADE_OUT_DURATION);
+  };
 
-    toastTimer = null;
-  }, duration);
+  if (interactive) {
+    toast.classList.add("gnome-osd-toast--interactive");
+    toast.replaceChildren();
+    const msg = document.createElement("span");
+    msg.className = "gnome-osd-toast__message";
+    msg.textContent = message;
+    const undoBtn = document.createElement("button");
+    undoBtn.type = "button";
+    undoBtn.className = "gnome-osd-toast__undo";
+    undoBtn.textContent = undoLabel;
+    undoBtn.setAttribute("aria-label", undoLabel);
+    if (undoStyle === "pill-accent") {
+      undoBtn.classList.add("gnome-osd-toast__undo--pill-accent");
+    }
+
+    activeInteractiveUndoExpire = onUndoExpire;
+
+    const runUndoExpire = () => {
+      const ex = activeInteractiveUndoExpire;
+      activeInteractiveUndoExpire = null;
+      if (typeof ex === "function") {
+        ex();
+      }
+    };
+
+    const ac = new AbortController();
+    toastHoverAbort = ac;
+
+    let resumeMs = duration;
+
+    const finishTimeoutHide = () => {
+      if (toastHoverAbort) {
+        toastHoverAbort.abort();
+        toastHoverAbort = null;
+      }
+      toast.classList.remove("visible");
+      toastTimer = null;
+      toastHideDeadline = 0;
+      setTimeout(() => {
+        toast.style.display = "none";
+        toast.replaceChildren();
+        toast.classList.remove("gnome-osd-toast--interactive");
+        runUndoExpire();
+      }, FADE_OUT_DURATION);
+    };
+
+    const scheduleHide = (ms) => {
+      if (toastTimer) {
+        clearTimeout(toastTimer);
+        toastTimer = null;
+      }
+      if (ms <= 0) {
+        finishTimeoutHide();
+        return;
+      }
+      toastHideDeadline = Date.now() + ms;
+      toastTimer = setTimeout(() => {
+        toastTimer = null;
+        finishTimeoutHide();
+      }, ms);
+    };
+
+    toast.addEventListener(
+      "mouseenter",
+      () => {
+        if (toastHideDeadline <= 0) return;
+        if (toastTimer) {
+          clearTimeout(toastTimer);
+          toastTimer = null;
+        }
+        resumeMs = Math.max(0, toastHideDeadline - Date.now());
+      },
+      { signal: ac.signal },
+    );
+
+    toast.addEventListener(
+      "mouseleave",
+      () => {
+        if (toastHideDeadline <= 0) return;
+        scheduleHide(resumeMs);
+      },
+      { signal: ac.signal },
+    );
+
+    undoBtn.addEventListener("click", () => {
+      if (toastHoverAbort) {
+        toastHoverAbort.abort();
+        toastHoverAbort = null;
+      }
+      if (toastTimer) {
+        clearTimeout(toastTimer);
+        toastTimer = null;
+      }
+      toastHideDeadline = 0;
+      activeInteractiveUndoExpire = null;
+      onUndo();
+      dismissAfterUndo();
+    });
+    toast.appendChild(msg);
+    toast.appendChild(undoBtn);
+    toast.style.display = "flex";
+
+    startInteractiveAutoHide = scheduleHide;
+  } else {
+    toast.classList.remove("gnome-osd-toast--interactive");
+    toast.replaceChildren(document.createTextNode(message));
+    toast.style.display = "block";
+  }
+
+  toast.classList.add("visible");
+
+  if (startInteractiveAutoHide) {
+    startInteractiveAutoHide(duration);
+  } else {
+    toastTimer = setTimeout(() => {
+      toast.classList.remove("visible");
+      toastTimer = null;
+      setTimeout(() => {
+        toast.style.display = "none";
+        toast.classList.remove("gnome-osd-toast--interactive");
+      }, FADE_OUT_DURATION);
+    }, duration);
+  }
 }
 
 function showPreviewWarningToast() {
@@ -1570,15 +2017,15 @@ function showPreviewWarningToast() {
   });
 
   // Clear any existing timer to prevent premature removal
-  if (toastTimer) {
-    clearTimeout(toastTimer);
+  if (previewToastTimer) {
+    clearTimeout(previewToastTimer);
   }
 
   // Set 5-second timer to remove
-  toastTimer = setTimeout(() => {
+  previewToastTimer = setTimeout(() => {
     // Check if the toast element still exists in the DOM before manipulating classes
     if (!toast || !toast.parentNode) {
-      toastTimer = null;
+      previewToastTimer = null;
       return; // Exit if the toast or its parent is already gone
     }
 
@@ -1596,7 +2043,7 @@ function showPreviewWarningToast() {
           // console.error("Toast removal failed:", e);
         }
       }
-      toastTimer = null;
+      previewToastTimer = null;
     }, 250);
   }, 5000);
 
@@ -1780,6 +2227,18 @@ function installIPCHandler() {
 }
 
 async function handleMediaWindowClosed(event, id) {
+  if (pendingQueueClearPostClose) {
+    pendingQueueClearPostClose = false;
+    mediaPlaybackEndedPending = false;
+    isPlaying = false;
+    isQueuePlaying = false;
+    updateDynUI();
+    isActiveMediaWindowCache = false;
+    saveMediaFile();
+    pauseLocalPreviewAfterQueueClear();
+    return;
+  }
+
   if (pendingQueueSwitchIndex !== null) {
     const idx = pendingQueueSwitchIndex;
     pendingQueueSwitchIndex = null;
@@ -1813,7 +2272,11 @@ async function handleMediaWindowClosed(event, id) {
   if (isQueuePlaying) {
     if (mediaPlaybackEndedPending) {
       mediaPlaybackEndedPending = false;
-      await advanceQueueAfterMediaWindowClosed();
+      if (isQueueAutoAdvanceEnabled()) {
+        await advanceQueueAfterMediaWindowClosed();
+      } else {
+        await stopQueuePresentationUserClosed();
+      }
     } else {
       await stopQueuePresentationUserClosed();
     }
@@ -2103,6 +2566,31 @@ async function playMedia(e) {
       await playCurrentQueueItem();
       return;
     }
+  }
+
+  if (
+    !isPlaying &&
+    currentMode === MEDIAPLAYER &&
+    mediaQueue.length === 0 &&
+    mediaFile &&
+    typeof mediaFile === "string" &&
+    mediaFile.length > 0 &&
+    !isLiveStream(mediaFile)
+  ) {
+    invalidateQueueUndoToastAfterMutation();
+    mediaQueue = [createQueueEntry(mediaFile)];
+    currentQueueIndex = 0;
+    renderQueue();
+    startTime = 0;
+    targetTime = 0;
+    if (video !== null && !isImg(mediaFile)) {
+      video.pause();
+      video.currentTime = 0;
+    }
+    saveMediaFile();
+    isQueuePlaying = true;
+    await playCurrentQueueItem();
+    return;
   }
 
   if (
@@ -2635,7 +3123,7 @@ function generateMediaFormHTML(video = null) {
         </div>
       </div>
 
-      <div class="control-group">
+      <div class="control-group media-toggle-rows">
         <div class="loop-control">
           <span class="control-label">Autoplay</span>
           <label class="switch">
@@ -2644,16 +3132,24 @@ function generateMediaFormHTML(video = null) {
             <span class="switch-thumb"></span>
           </label>
         </div>
+        <div class="loop-control queue-auto-advance-control">
+          <span class="control-label" id="queueAutoAdvanceLbl">Auto-advance</span>
+          <label class="switch">
+            <input type="checkbox" checked name="queueAutoAdvanceCtl" id="queueAutoAdvanceCtl" aria-labelledby="queueAutoAdvanceLbl">
+            <span class="switch-track"></span>
+            <span class="switch-thumb"></span>
+          </label>
         </div>
+      </div>
 
       <div id="mediaCntDn"></div>
 
       <div class="queue-section">
         <div class="list-header">
           <span class="queue-section-title">Media Queue</span>
-          <button type="button" id="clearQueueBtn" class="pill-button secondary">Clear All</button>
+          <button type="button" id="clearQueueBtn" class="pill-button destructive-action" title="Clear the queue" aria-label="Clear queue">Clear</button>
         </div>
-        <div id="mediaQueueList" class="boxed-list" role="listbox" aria-label="Media queue">
+        <div id="mediaQueueList" class="boxed-list" role="list" aria-label="Media queue">
           <div class="list-placeholder">No media in queue</div>
         </div>
       </div>
@@ -2764,6 +3260,7 @@ function setSBFormMediaPlayer() {
 
   const mdFile = document.getElementById("mdFile");
   mdFile.addEventListener("change", onMediaFileInputChanged);
+  installMediaOrderedOpenDialog();
   document
     .getElementById("clearQueueBtn")
     ?.addEventListener("click", onClearMediaQueueClick);
@@ -2863,28 +3360,45 @@ function saveMediaFile() {
   textNode.data = "";
   const mdfileElement = document.getElementById("mdFile");
   if (mediaPlayerInputState.filePaths.length < 1) {
-    if (
-      !mdfileElement ||
-      mdfileElement.value === "" ||
-      (mdfileElement.files && mdfileElement.files.length === 0)
-    ) {
+    if (!mdfileElement && mediaQueue.length === 0) {
+      return;
+    }
+    const filesLen = mdfileElement?.files?.length ?? 0;
+    const val = mdfileElement?.value ?? "";
+    const hasPickerSelection =
+      filesLen > 0 || (val !== "" && val !== undefined);
+    if (!hasPickerSelection && mediaQueue.length === 0) {
       return;
     }
   }
 
   if (playingMediaAudioOnly && currentMode === MEDIAPLAYER) {
-    if (mdfileElement.files[0] == null || mdfileElement.files[0].length === 0) {
+    const f0 = mdfileElement?.files?.[0];
+    if (f0 != null && f0.length > 0) {
+      showGnomeToast("File queued for playback");
+      mediaFile = getPathForFile(f0);
       return;
     }
-    showGnomeToast("File queued for playback");
-    mediaFile = getPathForFile(mdfileElement.files[0]);
+    if (mediaQueue.length > 0) {
+      const qi =
+        currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+          ? currentQueueIndex
+          : 0;
+      showGnomeToast("File queued for playback");
+      mediaFile = mediaQueue[qi].path;
+      return;
+    }
     return;
   }
 
   if (mdfileElement !== null && mdfileElement !== "undefined") {
-    if (mdfileElement.files !== null && mdfileElement.files.length === 0) {
-      return;
-    } else if (mdfileElement.value === "") {
+    const filesLen = mdfileElement.files?.length ?? 0;
+    const val = mdfileElement.value ?? "";
+    if (
+      filesLen === 0 &&
+      (val === "" || val === undefined) &&
+      mediaQueue.length === 0
+    ) {
       return;
     }
 
@@ -3622,7 +4136,11 @@ function isLiveStream(mediaFile) {
   return /(?:m3u8|mpd|youtube\.com|videoplayback|youtu\.be)/i.test(mediaFile);
 }
 
-async function createMediaWindow() {
+async function createMediaWindow(options) {
+  const seekOnly = options && options.seekOnly === true;
+  if (seekOnly) {
+    itc = performance.now() * 0.001;
+  }
   const ts = await invoke("get-system-time");
   let birth =
     ts.systemTime +
@@ -3686,6 +4204,7 @@ async function createMediaWindow() {
         liveStreamMode ? "__live-stream=" + liveStreamMode : "",
         isImgFile ? "__isImg" : "",
         `__autoplay=${document.getElementById("autoPlayCtl")?.checked !== undefined && document.getElementById("autoPlayCtl").checked}`,
+        seekOnly ? "__seek-only" : "",
         birth,
       ],
       preload: `${__dirname}/media_preload.min.js`,

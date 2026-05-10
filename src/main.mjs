@@ -20,6 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   screen,
   powerSaveBlocker,
@@ -392,10 +393,12 @@ function handlePlaybackStateChange(event, playbackState) {
 
 async function handleGetMediaCurrentTime() {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-    return await mediaWindow.webContents.executeJavaScript(
+    const t = await mediaWindow.webContents.executeJavaScript(
       "window.api.video.currentTime",
     );
+    return typeof t === "number" && Number.isFinite(t) ? t : 0;
   }
+  return 0;
 }
 
 async function handleSetLoopStatus(event, arg) {
@@ -1002,12 +1005,57 @@ function getPlatform() {
   return process.platform;
 }
 
+async function handleShowMediaFilesDialog(event) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, filePaths: [] };
+  }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Open media",
+    properties: ["openFile", "multiSelections"],
+    filters: [
+      {
+        name: "Media",
+        extensions: [
+          "mp4",
+          "m4v",
+          "webm",
+          "ogg",
+          "ogv",
+          "mkv",
+          "mov",
+          "avi",
+          "mp3",
+          "wav",
+          "flac",
+          "m4a",
+          "aac",
+          "opus",
+          "jpg",
+          "jpeg",
+          "png",
+          "gif",
+          "webp",
+          "bmp",
+          "svg",
+        ],
+      },
+      { name: "All files", extensions: ["*"] },
+    ],
+  });
+  if (result.canceled || !result.filePaths?.length) {
+    return { canceled: true, filePaths: [] };
+  }
+  return { canceled: false, filePaths: result.filePaths };
+}
+
 function setIPC() {
   ipcMain.handle("get-system-time", getSystemTIme);
   ipcMain.handle("get-platform", getPlatform);
   ipcMain.on("set-mode", handleSetMode);
   ipcMain.handle("get-setting", getSetting);
   ipcMain.handle("get-all-displays", handleGetAllDisplays);
+  ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);
