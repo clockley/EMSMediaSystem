@@ -1229,7 +1229,8 @@ const mainWindowOptions = {
   show: false,
   webPreferences: {
     contextIsolation: true,
-    nodeIntegration: true,
+    nodeIntegration: false,
+    sandbox: false,
     v8CacheOptions: "bypassHeatCheck",
     userGesture: true,
     backgroundThrottling: false,
