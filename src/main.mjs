@@ -1005,6 +1005,34 @@ function getPlatform() {
   return process.platform;
 }
 
+const ALLOWED_MEDIA_EXTENSIONS = [
+  "mp4",
+  "m4v",
+  "webm",
+  "ogg",
+  "ogv",
+  "mkv",
+  "mov",
+  "avi",
+  "mp3",
+  "wav",
+  "flac",
+  "m4a",
+  "aac",
+  "opus",
+  "jpg",
+  "jpeg",
+  "png",
+  "gif",
+  "webp",
+  "bmp",
+  "svg",
+];
+
+const ALLOWED_MEDIA_EXTENSION_SET = new Set(
+  ALLOWED_MEDIA_EXTENSIONS.map((ext) => "." + ext.toLowerCase()),
+);
+
 async function handleShowMediaFilesDialog(event) {
   const mainWindow = BrowserWindow.fromWebContents(event.sender);
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -1014,32 +1042,7 @@ async function handleShowMediaFilesDialog(event) {
     title: "Open media",
     properties: ["openFile", "multiSelections"],
     filters: [
-      {
-        name: "Media",
-        extensions: [
-          "mp4",
-          "m4v",
-          "webm",
-          "ogg",
-          "ogv",
-          "mkv",
-          "mov",
-          "avi",
-          "mp3",
-          "wav",
-          "flac",
-          "m4a",
-          "aac",
-          "opus",
-          "jpg",
-          "jpeg",
-          "png",
-          "gif",
-          "webp",
-          "bmp",
-          "svg",
-        ],
-      },
+      { name: "Media", extensions: ALLOWED_MEDIA_EXTENSIONS },
       { name: "All files", extensions: ["*"] },
     ],
   });
@@ -1049,6 +1052,20 @@ async function handleShowMediaFilesDialog(event) {
   return { canceled: false, filePaths: result.filePaths };
 }
 
+/** Filter renderer-supplied dropped paths to those with a recognized media extension. */
+function handleFilterMediaDropPaths(_, paths) {
+  if (!Array.isArray(paths)) return [];
+  const out = [];
+  for (const p of paths) {
+    if (typeof p !== "string" || p.length === 0) continue;
+    const dot = p.lastIndexOf(".");
+    if (dot < 0) continue;
+    const ext = p.slice(dot).toLowerCase();
+    if (ALLOWED_MEDIA_EXTENSION_SET.has(ext)) out.push(p);
+  }
+  return out;
+}
+
 function setIPC() {
   ipcMain.handle("get-system-time", getSystemTIme);
   ipcMain.handle("get-platform", getPlatform);
@@ -1056,6 +1073,7 @@ function setIPC() {
   ipcMain.handle("get-setting", getSetting);
   ipcMain.handle("get-all-displays", handleGetAllDisplays);
   ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
+  ipcMain.handle("filter-media-drop-paths", handleFilterMediaDropPaths);
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);
