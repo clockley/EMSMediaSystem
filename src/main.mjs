@@ -36,6 +36,7 @@ let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
 let aboutWindow = null;
 let helpWindow = null;
+let queueSwitchDialogWindow = null;
 app.commandLine.appendSwitch("js-flags", "--maglev --no-use-osr");
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
 
@@ -291,8 +292,12 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     //mediaWindow.openDevTools()
     await mediaWindow.loadFile("derived/src/media.prod.html");
     mediaWindow.on("closed", () => {
-      if (win) win.webContents.send("media-window-closed", mediaWindow.id);
+      const closedId = mediaWindow?.id;
+      mediaWindow = null;
       stopMediaPlaybackPowerHint();
+      if (win && !win.isDestroyed()) {
+        win.webContents.send("media-window-closed", closedId);
+      }
     });
 
     // Save the selected display index
@@ -888,6 +893,111 @@ function createAboutWindow(parentWindow) {
   return aboutWindow;
 }
 
+function createQueueSwitchDialogWindow(parentWindow, message) {
+  return new Promise((resolve) => {
+    if (queueSwitchDialogWindow && !queueSwitchDialogWindow.isDestroyed()) {
+      queueSwitchDialogWindow.focus();
+      resolve(false);
+      return;
+    }
+
+    let resolved = false;
+    const finish = (accepted) => {
+      if (resolved) return;
+      resolved = true;
+      ipcMain.removeListener("queue_switch_dialog_response", onResponse);
+      resolve(accepted === true);
+    };
+
+    const onResponse = (event, accepted) => {
+      if (
+        !queueSwitchDialogWindow ||
+        queueSwitchDialogWindow.isDestroyed() ||
+        event.sender !== queueSwitchDialogWindow.webContents
+      ) {
+        return;
+      }
+      finish(accepted === true);
+      if (!queueSwitchDialogWindow.isDestroyed()) {
+        queueSwitchDialogWindow.close();
+      }
+    };
+
+    ipcMain.on("queue_switch_dialog_response", onResponse);
+
+    queueSwitchDialogWindow = new BrowserWindow({
+      parent: parentWindow,
+      modal: true,
+      width: 440,
+      height: 260,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      frame: false,
+      transparent: true,
+      show: false,
+      skipTaskbar: true,
+      title: "Switch presentation",
+      backgroundColor: "#00000000",
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: false,
+        webviewTag: false,
+        navigateOnDragDrop: false,
+        spellcheck: false,
+        devTools: false,
+        preload: `${path.dirname(import.meta.dirname)}/src/queue_switch_dialog_preload.min.mjs`,
+      },
+    });
+
+    queueSwitchDialogWindow.once("closed", () => {
+      ipcMain.removeListener("queue_switch_dialog_response", onResponse);
+      queueSwitchDialogWindow = null;
+      finish(false);
+    });
+
+    queueSwitchDialogWindow.loadFile("derived/src/queue_switch_dialog.prod.html");
+
+    queueSwitchDialogWindow.webContents.once("did-finish-load", () => {
+      if (
+        !queueSwitchDialogWindow ||
+        queueSwitchDialogWindow.isDestroyed()
+      ) {
+        return;
+      }
+      const literal = JSON.stringify(message ?? "");
+      queueSwitchDialogWindow.webContents
+        .executeJavaScript(
+          `document.getElementById('queue_switch_dialog_text').textContent = ${literal};`,
+        )
+        .catch(() => {});
+    });
+
+    queueSwitchDialogWindow.once("ready-to-show", () => {
+      if (
+        !queueSwitchDialogWindow ||
+        queueSwitchDialogWindow.isDestroyed()
+      ) {
+        return;
+      }
+      const parentBounds = parentWindow.getBounds();
+      const w = 440;
+      const h = 260;
+      const x = parentBounds.x + (parentBounds.width - w) / 2;
+      const y = parentBounds.y + (parentBounds.height - h) / 2;
+      queueSwitchDialogWindow.setBounds({ x, y, width: w, height: h });
+      queueSwitchDialogWindow.show();
+    });
+
+    queueSwitchDialogWindow.webContents.setWindowOpenHandler(({ url }) => {
+      shell.openExternal(url);
+      return { action: "deny" };
+    });
+  });
+}
+
 function getPlatform() {
   return process.platform;
 }
@@ -904,6 +1014,11 @@ function setIPC() {
   ipcMain.handle("get-media-current-time", handleGetMediaCurrentTime);
   ipcMain.handle("set-media-loop-status", handleSetLoopStatus);
   ipcMain.on("close-media-window", handleCloseMediaWindow);
+  ipcMain.on("media-playback-ended", () => {
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("media-playback-ended");
+    }
+  });
   ipcMain.on("timeRemaining-message", sendRemainingTime);
   ipcMain.on("vlcl", handleVlcl);
   ipcMain.handle("create-media-window", handleCreateMediaWindow);
@@ -935,6 +1050,15 @@ function setIPC() {
   ipcMain.handle("open-about-window", (event) => {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
     createAboutWindow(mainWindow);
+  });
+  ipcMain.handle("show_queue_switch_dialog", async (event, opts) => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    const message =
+      opts && typeof opts.message === "string"
+        ? opts.message
+        : "Switch to another item?";
+    return createQueueSwitchDialogWindow(mainWindow, message);
   });
   ipcMain.handle("open-help-window", (event) => {
     createHelpWindow();

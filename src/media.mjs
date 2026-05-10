@@ -240,7 +240,11 @@ async function loadMedia() {
     video.addEventListener("pause", playbackStateUpdate);
   }
 
-  video.onended = () => close();
+  video.onended = () => {
+    if (loopFile) return;
+    ipcRenderer.send("media-playback-ended");
+    window.close();
+  };
 
   if (!liveStreamMode) {
     sendRemainingTime(video);

@@ -197,7 +197,6 @@ else
 endif
 	@echo "$(COLOR_YELLOW)Minifying $< → $@$(COLOR_RESET)"
 	@$(TERSER) "$<" \
-		--source-map "filename=$(notdir $<),url=$(notdir $@).map" \
 		--compress \
 		--mangle \
 		--output "$@"
@@ -211,7 +210,6 @@ else
 endif
 	@echo "$(COLOR_YELLOW)Minifying $< → $@$(COLOR_RESET)"
 	@$(TERSER) "$<" \
-		--source-map "filename=$(notdir $<),url=$(notdir $@).map" \
 		--compress \
 		--mangle \
 		--output "$@"

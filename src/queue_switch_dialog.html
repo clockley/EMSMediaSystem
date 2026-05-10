@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Switch presentation</title>
+  <link rel="stylesheet" type="text/css" href="main.css">
+  <style>
+    .queue_switch_dialog_body {
+      padding: 20px 24px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-height: 0;
+      box-sizing: border-box;
+    }
+
+    #queue_switch_dialog_text {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--window-fg-color);
+      white-space: pre-wrap;
+    }
+
+    .queue_switch_dialog_actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .queue_switch_dialog_actions button {
+      min-width: 96px;
+      padding: 8px 16px;
+      border-radius: var(--adw-radius-sm, 6px);
+      font-size: 14px;
+      cursor: default;
+      border: 1px solid var(--border-color);
+      background: var(--card-bg-color);
+      color: var(--window-fg-color);
+    }
+
+    .queue_switch_dialog_actions button.primary {
+      background: var(--accent-bg-color);
+      color: #ffffff;
+      border-color: var(--accent-bg-color);
+    }
+
+    .queue_switch_dialog_actions button.primary:hover {
+      background: var(--accent-bg-color-hover);
+    }
+
+    .queue_switch_dialog_actions button.secondary:hover {
+      background: color-mix(in srgb, var(--window-fg-color) 8%, transparent);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="window-container">
+    <header class="headerbar">
+      <div class="headerbar-start"></div>
+      <div id="WindowTitle">Switch presentation</div>
+      <div class="headerbar-end">
+        <div class="window-controls">
+          <button type="button" class="window-control close" tabindex="-1" aria-label="Close">
+            <svg width="16" height="16" viewBox="0 0 16 16">
+              <path d="M5 5l6 6m0-6l-6 6" stroke="currentColor" stroke-width="1.5" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+    <main class="queue_switch_dialog_body">
+      <p id="queue_switch_dialog_text"></p>
+      <div class="queue_switch_dialog_actions">
+        <button type="button" class="secondary" id="queue_switch_dialog_cancel">Cancel</button>
+        <button type="button" class="primary" id="queue_switch_dialog_confirm">Switch</button>
+      </div>
+    </main>
+  </div>
+
+  <script defer>
+    document.getElementById("queue_switch_dialog_cancel").addEventListener("click", () => {
+      queueSwitchDialog.respond(false);
+    });
+    document.getElementById("queue_switch_dialog_confirm").addEventListener("click", () => {
+      queueSwitchDialog.respond(true);
+    });
+
+    document.querySelector(".window-control.close").addEventListener("click", () => {
+      queueSwitchDialog.respond(false);
+    });
+  </script>
+</body>
+
+</html>
