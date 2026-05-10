@@ -2597,7 +2597,7 @@ async function setSBFormTextPlayer() {
 function generateMediaFormHTML(video = null) {
   return `
   <div class="media-container">
-    <form onsubmit="return false;" class="control-panel">
+    <form onsubmit="return false;" class="control-panel control-panel--media">
       <div class="control-group">
         <span class="control-label">Media</span>
         <label class="file-input-label">
