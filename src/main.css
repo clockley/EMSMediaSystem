@@ -277,7 +277,10 @@ footer {
 
 .file-input-label {
     cursor: pointer;
+    font: inherit;
     font-weight: 400;
+    color: inherit;
+    text-align: left;
     display: inline-flex;
     align-items: center;
     gap: 8px;
@@ -314,18 +317,6 @@ footer {
     width: 16px;
     height: 16px;
     color: var(--window-fg-color);
-}
-
-.file-input {
-    position: absolute;
-    pointer-events: none;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    border: 0;
 }
 
 /* Display select */
@@ -687,18 +678,6 @@ button:focus-visible,
     margin: 0;
     color: #ffffff;
     user-select: none;
-}
-
-.file-input {
-
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    border: 0;
 }
 
 .title-button {

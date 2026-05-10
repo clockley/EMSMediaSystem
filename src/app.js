@@ -259,108 +259,57 @@ function enqueuePathsFromFilePicker(paths) {
   renderQueue();
 }
 
-function onMediaFileInputChanged() {
-  const md = document.getElementById("mdFile");
-  if (md?.files?.length && currentMode === MEDIAPLAYER) {
-    enqueuePathsFromFilePicker(
-      Array.from(md.files).map((f) => getPathForFile(f)),
-    );
+/** Electron open dialog preserves multi-selection order better than <input type="file">. */
+function installMediaOpenButton() {
+  const button = document.getElementById("mediaOpenButton");
+  if (!button || button.dataset.openDialogBound === "1") return;
+  button.dataset.openDialogBound = "1";
+  button.addEventListener("click", openMediaFilesDialog);
+}
+
+async function openMediaFilesDialog() {
+  if (currentMode !== MEDIAPLAYER) return;
+  try {
+    const res = await invoke("show-media-files-dialog");
+    if (!res || res.canceled || !res.filePaths?.length) return;
+    enqueuePathsFromFilePicker(res.filePaths);
+    saveMediaFile();
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+/**
+ * Convert a renderer-supplied DataTransfer into native paths and forward them
+ * to the main process for media-extension filtering. The drop event itself
+ * must be observed in the renderer (Electron does not surface DOM drop events
+ * to the main process), but every validation/decision step lives in main.
+ *
+ * @returns {Promise<string[]>} filtered, allowed media paths
+ */
+async function extractAndFilterDroppedMediaPaths(dataTransfer) {
+  if (!dataTransfer?.files?.length) return [];
+  const paths = [];
+  for (const file of dataTransfer.files) {
+    const p = getPathForFile(file);
+    if (typeof p === "string" && p.length > 0) paths.push(p);
+  }
+  if (paths.length === 0) return [];
+  try {
+    const filtered = await invoke("filter-media-drop-paths", paths);
+    return Array.isArray(filtered) ? filtered : [];
+  } catch (err) {
+    console.error("filter-media-drop-paths failed:", err);
+    return [];
+  }
+}
+
+function applyDroppedMediaPaths(paths) {
+  if (!paths || paths.length === 0) return;
+  if (currentMode === MEDIAPLAYER) {
+    enqueuePathsFromFilePicker(paths);
   }
   saveMediaFile();
-}
-
-/** Electron open dialog preserves multi-selection order better than <input type="file">. */
-function installMediaOrderedOpenDialog() {
-  const label = document.querySelector(
-    ".control-panel--media .file-input-label",
-  );
-  if (!label || label.dataset.orderedOpenDialog === "1") return;
-  label.dataset.orderedOpenDialog = "1";
-  label.addEventListener(
-    "click",
-    async (e) => {
-      if (currentMode !== MEDIAPLAYER) return;
-      e.preventDefault();
-      e.stopPropagation();
-      try {
-        const res = await invoke("show-media-files-dialog");
-        if (!res || res.canceled || !res.filePaths?.length) return;
-        enqueuePathsFromFilePicker(res.filePaths);
-        saveMediaFile();
-      } catch (err) {
-        console.error(err);
-      }
-    },
-    true,
-  );
-}
-
-const ALLOWED_DROP_MEDIA_TYPES = [
-  "video/mp4",
-  "video/x-m4v",
-  "video/webm",
-  "video/ogg",
-  "audio/x-m4a",
-  "audio/mpeg",
-  "audio/flac",
-  "audio/ogg",
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/bmp",
-  "image/svg+xml",
-];
-
-const ALLOWED_DROP_MEDIA_EXTENSIONS = new Set([
-  ".mp4",
-  ".m4v",
-  ".webm",
-  ".ogg",
-  ".ogv",
-  ".mkv",
-  ".mov",
-  ".avi",
-  ".mp3",
-  ".wav",
-  ".flac",
-  ".m4a",
-  ".aac",
-  ".opus",
-  ".jpg",
-  ".jpeg",
-  ".png",
-  ".gif",
-  ".webp",
-  ".bmp",
-  ".svg",
-]);
-
-function filterAllowedMediaDropFiles(dataTransfer) {
-  if (!dataTransfer?.files?.length) return [];
-  return Array.from(dataTransfer.files).filter((file) => {
-    const mimeType = file.type;
-    const dot = file.name.lastIndexOf(".");
-    const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : "";
-    return (
-      ALLOWED_DROP_MEDIA_TYPES.includes(mimeType) ||
-      mimeType.startsWith("video/") ||
-      mimeType.startsWith("audio/") ||
-      mimeType.startsWith("image/") ||
-      ALLOWED_DROP_MEDIA_EXTENSIONS.has(ext)
-    );
-  });
-}
-
-function applyDroppedFilesToMediaInput(files) {
-  const mdFile = document.getElementById("mdFile");
-  if (!mdFile || files.length === 0) return;
-  mdFile.files = filesArrayToFileList(files);
-  if (currentMode === MEDIAPLAYER) {
-    onMediaFileInputChanged();
-  } else {
-    saveMediaFile();
-  }
 }
 
 function clearMediaQueue() {
@@ -651,15 +600,19 @@ function installMediaQueueListDelegation() {
     }
   });
 
-  list.addEventListener("drop", (e) => {
-    const droppedFiles = filterAllowedMediaDropFiles(e.dataTransfer);
-    if (droppedFiles.length > 0) {
+  list.addEventListener("drop", async (e) => {
+    const hasOSFiles =
+      e.dataTransfer?.files?.length > 0 ||
+      (e.dataTransfer?.types &&
+        Array.from(e.dataTransfer.types).includes("Files"));
+    if (hasOSFiles) {
       e.preventDefault();
       e.stopPropagation();
       list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
         el.classList.remove("queue-item-drag-over");
       });
-      applyDroppedFilesToMediaInput(droppedFiles);
+      const paths = await extractAndFilterDroppedMediaPaths(e.dataTransfer);
+      applyDroppedMediaPaths(paths);
       return;
     }
     const row = e.target.closest(".queue-item[data-queue-index]");
@@ -2543,7 +2496,7 @@ async function playMedia(e) {
   if (video && mediaFile !== normalizedPathname) {
     if (
       isPlaying === false &&
-      mdFile.value === "" &&
+      (!mdFile || mdFile.value === "") &&
       currentMode !== MEDIAPLAYER
     ) {
       return;
@@ -2594,7 +2547,7 @@ async function playMedia(e) {
   }
 
   if (
-    mdFile.value === "" &&
+    (!mdFile || mdFile.value === "") &&
     !playingMediaAudioOnly &&
     mediaPlayerInputState.filePaths.length === 0
   ) {
@@ -3088,7 +3041,7 @@ function generateMediaFormHTML(video = null) {
     <form onsubmit="return false;" class="control-panel control-panel--media">
       <div class="control-group">
         <span class="control-label">Media</span>
-        <label class="file-input-label">
+        <button type="button" class="file-input-label" id="mediaOpenButton">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
             <path
               fill="none"
@@ -3109,9 +3062,7 @@ function generateMediaFormHTML(video = null) {
             />
           </svg>
           <span>Open</span>
-          <input type="file" class="file-input" name="mdFile" id="mdFile" multiple
-                 accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
-        </label>
+        </button>
       </div>
 
       <div class="control-group">
@@ -3258,9 +3209,7 @@ function setSBFormMediaPlayer() {
       console.error("Failed to get platform, skipping audio setup:", error);
     });
 
-  const mdFile = document.getElementById("mdFile");
-  mdFile.addEventListener("change", onMediaFileInputChanged);
-  installMediaOrderedOpenDialog();
+  installMediaOpenButton();
   document
     .getElementById("clearQueueBtn")
     ?.addEventListener("click", onClearMediaQueueClick);
@@ -3277,53 +3226,47 @@ function setSBFormMediaPlayer() {
   video.controls = false;
   plyBtn.addEventListener("click", playMedia, { passive: true });
   let isImgFile;
-  if (mdFile !== null) {
-    if (document.getElementById("preview").parentNode !== null) {
-      if (!masterPauseState && video !== null && !video.paused) {
-        if (!isImg(mediaFile)) {
-          video.play();
-        }
+  if (document.getElementById("preview").parentNode !== null) {
+    if (!masterPauseState && video !== null && !video.paused) {
+      if (!isImg(mediaFile)) {
+        video.play();
       }
-      if (video !== null) {
-        if (!isActiveMW) {
-          if (!mdFile.value.includes("fake") && mdFile.value !== "") {
-            mediaFile = mdFile.value;
-          } else if (mediaPlayerInputState.filePaths.length > 0) {
-            mediaFile = mediaPlayerInputState.filePaths[0];
-          }
+    }
+    if (video !== null) {
+      if (!isActiveMW && mediaPlayerInputState.filePaths.length > 0) {
+        mediaFile = mediaPlayerInputState.filePaths[0];
+      }
+      isImgFile = isImg(mediaFile);
+      if (isActiveMW && mediaFile !== null && !isLiveStream(mediaFile)) {
+        if (video === null) {
+          video = document.getElementById("preview");
+          saveMediaFile();
         }
-        const isImgFile = isImg(mediaFile);
-        if (isActiveMW && mediaFile !== null && !isLiveStream(mediaFile)) {
-          if (video === null) {
-            video = document.getElementById("preview");
-            saveMediaFile();
-          }
-          if (video) {
-            if (targetTime !== null) {
-              if (!masterPauseState && !isImgFile) {
-                video.play();
-              }
+        if (video) {
+          if (targetTime !== null) {
+            if (!masterPauseState && !isImgFile) {
+              video.play();
             }
           }
         }
-        document
-          .getElementById("preview")
-          .parentNode.replaceChild(video, document.getElementById("preview"));
       }
+      document
+        .getElementById("preview")
+        .parentNode.replaceChild(video, document.getElementById("preview"));
     }
+  }
 
-    if (isImgFile && !document.querySelector("img")) {
-      img = document.createElement("img");
-      video.removeAttribute("src");
-      video.load();
-      const overlay = document.getElementById("customControls");
-      overlay.style.visibility = "hidden";
-      img.src = mediaFile;
-      img.setAttribute("id", "preview");
-      document.getElementById("preview").style.display = "none";
-      document.getElementById("preview").parentNode.appendChild(img);
-      return;
-    }
+  if (isImgFile && !document.querySelector("img")) {
+    img = document.createElement("img");
+    video.removeAttribute("src");
+    video.load();
+    const overlay = document.getElementById("customControls");
+    overlay.style.visibility = "hidden";
+    img.src = mediaFile;
+    img.setAttribute("id", "preview");
+    document.getElementById("preview").style.display = "none";
+    document.getElementById("preview").parentNode.appendChild(img);
+    return;
   }
   setupCustomMediaControls();
   setupGtkVolumeControl();
@@ -3392,12 +3335,11 @@ function saveMediaFile() {
   }
 
   if (mdfileElement !== null && mdfileElement !== "undefined") {
-    const filesLen = mdfileElement.files?.length ?? 0;
     const val = mdfileElement.value ?? "";
     if (
-      filesLen === 0 &&
       (val === "" || val === undefined) &&
-      mediaQueue.length === 0
+      mediaQueue.length === 0 &&
+      mediaPlayerInputState.filePaths.length === 0
     ) {
       return;
     }
@@ -3413,12 +3355,17 @@ function saveMediaFile() {
           ? currentQueueIndex
           : 0;
       mediaPlayerInputState.filePaths = [mediaQueue[qi].path];
-    } else {
-      mediaPlayerInputState.filePaths = Array.from(mdfileElement.files).map(
-        (file) => getPathForFile(file),
-      );
     }
-    mediaPlayerInputState.urlInpt = mdfileElement.value.toLowerCase();
+    mediaPlayerInputState.urlInpt = val.toLowerCase();
+  } else if (mediaQueue.length > 0) {
+    const qi =
+      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+        ? currentQueueIndex
+        : 0;
+    if (isActiveMediaWindow() || (audioOnlyFile && video && !video.paused)) {
+      showGnomeToast("File queued for playback");
+    }
+    mediaPlayerInputState.filePaths = [mediaQueue[qi].path];
   }
   const isActiveMW = isActiveMediaWindow();
   if (isActiveMW) {
@@ -3472,11 +3419,11 @@ function saveMediaFile() {
     return;
   }
   let liveStream = isLiveStream(mediaFile);
+  const hasLocalSelection =
+    currentMode === MEDIAPLAYER &&
+    (mediaPlayerInputState.filePaths.length > 0 || mediaQueue.length > 0);
   if (
-    (mdfileElement !== null &&
-      !isActiveMW &&
-      mdfileElement !== null &&
-      !liveStream) ||
+    (hasLocalSelection && !isActiveMW && !liveStream) ||
     (isActiveMW && mdfileElement !== null && liveStream) ||
     (activeLiveStream && isActiveMW)
   ) {
@@ -3484,15 +3431,11 @@ function saveMediaFile() {
       video = document.getElementById("preview");
     }
     if (video) {
-      if (
-        mdfileElement !== null &&
-        mdfileElement.files &&
-        prePathname !== mediaFile
-      ) {
+      if (hasLocalSelection && prePathname !== mediaFile) {
         prePathname = mediaFile;
         startTime = 0;
       }
-      if (!playingMediaAudioOnly && mdfileElement.files) {
+      if (!playingMediaAudioOnly && hasLocalSelection) {
         let uncachedLoad;
         if (
           (uncachedLoad =
@@ -3555,8 +3498,13 @@ function shortcutHandler(event) {
   }
   if (event.ctrlKey || event.metaKey) {
     if (event.key === "o" || event.key === "O") {
-      if (document.getElementById("mdFile")) {
-        document.getElementById("mdFile").click();
+      if (currentMode === MEDIAPLAYER) {
+        void openMediaFilesDialog();
+      } else {
+        const stream = document.getElementById("mdFile");
+        if (stream && typeof stream.focus === "function") {
+          stream.focus();
+        }
       }
     }
 
@@ -3587,10 +3535,6 @@ function cleanRefs() {
     playButton = null;
   }
 
-  let mdFile = document.getElementById("mdFile");
-  if (mdFile) {
-    mdFile.removeEventListener("change", onMediaFileInputChanged);
-  }
   const clearQueueBtn = document.getElementById("clearQueueBtn");
   if (clearQueueBtn) {
     clearQueueBtn.removeEventListener("click", onClearMediaQueueClick);
@@ -3689,14 +3633,6 @@ function playLocalMedia(event) {
     isPlaying = true;
     updateDynUI();
     updateTimestamp();
-    if (!playingMediaAudioOnly) {
-      let t1 = encodeURI(mediaPlayerInputState.fileInpt);
-      let t2 = removeFileProtocol(video.src).split(/[\\/]/).pop();
-      if (t1 != null && t2 != null && t1 === t2) {
-        document.getElementById("mdFile").files =
-          mediaPlayerInputState.fileInpt;
-      }
-    }
   }
   if (isActiveMediaWindow()) {
     unPauseMedia(event);
@@ -3923,12 +3859,6 @@ function installPreviewEventHandlers() {
   }
 }
 
-function filesArrayToFileList(filesArray) {
-  const dataTransfer = new DataTransfer();
-  filesArray.forEach((file) => dataTransfer.items.add(file));
-  return dataTransfer.files; // Returns a FileList
-}
-
 async function loadOpMode(mode) {
   const execute = async () => {
     try {
@@ -4051,23 +3981,29 @@ async function loadOpMode(mode) {
         installPreviewEventHandlers();
       }
 
-      // Drag and drop behavior
+      // Drag and drop: the renderer is the OS-level drop target (Electron does
+      // not surface drop events to the main process). The renderer only
+      // extracts native paths via webUtils.getPathForFile and then defers all
+      // media-type filtering / validation to the main process via IPC.
       document.addEventListener("dragover", (event) => event.preventDefault());
       document.addEventListener("dragstart", (event) => {
         if (event.target.tagName === "IMG" || event.target.tagName === "A") {
           event.preventDefault();
         }
       });
-      document.addEventListener("drop", (event) => {
+      document.addEventListener("drop", async (event) => {
         event.preventDefault();
-        const files = filterAllowedMediaDropFiles(event.dataTransfer);
-        if (files.length > 0) {
-          applyDroppedFilesToMediaInput(files);
-        } else if (
+        const hasOSFiles =
           event.dataTransfer?.files?.length > 0 ||
           (event.dataTransfer?.types &&
-            Array.from(event.dataTransfer.types).includes("Files"))
-        ) {
+            Array.from(event.dataTransfer.types).includes("Files"));
+        if (!hasOSFiles) return;
+        const paths = await extractAndFilterDroppedMediaPaths(
+          event.dataTransfer,
+        );
+        if (paths.length > 0) {
+          applyDroppedMediaPaths(paths);
+        } else {
           console.warn("No valid media files were dropped.");
         }
       });
