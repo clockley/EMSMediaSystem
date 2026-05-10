@@ -27,6 +27,7 @@ var isText = false;
 var liveStreamMode = false;
 var isImg = false;
 var autoPlay = false;
+var seekOnly = false;
 let i = argv.length - 1;
 
 do {
@@ -44,6 +45,8 @@ do {
     loopFile = true;
   } else if (argv[i] === "__autoplay=true") {
     autoPlay = true;
+  } else if (argv[i] === "__seek-only") {
+    seekOnly = true;
   } else if (argv[i] === "__isText") {
     isText = true;
   }
@@ -230,10 +233,16 @@ async function loadMedia() {
     let ts = await ipcRenderer.invoke("get-system-time");
 
     if (strtTm != 0) {
-      video.currentTime =
-        strtTm +
-        (ts.systemTime - birth) +
-        (Date.now() - ts.ipcTimestamp) * 0.001;
+      let t = seekOnly
+        ? strtTm
+        : strtTm +
+          (ts.systemTime - birth) +
+          (Date.now() - ts.ipcTimestamp) * 0.001;
+      if (Number.isFinite(video.duration) && video.duration > 0) {
+        t = Math.min(t, Math.max(0, video.duration - 0.15));
+      }
+      if (t < 0) t = 0;
+      video.currentTime = t;
     }
 
     video.addEventListener("play", playbackStateUpdate);

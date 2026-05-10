@@ -102,6 +102,9 @@ button,
     --spacing-l: 16px;
     --spacing-xl: 24px;
     --spacing-xxl: 32px;
+    --destructive-bg-color: #c01c28;
+    --destructive-bg-hover: #a5171f;
+    --destructive-fg-color: #ffffff;
 }
 
 /* Grid layout */
@@ -540,6 +543,9 @@ button:focus-visible,
         --headerbar-shade-color: rgb(0 0 6 / 36%);
         --card-shade-color: rgb(0 0 6 / 36%);
         --border-color: color-mix(in srgb, currentColor 15%, transparent);
+        --destructive-bg-color: #e01b24;
+        --destructive-bg-hover: #c01c28;
+        --destructive-fg-color: #ffffff;
     }
 }
 
@@ -1144,6 +1150,67 @@ ul {
     /* Slide down slightly */
 }
 
+/* Banner-style toast with optional Undo (Adwaita / GTK4 pattern; position inherits .gnome-osd-toast top) */
+.gnome-osd-toast.gnome-osd-toast--interactive {
+    pointer-events: auto;
+    white-space: normal;
+    max-width: min(90vw, 480px);
+    align-items: center;
+    gap: 16px;
+    padding: 10px 12px 10px 16px;
+    border-radius: 12px;
+    font-weight: 400;
+}
+
+.gnome-osd-toast__message {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    font-weight: 600;
+    font-size: 15px;
+    line-height: 1.35;
+}
+
+.gnome-osd-toast__undo {
+    flex-shrink: 0;
+    margin: 0;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: none;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--accent-bg-color);
+    background: transparent;
+}
+
+.gnome-osd-toast__undo:hover {
+    background: color-mix(in srgb, var(--accent-bg-color) 16%, transparent);
+}
+
+.gnome-osd-toast__undo:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
+.gnome-osd-toast__undo.gnome-osd-toast__undo--pill-accent {
+    background: var(--accent-bg-color);
+    color: #ffffff;
+    border-radius: 999px;
+    padding: 5px 16px;
+    font-weight: 700;
+}
+
+.gnome-osd-toast__undo.gnome-osd-toast__undo--pill-accent:hover {
+    background: var(--accent-bg-color-hover);
+}
+
+.gnome-osd-toast__undo.gnome-osd-toast__undo--pill-accent:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: 2px;
+}
+
 /* --- Video Wrapper and View Area Styling --- */
 .video-wrapper {
     flex: 1;
@@ -1294,6 +1361,53 @@ ul {
     font-weight: 700;
     font-size: 14px;
     color: var(--window-fg-color);
+}
+
+/* Media tab: stack Autoplay + queue continuous; align switch columns */
+.control-panel--media .media-toggle-rows {
+    gap: 10px;
+}
+
+.control-panel--media .media-toggle-rows .loop-control {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    column-gap: 10px;
+    width: 100%;
+}
+
+.control-panel--media .media-toggle-rows .loop-control>.control-label {
+    min-height: 26px;
+    display: flex;
+    align-items: center;
+}
+
+.pill-button.destructive-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    border: 1px solid color-mix(in srgb, var(--destructive-bg-color) 80%, black);
+    background: var(--destructive-bg-color);
+    color: var(--destructive-fg-color);
+    cursor: default;
+    transition: background-color 75ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.pill-button.destructive-action:hover {
+    background: var(--destructive-bg-hover);
+}
+
+.pill-button.destructive-action:focus-visible {
+    outline: 2px solid var(--destructive-bg-color);
+    outline-offset: 2px;
+}
+
+.pill-button.destructive-action:disabled {
+    opacity: 0.42;
+    pointer-events: none;
 }
 
 .pill-button.secondary {
