@@ -116,6 +116,486 @@ const mediaPlayerInputState = {
   },
 };
 
+/** @type {{ path: string, name: string, type: string }[]} */
+let mediaQueue = [];
+let currentQueueIndex = -1;
+let isQueuePlaying = false;
+/** True after natural playback end (signaled before media window closes). */
+let mediaPlaybackEndedPending = false;
+/** When set, closing the media window switches to this queue index instead of advancing/stopping. */
+let pendingQueueSwitchIndex = null;
+/** After reorder drop, ignore the synthetic click on the row. */
+let ignoreNextQueueItemClick = false;
+
+function classifyQueueMediaType(filePath) {
+  if (imageRegex.test(filePath)) return "image";
+  if (/\.(mp4|webm|ogg|mkv|mov|m4v|avi)$/i.test(filePath)) return "video";
+  if (/\.(mp3|wav|flac|m4a|aac|opus)$/i.test(filePath)) return "audio";
+  return "file";
+}
+
+function queueBasename(filePath) {
+  const parts = filePath.split(/[/\\]/);
+  return parts[parts.length - 1] || filePath;
+}
+
+function createQueueEntry(filePath) {
+  return {
+    path: filePath,
+    name: queueBasename(filePath),
+    type: classifyQueueMediaType(filePath),
+  };
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function queueTypeIconMarkup(type) {
+  switch (type) {
+    case "video":
+      return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V8.5l3 2V4.5l-3 2V4a1 1 0 0 0-1-1H2z"/></svg>`;
+    case "audio":
+      return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M12 1v9.5a2.5 2.5 0 1 1-1-2.15V5H8V1h4zM5.5 9A1.5 1.5 0 1 0 7 10.5 1.5 1.5 0 0 0 5.5 9z"/></svg>`;
+    case "image":
+      return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h12v12H2V2zm1 1v8.59l2.5-2.5 2 2L13 5.41V3H3zm7.5 1a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></svg>`;
+    default:
+      return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2h10v12H3V2zm1 1v10h8V3H4zm1 1h6v1H5V4zm0 2h4v1H5V6zm0 2h6v1H5V8z"/></svg>`;
+  }
+}
+
+function renderQueue() {
+  const listContainer = document.getElementById("mediaQueueList");
+  if (!listContainer) return;
+
+  if (mediaQueue.length === 0) {
+    listContainer.innerHTML =
+      '<div class="list-placeholder">No media in queue</div>';
+    return;
+  }
+
+  listContainer.innerHTML = mediaQueue
+    .map(
+      (item, index) =>
+        `<div class="queue-item${index === currentQueueIndex ? " active" : ""}" role="row" data-queue-index="${index}">
+      <span class="queue-drag-handle" draggable="true" data-queue-index="${index}" title="Drag to reorder" aria-label="Drag to reorder">
+        <svg width="12" height="16" viewBox="0 0 12 16" aria-hidden="true"><circle cx="3" cy="3" r="1.5" fill="currentColor"/><circle cx="9" cy="3" r="1.5" fill="currentColor"/><circle cx="3" cy="8" r="1.5" fill="currentColor"/><circle cx="9" cy="8" r="1.5" fill="currentColor"/><circle cx="3" cy="13" r="1.5" fill="currentColor"/><circle cx="9" cy="13" r="1.5" fill="currentColor"/></svg>
+      </span>
+      <span class="item-icon">${queueTypeIconMarkup(item.type)}</span>
+      <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+      <button type="button" class="remove-btn" draggable="false" data-queue-remove="${index}" title="Remove from queue" aria-label="Remove from queue">✕</button>
+    </div>`,
+    )
+    .join("");
+}
+
+function reorderMediaQueue(fromIndex, toIndex) {
+  if (
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= mediaQueue.length ||
+    toIndex >= mediaQueue.length
+  ) {
+    return;
+  }
+
+  const activePath =
+    currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+      ? mediaQueue[currentQueueIndex].path
+      : null;
+
+  const [item] = mediaQueue.splice(fromIndex, 1);
+  mediaQueue.splice(toIndex, 0, item);
+
+  if (activePath !== null) {
+    const ni = mediaQueue.findIndex((q) => q.path === activePath);
+    currentQueueIndex = ni >= 0 ? ni : -1;
+  }
+
+  ignoreNextQueueItemClick = true;
+  window.setTimeout(() => {
+    ignoreNextQueueItemClick = false;
+  }, 400);
+
+  renderQueue();
+  saveMediaFile();
+}
+
+function enqueuePathsFromFilePicker(paths) {
+  if (currentMode !== MEDIAPLAYER || !paths.length) return;
+  for (const p of paths) {
+    mediaQueue.push(createQueueEntry(p));
+  }
+  renderQueue();
+}
+
+function onMediaFileInputChanged() {
+  const md = document.getElementById("mdFile");
+  if (md?.files?.length && currentMode === MEDIAPLAYER) {
+    enqueuePathsFromFilePicker(
+      Array.from(md.files).map((f) => getPathForFile(f)),
+    );
+  }
+  saveMediaFile();
+}
+
+const ALLOWED_DROP_MEDIA_TYPES = [
+  "video/mp4",
+  "video/x-m4v",
+  "video/webm",
+  "video/ogg",
+  "audio/x-m4a",
+  "audio/mpeg",
+  "audio/flac",
+  "audio/ogg",
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/bmp",
+  "image/svg+xml",
+];
+
+const ALLOWED_DROP_MEDIA_EXTENSIONS = new Set([
+  ".mp4",
+  ".m4v",
+  ".webm",
+  ".ogg",
+  ".ogv",
+  ".mkv",
+  ".mov",
+  ".avi",
+  ".mp3",
+  ".wav",
+  ".flac",
+  ".m4a",
+  ".aac",
+  ".opus",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".svg",
+]);
+
+function filterAllowedMediaDropFiles(dataTransfer) {
+  if (!dataTransfer?.files?.length) return [];
+  return Array.from(dataTransfer.files).filter((file) => {
+    const mimeType = file.type;
+    const dot = file.name.lastIndexOf(".");
+    const ext = dot >= 0 ? file.name.slice(dot).toLowerCase() : "";
+    return (
+      ALLOWED_DROP_MEDIA_TYPES.includes(mimeType) ||
+      mimeType.startsWith("video/") ||
+      mimeType.startsWith("audio/") ||
+      mimeType.startsWith("image/") ||
+      ALLOWED_DROP_MEDIA_EXTENSIONS.has(ext)
+    );
+  });
+}
+
+function applyDroppedFilesToMediaInput(files) {
+  const mdFile = document.getElementById("mdFile");
+  if (!mdFile || files.length === 0) return;
+  mdFile.files = filesArrayToFileList(files);
+  if (currentMode === MEDIAPLAYER) {
+    onMediaFileInputChanged();
+  } else {
+    saveMediaFile();
+  }
+}
+
+function onClearMediaQueueClick() {
+  clearMediaQueue();
+  saveMediaFile();
+}
+
+function clearMediaQueue() {
+  mediaQueue = [];
+  currentQueueIndex = -1;
+  isQueuePlaying = false;
+  renderQueue();
+}
+
+function removeFromQueue(index) {
+  if (index < 0 || index >= mediaQueue.length) return;
+  if (isQueuePlaying && index === currentQueueIndex) {
+    showGnomeToast("Stop the presentation to remove the current item");
+    return;
+  }
+  mediaQueue.splice(index, 1);
+  if (currentQueueIndex > index) currentQueueIndex--;
+  else if (currentQueueIndex >= mediaQueue.length) currentQueueIndex = -1;
+  renderQueue();
+  if (currentMode === MEDIAPLAYER && mediaQueue.length > 0 && !isPlaying) {
+    void loadQueueItemIntoControlWindow(mediaQueue[0]).catch((err) =>
+      console.error(err),
+    );
+  }
+}
+
+function installMediaQueueListDelegation() {
+  const list = document.getElementById("mediaQueueList");
+  if (!list || list.dataset.queueDelegation === "1") return;
+  list.dataset.queueDelegation = "1";
+  list.addEventListener("click", (e) => {
+    const removeBtn = e.target.closest("[data-queue-remove]");
+    if (removeBtn && list.contains(removeBtn)) {
+      e.preventDefault();
+      removeFromQueue(
+        Number.parseInt(removeBtn.getAttribute("data-queue-remove"), 10),
+      );
+      return;
+    }
+    if (e.target.closest(".queue-drag-handle")) return;
+    if (ignoreNextQueueItemClick) return;
+    const row = e.target.closest(".queue-item[data-queue-index]");
+    if (!row || !list.contains(row)) return;
+    const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+    if (Number.isNaN(idx)) return;
+    void onQueueItemActivate(idx);
+  });
+
+  list.addEventListener("dragstart", (e) => {
+    const handle = e.target.closest(".queue-drag-handle");
+    if (!handle || !list.contains(handle)) return;
+    e.stopPropagation();
+    const idx = Number.parseInt(handle.getAttribute("data-queue-index"), 10);
+    if (Number.isNaN(idx)) return;
+    e.dataTransfer.setData("application/x-queue-index", String(idx));
+    e.dataTransfer.effectAllowed = "move";
+    const row = handle.closest(".queue-item");
+    if (row) row.classList.add("queue-item-dragging");
+  });
+
+  list.addEventListener("dragend", (e) => {
+    list.querySelectorAll(".queue-item-dragging").forEach((el) => {
+      el.classList.remove("queue-item-dragging");
+    });
+    list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
+      el.classList.remove("queue-item-drag-over");
+    });
+  });
+
+  list.addEventListener("dragover", (e) => {
+    if (
+      e.dataTransfer?.types &&
+      Array.from(e.dataTransfer.types).includes("Files")
+    ) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      return;
+    }
+    const row = e.target.closest(".queue-item[data-queue-index]");
+    if (!row || !list.contains(row)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
+      if (el !== row) el.classList.remove("queue-item-drag-over");
+    });
+    row.classList.add("queue-item-drag-over");
+  });
+
+  list.addEventListener("dragleave", (e) => {
+    const row = e.target.closest(".queue-item[data-queue-index]");
+    if (
+      row &&
+      list.contains(row) &&
+      typeof e.relatedTarget === "object" &&
+      e.relatedTarget &&
+      !row.contains(e.relatedTarget)
+    ) {
+      row.classList.remove("queue-item-drag-over");
+    }
+  });
+
+  list.addEventListener("drop", (e) => {
+    const droppedFiles = filterAllowedMediaDropFiles(e.dataTransfer);
+    if (droppedFiles.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
+        el.classList.remove("queue-item-drag-over");
+      });
+      applyDroppedFilesToMediaInput(droppedFiles);
+      return;
+    }
+    const row = e.target.closest(".queue-item[data-queue-index]");
+    if (!row || !list.contains(row)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const fromStr = e.dataTransfer.getData("application/x-queue-index");
+    const from = Number.parseInt(fromStr, 10);
+    const to = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+    list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
+      el.classList.remove("queue-item-drag-over");
+    });
+    if (Number.isNaN(from) || Number.isNaN(to)) return;
+    reorderMediaQueue(from, to);
+  });
+}
+
+async function onQueueItemActivate(index) {
+  if (index < 0 || index >= mediaQueue.length) return;
+
+  if (!isActiveMediaWindow()) {
+    currentQueueIndex = index;
+    await loadQueueItemIntoControlWindow(mediaQueue[index]);
+    renderQueue();
+    saveMediaFile();
+    return;
+  }
+
+  const item = mediaQueue[index];
+  const ok = await invoke("show_queue_switch_dialog", {
+    message: `Switch the presentation to "${item.name}"?\n\nThe current media will be stopped.`,
+  });
+  if (!ok) return;
+
+  pendingQueueSwitchIndex = index;
+  send("close-media-window", 0);
+}
+
+async function stopQueuePresentationUserClosed() {
+  isQueuePlaying = false;
+  isPlaying = false;
+  updateDynUI();
+  isActiveMediaWindowCache = false;
+  renderQueue();
+
+  if (
+    currentMode === MEDIAPLAYER &&
+    mediaQueue.length > 0 &&
+    currentQueueIndex >= 0
+  ) {
+    mediaFile = mediaQueue[currentQueueIndex].path;
+    mediaPlayerInputState.filePaths = [mediaFile];
+    updateQueueFileLabel(mediaQueue[currentQueueIndex].name);
+  } else if (
+    currentMode === MEDIAPLAYER &&
+    mediaPlayerInputState.filePaths.length > 0
+  ) {
+    mediaFile = mediaPlayerInputState.filePaths[0];
+  }
+
+  let isImgFile = isImg(mediaFile);
+  handleMediaPlayback(isImgFile);
+
+  let imgEle = document.querySelector("img");
+  handleImageDisplay(isImgFile, imgEle);
+
+  resetVideoState();
+
+  updatePlayButtonOnMediaWindow();
+  masterPauseState = false;
+  saveMediaFile();
+  removeFilenameFromTitlebar();
+  textNode.data = "";
+}
+
+function updateQueueFileLabel(name) {
+  const fileNameSpan = document.querySelector(".file-input-label span");
+  if (fileNameSpan) {
+    fileNameSpan.textContent = name;
+    fileNameSpan.title = name;
+  }
+}
+
+async function loadQueueItemIntoControlWindow(item) {
+  mediaFile = item.path;
+  mediaPlayerInputState.filePaths = [item.path];
+  updateQueueFileLabel(item.name);
+
+  const isImgFile = isImg(mediaFile);
+  handleMediaPlayback(isImgFile);
+  handleImageDisplay(isImgFile, document.querySelector("img"));
+
+  if (!isImgFile && video) {
+    video.load();
+    await waitForMetadata();
+    audioOnlyFile =
+      !!video.videoTracks && video.videoTracks.length === 0;
+    if (audioOnlyFile) {
+      document.getElementById("customControls").style.visibility = "";
+    }
+  } else {
+    audioOnlyFile = false;
+    playingMediaAudioOnly = false;
+  }
+}
+
+async function playCurrentQueueItem() {
+  mediaPlaybackEndedPending = false;
+  const item = mediaQueue[currentQueueIndex];
+  if (!item) {
+    isQueuePlaying = false;
+    currentQueueIndex = -1;
+    renderQueue();
+    return;
+  }
+
+  await loadQueueItemIntoControlWindow(item);
+  renderQueue();
+
+  isPlaying = true;
+  updateDynUI();
+
+  const iM = isImg(mediaFile);
+  if (iM) {
+    await createMediaWindow();
+    video.currentTime = 0;
+    if (!video.paused) {
+      video.removeAttribute("src");
+      video.load();
+    }
+    return;
+  }
+  await createMediaWindow();
+}
+
+async function advanceQueueAfterMediaWindowClosed() {
+  isPlaying = false;
+  updateDynUI();
+  isActiveMediaWindowCache = false;
+
+  currentQueueIndex++;
+  if (currentQueueIndex < mediaQueue.length) {
+    renderQueue();
+    await new Promise((r) => setTimeout(r, 100));
+    isPlaying = true;
+    updateDynUI();
+    await playCurrentQueueItem();
+    return;
+  }
+
+  isQueuePlaying = false;
+  currentQueueIndex = -1;
+  renderQueue();
+
+  if (mediaQueue.length > 0) {
+    mediaFile = mediaQueue[0].path;
+    mediaPlayerInputState.filePaths = [mediaFile];
+    const head = mediaQueue[0];
+    updateQueueFileLabel(head.name);
+  }
+
+  const isImgFile = isImg(mediaFile);
+  handleMediaPlayback(isImgFile);
+  handleImageDisplay(isImgFile, document.querySelector("img"));
+  resetVideoState();
+  updatePlayButtonOnMediaWindow();
+  masterPauseState = false;
+  removeFilenameFromTitlebar();
+  textNode.data = "";
+}
+
 class PIDController {
   constructor(video) {
     this.video = video;
@@ -1292,11 +1772,54 @@ function installIPCHandler() {
   on("update-playback-state", handlePlaybackState);
   on("remoteplaypause", handlePlayPause);
   on("media-window-closed", handleMediaWindowClosed);
+  on("media-playback-ended", () => {
+    mediaPlaybackEndedPending = true;
+  });
   on("media-seek", handleMediaseek);
   on("window-maximized", handleWindowMax);
 }
 
 async function handleMediaWindowClosed(event, id) {
+  if (pendingQueueSwitchIndex !== null) {
+    const idx = pendingQueueSwitchIndex;
+    pendingQueueSwitchIndex = null;
+    mediaPlaybackEndedPending = false;
+
+    isPlaying = false;
+    updateDynUI();
+    isActiveMediaWindowCache = false;
+
+    currentQueueIndex = idx;
+    await loadQueueItemIntoControlWindow(mediaQueue[idx]);
+    renderQueue();
+
+    isPlaying = true;
+    updateDynUI();
+
+    const iM = isImg(mediaFile);
+    if (iM) {
+      await createMediaWindow();
+      video.currentTime = 0;
+      if (!video.paused) {
+        video.removeAttribute("src");
+        video.load();
+      }
+    } else {
+      await createMediaWindow();
+    }
+    return;
+  }
+
+  if (isQueuePlaying) {
+    if (mediaPlaybackEndedPending) {
+      mediaPlaybackEndedPending = false;
+      await advanceQueueAfterMediaWindowClosed();
+    } else {
+      await stopQueuePresentationUserClosed();
+    }
+    return;
+  }
+
   if (isLiveStream(mediaFile)) {
     saveMediaFile();
   }
@@ -1566,6 +2089,23 @@ async function playMedia(e) {
   const iM = isImg(mediaFile);
 
   if (
+    !isPlaying &&
+    currentMode === MEDIAPLAYER &&
+    mediaQueue.length > 0
+  ) {
+    const startIdx =
+      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+        ? currentQueueIndex
+        : 0;
+    if (!isLiveStream(mediaQueue[startIdx].path)) {
+      isQueuePlaying = true;
+      currentQueueIndex = startIdx;
+      await playCurrentQueueItem();
+      return;
+    }
+  }
+
+  if (
     mdFile.value === "" &&
     !playingMediaAudioOnly &&
     mediaPlayerInputState.filePaths.length === 0
@@ -1627,6 +2167,11 @@ async function playMedia(e) {
 
     await createMediaWindow();
   } else {
+    if (isQueuePlaying) {
+      isQueuePlaying = false;
+      currentQueueIndex = -1;
+      renderQueue();
+    }
     startTime = 0;
     isPlaying = false;
     updateDynUI();
@@ -2076,7 +2621,7 @@ function generateMediaFormHTML(video = null) {
             />
           </svg>
           <span>Open</span>
-          <input type="file" class="file-input" name="mdFile" id="mdFile"
+          <input type="file" class="file-input" name="mdFile" id="mdFile" multiple
                  accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*,image/*">
         </label>
       </div>
@@ -2102,6 +2647,16 @@ function generateMediaFormHTML(video = null) {
         </div>
 
       <div id="mediaCntDn"></div>
+
+      <div class="queue-section">
+        <div class="list-header">
+          <span class="queue-section-title">Media Queue</span>
+          <button type="button" id="clearQueueBtn" class="pill-button secondary">Clear All</button>
+        </div>
+        <div id="mediaQueueList" class="boxed-list" role="listbox" aria-label="Media queue">
+          <div class="list-placeholder">No media in queue</div>
+        </div>
+      </div>
     </form>
 
     <div class="video-wrapper">
@@ -2208,7 +2763,12 @@ function setSBFormMediaPlayer() {
     });
 
   const mdFile = document.getElementById("mdFile");
-  mdFile.addEventListener("change", saveMediaFile);
+  mdFile.addEventListener("change", onMediaFileInputChanged);
+  document
+    .getElementById("clearQueueBtn")
+    ?.addEventListener("click", onClearMediaQueueClick);
+  installMediaQueueListDelegation();
+  renderQueue();
   const isActiveMW = isActiveMediaWindow();
   let plyBtn = document.getElementById("mediaWindowPlayButton");
   if (!isActiveMW && !playingMediaAudioOnly) {
@@ -2333,10 +2893,17 @@ function saveMediaFile() {
       showGnomeToast("File queued for playback");
     }
 
-    // Store pathnames as strings in array
-    mediaPlayerInputState.filePaths = Array.from(mdfileElement.files).map(
-      (file) => getPathForFile(file),
-    );
+    if (mediaQueue.length > 0) {
+      const qi =
+        currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+          ? currentQueueIndex
+          : 0;
+      mediaPlayerInputState.filePaths = [mediaQueue[qi].path];
+    } else {
+      mediaPlayerInputState.filePaths = Array.from(mdfileElement.files).map(
+        (file) => getPathForFile(file),
+      );
+    }
     mediaPlayerInputState.urlInpt = mdfileElement.value.toLowerCase();
   }
   const isActiveMW = isActiveMediaWindow();
@@ -2508,7 +3075,11 @@ function cleanRefs() {
 
   let mdFile = document.getElementById("mdFile");
   if (mdFile) {
-    mdFile.removeEventListener("change", saveMediaFile);
+    mdFile.removeEventListener("change", onMediaFileInputChanged);
+  }
+  const clearQueueBtn = document.getElementById("clearQueueBtn");
+  if (clearQueueBtn) {
+    clearQueueBtn.removeEventListener("click", onClearMediaQueueClick);
   }
   let mcd = document.getElementById("mediaCntDn");
   if (mcd && mcd.contains(textNode)) {
@@ -2712,6 +3283,15 @@ function seekingLocalMedia(e) {
 
 function endLocalMedia() {
   textNode.data = "";
+  if (
+    isQueuePlaying &&
+    isActiveMediaWindow() &&
+    video &&
+    !video.loop &&
+    currentMode === MEDIAPLAYER
+  ) {
+    mediaPlaybackEndedPending = true;
+  }
   isPlaying = false;
   updateDynUI();
   audioOnlyFile = false;
@@ -2966,51 +3546,15 @@ async function loadOpMode(mode) {
       });
       document.addEventListener("drop", (event) => {
         event.preventDefault();
-
-        const allowedTypes = [
-          "video/mp4",
-          "video/x-m4v",
-          "audio/x-m4a",
-          "image/jpeg",
-          "image/png",
-          "image/gif",
-          "image/webp",
-          "image/bmp",
-          "image/svg+xml",
-        ];
-        const allowedExtensions = [
-          ".mp4",
-          ".m4v",
-          ".mp3",
-          ".wav",
-          ".flac",
-          ".m4a",
-          ".jpg",
-          ".jpeg",
-          ".png",
-          ".gif",
-          ".webp",
-          ".bmp",
-          ".svg",
-        ];
-
-        const files = Array.from(event.dataTransfer.files).filter((file) => {
-          const mimeType = file.type;
-          const ext = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
-          return (
-            allowedTypes.includes(mimeType) ||
-            mimeType.startsWith("video/") ||
-            mimeType.startsWith("audio/") ||
-            mimeType.startsWith("image/") ||
-            allowedExtensions.includes(ext)
-          );
-        });
-
+        const files = filterAllowedMediaDropFiles(event.dataTransfer);
         if (files.length > 0) {
-          document.getElementById("mdFile").files = filesArrayToFileList(files);
-          saveMediaFile();
-        } else {
-          console.warn("No valid files were dropped.");
+          applyDroppedFilesToMediaInput(files);
+        } else if (
+          event.dataTransfer?.files?.length > 0 ||
+          (event.dataTransfer?.types &&
+            Array.from(event.dataTransfer.types).includes("Files"))
+        ) {
+          console.warn("No valid media files were dropped.");
         }
       });
 
@@ -3102,7 +3646,7 @@ async function createMediaWindow() {
 
   const isImgFile = isImg(mediaFile);
 
-  if (audioOnlyFile && !isActiveMediaWindow()) {
+  if (audioOnlyFile && !isActiveMediaWindow() && !isQueuePlaying) {
     if (!isImgFile) {
       await video.play();
     } else {
