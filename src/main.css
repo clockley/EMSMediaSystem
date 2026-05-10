@@ -192,16 +192,20 @@ footer {
 
 .media-container {
     background: var(--window-bg-color);
-    padding: 16px 24px;
+    padding: 16px 24px 20px 24px;
     height: calc(100vh - 45px - 37px - 32px);
+    min-height: 0;
     display: flex;
     flex-direction: row;
+    align-items: stretch;
     /* Horizontal layout */
     gap: 24px;
     /* Space between video and control panel */
     margin-top: 37px;
     border-bottom-left-radius: 12px;
     border-bottom-right-radius: 12px;
+    overflow: hidden;
+    box-sizing: border-box;
 }
 
 .control-group {
@@ -232,6 +236,35 @@ footer {
     order: 2;
     position: relative;
     /* For absolute positioning of children */
+}
+
+/* Media tab: sidebar does not scroll — only the queue list scrolls */
+.media-container .control-panel--media {
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    align-self: stretch;
+    overflow-y: hidden;
+    overflow-x: hidden;
+    /* Extra room so the queue card is not flush against the panel bottom */
+    padding-bottom: 24px;
+}
+
+.media-container .control-panel--media>.control-group,
+.media-container .control-panel--media>#mediaCntDn {
+    flex-shrink: 0;
+}
+
+.media-container .control-panel--media .queue-section {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.media-container .control-panel--media .queue-section .list-header {
+    flex-shrink: 0;
 }
 
 /* File input */
@@ -418,6 +451,7 @@ video {}
     margin-top: 0;
     overflow: hidden;
     flex: 1;
+    min-height: 0;
     position: relative;
     height: 100%;
 }
@@ -1285,11 +1319,13 @@ ul {
     outline-offset: 2px;
 }
 
-.boxed-list {
+/* Media queue list only (scrolls inside sidebar, not the whole sidebar) */
+.media-container .control-panel--media .boxed-list {
     background: var(--card-bg-color);
     border: 1px solid var(--border-color);
     border-radius: 12px;
-    max-height: 220px;
+    flex: 1 1 0;
+    min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
     display: flex;
