@@ -3,9 +3,13 @@
 #TODO: Add derived file path fixups for css, html, js and mjs files. This is needed to prevent refrencing the derived files in the source code.
 .PHONY: all check-deps clean help js-minify rebuild status
 
-# Tools
-TERSER = npx terser
-HTML_MINIFIER = npx html-minifier-terser
+# If any recipe step fails, remove the target instead of leaving a half-written (or empty) file.
+.DELETE_ON_ERROR:
+
+# Tools — use project-installed CLIs so a broken system `/usr/share/nodejs/terser`
+# (or `npx` resolving outside this repo) cannot produce empty derived artifacts.
+TERSER = $(NODE) node_modules/terser/bin/terser
+HTML_MINIFIER = $(NODE) node_modules/html-minifier-terser/cli.js
 CSSO = npx csso
 NODE = node
 # ICON_SRC = src/icon.png # Covered by general image search
@@ -154,7 +158,8 @@ endif
 check-deps:
 	@echo "$(COLOR_BLUE)Checking dependencies...$(COLOR_RESET)"
 	@command -v node >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: node is required$(COLOR_RESET)" >&2; exit 1; }
-	@command -v npx >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: npx is required$(COLOR_RESET)" >&2; exit 1; }
+	@test -f node_modules/terser/bin/terser || { echo "$(COLOR_RED)Error: terser not found in node_modules. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
+	@test -f node_modules/html-minifier-terser/cli.js || { echo "$(COLOR_RED)Error: html-minifier-terser not found in node_modules. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@$(NODE) -e "require('csso')" 2>/dev/null || { echo "$(COLOR_RED)Error: csso module required. Run: npm install csso$(COLOR_RESET)" >&2; exit 1; }
 	@$(HTML_MINIFIER) --version >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: html-minifier-terser required. Run: npm install html-minifier-terser$(COLOR_RESET)" >&2; exit 1; }
 	@$(TERSER) --version >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: terser required. Run: npm install terser$(COLOR_RESET)" >&2; exit 1; }
