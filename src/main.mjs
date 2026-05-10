@@ -1066,7 +1066,13 @@ function extractYouTubeVideoId(input) {
     const id = url.pathname.slice(1).split("/")[0];
     return /^[\w-]{11}$/.test(id) ? id : null;
   }
-  if (host !== "youtube.com" && host !== "m.youtube.com") return null;
+  if (
+    host !== "youtube.com" &&
+    host !== "m.youtube.com" &&
+    host !== "music.youtube.com"
+  ) {
+    return null;
+  }
   const v = url.searchParams.get("v");
   if (v && /^[\w-]{11}$/.test(v)) return v;
   const m = url.pathname.match(
@@ -1117,6 +1123,10 @@ const YOUTUBE_LIVE_INFO_CLIENTS = [
   "ANDROID",
 ];
 
+/**
+ * Resolves a YouTube URL to something the media window can play.
+ * @returns {{ type: 'hls', url: string } | { type: 'progressive', url: string } | { type: 'dash', manifest: string }}
+ */
 async function handleResolveYouTubeStream(_event, url) {
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) {
@@ -1130,22 +1140,51 @@ async function handleResolveYouTubeStream(_event, url) {
       // Second argument must be { client: '...' }. Passing a string leaves
       // options.client undefined so InnerTube uses the default client only.
       const info = await yt.getInfo(videoId, { client });
+
       let hlsUrl = info?.streaming_data?.hls_manifest_url;
-      if (!hlsUrl) continue;
-      // Innertube only auto-deciphers format URLs; hls_manifest_url is passed
-      // through raw from the player API. Since Jan 2026 it includes `n`, which
-      // must be run through the player decipher (same as FreeTube #8582).
-      if (player) {
-        hlsUrl = await player.decipher(hlsUrl);
+      if (hlsUrl) {
+        if (player) {
+          hlsUrl = await player.decipher(hlsUrl);
+        }
+        return { type: "hls", url: hlsUrl };
       }
-      return hlsUrl;
+
+      const isLive =
+        info.basic_info?.is_live === true ||
+        info.page?.[0]?.video_details?.is_live === true;
+      if (isLive) {
+        continue;
+      }
+
+      if (!info.streaming_data) {
+        continue;
+      }
+
+      try {
+        const format = info.chooseFormat({
+          quality: "best",
+          type: "video+audio",
+          format: "mp4",
+        });
+        const progressiveUrl = await format.decipher(player);
+        if (progressiveUrl) {
+          return { type: "progressive", url: progressiveUrl };
+        }
+      } catch {
+        // No combined progressive format (typical for 1080p+); use DASH below.
+      }
+
+      const manifest = await info.toDash({});
+      if (manifest) {
+        return { type: "dash", manifest };
+      }
     } catch (e) {
       lastError = e;
     }
   }
   throw new Error(
     lastError?.message ??
-      "No HLS manifest URL is available for this video (is it currently live?)",
+      "No playable stream is available for this YouTube video.",
   );
 }
 
