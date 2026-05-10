@@ -635,7 +635,12 @@ function installMediaQueueListDelegation() {
 async function onQueueItemActivate(index) {
   if (index < 0 || index >= mediaQueue.length) return;
 
-  if (!isActiveMediaWindow()) {
+  // Audio-only items play locally without a media window, but they're still
+  // an active presentation: prompt before swapping them out.
+  const isAudioOnlyPresentation =
+    isQueuePlaying && playingMediaAudioOnly && !isActiveMediaWindow();
+
+  if (!isActiveMediaWindow() && !isAudioOnlyPresentation) {
     currentQueueIndex = index;
     await loadQueueItemIntoControlWindow(mediaQueue[index]);
     renderQueue();
@@ -648,6 +653,29 @@ async function onQueueItemActivate(index) {
     message: `Switch the presentation to "${item.name}"?\n\nThe current media will be stopped.`,
   });
   if (!ok) return;
+
+  if (isAudioOnlyPresentation) {
+    // No media window to close; transition directly to the next item.
+    if (video) {
+      try {
+        video.pause();
+      } catch (err) {
+        console.error("Failed to pause local audio before switch:", err);
+      }
+    }
+    send("localMediaState", 0, "stop");
+    removeFilenameFromTitlebar();
+    playingMediaAudioOnly = false;
+    audioOnlyFile = false;
+    mediaPlaybackEndedPending = false;
+
+    currentQueueIndex = index;
+    isQueuePlaying = true;
+    isPlaying = true;
+    updateDynUI();
+    await playCurrentQueueItem();
+    return;
+  }
 
   pendingQueueSwitchIndex = index;
   send("close-media-window", 0);
@@ -797,6 +825,21 @@ async function playCurrentQueueItem() {
     }
     return;
   }
+
+  // Audio-only items (detected via metadata or by file extension) play
+  // locally in the preview <video>. If a previous queue item left a media
+  // window open, tear it down first so we don't hold a stale surface.
+  const isAudioItem =
+    audioOnlyFile || classifyQueueMediaType(item.path) === "audio";
+  if (isAudioItem) {
+    if (isActiveMediaWindow()) {
+      isActiveMediaWindowCache = false;
+      send("close-media-window", 0);
+    }
+    await playAudioOnlyLocally();
+    return;
+  }
+
   await createMediaWindow();
 }
 
@@ -2273,6 +2316,11 @@ async function handleMediaWindowClosed(event, id) {
         video.removeAttribute("src");
         video.load();
       }
+    } else if (
+      audioOnlyFile ||
+      classifyQueueMediaType(mediaQueue[idx].path) === "audio"
+    ) {
+      await playAudioOnlyLocally();
     } else {
       await createMediaWindow();
     }
@@ -3787,6 +3835,18 @@ function seekingLocalMedia(e) {
 
 function endLocalMedia() {
   textNode.data = "";
+
+  // Capture before flags get cleared: an audio-only queue item just ended
+  // locally with no presentation window, so the normal media-window-closed
+  // path will not run. We need to drive the queue advance ourselves.
+  const wasAudioOnlyQueueItem =
+    isQueuePlaying &&
+    !isActiveMediaWindow() &&
+    playingMediaAudioOnly &&
+    currentMode === MEDIAPLAYER &&
+    video &&
+    !video.loop;
+
   if (
     isQueuePlaying &&
     isActiveMediaWindow() &&
@@ -3832,6 +3892,20 @@ function endLocalMedia() {
   masterPauseState = false;
   resetPIDOnSeek();
   localTimeStampUpdateIsRunning = false;
+
+  // Audio-only queue item finished: drive the same advance/stop logic that
+  // handleMediaWindowClosed normally does when a real media window closes.
+  if (wasAudioOnlyQueueItem) {
+    if (isQueueAutoAdvanceEnabled()) {
+      void advanceQueueAfterMediaWindowClosed().catch((err) =>
+        console.error("Queue advance after audio-only end failed:", err),
+      );
+    } else {
+      void stopQueuePresentationUserClosed().catch((err) =>
+        console.error("Queue stop after audio-only end failed:", err),
+      );
+    }
+  }
 }
 
 function pauseLocalMedia(event) {
@@ -4126,6 +4200,34 @@ function isLiveStream(mediaFile) {
   return /(?:m3u8|mpd|youtube\.com|videoplayback|youtu\.be)/i.test(mediaFile);
 }
 
+/**
+ * Play the currently-loaded audio-only file in the local preview <video>
+ * without creating a fullscreen media window. Audio-only files do not need
+ * a presentation surface, and creating one (then having nothing visible)
+ * confuses users and can race the window's open/close lifecycle.
+ */
+async function playAudioOnlyLocally() {
+  if (!video) return;
+  audioOnlyFile = true;
+  playingMediaAudioOnly = true;
+  isPlaying = true;
+  send("localMediaState", 0, "play");
+  if (video.src) {
+    try {
+      addFilenameToTitlebar(decodeURI(removeFileProtocol(video.src)));
+    } catch (err) {
+      console.error("Failed to update titlebar for audio-only:", err);
+    }
+  }
+  updateDynUI();
+  try {
+    await video.play();
+  } catch (err) {
+    console.error("Audio-only local playback failed:", err);
+  }
+  updateTimestamp();
+}
+
 async function createMediaWindow(options) {
   const seekOnly = options && options.seekOnly === true;
   if (seekOnly) {
@@ -4154,15 +4256,17 @@ async function createMediaWindow(options) {
 
   const isImgFile = isImg(mediaFile);
 
-  if (audioOnlyFile && !isActiveMediaWindow() && !isQueuePlaying) {
+  // Audio-only files always play in the local preview, never in the
+  // dedicated fullscreen media window (queue mode included). This keeps the
+  // user in control: nothing flickers on the secondary display, and audio
+  // continues to play exactly the way the local <video> preview already does.
+  if (audioOnlyFile && !isActiveMediaWindow()) {
     if (!isImgFile) {
-      await video.play();
+      await playAudioOnlyLocally();
     } else {
       video.removeAttribute("src");
       video.load();
     }
-    playingMediaAudioOnly = true;
-    if (playingMediaAudioOnly) updateTimestamp();
     return;
   } else {
     playingMediaAudioOnly = false;
