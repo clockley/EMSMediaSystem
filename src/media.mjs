@@ -28,6 +28,8 @@ var liveStreamMode = false;
 var isImg = false;
 var autoPlay = false;
 var seekOnly = false;
+/** Live edge: true HLS-style live (no sync/duration UI); false for YouTube VOD in stream mode. */
+var streamActsAsLiveEdge = false;
 let i = argv.length - 1;
 
 do {
@@ -54,7 +56,7 @@ do {
 } while (argv[i][0] !== "-");
 
 function installICPHandlers() {
-  if (!liveStreamMode) {
+  if (!streamActsAsLiveEdge) {
     ipcRenderer.on("timeGoto-message", function (evt, message) {
       const localTs = performance.now();
       const now = Date.now();
@@ -112,9 +114,20 @@ function playMediaSessionHandler() {
 }
 
 function matchYouTubeUrl(url) {
-  const youtubeRegex =
-    /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)(\/(?:[\w\-]+\?v=|embed\/|v\/)?)([\w\-]+)(\S+)?$/i;
-  return youtubeRegex.test(url);
+  if (typeof url !== "string" || url.length === 0) return false;
+  if (/^[\w-]{11}$/.test(url.trim())) return true;
+  try {
+    const u = new URL(url.includes("://") ? url : `https://${url}`);
+    const h = u.hostname.replace(/^www\./, "").toLowerCase();
+    return (
+      h === "youtu.be" ||
+      h === "youtube.com" ||
+      h === "m.youtube.com" ||
+      h === "music.youtube.com"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function playbackStateUpdate() {
@@ -180,12 +193,20 @@ async function loadMedia() {
     document.body.appendChild(img);
     document.querySelector("video").style.display = "none";
     return;
-  } else {
-    installICPHandlers();
   }
+
+  let ytResolved = null;
+  streamActsAsLiveEdge = liveStreamMode && !matchYouTubeUrl(mediaFile);
+  if (liveStreamMode && matchYouTubeUrl(mediaFile)) {
+    ytResolved = await ipcRenderer.invoke("resolve-youtube-stream", mediaFile);
+    streamActsAsLiveEdge = ytResolved.type === "hls";
+  }
+
+  installICPHandlers();
+
   video.volume = strtvl;
   video.setAttribute("loop", loopFile);
-  video.src = mediaFile;
+
   ipcRenderer
     .invoke("get-platform")
     .then((operatingSystem) => {
@@ -194,25 +215,39 @@ async function loadMedia() {
     .catch((error) => {
       console.error("Failed to get platform, skipping audio setup:", error);
     });
-  if (autoPlay) {
-    video.play();
-  }
-  if (liveStreamMode) {
-    if (matchYouTubeUrl(mediaFile)) {
-      // YouTube now signs live HLS/DASH manifest URLs with an "n" challenge
-      // parameter that must be deciphered through their player's JS, so the
-      // old "fetch the page and grep hlsManifestUrl" trick yields URLs whose
-      // segments return 403. Resolve via youtubei.js in the main process.
-      mediaFile = await ipcRenderer.invoke("resolve-youtube-stream", mediaFile);
-      video.src = mediaFile;
-    }
 
-    mediaFile = video.src;
-    const { default: hls } =
-      await import("../../node_modules/hls.js/dist/hls.mjs");
-    h = new hls();
-    h.loadSource(mediaFile);
+  if (liveStreamMode) {
+    if (ytResolved) {
+      if (ytResolved.type === "hls") {
+        video.src = ytResolved.url;
+        const { default: Hls } = await import(
+          "../../node_modules/hls.js/dist/hls.mjs",
+        );
+        h = new Hls();
+        h.loadSource(ytResolved.url);
+      } else if (ytResolved.type === "progressive") {
+        video.src = ytResolved.url;
+      } else if (ytResolved.type === "dash") {
+        const { MediaPlayer } = await import("dashjs");
+        const player = MediaPlayer().create();
+        const blobUrl = URL.createObjectURL(
+          new Blob([ytResolved.manifest], { type: "application/dash+xml" }),
+        );
+        player.initialize(video, blobUrl, false);
+      }
+    } else {
+      video.src = mediaFile;
+      const { default: Hls } = await import(
+        "../../node_modules/hls.js/dist/hls.mjs",
+      );
+      h = new Hls();
+      h.loadSource(mediaFile);
+    }
   } else {
+    video.src = mediaFile;
+  }
+
+  if (!streamActsAsLiveEdge) {
     navigator.mediaSession.setActionHandler("play", playMediaSessionHandler);
     navigator.mediaSession.setActionHandler("pause", pauseMediaSessionHandler);
 
@@ -245,22 +280,30 @@ async function loadMedia() {
     video.addEventListener("pause", playbackStateUpdate);
   }
 
+  if (!liveStreamMode && autoPlay) {
+    video.play().catch(() => {});
+  }
+
   video.onended = () => {
     if (loopFile) return;
     ipcRenderer.send("media-playback-ended");
     window.close();
   };
 
-  if (!liveStreamMode) {
+  if (!streamActsAsLiveEdge) {
     sendRemainingTime(video);
     video.addEventListener("pause", (event) => {
       if (video.duration - video.currentTime < 0.1) {
         video.currentTime = video.duration;
       }
     });
-  } else {
-    h.attachMedia(video);
-    video.play();
+  }
+
+  if (liveStreamMode) {
+    if (h) {
+      h.attachMedia(video);
+    }
+    video.play().catch(() => {});
   }
 }
 
