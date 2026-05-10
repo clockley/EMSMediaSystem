@@ -8,9 +8,11 @@ the Free Software Foundation, either version 3 of the License, or
 */
 import { contextBridge, ipcRenderer } from "electron/renderer";
 
+const QUEUE_SWITCH_DIALOG_IPC_CHANNEL = "queue-switch-dialog-response";
+
 contextBridge.exposeInMainWorld("queueSwitchDialog", {
   respond: (accepted) =>
-    ipcRenderer.send("queue_switch_dialog_response", accepted === true),
+    ipcRenderer.invoke(QUEUE_SWITCH_DIALOG_IPC_CHANNEL, accepted === true),
 });
 
 Object.freeze(window.queueSwitchDialog);

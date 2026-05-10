@@ -15,6 +15,7 @@
       gap: 20px;
       min-height: 0;
       box-sizing: border-box;
+      -webkit-app-region: no-drag;
     }
 
     #queue_switch_dialog_text {
@@ -41,6 +42,8 @@
       border: 1px solid var(--border-color);
       background: var(--card-bg-color);
       color: var(--window-fg-color);
+      -webkit-app-region: no-drag;
+      pointer-events: auto;
     }
 
     .queue_switch_dialog_actions button.primary {
