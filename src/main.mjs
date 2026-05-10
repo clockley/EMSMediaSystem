@@ -38,6 +38,9 @@ let wasDisplayDisconnected = false;
 let aboutWindow = null;
 let helpWindow = null;
 let queueSwitchDialogWindow = null;
+/** IPC channel for queue-switch modal; use invoke/handle so responses are routed reliably. */
+const QUEUE_SWITCH_DIALOG_IPC_CHANNEL = "queue-switch-dialog-response";
+
 app.commandLine.appendSwitch("js-flags", "--maglev --no-use-osr");
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
 
@@ -908,25 +911,37 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
     const finish = (accepted) => {
       if (resolved) return;
       resolved = true;
-      ipcMain.removeListener("queue_switch_dialog_response", onResponse);
+      try {
+        ipcMain.removeHandler(QUEUE_SWITCH_DIALOG_IPC_CHANNEL);
+      } catch {
+        /* no handler registered */
+      }
       resolve(accepted === true);
     };
 
     const onResponse = (event, accepted) => {
+      const fromWin = BrowserWindow.fromWebContents(event.sender);
       if (
         !queueSwitchDialogWindow ||
         queueSwitchDialogWindow.isDestroyed() ||
-        event.sender !== queueSwitchDialogWindow.webContents
+        !fromWin ||
+        fromWin.id !== queueSwitchDialogWindow.id
       ) {
-        return;
+        return false;
       }
       finish(accepted === true);
       if (!queueSwitchDialogWindow.isDestroyed()) {
         queueSwitchDialogWindow.close();
       }
+      return true;
     };
 
-    ipcMain.on("queue_switch_dialog_response", onResponse);
+    try {
+      ipcMain.removeHandler(QUEUE_SWITCH_DIALOG_IPC_CHANNEL);
+    } catch {
+      /* channel had no handler */
+    }
+    ipcMain.handle(QUEUE_SWITCH_DIALOG_IPC_CHANNEL, onResponse);
 
     queueSwitchDialogWindow = new BrowserWindow({
       parent: parentWindow,
@@ -956,7 +971,11 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
     });
 
     queueSwitchDialogWindow.once("closed", () => {
-      ipcMain.removeListener("queue_switch_dialog_response", onResponse);
+      try {
+        ipcMain.removeHandler(QUEUE_SWITCH_DIALOG_IPC_CHANNEL);
+      } catch {
+        /* already removed after a button response */
+      }
       queueSwitchDialogWindow = null;
       finish(false);
     });
@@ -992,6 +1011,10 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
       const y = parentBounds.y + (parentBounds.height - h) / 2;
       queueSwitchDialogWindow.setBounds({ x, y, width: w, height: h });
       queueSwitchDialogWindow.show();
+      queueSwitchDialogWindow.focus();
+      if (!queueSwitchDialogWindow.webContents.isDestroyed()) {
+        queueSwitchDialogWindow.webContents.focus();
+      }
     });
 
     queueSwitchDialogWindow.webContents.setWindowOpenHandler(({ url }) => {
