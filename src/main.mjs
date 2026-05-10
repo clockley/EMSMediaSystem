@@ -1001,6 +1001,16 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
   });
 }
 
+/** Close the queue-switch modal if open (e.g. queue auto-advanced while user had not answered). */
+async function handleDismissQueueSwitchDialog() {
+  const w = queueSwitchDialogWindow;
+  if (!w || w.isDestroyed()) return;
+  await new Promise((resolve) => {
+    w.once("closed", resolve);
+    w.close();
+  });
+}
+
 function getPlatform() {
   return process.platform;
 }
@@ -1126,6 +1136,7 @@ function setIPC() {
         : "Switch to another item?";
     return createQueueSwitchDialogWindow(mainWindow, message);
   });
+  ipcMain.handle("dismiss-queue-switch-dialog", handleDismissQueueSwitchDialog);
   ipcMain.handle("open-help-window", (event) => {
     createHelpWindow();
   });
