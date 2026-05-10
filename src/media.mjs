@@ -55,6 +55,49 @@ do {
   --i;
 } while (argv[i][0] !== "-");
 
+/**
+ * hls.js tuning for network streams (YouTube live HLS, generic m3u8): ask the
+ * player to hold a larger forward buffer, prefetch the next fragment early,
+ * and (for live) stay slightly farther behind the broadcast edge so the
+ * rolling playlist has more runway. Uses more RAM and bandwidth.
+ */
+const HLS_AGGRESSIVE_BUFFER_CONFIG = {
+  maxBufferLength: 75,
+  maxMaxBufferLength: 600,
+  maxBufferSize: 120 * 1000 * 1000,
+  startFragPrefetch: true,
+  highBufferWatchdogPeriod: 1,
+  /** Live only: more segments behind the live edge = fewer edge-of-playlist stalls */
+  liveSyncDurationCount: 6,
+  /** Prefer filling the standard buffer over LL-HLS “stay on the edge” behaviour */
+  lowLatencyMode: false,
+};
+
+async function createStreamingHls() {
+  const { default: Hls } = await import(
+    "../../node_modules/hls.js/dist/hls.mjs",
+  );
+  return new Hls(HLS_AGGRESSIVE_BUFFER_CONFIG);
+}
+
+/** dash.js tuning for YouTube DASH (and similar): higher buffer targets before switching down */
+function configureDashAggressiveBuffer(player) {
+  player.updateSettings({
+    streaming: {
+      buffer: {
+        bufferTimeDefault: 45,
+        bufferTimeAtTopQuality: 35,
+        bufferTimeAtTopQualityLongForm: 90,
+        initialBufferLevel: 15,
+        bufferToKeep: 40,
+      },
+      scheduling: {
+        scheduleWhilePaused: true,
+      },
+    },
+  });
+}
+
 function installICPHandlers() {
   if (!streamActsAsLiveEdge) {
     ipcRenderer.on("timeGoto-message", function (evt, message) {
@@ -206,6 +249,7 @@ async function loadMedia() {
 
   video.volume = strtvl;
   video.setAttribute("loop", loopFile);
+  video.preload = "auto";
 
   ipcRenderer
     .invoke("get-platform")
@@ -220,16 +264,14 @@ async function loadMedia() {
     if (ytResolved) {
       if (ytResolved.type === "hls") {
         video.src = ytResolved.url;
-        const { default: Hls } = await import(
-          "../../node_modules/hls.js/dist/hls.mjs",
-        );
-        h = new Hls();
+        h = await createStreamingHls();
         h.loadSource(ytResolved.url);
       } else if (ytResolved.type === "progressive") {
         video.src = ytResolved.url;
       } else if (ytResolved.type === "dash") {
         const { MediaPlayer } = await import("dashjs");
         const player = MediaPlayer().create();
+        configureDashAggressiveBuffer(player);
         const blobUrl = URL.createObjectURL(
           new Blob([ytResolved.manifest], { type: "application/dash+xml" }),
         );
@@ -237,10 +279,7 @@ async function loadMedia() {
       }
     } else {
       video.src = mediaFile;
-      const { default: Hls } = await import(
-        "../../node_modules/hls.js/dist/hls.mjs",
-      );
-      h = new Hls();
+      h = await createStreamingHls();
       h.loadSource(mediaFile);
     }
   } else {
