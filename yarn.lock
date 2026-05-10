@@ -12,6 +12,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@bufbuild/protobuf@npm:^2.0.0":
+  version: 2.12.0
+  resolution: "@bufbuild/protobuf@npm:2.12.0"
+  checksum: 10c0/28959e371fd2e7c8d67d52af9e3c8f8e6770e2e116dcc5508f469ca736afa6905e216bc76183835898a5f3deb8aa2e7db47d4a0e706fba76115e9a1996893191
+  languageName: node
+  linkType: hard
+
 "@develar/schema-utils@npm:~2.6.5":
   version: 2.6.5
   resolution: "@develar/schema-utils@npm:2.6.5"
@@ -1444,6 +1451,7 @@ __metadata:
     html-minifier-terser: "npm:^7.0.0"
     terser: "npm:^5.43.1"
     write-file-atomic: "npm:^7.0.0"
+    youtubei.js: "npm:^17.0.1"
   languageName: unknown
   linkType: soft
 
@@ -2393,6 +2401,13 @@ __metadata:
   version: 2.0.28
   resolution: "mdn-data@npm:2.0.28"
   checksum: 10c0/20000932bc4cd1cde9cba4e23f08cc4f816398af4c15ec81040ed25421d6bf07b5cf6b17095972577fb498988f40f4cb589e3169b9357bb436a12d8e07e5ea7b
+  languageName: node
+  linkType: hard
+
+"meriyah@npm:^6.1.4":
+  version: 6.1.4
+  resolution: "meriyah@npm:6.1.4"
+  checksum: 10c0/d792a12df453b9e86c2bb70e73adf41b2d0fa88125381143e4d339d309ddcbb7aeb108e286411dcb19be82539d29b881279c613ae03ce514b7c296c72e9a8d00
   languageName: node
   linkType: hard
 
@@ -3959,5 +3974,15 @@ __metadata:
   version: 0.1.0
   resolution: "yocto-queue@npm:0.1.0"
   checksum: 10c0/dceb44c28578b31641e13695d200d34ec4ab3966a5729814d5445b194933c096b7ced71494ce53a0e8820685d1d010df8b2422e5bf2cdea7e469d97ffbea306f
+  languageName: node
+  linkType: hard
+
+"youtubei.js@npm:^17.0.1":
+  version: 17.0.1
+  resolution: "youtubei.js@npm:17.0.1"
+  dependencies:
+    "@bufbuild/protobuf": "npm:^2.0.0"
+    meriyah: "npm:^6.1.4"
+  checksum: 10c0/18b188d9a706feca6b6a23582c00b3fdb955a1be823854b9c4b0312ccf7c3539db28a78184fb4927289388e363d5594f39df63e7253874b39317077309088d98
   languageName: node
   linkType: hard

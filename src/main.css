@@ -450,6 +450,11 @@ video {}
     height: 100%;
 }
 
+/* YouTube / stream mode reuses #preview for playMedia + createMediaWindow; no local preview UI. */
+.media-container .stream-preview-host {
+    display: none;
+}
+
 #preview {
     position: absolute;
     top: 0;

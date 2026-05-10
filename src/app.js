@@ -2579,7 +2579,9 @@ async function playMedia(e) {
     e.target = document.getElementById("mediaWindowPlayButton");
   }
   fileEnded = false;
-  let normalizedPathname = decodeURI(removeFileProtocol(video.src));
+  let normalizedPathname = decodeURI(
+    removeFileProtocol(video?.src ?? ""),
+  );
 
   if (currentMode === MEDIAPLAYER && mediaFile !== normalizedPathname) {
     saveMediaFile();
@@ -2657,8 +2659,10 @@ async function playMedia(e) {
       isPlaying = false;
       send("close-media-window", 0);
       saveMediaFile();
-      video.currentTime = 0;
-      video.pause();
+      if (video) {
+        video.currentTime = 0;
+        video.pause();
+      }
       isPlaying = false;
       updateDynUI();
       localTimeStampUpdateIsRunning = false;
@@ -2722,8 +2726,10 @@ async function playMedia(e) {
     isActiveMediaWindowCache = false;
     playingMediaAudioOnly = false;
     if (!audioOnlyFile) activeLiveStream = true;
-    await video.pause();
-    video.currentTime = 0;
+    if (video) {
+      await video.pause();
+      video.currentTime = 0;
+    }
     if (audioOnlyFile) {
       send("localMediaState", 0, "stop");
       removeFilenameFromTitlebar();
@@ -2806,6 +2812,9 @@ function setSBFormStreamPlayer() {
 
   document.getElementById("dyneForm").innerHTML = `
     <div class="media-container">
+        <div class="video-wrapper stream-preview-host" aria-hidden="true">
+            <video id="preview" disablePictureInPicture controls="false"></video>
+        </div>
         <div class="control-panel">
             <div class="control-group">
                 <span class="control-label">URL</span>
@@ -2841,6 +2850,8 @@ function setSBFormStreamPlayer() {
         </div>
     </div>
     `;
+
+  video = document.getElementById("preview");
 
   if (mediaFile !== null && isLiveStream(mediaFile)) {
     document.getElementById("mdFile").value = mediaFile;

@@ -199,16 +199,12 @@ async function loadMedia() {
   }
   if (liveStreamMode) {
     if (matchYouTubeUrl(mediaFile)) {
-      const response = await fetch(mediaFile);
-      const body = await response.text();
-      const regex = /"hlsManifestUrl":"([^"]+)"/;
-      const match = body.match(regex);
-      if (match && match[1]) {
-        mediaFile = decodeURIComponent(match[1]);
-        video.src = mediaFile;
-      } else {
-        throw new Error("M3U8 URL not found");
-      }
+      // YouTube now signs live HLS/DASH manifest URLs with an "n" challenge
+      // parameter that must be deciphered through their player's JS, so the
+      // old "fetch the page and grep hlsManifestUrl" trick yields URLs whose
+      // segments return 403. Resolve via youtubei.js in the main process.
+      mediaFile = await ipcRenderer.invoke("resolve-youtube-stream", mediaFile);
+      video.src = mediaFile;
     }
 
     mediaFile = video.src;

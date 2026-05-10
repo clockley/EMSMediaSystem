@@ -31,6 +31,7 @@ import { readdir, readFile } from "fs/promises";
 import path from "path";
 import settings from "./settings.min.mjs";
 let sessionID = 0;
+let innertubePromise = null;
 const isDevMode = process.env.ems_dev === "true";
 const openDevConsole = process.env.ems_dev_console === "true";
 let lastKnownDisplayState = null;
@@ -45,6 +46,12 @@ app.commandLine.appendSwitch("js-flags", "--maglev --no-use-osr");
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
 
 settings.init(app.getPath("userData"));
+
+/**
+ * Fullscreen presentation window must not use {@link session.defaultSession}.
+ * Set in {@link app.whenReady} — {@link session.fromPartition} is invalid before then.
+ */
+let mediaPresentationSession = null;
 
 if (isDevMode) {
   console.log(process.versions);
@@ -278,8 +285,11 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       displays.find((d) => d.bounds.x !== 0 || d.bounds.y !== 0) ||
       displays[0];
 
+    const { webPreferences: incomingPrefs = {}, ...restWindowOptions } =
+      windowOptions;
+
     const finalWindowOptions = {
-      ...windowOptions,
+      ...restWindowOptions,
       backgroundThrottling: false,
       backgroundColor: "#00000000",
       transparent: true,
@@ -290,6 +300,10 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       y: targetDisplay.bounds.y,
       width: targetDisplay.bounds.width,
       height: targetDisplay.bounds.height,
+      webPreferences: {
+        ...incomingPrefs,
+        session: mediaPresentationSession,
+      },
     };
 
     mediaWindow = new BrowserWindow(finalWindowOptions);
@@ -1038,6 +1052,103 @@ function getPlatform() {
   return process.platform;
 }
 
+function extractYouTubeVideoId(input) {
+  if (typeof input !== "string" || input.length === 0) return null;
+  if (/^[\w-]{11}$/.test(input)) return input;
+  let url;
+  try {
+    url = new URL(input);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/^www\./, "");
+  if (host === "youtu.be") {
+    const id = url.pathname.slice(1).split("/")[0];
+    return /^[\w-]{11}$/.test(id) ? id : null;
+  }
+  if (host !== "youtube.com" && host !== "m.youtube.com") return null;
+  const v = url.searchParams.get("v");
+  if (v && /^[\w-]{11}$/.test(v)) return v;
+  const m = url.pathname.match(
+    /^\/(?:live|embed|v|shorts)\/([\w-]{11})(?:[/?#]|$)/,
+  );
+  return m ? m[1] : null;
+}
+
+let youtubePlayerEvalInstalled = false;
+
+/**
+ * youtubei.js's Node entry loads {@code Platform.shim.eval} as a stub that throws.
+ * Transforming the live HLS `n` challenge requires executing YouTube's extracted
+ * player code — same as ytjs.dev "custom JavaScript interpreter" / FreeTube's
+ * manifest decipher step.
+ */
+function installYoutubePlayerEval(Platform) {
+  if (youtubePlayerEvalInstalled) return;
+  Platform.shim.eval = async (data, _env) =>
+    new Function(`"use strict";\n${data.output}`)();
+  youtubePlayerEvalInstalled = true;
+}
+
+async function getInnertube() {
+  if (!innertubePromise) {
+    innertubePromise = (async () => {
+      const { Innertube, Platform } = await import("youtubei.js");
+      installYoutubePlayerEval(Platform);
+      const po = process.env.EMS_YOUTUBE_PO_TOKEN?.trim();
+      return Innertube.create({
+        generate_session_locally: true,
+        ...(po ? { po_token: po } : {}),
+      });
+    })().catch((err) => {
+      // Reset so a retry can re-attempt session creation.
+      innertubePromise = null;
+      throw err;
+    });
+  }
+  return innertubePromise;
+}
+
+/** Clients to try for live HLS; order favors iOS-style manifests, then fallbacks. */
+const YOUTUBE_LIVE_INFO_CLIENTS = [
+  "IOS",
+  "ANDROID_VR",
+  "WEB",
+  "ANDROID",
+];
+
+async function handleResolveYouTubeStream(_event, url) {
+  const videoId = extractYouTubeVideoId(url);
+  if (!videoId) {
+    throw new Error(`Could not extract a YouTube video ID from: ${url}`);
+  }
+  const yt = await getInnertube();
+  const player = yt.session?.player;
+  let lastError = null;
+  for (const client of YOUTUBE_LIVE_INFO_CLIENTS) {
+    try {
+      // Second argument must be { client: '...' }. Passing a string leaves
+      // options.client undefined so InnerTube uses the default client only.
+      const info = await yt.getInfo(videoId, { client });
+      let hlsUrl = info?.streaming_data?.hls_manifest_url;
+      if (!hlsUrl) continue;
+      // Innertube only auto-deciphers format URLs; hls_manifest_url is passed
+      // through raw from the player API. Since Jan 2026 it includes `n`, which
+      // must be run through the player decipher (same as FreeTube #8582).
+      if (player) {
+        hlsUrl = await player.decipher(hlsUrl);
+      }
+      return hlsUrl;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw new Error(
+    lastError?.message ??
+      "No HLS manifest URL is available for this video (is it currently live?)",
+  );
+}
+
 const ALLOWED_MEDIA_EXTENSIONS = [
   "mp4",
   "m4v",
@@ -1102,6 +1213,7 @@ function handleFilterMediaDropPaths(_, paths) {
 function setIPC() {
   ipcMain.handle("get-system-time", getSystemTIme);
   ipcMain.handle("get-platform", getPlatform);
+  ipcMain.handle("resolve-youtube-stream", handleResolveYouTubeStream);
   ipcMain.on("set-mode", handleSetMode);
   ipcMain.handle("get-setting", getSetting);
   ipcMain.handle("get-all-displays", handleGetAllDisplays);
@@ -1188,7 +1300,28 @@ app.on("activate", () => {
 });
 
 app.whenReady().then(async () => {
-  //needed for high performance timers in renderer
+  // The main UI enables COOP + COEP (`require-corp`) for high-resolution timers /
+  // SharedArrayBuffer; that policy blocks cross-origin XHR from hls.js to
+  // `*.googlevideo.com` because those responses do not opt into CORP.
+  mediaPresentationSession = session.fromPartition(
+    "persist:ems-media-presentation",
+  );
+
+  // Many googlevideo URLs expect a YouTube Referer; hls.js XHR does not send one by default.
+  mediaPresentationSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    let requestHeaders = details.requestHeaders;
+    if (details.url.includes("googlevideo.com")) {
+      requestHeaders = {
+        ...details.requestHeaders,
+        Referer: "https://www.youtube.com/",
+        Origin: "https://www.youtube.com",
+      };
+    }
+    callback({ requestHeaders });
+  });
+
+  // COOP + COEP for the main renderer only (SharedArrayBuffer / high-res timers).
+  // Do not attach this to mediaPresentationSession.
   const headersHandler = (details, callback) => {
     if (!details.responseHeaders) details.responseHeaders = {};
 
