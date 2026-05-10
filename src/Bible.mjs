@@ -27,7 +27,10 @@ export class Bible {
     const go = new Go();
     const result = await WebAssembly.instantiate(
       await fs.readFile(
-        path.join(path.dirname(path.dirname(__dirname)), "src/main.wasm"),
+        path.join(
+          path.dirname(path.dirname(import.meta.dirname)),
+          "src/main.wasm",
+        ),
       ),
       go.importObject,
     );
