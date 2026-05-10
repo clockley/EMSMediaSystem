@@ -398,7 +398,9 @@ async function resumeQueuePresentationAtTime(seekTime) {
   if (!item) return;
 
   mediaPlaybackEndedPending = false;
-  await loadQueueItemIntoControlWindow(item);
+  await loadQueueItemIntoControlWindow(item, {
+    preservePreviewSeek: false,
+  });
   renderQueue();
 
   isQueuePlaying = true;
@@ -696,18 +698,67 @@ function updateQueueFileLabel(name) {
   }
 }
 
-async function loadQueueItemIntoControlWindow(item) {
+/** True when the preview <video> is showing the same local file as `filePath`. */
+function previewShowsSameClipAsPath(filePath) {
+  if (!video || !video.src) return false;
+  if (!filePath || isImg(filePath) || isLiveStream(filePath)) return false;
+  if (isImg(video.src) || isLiveStream(video.src)) return false;
+  try {
+    return decodeURI(removeFileProtocol(video.src)) === filePath;
+  } catch {
+    return false;
+  }
+}
+
+async function loadQueueItemIntoControlWindow(item, opts) {
+  const preservePreviewSeek = !opts || opts.preservePreviewSeek !== false;
+  const isImgFile = isImg(item.path);
+
+  let resumeAt = null;
+  if (
+    preservePreviewSeek &&
+    !isImgFile &&
+    video &&
+    previewShowsSameClipAsPath(item.path) &&
+    Number.isFinite(video.currentTime)
+  ) {
+    resumeAt = video.currentTime;
+  }
+
   mediaFile = item.path;
   mediaPlayerInputState.filePaths = [item.path];
   updateQueueFileLabel(item.name);
 
-  const isImgFile = isImg(mediaFile);
   handleMediaPlayback(isImgFile);
   handleImageDisplay(isImgFile, document.querySelector("img"));
 
   if (!isImgFile && video) {
     video.load();
     await waitForMetadata();
+    if (resumeAt !== null && resumeAt >= 0) {
+      const d = video.duration;
+      const safe =
+        Number.isFinite(d) && d > 0
+          ? Math.min(resumeAt, Math.max(0, d - 0.05))
+          : resumeAt;
+      try {
+        await new Promise((resolve) => {
+          const done = () => resolve();
+          const t = window.setTimeout(done, 400);
+          const onSeeked = () => {
+            window.clearTimeout(t);
+            video.removeEventListener("seeked", onSeeked);
+            done();
+          };
+          video.addEventListener("seeked", onSeeked, { once: true });
+          video.currentTime = safe;
+        });
+        startTime = video.currentTime;
+        targetTime = startTime;
+      } catch (err) {
+        console.error(err);
+      }
+    }
     audioOnlyFile =
       !!video.videoTracks && video.videoTracks.length === 0;
     if (audioOnlyFile) {
@@ -2180,6 +2231,12 @@ function installIPCHandler() {
 }
 
 async function handleMediaWindowClosed(event, id) {
+  try {
+    await invoke("dismiss-queue-switch-dialog");
+  } catch (err) {
+    console.error(err);
+  }
+
   if (pendingQueueClearPostClose) {
     pendingQueueClearPostClose = false;
     mediaPlaybackEndedPending = false;
@@ -2534,11 +2591,8 @@ async function playMedia(e) {
     mediaQueue = [createQueueEntry(mediaFile)];
     currentQueueIndex = 0;
     renderQueue();
-    startTime = 0;
-    targetTime = 0;
     if (video !== null && !isImg(mediaFile)) {
       video.pause();
-      video.currentTime = 0;
     }
     saveMediaFile();
     isQueuePlaying = true;
