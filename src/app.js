@@ -792,7 +792,6 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     if (audioOnlyFile) {
       document.getElementById("customControls").style.visibility = "";
     }
-    applyPreviewAudioTrackPolicy();
   } else {
     audioOnlyFile = false;
     playingMediaAudioOnly = false;
@@ -835,7 +834,6 @@ async function playCurrentQueueItem() {
   if (isAudioItem) {
     if (isActiveMediaWindow()) {
       isActiveMediaWindowCache = false;
-      applyPreviewAudioTrackPolicy();
       send("close-media-window", 0);
     }
     await playAudioOnlyLocally();
@@ -1299,9 +1297,6 @@ class PIDController {
 }
 let pidController;
 
-/** Tracks which preview `<video>` currently has seek/play IPC handlers attached. */
-const previewVideoHandlersBound = new WeakSet();
-
 const NUM_BUFFER = new Int32Array(4);
 const REM_BUFFER = new Int32Array(1);
 let usePad0, usePad1, usePad2, mask0, mask1, mask2, idx0, idx1, idx2;
@@ -1337,44 +1332,6 @@ function getHostnameOrBasename(input) {
 
 function isActiveMediaWindow() {
   return isActiveMediaWindowCache;
-}
-
-/** True when the operator preview should output audio (not routed only to the presentation window). */
-function previewUsesOperatorAudio() {
-  if (!isActiveMediaWindow()) return true;
-  return previewIsAudioOnlyWithoutVideoTrack();
-}
-
-function previewIsAudioOnlyWithoutVideoTrack() {
-  if (!video) return false;
-  if (audioOnlyFile) return true;
-  try {
-    return video.videoTracks && video.videoTracks.length === 0;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Apply preview audio routing: disable {@link HTMLMediaElement.audioTracks} while a video
- * presentation is active so volume IPC applies only to the media window; keep them enabled
- * when there is no presentation or the clip has no video track (audio-only).
- */
-function applyPreviewAudioTrackPolicy() {
-  if (!video) return;
-  const enable = previewUsesOperatorAudio();
-  const applyToTracks = () => {
-    try {
-      if (!video.audioTracks || video.audioTracks.length === 0) return;
-      video.audioTracks[0].enabled = enable;
-    } catch {
-      /* AudioTrack API unsupported */
-    }
-  };
-  applyToTracks();
-  if (!video.audioTracks || video.audioTracks.length === 0) {
-    video.addEventListener("loadedmetadata", applyToTracks, { once: true });
-  }
 }
 
 function formatTime(seconds) {
@@ -2283,7 +2240,6 @@ async function handlePlaybackState(event, playbackState) {
       await video.pause();
     }
   }
-  applyPreviewAudioTrackPolicy();
 }
 
 function handlePlayPause(event, arg) {
@@ -2324,15 +2280,13 @@ async function handleMediaWindowClosed(event, id) {
     console.error(err);
   }
 
-  isActiveMediaWindowCache = false;
-  applyPreviewAudioTrackPolicy();
-
   if (pendingQueueClearPostClose) {
     pendingQueueClearPostClose = false;
     mediaPlaybackEndedPending = false;
     isPlaying = false;
     isQueuePlaying = false;
     updateDynUI();
+    isActiveMediaWindowCache = false;
     saveMediaFile();
     pauseLocalPreviewAfterQueueClear();
     return;
@@ -2345,6 +2299,7 @@ async function handleMediaWindowClosed(event, id) {
 
     isPlaying = false;
     updateDynUI();
+    isActiveMediaWindowCache = false;
 
     currentQueueIndex = idx;
     await loadQueueItemIntoControlWindow(mediaQueue[idx]);
@@ -2391,6 +2346,10 @@ async function handleMediaWindowClosed(event, id) {
   }
 
   if (video) {
+    if (video.audioTracks.length !== 0) {
+      video.audioTracks[0].enabled = true;
+    }
+
     if (
       video.loop &&
       video.currentTime > 0 &&
@@ -2407,6 +2366,7 @@ async function handleMediaWindowClosed(event, id) {
 
   isPlaying = false;
   updateDynUI();
+  isActiveMediaWindowCache = false;
 
   // ADDED: Restore queued file if we're in media player mode
   if (
@@ -2430,9 +2390,19 @@ async function handleMediaWindowClosed(event, id) {
   removeFilenameFromTitlebar();
   textNode.data = "";
 }
+function isAudioFile() {
+  return (
+    currentMode === MEDIAPLAYER &&
+    video.videoTracks &&
+    video.videoTracks.length === 0
+  );
+}
 
 function handleMediaPlayback(isImgFile) {
-  if (!isImgFile && video) {
+  if (!isImgFile) {
+    if (video.src !== "") {
+      waitForMetadata().then(isAudioFile);
+    }
     video.src = mediaFile;
   }
 }
@@ -2556,13 +2526,22 @@ async function unPauseMedia(e) {
   }
 }
 
-/**
- * Wait until the preview {@link HTMLMediaElement} has loaded metadata (so
- * {@link HTMLMediaElement.videoTracks} / {@link HTMLMediaElement.audioTracks}
- * reflect the current resource) and enough data to play; mirrors the legacy
- * `canplaythrough` waiter with an explicit `loadedmetadata` path so track info
- * is available as early as possible.
- */
+function handleCanPlayThrough(e, resolve) {
+  if (video.src === "") {
+    e.preventDefault();
+    resolve(video);
+    return;
+  }
+  video.currentTime = 0;
+  audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
+
+  resolve(video);
+}
+
+function handleError(e, reject) {
+  reject(e);
+}
+
 function waitForMetadata() {
   if (
     !video ||
@@ -2576,45 +2555,10 @@ function waitForMetadata() {
     return Promise.reject("Invalid source or live stream.");
   }
 
-  const syncTrackFlagsAndPreviewAudio = () => {
-    if (video.src === "") {
-      return video;
-    }
-    video.currentTime = 0;
-    audioOnlyFile = !!(video.videoTracks && video.videoTracks.length === 0);
-    applyPreviewAudioTrackPolicy();
-    return video;
-  };
-
-  if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
-    return Promise.resolve(syncTrackFlagsAndPreviewAudio());
-  }
-
   return new Promise((resolve, reject) => {
-    let settled = false;
-    const cleanup = () => {
-      video.removeEventListener("loadedmetadata", onLoadedMetadata);
-      video.removeEventListener("canplaythrough", onCanPlayThrough);
-      video.removeEventListener("error", onError);
-    };
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(syncTrackFlagsAndPreviewAudio());
-    };
-    const onLoadedMetadata = () => finish();
-    const onCanPlayThrough = () => finish();
-    const onError = (e) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(e);
-    };
+    const onCanPlayThrough = (e) => handleCanPlayThrough(e, resolve);
+    const onError = (e) => handleError(e, reject);
 
-    video.addEventListener("loadedmetadata", onLoadedMetadata, {
-      once: true,
-    });
     video.addEventListener("canplaythrough", onCanPlayThrough, { once: true });
     video.addEventListener("error", onError, { once: true });
 
@@ -2780,7 +2724,6 @@ async function playMedia(e) {
     updateDynUI();
     send("close-media-window", 0);
     isActiveMediaWindowCache = false;
-    applyPreviewAudioTrackPolicy();
     playingMediaAudioOnly = false;
     if (!audioOnlyFile) activeLiveStream = true;
     if (video) {
@@ -2943,7 +2886,6 @@ function setSBFormStreamPlayer() {
     isPlaying = true;
   }
   updateDynUI();
-  installPreviewEventHandlers();
 }
 
 async function setSBFormTextPlayer() {
@@ -3441,7 +3383,6 @@ function setSBFormMediaPlayer() {
   }
   setupCustomMediaControls();
   setupGtkVolumeControl();
-  installPreviewEventHandlers();
   if (isFinite(video.duration) && video.duration > 0) {
     document.getElementById("customControls").style.display = "";
     timelineSync();
@@ -3689,13 +3630,13 @@ function shortcutHandler(event) {
 function modeSwitchHandler(event) {
   if (event.target.type === "radio") {
     if (event.target.value === "Media Player") {
+      installPreviewEventHandlers();
       updateTimestamp();
     }
   }
 }
 
 function cleanRefs() {
-  teardownPreviewEventHandlers();
   let vsl = document.getElementById("volume-slider");
   if (vsl) {
     vsl.removeEventListener("input", handleVolumeChange);
@@ -3782,7 +3723,11 @@ function playLocalMedia(event) {
     return;
   }
 
-  applyPreviewAudioTrackPolicy();
+  if (!isActiveMediaWindow()) {
+    if (video.audioTracks.length !== 0) {
+      video.audioTracks[0].enabled = true;
+    }
+  }
   mediaSessionPause = false;
   if (
     !audioOnlyFile &&
@@ -3794,7 +3739,6 @@ function playLocalMedia(event) {
     if (currentMode === MEDIAPLAYER) {
       document.getElementById("customControls").style.visibility = "";
     }
-    applyPreviewAudioTrackPolicy();
   }
   if (audioOnlyFile) {
     send("localMediaState", 0, "play");
@@ -3858,7 +3802,6 @@ function loadedmetadataHandler(e) {
     return;
   }
   audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
-  applyPreviewAudioTrackPolicy();
 }
 
 function seekLocalMedia(e) {
@@ -4040,31 +3983,19 @@ function handleVolumeChange(event) {
   event.target.muted ? vlCtl(0) : vlCtl(event.target.volume);
 }
 
-function teardownPreviewEventHandlers() {
-  if (!video || !previewVideoHandlersBound.has(video)) return;
-  video.removeEventListener("loadstart", loadLocalMediaHandler);
-  video.removeEventListener("loadedmetadata", loadedmetadataHandler);
-  video.removeEventListener("seeked", seekLocalMedia);
-  video.removeEventListener("seeking", seekingLocalMedia);
-  video.removeEventListener("ended", endLocalMedia);
-  video.removeEventListener("pause", pauseLocalMedia);
-  video.removeEventListener("play", playLocalMedia);
-  video.removeEventListener("volumechange", handleVolumeChange);
-  previewVideoHandlersBound.delete(video);
-}
-
 function installPreviewEventHandlers() {
-  if (!video || previewVideoHandlersBound.has(video)) return;
-  video.addEventListener("loadstart", loadLocalMediaHandler);
-  video.addEventListener("loadedmetadata", loadedmetadataHandler);
-  video.addEventListener("seeked", seekLocalMedia);
-  video.addEventListener("seeking", seekingLocalMedia);
-  video.addEventListener("ended", endLocalMedia);
-  video.addEventListener("pause", pauseLocalMedia);
-  video.addEventListener("play", playLocalMedia);
-  video.addEventListener("volumechange", handleVolumeChange);
-  pidController = new PIDController(video);
-  previewVideoHandlersBound.add(video);
+  if (!installPreviewEventHandlers.installedVideoEventListener) {
+    video.addEventListener("loadstart", loadLocalMediaHandler);
+    video.addEventListener("loadedmetadata", loadedmetadataHandler);
+    video.addEventListener("seeked", seekLocalMedia);
+    video.addEventListener("seeking", seekingLocalMedia);
+    video.addEventListener("ended", endLocalMedia);
+    video.addEventListener("pause", pauseLocalMedia);
+    video.addEventListener("play", playLocalMedia);
+    video.addEventListener("volumechange", handleVolumeChange);
+    pidController = new PIDController(video);
+    installPreviewEventHandlers.installedVideoEventListener = true;
+  }
 }
 
 async function loadOpMode(mode) {
@@ -4181,10 +4112,12 @@ async function loadOpMode(mode) {
           // Fall back to media player mode
           document.getElementById("MdPlyrRBtnFrmID").checked = true;
           setSBFormMediaPlayer();
+          installPreviewEventHandlers();
         }
       } else {
         document.getElementById("MdPlyrRBtnFrmID").checked = true;
         setSBFormMediaPlayer();
+        installPreviewEventHandlers();
       }
 
       // Drag and drop: the renderer is the OS-level drop target (Electron does
@@ -4392,7 +4325,24 @@ async function createMediaWindow(options) {
   }
 
   if (video) {
-    applyPreviewAudioTrackPolicy();
+    if (video.audioTracks && video.audioTracks[0]) {
+      video.audioTracks[0].enabled = false;
+    } else {
+      video.addEventListener(
+        "loadedmetadata",
+        () => {
+          if (video.audioTracks.length !== 0) {
+            video.audioTracks[0].enabled = false;
+          }
+        },
+        { once: true },
+      );
+    }
+
+    if (video.audioTracks.length !== 0 && video.audioTracks[0]) {
+      video.audioTracks[0].enabled = false;
+    }
+    video.muted = false;
   }
   if (
     document.getElementById("autoPlayCtl")?.checked !== undefined &&
