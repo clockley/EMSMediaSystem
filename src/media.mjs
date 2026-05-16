@@ -98,6 +98,93 @@ function configureDashAggressiveBuffer(player) {
   });
 }
 
+function isDubbedOrDescriptiveLabel(label) {
+  if (typeof label !== "string" || label.length === 0) return false;
+  return /(dub(?:bed)?|translated|translation|voice.?over|describ|narrat)/i.test(
+    label,
+  );
+}
+
+function scoreAudioTrack(track, index) {
+  const label = [
+    track?.name,
+    track?.label,
+    track?.lang,
+    track?.language,
+    track?.id,
+    Array.isArray(track?.roles) ? track.roles.join(" ") : "",
+  ]
+    .filter((value) => typeof value === "string" && value.length > 0)
+    .join(" ");
+  let score = 0;
+  if (track?.default === true || track?.audio_is_default === true) score += 200;
+  if (/\boriginal\b/i.test(label)) score += 120;
+  if (/\b(main|primary|default)\b/i.test(label)) score += 60;
+  if (isDubbedOrDescriptiveLabel(label)) score -= 300;
+  score -= index * 0.01;
+  return score;
+}
+
+function pickPreferredTrackIndex(tracks) {
+  if (!Array.isArray(tracks) || tracks.length === 0) return -1;
+  let bestIndex = 0;
+  let bestScore = -Infinity;
+  for (let i = 0; i < tracks.length; i += 1) {
+    const score = scoreAudioTrack(tracks[i], i);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
+function selectPreferredNativeAudioTrack(videoEl) {
+  const tracks = videoEl?.audioTracks;
+  if (!tracks || typeof tracks.length !== "number" || tracks.length === 0) return;
+  const list = [];
+  for (let i = 0; i < tracks.length; i += 1) {
+    list.push(tracks[i]);
+  }
+  const preferredIndex = pickPreferredTrackIndex(list);
+  if (preferredIndex < 0) return;
+  for (let i = 0; i < tracks.length; i += 1) {
+    tracks[i].enabled = i === preferredIndex;
+  }
+}
+
+function selectPreferredHlsAudioTrack(hls) {
+  const trackList = hls?.audioTracks;
+  if (!Array.isArray(trackList) || trackList.length === 0) return;
+  const idx = pickPreferredTrackIndex(trackList);
+  if (idx >= 0 && hls.audioTrack !== idx) {
+    hls.audioTrack = idx;
+  }
+}
+
+function ensurePreferredDashAudioTrack(player, maxAttempts = 25) {
+  let attempts = 0;
+  const timer = setInterval(() => {
+    attempts += 1;
+    try {
+      const tracks = player.getTracksFor("audio");
+      if (Array.isArray(tracks) && tracks.length > 0) {
+        const idx = pickPreferredTrackIndex(tracks);
+        if (idx >= 0 && tracks[idx]) {
+          player.setCurrentTrack(tracks[idx]);
+        }
+        clearInterval(timer);
+        return;
+      }
+    } catch {
+      // Ignore transient startup errors while dash.js enumerates tracks.
+    }
+    if (attempts >= maxAttempts) {
+      clearInterval(timer);
+    }
+  }, 200);
+}
+
 function installICPHandlers() {
   if (!streamActsAsLiveEdge) {
     ipcRenderer.on("timeGoto-message", function (evt, message) {
@@ -219,6 +306,7 @@ function installTextHandlers() {
 
 async function loadMedia() {
   let h = null;
+  let dashPlayer = null;
 
   if (isText) {
     document.querySelector("video").style.display = "none";
@@ -269,13 +357,15 @@ async function loadMedia() {
       } else if (ytResolved.type === "progressive") {
         video.src = ytResolved.url;
       } else if (ytResolved.type === "dash") {
-        const { MediaPlayer } = await import("dashjs");
-        const player = MediaPlayer().create();
-        configureDashAggressiveBuffer(player);
+        const { MediaPlayer } = await import(
+          "../../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
+        );
+        dashPlayer = MediaPlayer().create();
+        configureDashAggressiveBuffer(dashPlayer);
         const blobUrl = URL.createObjectURL(
           new Blob([ytResolved.manifest], { type: "application/dash+xml" }),
         );
-        player.initialize(video, blobUrl, false);
+        dashPlayer.initialize(video, blobUrl, false);
       }
     } else {
       video.src = mediaFile;
@@ -340,8 +430,18 @@ async function loadMedia() {
 
   if (liveStreamMode) {
     if (h) {
+      const hlsEvents = h.constructor?.Events;
+      if (hlsEvents?.MANIFEST_PARSED) {
+        h.on(hlsEvents.MANIFEST_PARSED, () => selectPreferredHlsAudioTrack(h));
+      }
+      if (hlsEvents?.AUDIO_TRACKS_UPDATED) {
+        h.on(hlsEvents.AUDIO_TRACKS_UPDATED, () => selectPreferredHlsAudioTrack(h));
+      }
       h.attachMedia(video);
     }
+    video.addEventListener("loadedmetadata", () => {
+      selectPreferredNativeAudioTrack(video);
+    });
     video.play().catch(() => {});
   }
 }
