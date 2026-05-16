@@ -56,10 +56,11 @@ do {
 } while (argv[i][0] !== "-");
 
 /**
- * hls.js tuning for network streams (YouTube live HLS, generic m3u8): ask the
- * player to hold a larger forward buffer, prefetch the next fragment early,
- * and (for live) stay slightly farther behind the broadcast edge so the
- * rolling playlist has more runway. Uses more RAM and bandwidth.
+ * hls.js tuning for network streams (YouTube live HLS, generic m3u8) in the
+ * projection window. Goal: maximum video quality on a presentation display.
+ * We hold a large forward buffer, prefetch the next fragment early, stay
+ * farther from the live edge for stability, and bias adaptive bitrate (ABR)
+ * toward the highest available variant.
  */
 const HLS_AGGRESSIVE_BUFFER_CONFIG = {
   maxBufferLength: 75,
@@ -71,6 +72,14 @@ const HLS_AGGRESSIVE_BUFFER_CONFIG = {
   liveSyncDurationCount: 6,
   /** Prefer filling the standard buffer over LL-HLS “stay on the edge” behaviour */
   lowLatencyMode: false,
+  /** Quality: never cap quality to player render size — projection is fullscreen. */
+  capLevelToPlayerSize: false,
+  /** Quality: skip the low-bitrate probe; we have plenty of bandwidth for live. */
+  testBandwidth: false,
+  /** Quality: assume 25 Mbps available so ABR starts near the top variant. */
+  abrEwmaDefaultEstimate: 25_000_000,
+  /** Quality: pick the highest quality level immediately rather than starting low. */
+  startLevel: -1,
 };
 
 async function createStreamingHls() {
@@ -336,7 +345,9 @@ async function loadMedia() {
   installICPHandlers();
 
   video.volume = strtvl;
-  video.setAttribute("loop", loopFile);
+  // `loop` is a boolean HTML attribute — its mere presence enables looping,
+  // so setAttribute("loop", false) would still loop. Use the IDL property.
+  video.loop = !!loopFile;
   video.preload = "auto";
 
   ipcRenderer
@@ -432,7 +443,26 @@ async function loadMedia() {
     if (h) {
       const hlsEvents = h.constructor?.Events;
       if (hlsEvents?.MANIFEST_PARSED) {
-        h.on(hlsEvents.MANIFEST_PARSED, () => selectPreferredHlsAudioTrack(h));
+        h.on(hlsEvents.MANIFEST_PARSED, () => {
+          selectPreferredHlsAudioTrack(h);
+          // Pin the projection player to the highest video variant once we
+          // know the manifest. ABR can still react to sustained stalls, but
+          // we start at top quality instead of climbing up from the bottom.
+          const levels = h.levels;
+          if (Array.isArray(levels) && levels.length > 0) {
+            const topIndex = levels.reduce(
+              (best, lvl, i) =>
+                (lvl?.bitrate ?? 0) > (levels[best]?.bitrate ?? 0) ? i : best,
+              0,
+            );
+            try {
+              h.startLevel = topIndex;
+              h.nextLevel = topIndex;
+            } catch {
+              /* hls.js setter may throw if levels race; safe to ignore. */
+            }
+          }
+        });
       }
       if (hlsEvents?.AUDIO_TRACKS_UPDATED) {
         h.on(hlsEvents.AUDIO_TRACKS_UPDATED, () => selectPreferredHlsAudioTrack(h));
