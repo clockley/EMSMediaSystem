@@ -10,9 +10,33 @@ import { contextBridge, ipcRenderer } from "electron/renderer";
 
 const QUEUE_SWITCH_DIALOG_IPC_CHANNEL = "queue-switch-dialog-response";
 
-contextBridge.exposeInMainWorld("queueSwitchDialog", {
-  respond: (accepted) =>
-    ipcRenderer.invoke(QUEUE_SWITCH_DIALOG_IPC_CHANNEL, accepted === true),
-});
+function respond(accepted) {
+  return ipcRenderer.invoke(
+    QUEUE_SWITCH_DIALOG_IPC_CHANNEL,
+    accepted === true,
+  );
+}
 
-Object.freeze(window.queueSwitchDialog);
+contextBridge.exposeInMainWorld("queueSwitchDialog", { respond });
+
+function wireDialogButtons() {
+  document
+    .getElementById("queue_switch_dialog_cancel")
+    ?.addEventListener("click", () => {
+      void respond(false);
+    });
+  document
+    .getElementById("queue_switch_dialog_confirm")
+    ?.addEventListener("click", () => {
+      void respond(true);
+    });
+  document.querySelector(".window-control.close")?.addEventListener("click", () => {
+    void respond(false);
+  });
+}
+
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", wireDialogButtons, { once: true });
+} else {
+  wireDialogButtons();
+}

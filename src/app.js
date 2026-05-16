@@ -2570,7 +2570,7 @@ async function unPauseMedia(e) {
 
 function handleCanPlayThrough(e, resolve) {
   if (video.src === "") {
-    e.preventDefault();
+    if (e && typeof e.preventDefault === "function") e.preventDefault();
     resolve(video);
     return;
   }
@@ -2584,6 +2584,47 @@ function handleError(e, reject) {
   reject(e);
 }
 
+/** HTMLMediaElement.readyState constants — readability over magic numbers. */
+const HAVE_NOTHING = 0;
+const HAVE_METADATA = 1;
+/**
+ * Hard cap so a stalled media pipeline can never freeze a downstream
+ * `await waitForMetadata()` (e.g. the queue-switch confirm flow). Long
+ * enough that a healthy local-file load always wins under it; short enough
+ * that the UI doesn't appear hung if the pipeline is sick.
+ */
+const WAIT_FOR_METADATA_TIMEOUT_MS = 4000;
+
+/**
+ * Resolve when the current preview video has enough metadata to inspect
+ * `videoTracks` / `audioTracks` and decide whether the file is audio-only.
+ *
+ * The previous implementation waited for `canplaythrough`, which has two
+ * failure modes that became observable once the <video id="preview">
+ * element started surviving tab switches:
+ *
+ *   1. When metadata is already loaded (queue switch to the same file the
+ *      preview was already on, or any case where `loadedmetadata` fired
+ *      before the listener was attached), `canplaythrough` will not fire
+ *      again — the once-listener just sits there and the promise never
+ *      settles, freezing `loadQueueItemIntoControlWindow` and the entire
+ *      queue-switch confirmation chain. Externally this looks like the
+ *      "Switch" / "Cancel" buttons in the dialog do nothing.
+ *   2. `canplaythrough` is also a strictly later milestone than we need:
+ *      track inspection only requires `HAVE_METADATA`, so waiting for
+ *      `HAVE_ENOUGH_DATA` adds latency for no benefit on slow I/O.
+ *
+ * The robust shape is:
+ *   - resolve immediately if `readyState >= HAVE_METADATA`,
+ *   - otherwise resolve on whichever of `loadedmetadata` / `canplaythrough`
+ *     fires first,
+ *   - reject on `error`,
+ *   - and in the worst case, resolve after a hard timeout so callers
+ *     awaiting this promise can never hang the UI.
+ *
+ * Rejection semantics for invalid sources are preserved so existing
+ * `.catch()` paths (e.g. `saveMediaFile`) keep working.
+ */
 function waitForMetadata() {
   if (
     !video ||
@@ -2598,15 +2639,52 @@ function waitForMetadata() {
   }
 
   return new Promise((resolve, reject) => {
-    const onCanPlayThrough = (e) => handleCanPlayThrough(e, resolve);
-    const onError = (e) => handleError(e, reject);
+    let settled = false;
+    let timer = null;
 
+    const cleanup = () => {
+      video.removeEventListener("loadedmetadata", onMetadata);
+      video.removeEventListener("canplaythrough", onCanPlayThrough);
+      video.removeEventListener("error", onError);
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+    const finishOk = (e) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      handleCanPlayThrough(e || {}, resolve);
+    };
+    const onMetadata = () => finishOk();
+    const onCanPlayThrough = (e) => finishOk(e);
+    const onError = (e) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      handleError(e, reject);
+    };
+
+    // Fast path: the <video> already advanced past HAVE_METADATA (very
+    // common with the persistent preview element after a queue switch to
+    // the same file or after `loadedmetadata` fired before this listener
+    // attached). Resolve synchronously instead of waiting for an event
+    // that will never come.
+    if (video.readyState >= HAVE_METADATA) {
+      finishOk();
+      return;
+    }
+
+    video.addEventListener("loadedmetadata", onMetadata, { once: true });
     video.addEventListener("canplaythrough", onCanPlayThrough, { once: true });
     video.addEventListener("error", onError, { once: true });
 
-    if (video.readyState === 0) {
+    if (video.readyState === HAVE_NOTHING) {
       video.load();
     }
+
+    timer = window.setTimeout(() => finishOk(), WAIT_FOR_METADATA_TIMEOUT_MS);
   });
 }
 

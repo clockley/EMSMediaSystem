@@ -8,7 +8,12 @@
   <title>Switch presentation</title>
   <link rel="stylesheet" type="text/css" href="main.css">
   <style>
+    .window-container {
+      -webkit-app-region: no-drag;
+    }
+
     .queue_switch_dialog_body {
+      margin-top: 48px;
       padding: 20px 24px 24px;
       display: flex;
       flex-direction: column;
@@ -85,19 +90,6 @@
       </div>
     </main>
   </div>
-
-  <script defer>
-    document.getElementById("queue_switch_dialog_cancel").addEventListener("click", () => {
-      queueSwitchDialog.respond(false);
-    });
-    document.getElementById("queue_switch_dialog_confirm").addEventListener("click", () => {
-      queueSwitchDialog.respond(true);
-    });
-
-    document.querySelector(".window-control.close").addEventListener("click", () => {
-      queueSwitchDialog.respond(false);
-    });
-  </script>
 </body>
 
 </html>
