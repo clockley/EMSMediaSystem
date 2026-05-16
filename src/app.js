@@ -1421,6 +1421,22 @@ function setupCustomMediaControls() {
     return;
   }
 
+  // The <video id="preview"> persists across tab rebuilds (see preview stash
+  // helpers), so listeners attached here would accumulate on every Media-tab
+  // re-entry. Abort the previous batch and use a fresh AbortController so
+  // each rebuild has exactly one set of control listeners on the video and
+  // on the document-level mouseup/touchend fall-through handlers.
+  if (setupCustomMediaControls.controller) {
+    try {
+      setupCustomMediaControls.controller.abort();
+    } catch {
+      /* already aborted */
+    }
+  }
+  const controller = new AbortController();
+  setupCustomMediaControls.controller = controller;
+  const sig = { signal: controller.signal };
+
   let isDragging = false; // Track drag interaction
   let wasPlayingBeforeDrag = false;
 
@@ -1462,39 +1478,51 @@ function setupCustomMediaControls() {
     }
   });
 
-  video.addEventListener("play", () => {
-    if (video.src === "" || currentMode !== MEDIAPLAYER) return;
-    playPauseIcon.innerHTML = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
-  });
+  video.addEventListener(
+    "play",
+    () => {
+      if (video.src === "" || currentMode !== MEDIAPLAYER) return;
+      playPauseIcon.innerHTML = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
+    },
+    sig,
+  );
 
-  video.addEventListener("pause", () => {
-    // Play icon
-    if (playPauseIcon === null) return;
-    playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
-  });
+  video.addEventListener(
+    "pause",
+    () => {
+      // Play icon
+      if (playPauseIcon === null) return;
+      playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
+    },
+    sig,
+  );
 
-  video.addEventListener("loadedmetadata", () => {
-    if (currentMode !== MEDIAPLAYER) {
-      return;
-    }
-    timeline.min = 0;
-    timeline.max = 100;
-    timeline.value = 0;
+  video.addEventListener(
+    "loadedmetadata",
+    () => {
+      if (currentMode !== MEDIAPLAYER) {
+        return;
+      }
+      timeline.min = 0;
+      timeline.max = 100;
+      timeline.value = 0;
 
-    const hasSeekableMedia = isFinite(video.duration) && video.duration > 0;
+      const hasSeekableMedia = isFinite(video.duration) && video.duration > 0;
 
-    currentTimeDisplay.textContent = "0:00";
-    durationTimeDisplay.textContent = fmt(video.duration);
+      currentTimeDisplay.textContent = "0:00";
+      durationTimeDisplay.textContent = fmt(video.duration);
 
-    playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`; // Play icon
+      playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`; // Play icon
 
-    if (overlay) {
-      overlay.style.display = "";
-      overlay.style.visibility = hasSeekableMedia ? "visible" : "hidden";
-    }
+      if (overlay) {
+        overlay.style.display = "";
+        overlay.style.visibility = hasSeekableMedia ? "visible" : "hidden";
+      }
 
-    repeatButton.classList.toggle("active", video.loop);
-  });
+      repeatButton.classList.toggle("active", video.loop);
+    },
+    sig,
+  );
 
   // --- DRAGGING THE TIMELINE (HYBRID LIVE SCRUBBING) ---
   timeline.addEventListener("mousedown", () => {
@@ -1531,20 +1559,24 @@ function setupCustomMediaControls() {
     }
   });
 
-  document.addEventListener("mouseup", () => (isDragging = false));
-  document.addEventListener("touchend", () => (isDragging = false));
+  document.addEventListener("mouseup", () => (isDragging = false), sig);
+  document.addEventListener("touchend", () => (isDragging = false), sig);
 
   // --- TIMEUPDATE ---
-  video.addEventListener("timeupdate", () => {
-    if (!video.duration || timeline === null) return;
-    if (currentTimeDisplay !== null) {
-      currentTimeDisplay.textContent = fmt(video.currentTime);
-    }
+  video.addEventListener(
+    "timeupdate",
+    () => {
+      if (!video.duration || timeline === null) return;
+      if (currentTimeDisplay !== null) {
+        currentTimeDisplay.textContent = fmt(video.currentTime);
+      }
 
-    if (!isDragging) {
-      timeline.value = (video.currentTime / video.duration) * 100;
-    }
-  });
+      if (!isDragging) {
+        timeline.value = (video.currentTime / video.duration) * 100;
+      }
+    },
+    sig,
+  );
 
   // --- LOOP / REPEAT ---
   repeatButton.addEventListener("click", () => {
@@ -1555,29 +1587,39 @@ function setupCustomMediaControls() {
   });
 
   // --- END OF VIDEO ---
-  video.addEventListener("ended", () => {
-    if (!video.loop && currentMode === MEDIAPLAYER) {
-      video.currentTime = 0;
-      video.pause();
-      timeline.value = 0;
-      currentTimeDisplay.textContent = "0:00";
-    }
-  });
+  video.addEventListener(
+    "ended",
+    () => {
+      if (!video.loop && currentMode === MEDIAPLAYER) {
+        video.currentTime = 0;
+        video.pause();
+        timeline.value = 0;
+        currentTimeDisplay.textContent = "0:00";
+      }
+    },
+    sig,
+  );
 
   if (clickTarget) {
-    clickTarget.addEventListener("click", (event) => {
-      if (video.src === "") return;
-      const isControl = event.target.closest("#customControls");
+    // The click target may be the persistent <video id="preview">, so this
+    // listener also needs the AbortController scope to avoid duplicates.
+    clickTarget.addEventListener(
+      "click",
+      (event) => {
+        if (video.src === "") return;
+        const isControl = event.target.closest("#customControls");
 
-      if (!isControl) {
-        if (video.paused) {
-          video.play();
-        } else {
-          video.pause();
+        if (!isControl) {
+          if (video.paused) {
+            video.play();
+          } else {
+            video.pause();
+          }
         }
-      }
-      event.stopPropagation();
-    });
+        event.stopPropagation();
+      },
+      sig,
+    );
   }
 }
 
@@ -2851,6 +2893,14 @@ function setSBFormStreamPlayer() {
     </div>
     `;
 
+  // Restore the persistent preview element (if any was stashed by
+  // `cleanRefs`) into the streams-tab wrapper. The wrapper carries
+  // `.stream-preview-host`, which CSS hides via `display: none`, so the
+  // video is invisible here — but it stays in the DOM and continues to
+  // play, keeping the projection window in sync. Switching back to Media
+  // re-attaches the same element under the visible `.video-wrapper`.
+  restoreLivePreview();
+
   video = document.getElementById("preview");
 
   if (mediaFile !== null && isLiveStream(mediaFile)) {
@@ -3148,6 +3198,92 @@ async function setSBFormTextPlayer() {
   });
 }
 
+/**
+ * Persistent preview stash.
+ *
+ * Switching tabs replaces #dyneForm's children, which would otherwise destroy
+ * the live <video id="preview"> element and reset its playback state along
+ * with every listener that drives the projection (media) window over IPC
+ * (`seekLocalMedia`, `pauseLocalMedia`, `playLocalMedia`, `timeGoto-message`,
+ * `play-ctl`, ...). Before wiping the form we move the preview element (and
+ * any sibling <img id="preview"> created by the image path) into a hidden
+ * host attached to <body>, then swap it back in for the freshly-rendered
+ * placeholder when the new tab finishes rendering. Because the node never
+ * leaves the document, playback continues uninterrupted, every listener
+ * keeps firing, and seek/pause/play in the preview keeps driving the
+ * projection window the same way it did before the tab switch.
+ */
+const PREVIEW_STASH_ID = "previewStash";
+
+function getOrCreatePreviewStash() {
+  let stash = document.getElementById(PREVIEW_STASH_ID);
+  if (stash) return stash;
+
+  stash = document.createElement("div");
+  stash.id = PREVIEW_STASH_ID;
+  stash.setAttribute("aria-hidden", "true");
+  // Keep it in the DOM (so HTMLMediaElement playback survives) but invisible
+  // and non-interactive so it cannot intercept layout, focus, or hit-testing.
+  stash.style.cssText =
+    "position: fixed; left: -100000px; top: -100000px;" +
+    "width: 1px; height: 1px;" +
+    "pointer-events: none; visibility: hidden;" +
+    "contain: strict;";
+  document.body.appendChild(stash);
+  return stash;
+}
+
+function stashLivePreview() {
+  const dyne = document.getElementById("dyneForm");
+  if (!dyne) return;
+  const stash = getOrCreatePreviewStash();
+  // Match by tag+id so we never sweep stray elements that happen to share id.
+  // Image-mode previews leave a hidden <video id="preview"> next to the
+  // visible <img id="preview"> — both must travel together so re-entering
+  // Media mode finds the same elements in the same order.
+  const persistentEls = dyne.querySelectorAll(
+    'video#preview, img#preview',
+  );
+  for (const el of persistentEls) {
+    if (el.parentNode !== stash) {
+      stash.appendChild(el);
+    }
+  }
+}
+
+/**
+ * Replace the freshly-rendered <video id="preview"> placeholder in #dyneForm
+ * with the persistent video element from the stash, if one exists. A stashed
+ * <img id="preview"> is reattached as a sibling, mirroring the layout that
+ * `handleImageDisplay` produces. Returns true when a stashed video was
+ * restored (callers can use this to skip redundant restoration paths).
+ */
+function restoreLivePreview() {
+  const stash = document.getElementById(PREVIEW_STASH_ID);
+  if (!stash) return false;
+  const dyne = document.getElementById("dyneForm");
+  if (!dyne) return false;
+
+  const placeholder = dyne.querySelector("video#preview");
+  if (!placeholder) return false;
+
+  const stashedVideo = stash.querySelector("video#preview");
+  if (!stashedVideo) return false;
+
+  const wrapper = placeholder.parentNode;
+  if (!wrapper) return false;
+
+  if (stashedVideo !== placeholder) {
+    wrapper.replaceChild(stashedVideo, placeholder);
+  }
+
+  const stashedImg = stash.querySelector("img#preview");
+  if (stashedImg) {
+    wrapper.appendChild(stashedImg);
+  }
+  return true;
+}
+
 function generateMediaFormHTML(video = null) {
   return `
   <div class="media-container">
@@ -3287,6 +3423,11 @@ function setSBFormMediaPlayer() {
   currentMode = MEDIAPLAYER;
   send("set-mode", currentMode);
   document.getElementById("dyneForm").innerHTML = generateMediaFormHTML(video);
+  // Swap the freshly-rendered placeholder for the live preview element if
+  // one was stashed by `cleanRefs`. After this call,
+  // `document.getElementById("preview")` refers to the same element that was
+  // playing before the tab switch, with all its listeners and src intact.
+  restoreLivePreview();
   mediaCntDn.appendChild(textNode);
   mediaCntDn.style.color = "#5c87b2";
   installDisplayChangeHandler();
@@ -3363,9 +3504,13 @@ function setSBFormMediaPlayer() {
           }
         }
       }
-      document
-        .getElementById("preview")
-        .parentNode.replaceChild(video, document.getElementById("preview"));
+      const livePreview = document.getElementById("preview");
+      // After `restoreLivePreview` ran, the placeholder has already been
+      // replaced with the persistent element, so `livePreview === video`
+      // and a self-replace would needlessly detach the playing element.
+      if (livePreview && livePreview !== video) {
+        livePreview.parentNode.replaceChild(video, livePreview);
+      }
     }
   }
 
@@ -3668,6 +3813,12 @@ function cleanRefs() {
   currentTimeDisplay = null;
   durationTimeDisplay = null;
   repeatButton = null;
+
+  // Move the live <video id="preview"> (and any image overlay using the same
+  // id) into the persistent stash before the form's children are destroyed.
+  // This preserves playback state and event listeners across tab switches so
+  // the projection window keeps tracking the preview's pause / play / seek.
+  stashLivePreview();
 
   document.getElementById("dyneForm").innerHTML = "";
 }
