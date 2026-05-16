@@ -45,6 +45,18 @@ const QUEUE_SWITCH_DIALOG_IPC_CHANNEL = "queue-switch-dialog-response";
 app.commandLine.appendSwitch("js-flags", "--maglev --no-use-osr");
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
 
+// Force IPv4 for all outbound connections. YouTube signs HLS/DASH segment
+// URLs against the *exact* client IP that requested the manifest (the URL
+// embeds the IP in its path, e.g. `.../ip/<ipv6>/...`). When the host has
+// IPv6, Chromium's "happy eyeballs" opens new sockets per fragment fetch
+// and often lands on either a different IPv6 address (privacy extensions
+// rotate the temporary address) or on IPv4, neither of which matches the
+// IP encoded in the signed URL — and the segment server 403s every
+// fragment. Pinning the network stack to IPv4 makes the egress IP stable
+// across the manifest fetch and all subsequent segment fetches. Must run
+// before `app.whenReady` so the network service starts in IPv4-only mode.
+app.commandLine.appendSwitch("disable-ipv6");
+
 settings.init(app.getPath("userData"));
 
 /**
@@ -263,6 +275,9 @@ function handleCloseMediaWindow(event, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     mediaWindow.close();
   }
+  // Closing the projection window ends any active YouTube live HLS session;
+  // clear the flag so the next item (often a VOD) isn't given the iOS UA.
+  youtubeLiveSessionActive = false;
 }
 
 function localMediaStateUpdate(event, id, state) {
@@ -272,6 +287,7 @@ function localMediaStateUpdate(event, id, state) {
       break;
     case "stop":
       stopMediaPlaybackPowerHint();
+      youtubeLiveSessionActive = false;
       break;
   }
 }
@@ -1140,6 +1156,23 @@ const YOUTUBE_LIVE_INFO_CLIENTS = [
 ];
 
 /**
+ * Tracks whether the active YouTube media session is a live IOS-client HLS
+ * stream. We flip this on the moment {@link handleResolveYouTubeStream}
+ * resolves an HLS URL so the `webRequest` header-injector knows to apply the
+ * iOS User-Agent to every `googlevideo.com` segment fetch, not just URLs that
+ * happen to include client/path markers. Live HLS segment URLs frequently
+ * omit `c=IOS` / `yt_live_broadcast` (they're path-style:
+ * `/videoplayback/id/<id>/.../index.m3u8/sq/<n>/.../file/seg.ts`), and
+ * without the iOS UA those segment fetches return 403 even though the
+ * manifest itself loaded fine.
+ *
+ * Cleared by {@link handleCloseMediaWindow} and on `localMediaState` "stop"
+ * so VOD playback that follows a live session does not get the iOS UA
+ * spoof (which would 403 TV_SIMPLY-signed URLs).
+ */
+let youtubeLiveSessionActive = false;
+
+/**
  * Clients to try for VOD playback. {@code TV_SIMPLY} (TVHTML5 simply embedded
  * player) is preferred because its signed URLs are not bound to a specific
  * IP / User-Agent the way IOS / ANDROID URLs are, so dash.js fetches from
@@ -1221,6 +1254,11 @@ async function handleResolveYouTubeStream(_event, url) {
           if (player) {
             hlsUrl = await player.decipher(hlsUrl);
           }
+          // Flag this as an active live session so the webRequest header
+          // injector applies the iOS User-Agent to every segment fetch —
+          // path-style live segment URLs do not always carry the
+          // `c=IOS` / `yt_live_broadcast` markers we'd otherwise key on.
+          youtubeLiveSessionActive = true;
           return { type: "hls", url: hlsUrl };
         }
         continue;
@@ -1229,6 +1267,11 @@ async function handleResolveYouTubeStream(_event, url) {
       if (!info.streaming_data) {
         continue;
       }
+
+      // Going down the VOD path; any leftover live flag must be cleared so
+      // we don't poison TV_SIMPLY-signed URLs with an iOS UA spoof (which
+      // would re-introduce VOD 403s).
+      youtubeLiveSessionActive = false;
 
       try {
         const preferredFormat = info.chooseFormat({
@@ -1424,29 +1467,81 @@ app.whenReady().then(async () => {
   // Many googlevideo URLs expect a YouTube Referer; hls.js / dash.js XHRs
   // do not send one by default.
   //
-  // Live HLS URLs (path-based signing, contain "yt_live_broadcast" or "c=IOS")
-  // come from the IOS-client manifest and require an iOS User-Agent — without
-  // it googlevideo 403s every fragment. VOD URLs from TV_SIMPLY / WEB are
-  // signed to work from any UA, so we must NOT override UA for them.
+  // Live HLS URLs come from the IOS-client manifest and the segment URLs are
+  // signed against the *exact* request shape the IOS app would send: the
+  // iOS User-Agent string, and crucially, *no* Referer / Origin / Sec-CH-UA*
+  // client hints. If we add browser-style headers to those requests, YouTube
+  // 403s every fragment because the request no longer looks like an iOS app.
+  //
+  // VOD URLs from TV_SIMPLY / WEB_EMBEDDED are signed against a browser
+  // request and *do* expect a YouTube Referer + Origin; for those we keep
+  // the original Chromium UA and inject Referer / Origin.
+  //
+  // The primary live signal is {@link youtubeLiveSessionActive} (set by the
+  // resolver when it hands back an HLS URL); URL-substring patterns are a
+  // defensive fallback for late-arriving requests.
+  //
+  // IOS_USER_AGENT must match youtubei.js's Constants.CLIENTS.IOS.USER_AGENT
+  // verbatim — the manifest is signed against this exact string and any
+  // drift (older version, different device model, trailing semicolon, etc.)
+  // makes the segment server reject the URL.
   const IOS_USER_AGENT =
-    "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)";
+    "com.google.ios.youtube/20.11.6 (iPhone10,4; U; CPU iOS 16_7_7 like Mac OS X)";
+  const urlLooksLikeLiveSegment = (url) =>
+    url.includes("yt_live_broadcast") ||
+    url.includes("/source/yt_live") ||
+    url.includes("c=IOS") ||
+    url.includes("client=ios") ||
+    // Path-style live HLS segment markers used by the IOS manifest.
+    /\/videoplayback\/.+?\/index\.m3u8\//.test(url) ||
+    url.includes("/file/seg.ts");
   const needsIosUserAgent = (url) =>
     url.includes("googlevideo.com") &&
-    (url.includes("yt_live_broadcast") ||
-      url.includes("/source/yt_live") ||
-      url.includes("c=IOS") ||
-      url.includes("client=ios"));
+    (youtubeLiveSessionActive || urlLooksLikeLiveSegment(url));
+  const stripBrowserIdentityHeaders = (headers) => {
+    // Chromium fills in these on every fetch and leaks the real browser
+    // identity even after we override `User-Agent`. The iOS app never sends
+    // them, so YouTube's signed-URL validator on live segments rejects the
+    // request if they are present. Strip in-place.
+    const out = { ...headers };
+    for (const key of Object.keys(out)) {
+      const k = key.toLowerCase();
+      if (
+        k === "sec-ch-ua" ||
+        k.startsWith("sec-ch-ua-") ||
+        k === "sec-fetch-site" ||
+        k === "sec-fetch-mode" ||
+        k === "sec-fetch-dest" ||
+        k === "sec-fetch-user" ||
+        k === "referer" ||
+        k === "origin"
+      ) {
+        delete out[key];
+      }
+    }
+    return out;
+  };
   const injectGooglevideoHeaders = (details, callback) => {
     let requestHeaders = details.requestHeaders;
     if (details.url.includes("googlevideo.com")) {
-      const base = {
-        ...details.requestHeaders,
-        Referer: "https://www.youtube.com/",
-        Origin: "https://www.youtube.com",
-      };
-      requestHeaders = needsIosUserAgent(details.url)
-        ? { ...base, "User-Agent": IOS_USER_AGENT }
-        : base;
+      if (needsIosUserAgent(details.url)) {
+        // iOS-signed live segments: strip browser identity, then set iOS UA.
+        // NB: order matters — we strip first so a leftover lowercase
+        // "user-agent" from Chromium does not shadow our override.
+        const stripped = stripBrowserIdentityHeaders(details.requestHeaders);
+        for (const k of Object.keys(stripped)) {
+          if (k.toLowerCase() === "user-agent") delete stripped[k];
+        }
+        requestHeaders = { ...stripped, "User-Agent": IOS_USER_AGENT };
+      } else {
+        // VOD / browser-style googlevideo URLs need a YouTube Referer +
+        // Origin; UA stays as Chromium because the URL was signed for it.
+        requestHeaders = {
+          ...details.requestHeaders,
+          Referer: "https://www.youtube.com/",
+          Origin: "https://www.youtube.com",
+        };
+      }
     }
     callback({ requestHeaders });
   };
