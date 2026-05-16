@@ -1133,6 +1133,31 @@ const YOUTUBE_LIVE_INFO_CLIENTS = [
 ];
 
 /**
+ * Returns true when an audio adaptive format should be DROPPED from the DASH
+ * manifest. We keep all video-only formats, drop any audio format flagged as
+ * a dub/auto-dub/description/secondary, and drop formats whose `audio_track`
+ * metadata says it is not the default. The aim is to leave a single audio
+ * AdaptationSet (the speaker's original track), preventing both auto-dub
+ * playback and dash.js audio-track switching mid-playback.
+ */
+function shouldFilterOutAudioFormat(format) {
+  if (!format?.has_audio) return false;
+  if (format.has_video) return false; // keep combined formats untouched
+  if (
+    format.is_dubbed ||
+    format.is_auto_dubbed ||
+    format.is_descriptive ||
+    format.is_secondary
+  ) {
+    return true;
+  }
+  if (format.audio_track && format.audio_track.audio_is_default === false) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Resolves a YouTube URL to something the media window can play.
  * @returns {{ type: 'hls', url: string } | { type: 'progressive', url: string } | { type: 'dash', manifest: string }}
  */
@@ -1150,17 +1175,16 @@ async function handleResolveYouTubeStream(_event, url) {
       // options.client undefined so InnerTube uses the default client only.
       const info = await yt.getInfo(videoId, { client });
 
+      const isLive =
+        info.basic_info?.is_live === true ||
+        info.page?.[0]?.video_details?.is_live === true;
       let hlsUrl = info?.streaming_data?.hls_manifest_url;
-      if (hlsUrl) {
+      if (isLive && hlsUrl) {
         if (player) {
           hlsUrl = await player.decipher(hlsUrl);
         }
         return { type: "hls", url: hlsUrl };
       }
-
-      const isLive =
-        info.basic_info?.is_live === true ||
-        info.page?.[0]?.video_details?.is_live === true;
       if (isLive) {
         continue;
       }
@@ -1170,12 +1194,15 @@ async function handleResolveYouTubeStream(_event, url) {
       }
 
       try {
-        const format = info.chooseFormat({
+        const preferredFormat = info.chooseFormat({
           quality: "best",
           type: "video+audio",
           format: "mp4",
+          language: "original",
         });
-        const progressiveUrl = await format.decipher(player);
+        const progressiveUrl = preferredFormat?.decipher
+          ? await preferredFormat.decipher(player)
+          : preferredFormat?.url;
         if (progressiveUrl) {
           return { type: "progressive", url: progressiveUrl };
         }
@@ -1183,7 +1210,9 @@ async function handleResolveYouTubeStream(_event, url) {
         // No combined progressive format (typical for 1080p+); use DASH below.
       }
 
-      const manifest = await info.toDash({});
+      const manifest = await info.toDash({
+        format_filter: shouldFilterOutAudioFormat,
+      });
       if (manifest) {
         return { type: "dash", manifest };
       }
@@ -1355,7 +1384,12 @@ app.whenReady().then(async () => {
     "persist:ems-media-presentation",
   );
 
-  // Many googlevideo URLs expect a YouTube Referer; hls.js XHR does not send one by default.
+  // Many googlevideo URLs expect a YouTube Referer; hls.js XHR does not send
+  // one by default. youtubei.js generates URLs via its IOS client, which
+  // googlevideo cross-checks against an iOS-style User-Agent. Spoofing both
+  // here prevents 403s on every fragment fetch.
+  const IOS_USER_AGENT =
+    "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)";
   mediaPresentationSession.webRequest.onBeforeSendHeaders((details, callback) => {
     let requestHeaders = details.requestHeaders;
     if (details.url.includes("googlevideo.com")) {
@@ -1363,6 +1397,7 @@ app.whenReady().then(async () => {
         ...details.requestHeaders,
         Referer: "https://www.youtube.com/",
         Origin: "https://www.youtube.com",
+        "User-Agent": IOS_USER_AGENT,
       };
     }
     callback({ requestHeaders });
@@ -1380,6 +1415,22 @@ app.whenReady().then(async () => {
   };
 
   session.defaultSession.webRequest.onHeadersReceived(headersHandler);
+
+  // Mirror the googlevideo header spoof for the control window's stream preview
+  // (uses defaultSession). Without these headers, dash.js / hls.js fragment
+  // requests are rejected with 403 by YouTube's edge CDN.
+  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    let requestHeaders = details.requestHeaders;
+    if (details.url.includes("googlevideo.com")) {
+      requestHeaders = {
+        ...details.requestHeaders,
+        Referer: "https://www.youtube.com/",
+        Origin: "https://www.youtube.com",
+        "User-Agent": IOS_USER_AGENT,
+      };
+    }
+    callback({ requestHeaders });
+  });
   measurePerformance("Creating window", createWindow);
   if (isDevMode) {
     const appReadyTime = performance.now();

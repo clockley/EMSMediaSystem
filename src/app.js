@@ -4616,7 +4616,7 @@ async function createMediaWindow(options) {
         birth,
       ],
       preload: `${__dirname}/media_preload.min.js`,
-      devTools: false,
+      devTools: true,
     },
   };
 
