@@ -934,12 +934,10 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
     };
 
     const onResponse = (event, accepted) => {
-      const fromWin = BrowserWindow.fromWebContents(event.sender);
       if (
         !queueSwitchDialogWindow ||
         queueSwitchDialogWindow.isDestroyed() ||
-        !fromWin ||
-        fromWin.id !== queueSwitchDialogWindow.id
+        event.sender !== queueSwitchDialogWindow.webContents
       ) {
         return false;
       }
@@ -968,6 +966,7 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
       fullscreenable: false,
       frame: false,
       transparent: true,
+      acceptFirstMouse: true,
       show: false,
       skipTaskbar: true,
       title: "Switch presentation",
@@ -979,8 +978,11 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
         webviewTag: false,
         navigateOnDragDrop: false,
         spellcheck: false,
-        devTools: false,
-        preload: `${path.dirname(import.meta.dirname)}/src/queue_switch_dialog_preload.min.mjs`,
+        devTools: isDevMode,
+        preload: path.join(
+          import.meta.dirname,
+          "queue_switch_dialog_preload.min.mjs",
+        ),
       },
     });
 
