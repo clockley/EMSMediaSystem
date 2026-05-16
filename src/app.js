@@ -136,10 +136,39 @@ let pendingQueueClearPostClose = false;
 let queueClearUndoSnapshot = null;
 /** After reorder drop, ignore the synthetic click on the row. */
 let ignoreNextQueueItemClick = false;
+/** Last <video> element that received cubic waveshaper wiring. */
+let cubicWaveShaperAttachedVideo = null;
+
+/** Hidden host for the persistent <video id="preview"> across tab switches. */
+const PREVIEW_STASH_ID = "previewStash";
 
 function isQueueAutoAdvanceEnabled() {
   const el = document.getElementById("queueAutoAdvanceCtl");
   return !el || el.checked;
+}
+
+function isPlayInterruptedError(error) {
+  if (!error) return false;
+  const msg = typeof error.message === "string" ? error.message : "";
+  return (
+    error.name === "AbortError" ||
+    msg.includes("interrupted by a call to pause()")
+  );
+}
+
+async function playVideoSafely(mediaEl, context = "") {
+  if (!mediaEl || typeof mediaEl.play !== "function") return false;
+  try {
+    await mediaEl.play();
+    return true;
+  } catch (error) {
+    if (isPlayInterruptedError(error)) {
+      return false;
+    }
+    const suffix = context ? ` (${context})` : "";
+    console.error(`Failed to start playback${suffix}:`, error);
+    return false;
+  }
 }
 
 function classifyQueueMediaType(filePath) {
@@ -738,7 +767,31 @@ function previewShowsSameClipAsPath(filePath) {
   }
 }
 
+/**
+ * Resolve the persistent queue/presentation <video id="preview">, including
+ * when the operator has switched to another tab and the element lives in the
+ * preview stash. Queue auto-advance must keep working in that state (GNOME HIG:
+ * an ongoing presentation is not cancelled by changing views).
+ */
+function resolveQueuePresentationVideo() {
+  if (video?.isConnected) return video;
+  const stashed = document
+    .getElementById(PREVIEW_STASH_ID)
+    ?.querySelector("video#preview");
+  if (stashed) {
+    video = stashed;
+    return video;
+  }
+  const inDom = document.getElementById("preview");
+  if (inDom) {
+    video = inDom;
+    return video;
+  }
+  return null;
+}
+
 async function loadQueueItemIntoControlWindow(item, opts) {
+  resolveQueuePresentationVideo();
   const preservePreviewSeek = !opts || opts.preservePreviewSeek !== false;
   const isImgFile = isImg(item.path);
 
@@ -790,7 +843,9 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     audioOnlyFile =
       !!video.videoTracks && video.videoTracks.length === 0;
     if (audioOnlyFile) {
-      document.getElementById("customControls").style.visibility = "";
+      document
+        .getElementById("customControls")
+        ?.style.setProperty("visibility", "");
     }
   } else {
     audioOnlyFile = false;
@@ -799,6 +854,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
 }
 
 async function playCurrentQueueItem() {
+  resolveQueuePresentationVideo();
   mediaPlaybackEndedPending = false;
   itc = performance.now() * 0.001;
   const item = mediaQueue[currentQueueIndex];
@@ -1472,7 +1528,7 @@ function setupCustomMediaControls() {
     if (video.src === "") return;
 
     if (video.paused) {
-      await video.play();
+      await playVideoSafely(video, "custom controls toggle");
     } else {
       await video.pause();
     }
@@ -1532,13 +1588,17 @@ function setupCustomMediaControls() {
     // Pause playback for stable seeking
     video.pause();
   });
-  timeline.addEventListener("touchstart", () => {
-    if (!video.duration) return;
-    wasPlayingBeforeDrag = !video.paused;
-    isDragging = true;
-    // Pause playback for stable seeking
-    video.pause();
-  });
+  timeline.addEventListener(
+    "touchstart",
+    () => {
+      if (!video.duration) return;
+      wasPlayingBeforeDrag = !video.paused;
+      isDragging = true;
+      // Pause playback for stable seeking
+      video.pause();
+    },
+    { passive: true },
+  );
 
   // Seek immediately on 'input' for live frame updates
   timeline.addEventListener("input", () => {
@@ -1555,7 +1615,10 @@ function setupCustomMediaControls() {
 
     if (wasPlayingBeforeDrag) {
       // Use .catch() for promise errors if browser auto-play is blocked (common with video.play())
-      video.play().catch((e) => modeChangeFixups(e));
+      video.play().catch((e) => {
+        if (isPlayInterruptedError(e)) return;
+        modeChangeFixups(e);
+      });
     }
   });
 
@@ -1611,7 +1674,7 @@ function setupCustomMediaControls() {
 
         if (!isControl) {
           if (video.paused) {
-            video.play();
+            void playVideoSafely(video, "preview click toggle");
           } else {
             video.pause();
           }
@@ -1649,9 +1712,13 @@ function setupGtkVolumeControl() {
     volumePopupOpen = true;
   });
 
-  slider.addEventListener("touchstart", () => {
-    volumePopupOpen = true;
-  });
+  slider.addEventListener(
+    "touchstart",
+    () => {
+      volumePopupOpen = true;
+    },
+    { passive: true },
+  );
 
   // Initialize slider value based on current video volume (or 100 if undefined)
   slider.value = Math.round((video.volume || 1) * 100);
@@ -2273,7 +2340,7 @@ async function handlePlaybackState(event, playbackState) {
   if (playbackState.playing && video.paused) {
     masterPauseState = false;
     if (video && !isImg(mediaFile)) {
-      await video.play();
+      await playVideoSafely(video, "playback state sync");
     }
   } else if (!playbackState.playing && !video.paused) {
     masterPauseState = true;
@@ -2400,7 +2467,7 @@ async function handleMediaWindowClosed(event, id) {
       startTime = 0;
       targetTime = 0;
       video.currentTime = 0;
-      video.play();
+      await playVideoSafely(video, "loop restart after window close");
       await createMediaWindow();
       return;
     }
@@ -2441,6 +2508,7 @@ function isAudioFile() {
 }
 
 function handleMediaPlayback(isImgFile) {
+  if (!video) return;
   if (!isImgFile) {
     if (video.src !== "") {
       waitForMetadata().then(isAudioFile);
@@ -2450,30 +2518,32 @@ function handleMediaPlayback(isImgFile) {
 }
 
 function handleImageDisplay(isImgFile, imgEle) {
+  const previewEl = document.getElementById("preview");
   if (imgEle && !isImgFile) {
     imgEle.remove();
     imgEle.src = "";
-    document.getElementById("preview").style.display = "";
-  } else if (isImgFile) {
+    if (previewEl) previewEl.style.display = "";
+  } else if (isImgFile && video) {
     resetPreviewWarningState();
     if (imgEle) {
       imgEle.src = mediaFile;
     } else {
-      if ((imgEle = document.querySelector("img")) !== null) {
+      if ((imgEle = document.querySelector("img#preview")) !== null) {
         imgEle.remove();
         imgEle.src = "";
       }
       video.removeAttribute("src");
       video.load();
       img = document.createElement("img");
-      const overlay = document.getElementById("customControls");
-      overlay.style.visibility = "hidden";
+      document
+        .getElementById("customControls")
+        ?.style.setProperty("visibility", "hidden");
       img.src = mediaFile;
       img.setAttribute("id", "preview");
-      if (!document.getElementById("preview")) {
-        document.getElementById("preview").style.display = "none";
+      if (previewEl) {
+        previewEl.style.display = "none";
+        previewEl.parentNode?.appendChild(img);
       }
-      document.getElementById("preview").parentNode.appendChild(img);
     }
   }
 }
@@ -2827,7 +2897,7 @@ async function playMedia(e) {
       addFilenameToTitlebar(normalizedPathname);
       isPlaying = true;
       playingMediaAudioOnly = true;
-      video.play();
+      void playVideoSafely(video, "audio-only local start");
       updateTimestamp();
       return;
     }
@@ -3291,7 +3361,6 @@ async function setSBFormTextPlayer() {
  * keeps firing, and seek/pause/play in the preview keeps driving the
  * projection window the same way it did before the tab switch.
  */
-const PREVIEW_STASH_ID = "previewStash";
 
 function getOrCreatePreviewStash() {
   let stash = document.getElementById(PREVIEW_STASH_ID);
@@ -3535,7 +3604,10 @@ function setSBFormMediaPlayer() {
   }
   invoke("get-platform")
     .then((operatingSystem) => {
-      attachCubicWaveShaper(video, undefined, undefined, operatingSystem);
+      if (video && video !== cubicWaveShaperAttachedVideo) {
+        attachCubicWaveShaper(video, undefined, undefined, operatingSystem);
+        cubicWaveShaperAttachedVideo = video;
+      }
     })
     .catch((error) => {
       console.error("Failed to get platform, skipping audio setup:", error);
@@ -3561,7 +3633,7 @@ function setSBFormMediaPlayer() {
   if (document.getElementById("preview").parentNode !== null) {
     if (!masterPauseState && video !== null && !video.paused) {
       if (!isImg(mediaFile)) {
-        video.play();
+        void playVideoSafely(video, "resume after media tab switch");
       }
     }
     if (video !== null) {
@@ -3577,7 +3649,7 @@ function setSBFormMediaPlayer() {
         if (video) {
           if (targetTime !== null) {
             if (!masterPauseState && !isImgFile) {
-              video.play();
+              void playVideoSafely(video, "restore active media preview");
             }
           }
         }
@@ -4083,17 +4155,10 @@ function endLocalMedia() {
     isQueuePlaying &&
     !isActiveMediaWindow() &&
     playingMediaAudioOnly &&
-    currentMode === MEDIAPLAYER &&
     video &&
     !video.loop;
 
-  if (
-    isQueuePlaying &&
-    isActiveMediaWindow() &&
-    video &&
-    !video.loop &&
-    currentMode === MEDIAPLAYER
-  ) {
+  if (isQueuePlaying && isActiveMediaWindow() && video && !video.loop) {
     mediaPlaybackEndedPending = true;
   }
   isPlaying = false;
@@ -4128,7 +4193,7 @@ function endLocalMedia() {
   send("localMediaState", 0, "stop");
   send("close-media-window", 0);
   removeFilenameFromTitlebar();
-  video.pause();
+  video?.pause();
   masterPauseState = false;
   resetPIDOnSeek();
   localTimeStampUpdateIsRunning = false;
@@ -4179,7 +4244,7 @@ function pauseLocalMedia(event) {
   }
   if (event.target.clientHeight === 0) {
     event.preventDefault();
-    event.target.play(); //continue to play even if detached
+    void playVideoSafely(event.target, "detached media element resume");
     return;
   }
   if (video.src === "") {
@@ -4473,14 +4538,19 @@ async function createMediaWindow(options) {
   if (seekOnly) {
     itc = performance.now() * 0.001;
   }
+  const isQueuePlaybackContext =
+    isQueuePlaying &&
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length;
   const ts = await invoke("get-system-time");
   let birth =
     ts.systemTime +
     (Date.now() - ts.ipcTimestamp) * 0.001 +
     (performance.now() * 0.001 - itc) +
     "";
-  mediaFile =
-    currentMode === STREAMPLAYER
+  mediaFile = isQueuePlaybackContext
+    ? mediaQueue[currentQueueIndex].path
+    : currentMode === STREAMPLAYER
       ? document.getElementById("mdFile").value
       : mediaPlayerInputState.filePaths[0];
   var liveStreamMode = isLiveStream(mediaFile);
@@ -4512,11 +4582,15 @@ async function createMediaWindow(options) {
     playingMediaAudioOnly = false;
   }
   let strtVl = 0;
-  if (currentMode === MEDIAPLAYER) {
+  if (isQueuePlaybackContext || currentMode === MEDIAPLAYER) {
     strtVl = video.volume;
   } else {
     strtVl = streamVolume;
   }
+  const autoPlayCtl = document.getElementById("autoPlayCtl");
+  const autoPlayEnabled = isQueuePlaybackContext || !!autoPlayCtl?.checked;
+  const autoPlayExplicitlyDisabled =
+    !isQueuePlaybackContext && autoPlayCtl && !autoPlayCtl.checked;
 
   if (liveStreamMode === false && video !== null) {
     startTime = video.currentTime;
@@ -4537,7 +4611,7 @@ async function createMediaWindow(options) {
         video.loop ? "__media-loop=true" : "",
         liveStreamMode ? "__live-stream=" + liveStreamMode : "",
         isImgFile ? "__isImg" : "",
-        `__autoplay=${document.getElementById("autoPlayCtl")?.checked !== undefined && document.getElementById("autoPlayCtl").checked}`,
+        `__autoplay=${autoPlayEnabled}`,
         seekOnly ? "__seek-only" : "",
         birth,
       ],
@@ -4573,23 +4647,17 @@ async function createMediaWindow(options) {
     }
     video.muted = false;
   }
-  if (
-    document.getElementById("autoPlayCtl")?.checked !== undefined &&
-    document.getElementById("autoPlayCtl").checked
-  ) {
+  if (autoPlayEnabled) {
     pidSeeking = true;
     unPauseMedia();
-    if (currentMode !== STREAMPLAYER) {
+    if (isQueuePlaybackContext || currentMode !== STREAMPLAYER) {
       if (video !== null && !isImgFile) {
         pidSeeking = true;
-        await video.play();
+        await playVideoSafely(video, "media-window autoplay");
       }
     }
   }
-  if (
-    document.getElementById("autoPlayCtl")?.checked !== undefined &&
-    !document.getElementById("autoPlayCtl").checked
-  ) {
+  if (autoPlayExplicitlyDisabled) {
     pauseMedia();
     await video.pause();
   }
