@@ -1111,8 +1111,15 @@ async function getInnertube() {
       const { Innertube, Platform } = await import("youtubei.js");
       installYoutubePlayerEval(Platform);
       const po = process.env.EMS_YOUTUBE_PO_TOKEN?.trim();
+      // Use Chromium's network stack (same as renderer playback) so any
+      // YouTube signed URL decisions are based on the same egress behavior
+      // as subsequent media segment requests.
+      const sessionFetch =
+        mediaPresentationSession?.fetch?.bind(mediaPresentationSession) ??
+        session.defaultSession?.fetch?.bind(session.defaultSession);
       return Innertube.create({
         generate_session_locally: true,
+        ...(sessionFetch ? { fetch: sessionFetch } : {}),
         ...(po ? { po_token: po } : {}),
       });
     })().catch((err) => {
@@ -1124,12 +1131,29 @@ async function getInnertube() {
   return innertubePromise;
 }
 
-/** Clients to try for live HLS; order favors iOS-style manifests, then fallbacks. */
+/** Clients to try for live HLS; IOS-first because its manifest works with the iOS UA spoof. */
 const YOUTUBE_LIVE_INFO_CLIENTS = [
   "IOS",
   "ANDROID_VR",
   "WEB",
   "ANDROID",
+];
+
+/**
+ * Clients to try for VOD playback. {@code TV_SIMPLY} (TVHTML5 simply embedded
+ * player) is preferred because its signed URLs are not bound to a specific
+ * IP / User-Agent the way IOS / ANDROID URLs are, so dash.js fetches from
+ * the Electron renderer aren't 403'd by googlevideo. {@code WEB_EMBEDDED}
+ * and {@code MWEB} are close-enough fallbacks; raw {@code IOS} is last
+ * because its URLs trigger 403s once the renderer's source IP or UA differs
+ * from what the manifest was signed against.
+ */
+const YOUTUBE_VOD_INFO_CLIENTS = [
+  "TV_SIMPLY",
+  "WEB_EMBEDDED",
+  "MWEB",
+  "ANDROID_VR",
+  "IOS",
 ];
 
 /**
@@ -1168,24 +1192,37 @@ async function handleResolveYouTubeStream(_event, url) {
   }
   const yt = await getInnertube();
   const player = yt.session?.player;
+
+  // Probe with WEB first to cheaply learn live vs VOD; pick the right client
+  // list, then iterate to find a playable stream.
+  let isLive = false;
+  try {
+    const probe = await yt.getBasicInfo(videoId).catch(() => null);
+    isLive =
+      probe?.basic_info?.is_live === true ||
+      probe?.page?.[0]?.video_details?.is_live === true;
+  } catch {
+    // Fall through; treat as VOD by default and let the per-client loop sort it out.
+  }
+
+  const clients = isLive ? YOUTUBE_LIVE_INFO_CLIENTS : YOUTUBE_VOD_INFO_CLIENTS;
   let lastError = null;
-  for (const client of YOUTUBE_LIVE_INFO_CLIENTS) {
+  for (const client of clients) {
     try {
-      // Second argument must be { client: '...' }. Passing a string leaves
-      // options.client undefined so InnerTube uses the default client only.
       const info = await yt.getInfo(videoId, { client });
 
-      const isLive =
+      const liveAccordingToClient =
         info.basic_info?.is_live === true ||
         info.page?.[0]?.video_details?.is_live === true;
-      let hlsUrl = info?.streaming_data?.hls_manifest_url;
-      if (isLive && hlsUrl) {
-        if (player) {
-          hlsUrl = await player.decipher(hlsUrl);
+
+      if (liveAccordingToClient) {
+        let hlsUrl = info?.streaming_data?.hls_manifest_url;
+        if (hlsUrl) {
+          if (player) {
+            hlsUrl = await player.decipher(hlsUrl);
+          }
+          return { type: "hls", url: hlsUrl };
         }
-        return { type: "hls", url: hlsUrl };
-      }
-      if (isLive) {
         continue;
       }
 
@@ -1384,24 +1421,38 @@ app.whenReady().then(async () => {
     "persist:ems-media-presentation",
   );
 
-  // Many googlevideo URLs expect a YouTube Referer; hls.js XHR does not send
-  // one by default. youtubei.js generates URLs via its IOS client, which
-  // googlevideo cross-checks against an iOS-style User-Agent. Spoofing both
-  // here prevents 403s on every fragment fetch.
+  // Many googlevideo URLs expect a YouTube Referer; hls.js / dash.js XHRs
+  // do not send one by default.
+  //
+  // Live HLS URLs (path-based signing, contain "yt_live_broadcast" or "c=IOS")
+  // come from the IOS-client manifest and require an iOS User-Agent — without
+  // it googlevideo 403s every fragment. VOD URLs from TV_SIMPLY / WEB are
+  // signed to work from any UA, so we must NOT override UA for them.
   const IOS_USER_AGENT =
     "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)";
-  mediaPresentationSession.webRequest.onBeforeSendHeaders((details, callback) => {
+  const needsIosUserAgent = (url) =>
+    url.includes("googlevideo.com") &&
+    (url.includes("yt_live_broadcast") ||
+      url.includes("/source/yt_live") ||
+      url.includes("c=IOS") ||
+      url.includes("client=ios"));
+  const injectGooglevideoHeaders = (details, callback) => {
     let requestHeaders = details.requestHeaders;
     if (details.url.includes("googlevideo.com")) {
-      requestHeaders = {
+      const base = {
         ...details.requestHeaders,
         Referer: "https://www.youtube.com/",
         Origin: "https://www.youtube.com",
-        "User-Agent": IOS_USER_AGENT,
       };
+      requestHeaders = needsIosUserAgent(details.url)
+        ? { ...base, "User-Agent": IOS_USER_AGENT }
+        : base;
     }
     callback({ requestHeaders });
-  });
+  };
+  mediaPresentationSession.webRequest.onBeforeSendHeaders(
+    injectGooglevideoHeaders,
+  );
 
   // COOP + COEP for the main renderer only (SharedArrayBuffer / high-res timers).
   // Do not attach this to mediaPresentationSession.
@@ -1416,21 +1467,12 @@ app.whenReady().then(async () => {
 
   session.defaultSession.webRequest.onHeadersReceived(headersHandler);
 
-  // Mirror the googlevideo header spoof for the control window's stream preview
-  // (uses defaultSession). Without these headers, dash.js / hls.js fragment
-  // requests are rejected with 403 by YouTube's edge CDN.
-  session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    let requestHeaders = details.requestHeaders;
-    if (details.url.includes("googlevideo.com")) {
-      requestHeaders = {
-        ...details.requestHeaders,
-        Referer: "https://www.youtube.com/",
-        Origin: "https://www.youtube.com",
-        "User-Agent": IOS_USER_AGENT,
-      };
-    }
-    callback({ requestHeaders });
-  });
+  // Mirror the googlevideo header injection for the control window's stream
+  // preview (uses defaultSession). Same conditional UA logic as the
+  // presentation session: iOS UA only for live broadcast URLs.
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    injectGooglevideoHeaders,
+  );
   measurePerformance("Creating window", createWindow);
   if (isDevMode) {
     const appReadyTime = performance.now();

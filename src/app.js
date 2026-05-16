@@ -4225,6 +4225,11 @@ function pauseLocalMedia(event) {
     return;
   }
   if (!event.target.isConnected) {
+    // If the user explicitly stopped the presentation, let the pause stand.
+    // `playMedia` clears `isPlaying` *before* calling `video.pause()`, so an
+    // unset `isPlaying` here means this pause event came from Stop, not from
+    // an incidental DOM reattachment during a tab switch.
+    if (!isPlaying) return;
     if (!isActiveMediaWindow() && playingMediaAudioOnly === false) {
       return;
     }
@@ -4243,6 +4248,12 @@ function pauseLocalMedia(event) {
     return;
   }
   if (event.target.clientHeight === 0) {
+    // The Streams tab hosts the persistent <video> inside a wrapper with
+    // `display: none`, so its `clientHeight` is always 0 there. Without this
+    // guard, clicking Stop Presentation while on the Streams tab with an
+    // audio-only file playing would re-trigger playback immediately, because
+    // this branch was treating "hidden" as "incidentally detached, resume it".
+    if (!isPlaying) return;
     event.preventDefault();
     void playVideoSafely(event.target, "detached media element resume");
     return;
