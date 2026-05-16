@@ -19,24 +19,46 @@ function respond(accepted) {
 
 contextBridge.exposeInMainWorld("queueSwitchDialog", { respond });
 
+let queueSwitchDialogButtonsWired = false;
+
 function wireDialogButtons() {
-  document
-    .getElementById("queue_switch_dialog_cancel")
-    ?.addEventListener("click", () => {
-      void respond(false);
-    });
-  document
-    .getElementById("queue_switch_dialog_confirm")
-    ?.addEventListener("click", () => {
-      void respond(true);
-    });
-  document.querySelector(".window-control.close")?.addEventListener("click", () => {
+  if (queueSwitchDialogButtonsWired) {
+    return;
+  }
+  const cancel = document.getElementById("queue_switch_dialog_cancel");
+  const confirm = document.getElementById("queue_switch_dialog_confirm");
+  const closeBtn = document.querySelector(".window-control.close");
+  if (!cancel || !confirm) {
+    return;
+  }
+  queueSwitchDialogButtonsWired = true;
+
+  cancel.addEventListener("click", () => {
+    void respond(false);
+  });
+  confirm.addEventListener("click", () => {
+    void respond(true);
+  });
+  closeBtn?.addEventListener("click", () => {
     void respond(false);
   });
 }
 
-if (document.readyState === "loading") {
-  window.addEventListener("DOMContentLoaded", wireDialogButtons, { once: true });
-} else {
+function wireDialogButtonsWhenReady() {
   wireDialogButtons();
+  if (!queueSwitchDialogButtonsWired) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", wireDialogButtons, {
+        once: true,
+      });
+    }
+    requestAnimationFrame(() => {
+      wireDialogButtons();
+      if (!queueSwitchDialogButtonsWired) {
+        setTimeout(wireDialogButtons, 0);
+      }
+    });
+  }
 }
+
+wireDialogButtonsWhenReady();

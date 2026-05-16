@@ -916,9 +916,13 @@ function createAboutWindow(parentWindow) {
 function createQueueSwitchDialogWindow(parentWindow, message) {
   return new Promise((resolve) => {
     if (queueSwitchDialogWindow && !queueSwitchDialogWindow.isDestroyed()) {
-      queueSwitchDialogWindow.focus();
-      resolve(false);
-      return;
+      if (!queueSwitchDialogWindow.webContents.isDestroyed()) {
+        queueSwitchDialogWindow.focus();
+        queueSwitchDialogWindow.webContents.focus();
+        resolve(false);
+        return;
+      }
+      queueSwitchDialogWindow = null;
     }
 
     let resolved = false;
@@ -933,14 +937,17 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
       resolve(accepted === true);
     };
 
-    const onResponse = (event, accepted) => {
-      if (
-        !queueSwitchDialogWindow ||
-        queueSwitchDialogWindow.isDestroyed() ||
-        event.sender !== queueSwitchDialogWindow.webContents
-      ) {
+    const onResponse = (_event, accepted) => {
+      if (resolved) {
+        return true;
+      }
+      const dlg = queueSwitchDialogWindow;
+      if (!dlg || dlg.isDestroyed()) {
         return false;
       }
+      // Do not compare event.sender to webContents — on some platforms that
+      // identity check fails sporadically, so finish() never runs and the main
+      // process invoke("show_queue_switch_dialog") hangs with dead buttons.
       finish(accepted === true);
       if (!queueSwitchDialogWindow.isDestroyed()) {
         queueSwitchDialogWindow.close();
