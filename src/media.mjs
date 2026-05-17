@@ -194,6 +194,53 @@ function ensurePreferredDashAudioTrack(player, maxAttempts = 25) {
   }, 200);
 }
 
+async function applySlipstream(data) {
+  mediaFile = data.mediaFile;
+  loopFile = !!data.loopFile;
+  isImg = !!data.isImg;
+
+  if (isImg) {
+    try {
+      video.pause();
+    } catch {
+      /* element may already be paused-at-end */
+    }
+    video.removeAttribute("src");
+    video.load();
+    document.querySelector("video").style.display = "none";
+
+    if (!img) {
+      img = document.createElement("img");
+      img.setAttribute("id", "bigPlayer");
+      document.body.appendChild(img);
+    }
+    img.src = mediaFile;
+    img.style.display = "block";
+    return;
+  }
+
+  if (img) {
+    img.style.display = "none";
+  }
+
+  const videoEl = document.querySelector("video");
+  video.loop = loopFile;
+  if (data.startVolume != null) {
+    video.volume = data.startVolume;
+  }
+  // Per HTML5 spec, assigning to .src aborts the current load and resets the
+  // media element. Don't call removeAttribute("src") + load() here — that
+  // briefly puts the element in NETWORK_EMPTY and races the new src assignment.
+  video.src = mediaFile;
+  videoEl.style.display = "block";
+  if (data.startTime) {
+    video.currentTime = data.startTime;
+  }
+  await video.play().catch(() => {});
+}
+
+window.emsApplySlipstream = applySlipstream;
+
 function installICPHandlers() {
   if (!streamActsAsLiveEdge) {
     ipcRenderer.on("timeGoto-message", function (evt, message) {
@@ -220,6 +267,10 @@ function installICPHandlers() {
   ipcRenderer.on("vlcl", function (evt, message) {
     video.volume = message;
   });
+
+  ipcRenderer.on("slipstream", async (event, data) => {
+    await applySlipstream(data);
+  });
 }
 
 function sendRemainingTime(video) {
@@ -234,6 +285,7 @@ function sendRemainingTime(video) {
         video.duration,
         video.currentTime,
         Date.now() + (currentTime - performance.now()),
+        mediaFile,
       ]);
       lastTime = currentTime;
     }
@@ -327,6 +379,10 @@ async function loadMedia() {
   textCanvas.style.display = "none";
 
   if (isImg) {
+    // Slipstream still needs to work when the first queue item is an image
+    // (e.g. image -> video). Install the IPC listeners before the early return
+    // so the "slipstream" message can swap us into a video later.
+    installICPHandlers();
     img = document.createElement("img");
     img.src = mediaFile;
     img.setAttribute("id", "bigPlayer");
@@ -426,8 +482,8 @@ async function loadMedia() {
 
   video.onended = () => {
     if (loopFile) return;
-    ipcRenderer.send("media-playback-ended");
-    window.close();
+    video.style.display = "none";
+    ipcRenderer.send("media-playback-ended", mediaFile);
   };
 
   if (!streamActsAsLiveEdge) {
