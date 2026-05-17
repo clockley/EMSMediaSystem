@@ -722,6 +722,7 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
   el.volume = 0;
   el.preload = "metadata";
   el.removeAttribute("src");
+  el.removeAttribute("poster");
   el.load();
   el.src = pathToMediaUrl(item.path);
   el.load();
