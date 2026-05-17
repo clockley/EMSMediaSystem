@@ -1265,6 +1265,7 @@ function removeFromQueue(index) {
     // countdown overlay back to the live media (image: hidden;
     // audio/video: repainted with live time).
     restoreCountdownForLiveMedia();
+    syncPlayPauseIconToControlMedia();
   } else if (previewCueIndex > index) {
     previewCueIndex--;
     // Keep the cue overlay's index in sync with the shifted cue index so
@@ -1483,6 +1484,8 @@ async function restorePreviewToLiveOutput(index) {
   syncPreviewAudioTrackState();
   updatePreviewCueUI();
   renderQueue();
+
+  syncPlayPauseIconToControlMedia();
 }
 
 async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
@@ -2749,6 +2752,35 @@ function refreshLiveAudioControls() {
     }
   }
   playPauseIcon.innerHTML = liveAudio.paused
+    ? `<path d="M8 5v14l11-7z"/>`
+    : `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
+}
+
+/**
+ * Custom controls tie the scrubber / glyph to cue vs mirror vs liveAudio
+ * ({@link getPreviewControlMediaElement}, same ranking as setupCustomMediaControls).
+ * Routing can change without a play/pause on the new element (e.g. mirror kept
+ * playing under a cue), so callers that dismiss the cue must refresh the glyph.
+ */
+function syncPlayPauseIconToControlMedia() {
+  if (currentMode !== MEDIAPLAYER) return;
+  const glyph = document.getElementById("playPauseIcon");
+  if (!glyph) return;
+
+  resolveQueuePresentationVideo();
+  let mediaEl = getPreviewControlMediaElement();
+  if (
+    mediaEl === video &&
+    liveAudioQueueIndex >= 0 &&
+    liveAudio &&
+    liveAudio.src &&
+    liveAudio.src !== ""
+  ) {
+    mediaEl = liveAudio;
+  }
+  if (!mediaEl?.src || mediaEl.src === "") return;
+
+  glyph.innerHTML = mediaEl.paused
     ? `<path d="M8 5v14l11-7z"/>`
     : `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
 }
