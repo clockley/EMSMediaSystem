@@ -192,6 +192,9 @@ let cubicWaveShaperAttachedVideo = null;
 
 /** Hidden host for the persistent <video id="preview"> across tab switches. */
 const PREVIEW_STASH_ID = "previewStash";
+/** Persistent tab shells under `#dyneForm` — built once, shown/hidden per tab. */
+const TAB_PANEL_MEDIA_ID = "tab-panel-media";
+const TAB_PANEL_STREAMS_ID = "tab-panel-streams";
 
 function isQueueAutoAdvanceEnabled() {
   const el = document.getElementById("queueAutoAdvanceCtl");
@@ -1383,14 +1386,16 @@ function installMediaQueueListDelegation() {
 }
 
 function installCueButtonHandlers() {
-  document
-    .getElementById("cueCurrentPositionBtn")
-    ?.addEventListener("click", cueFromCurrentPosition);
-  document
-    .getElementById("playCueNowBtn")
-    ?.addEventListener("click", () => {
-      void playCueNow().catch((err) => console.error(err));
-    });
+  const cueBtn = document.getElementById("cueCurrentPositionBtn");
+  const playNowBtn = document.getElementById("playCueNowBtn");
+  if (!cueBtn || cueBtn.dataset.handlersBound === "1") {
+    return;
+  }
+  cueBtn.dataset.handlersBound = "1";
+  cueBtn.addEventListener("click", cueFromCurrentPosition);
+  playNowBtn?.addEventListener("click", () => {
+    void playCueNow().catch((err) => console.error(err));
+  });
 }
 
 /**
@@ -2826,6 +2831,10 @@ function setupCustomMediaControls() {
   // on the document-level mouseup/touchend fall-through handlers.
   if (setupCustomMediaControls.controller) {
     try {
+      if (setupCustomMediaControls.mouseLeaveFocusTimer != null) {
+        window.clearTimeout(setupCustomMediaControls.mouseLeaveFocusTimer);
+        setupCustomMediaControls.mouseLeaveFocusTimer = null;
+      }
       setupCustomMediaControls.controller.abort();
     } catch {
       /* already aborted */
@@ -2914,62 +2923,80 @@ function setupCustomMediaControls() {
     disableTabFocus();
 
     // 2. Event Handlers: Use mouseenter/mouseleave to control the tabindex.
-    videoWrapper.addEventListener("mouseenter", () => {
-      enableTabFocus();
-    });
+    // These MUST use `signal` so tab switches (which call setup again) do not
+    // stack duplicate handlers — without it, switching Media ↔ Streams every
+    // few seconds leaks listeners and eventually makes the UI feel sluggish.
+    videoWrapper.addEventListener(
+      "mouseenter",
+      () => {
+        if (setupCustomMediaControls.mouseLeaveFocusTimer != null) {
+          window.clearTimeout(setupCustomMediaControls.mouseLeaveFocusTimer);
+          setupCustomMediaControls.mouseLeaveFocusTimer = null;
+        }
+        enableTabFocus();
+      },
+      sig,
+    );
 
-    videoWrapper.addEventListener("mouseleave", () => {
-      // Wait for the CSS fade-out animation (250ms) to complete before
-      // removing the elements from the tab order. Use a small buffer (e.g., 300ms).
-      setTimeout(() => {
-        disableTabFocus();
-        closeVolumePopup();
-      }, 300);
-    });
+    videoWrapper.addEventListener(
+      "mouseleave",
+      () => {
+        setupCustomMediaControls.mouseLeaveFocusTimer = window.setTimeout(() => {
+          setupCustomMediaControls.mouseLeaveFocusTimer = null;
+          disableTabFocus();
+          closeVolumePopup();
+        }, 300);
+      },
+      sig,
+    );
   }
 
   // --- PLAY / PAUSE ---
-  playPauseBtn.addEventListener("click", async () => {
-    const mediaEl = currentControlMedia();
-    if (!mediaEl || mediaEl.src === "") return;
+  playPauseBtn.addEventListener(
+    "click",
+    async () => {
+      const mediaEl = currentControlMedia();
+      if (!mediaEl || mediaEl.src === "") return;
 
-    if (mediaEl.paused) {
-      // When an audio item is cued silently (previewAudio is the control
-      // element) and a presentation is already live, pressing play should
-      // take the cued audio live — the silent muted preview is otherwise
-      // a no-op from the operator's perspective.
-      if (
-        mediaEl === previewAudio &&
-        (isActiveMediaWindow() || isLocalAppWindowPresentationActive())
-      ) {
-        const cue = currentPreviewCue();
-        if (cue) {
-          void takeQueueItemLive(cue.index, cue.startTime);
+      if (mediaEl.paused) {
+        // When an audio item is cued silently (previewAudio is the control
+        // element) and a presentation is already live, pressing play should
+        // take the cued audio live — the silent muted preview is otherwise
+        // a no-op from the operator's perspective.
+        if (
+          mediaEl === previewAudio &&
+          (isActiveMediaWindow() || isLocalAppWindowPresentationActive())
+        ) {
+          const cue = currentPreviewCue();
+          if (cue) {
+            void takeQueueItemLive(cue.index, cue.startTime);
+            return;
+          }
+        }
+        // When the current control element is the preview <video> with an
+        // audio-only file and no live presentation is running, treat the play
+        // button as the headerbar "Present" action. Route audio through
+        // liveAudio (the dedicated live output element) rather than playing
+        // the preview video directly — identical to clicking Present.
+        if (
+          mediaEl === video &&
+          !isLocalAppWindowPresentationActive() &&
+          (audioOnlyFile ||
+            mediaElementLoadedAudioOnly(
+              video,
+              mediaFile || removeFileProtocol(decodeURI(video.src)),
+            ))
+        ) {
+          void playMedia();
           return;
         }
+        await playVideoSafely(mediaEl, "custom controls toggle");
+      } else {
+        await mediaEl.pause();
       }
-      // When the current control element is the preview <video> with an
-      // audio-only file and no live presentation is running, treat the play
-      // button as the headerbar "Present" action. Route audio through
-      // liveAudio (the dedicated live output element) rather than playing
-      // the preview video directly — identical to clicking Present.
-      if (
-        mediaEl === video &&
-        !isLocalAppWindowPresentationActive() &&
-        (audioOnlyFile ||
-          mediaElementLoadedAudioOnly(
-            video,
-            mediaFile || removeFileProtocol(decodeURI(video.src)),
-          ))
-      ) {
-        void playMedia();
-        return;
-      }
-      await playVideoSafely(mediaEl, "custom controls toggle");
-    } else {
-      await mediaEl.pause();
-    }
-  });
+    },
+    sig,
+  );
 
   video.addEventListener(
     "play",
@@ -3078,14 +3105,18 @@ function setupCustomMediaControls() {
   }
 
   // --- DRAGGING THE TIMELINE (HYBRID LIVE SCRUBBING) ---
-  timeline.addEventListener("mousedown", () => {
-    const mediaEl = currentControlMedia();
-    if (!mediaEl?.duration) return;
-    wasPlayingBeforeDrag = !mediaEl.paused;
-    isDragging = true;
-    // Pause playback for stable seeking
-    mediaEl.pause();
-  });
+  timeline.addEventListener(
+    "mousedown",
+    () => {
+      const mediaEl = currentControlMedia();
+      if (!mediaEl?.duration) return;
+      wasPlayingBeforeDrag = !mediaEl.paused;
+      isDragging = true;
+      // Pause playback for stable seeking
+      mediaEl.pause();
+    },
+    sig,
+  );
   timeline.addEventListener(
     "touchstart",
     () => {
@@ -3096,37 +3127,45 @@ function setupCustomMediaControls() {
       // Pause playback for stable seeking
       mediaEl.pause();
     },
-    { passive: true },
+    { passive: true, signal: controller.signal },
   );
 
   // Seek immediately on 'input' for live frame updates
-  timeline.addEventListener("input", () => {
-    const mediaEl = currentControlMedia();
-    if (!mediaEl?.duration) return;
-    const seekTime = (timeline.value / 100) * mediaEl.duration;
-    const seekToken = ++timelineSeekToken;
+  timeline.addEventListener(
+    "input",
+    () => {
+      const mediaEl = currentControlMedia();
+      if (!mediaEl?.duration) return;
+      const seekTime = (timeline.value / 100) * mediaEl.duration;
+      const seekToken = ++timelineSeekToken;
 
-    currentTimeDisplay.textContent = fmt(seekTime);
-    void seekMedia(mediaEl, seekTime).then((actualTime) => {
-      if (seekToken !== timelineSeekToken) return;
-      currentTimeDisplay.textContent = fmt(actualTime);
-      if (isPreparingSeparateCue()) {
-        setCueStartTime(previewCueIndex, actualTime);
-      }
-    });
-  });
-
-  timeline.addEventListener("change", () => {
-    isDragging = false;
-
-    if (wasPlayingBeforeDrag) {
-      // Use .catch() for promise errors if browser auto-play is blocked (common with video.play())
-      currentControlMedia()?.play().catch((e) => {
-        if (isPlayInterruptedError(e)) return;
-        modeChangeFixups(e);
+      currentTimeDisplay.textContent = fmt(seekTime);
+      void seekMedia(mediaEl, seekTime).then((actualTime) => {
+        if (seekToken !== timelineSeekToken) return;
+        currentTimeDisplay.textContent = fmt(actualTime);
+        if (isPreparingSeparateCue()) {
+          setCueStartTime(previewCueIndex, actualTime);
+        }
       });
-    }
-  });
+    },
+    sig,
+  );
+
+  timeline.addEventListener(
+    "change",
+    () => {
+      isDragging = false;
+
+      if (wasPlayingBeforeDrag) {
+        // Use .catch() for promise errors if browser auto-play is blocked (common with video.play())
+        currentControlMedia()?.play().catch((e) => {
+          if (isPlayInterruptedError(e)) return;
+          modeChangeFixups(e);
+        });
+      }
+    },
+    sig,
+  );
 
   document.addEventListener("mouseup", () => (isDragging = false), sig);
   document.addEventListener("touchend", () => (isDragging = false), sig);
@@ -3156,12 +3195,16 @@ function setupCustomMediaControls() {
   }
 
   // --- LOOP / REPEAT ---
-  repeatButton.addEventListener("click", () => {
-    video.loop = !video.loop;
-    repeatButton.classList.toggle("active", video.loop);
+  repeatButton.addEventListener(
+    "click",
+    () => {
+      video.loop = !video.loop;
+      repeatButton.classList.toggle("active", video.loop);
 
-    send("media-set-loop", video.loop);
-  });
+      send("media-set-loop", video.loop);
+    },
+    sig,
+  );
 
   // --- END OF VIDEO ---
   video.addEventListener(
@@ -3258,6 +3301,13 @@ function setupGtkVolumeControl() {
     console.error("Missing GTK Volume Control elements.");
     return;
   }
+
+  if (slider.dataset.gtkVolBound === "1") {
+    slider.value = Math.round((video.volume || 1) * 100);
+    if (video.muted) slider.value = 0;
+    return;
+  }
+  slider.dataset.gtkVolBound = "1";
 
   slider.addEventListener("mousedown", () => {
     volumePopupOpen = true;
@@ -4824,9 +4874,9 @@ function updateDynUI() {
     }
   }
 
-  if (document.getElementById("dspSelct")) {
-    document.getElementById("dspSelct").disabled = isPlaying && audioOnlyFile;
-  }
+  document.querySelectorAll("#dspSelct, #dspSelctStreams").forEach((sel) => {
+    sel.disabled = isPlaying && audioOnlyFile;
+  });
   if (document.getElementById("autoPlayCtl")) {
     const iM = isImg(mediaFile);
     if ((isPlaying && audioOnlyFile) || iM) {
@@ -4846,30 +4896,51 @@ function updateDynUI() {
   updatePreviewCueUI();
 }
 
-async function populateDisplaySelect() {
-  const displaySelect = document.getElementById("dspSelct");
-  if (!displaySelect) return;
+async function populateDisplaySelect(options = {}) {
+  const force = options.force === true;
+  const displaySelects = document.querySelectorAll(
+    "#dspSelct, #dspSelctStreams",
+  );
+  if (!displaySelects.length) return;
 
-  displaySelect.onchange = (event) => {
-    send("set-display-index", parseInt(event.target.value));
+  const alreadyReady =
+    !force &&
+    Array.from(displaySelects).every((sel) => sel.options && sel.options.length > 1);
+  if (alreadyReady) {
+    return;
+  }
+
+  const syncPeerSelects = (source) => {
+    const v = source.value;
+    displaySelects.forEach((sel) => {
+      if (sel !== source) sel.value = v;
+    });
   };
+
+  displaySelects.forEach((sel) => {
+    sel.onchange = (event) => {
+      send("set-display-index", parseInt(event.target.value, 10));
+      syncPeerSelects(event.target);
+    };
+  });
 
   try {
     const { displays, defaultDisplayIndex } = await invoke("get-all-displays");
 
-    // Clear existing options except the first disabled one
-    displaySelect.options.length = 1;
+    displaySelects.forEach((displaySelect) => {
+      displaySelect.options.length = 1;
 
-    const fragment = document.createDocumentFragment();
-    for (const { value, label } of displays) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = label;
-      fragment.appendChild(option);
-    }
+      const fragment = document.createDocumentFragment();
+      for (const { value, label } of displays) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        fragment.appendChild(option);
+      }
 
-    displaySelect.appendChild(fragment);
-    displaySelect.value = defaultDisplayIndex;
+      displaySelect.appendChild(fragment);
+      displaySelect.value = defaultDisplayIndex;
+    });
   } catch (error) {
     console.error("Failed to populate display select:", error);
   }
@@ -4883,72 +4954,29 @@ function setSBFormStreamPlayer() {
   send("set-mode", currentMode);
   updateHeaderAddMediaButtonVisibility();
 
-  document.getElementById("dyneForm").innerHTML = `
-    <div class="media-container">
-        <div class="video-wrapper stream-preview-host" aria-hidden="true">
-            <video id="preview" disablePictureInPicture controls="false"></video>
-        </div>
-        <div class="control-panel">
-            <div class="control-group">
-                <span class="control-label">URL</span>
-                <input type="url"
-                       name="mdFile"
-                       id="mdFile"
-                       placeholder="Paste your video URL here..."
-                       class="url-input"
-                       accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
-            </div>
+  ensureStreamsPanelBuilt();
 
-            <div class="control-group">
-                <span class="control-label">Display</span>
-                <select name="dspSelct" id="dspSelct" class="display-select">
-                    <option value="" disabled>Select Display</option>
-                </select>
-            </div>
+  const mediaPanel = document.getElementById(TAB_PANEL_MEDIA_ID);
+  const streamsPanel = document.getElementById(TAB_PANEL_STREAMS_ID);
+  if (mediaPanel) mediaPanel.hidden = true;
+  if (streamsPanel) streamsPanel.hidden = false;
 
-            <div class="control-group">
-                <span class="control-label">Volume</span>
-                <div class="volume-control">
-                    <input
-                    id="volume-slider"
-                    class="volume-slider"
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value="1"
-                    >
-                </div>
-            </div>
-        </div>
-    </div>
-    `;
-
-  // Restore the persistent preview element (if any was stashed by
-  // `cleanRefs`) into the streams-tab wrapper. The wrapper carries
-  // `.stream-preview-host`, which CSS hides via `display: none`, so the
-  // video is invisible here — but it stays in the DOM and continues to
-  // play, keeping the projection window in sync. Switching back to Media
-  // re-attaches the same element under the visible `.video-wrapper`.
-  restoreLivePreview();
+  restoreLivePreviewIntoPanel(streamsPanel);
 
   video = document.getElementById("preview");
 
-  if (mediaFile !== null && isLiveStream(mediaFile)) {
-    document.getElementById("mdFile").value = mediaFile;
+  const mdFile = document.getElementById("mdFile");
+  if (mediaFile !== null && isLiveStream(mediaFile) && mdFile) {
+    mdFile.value = mediaFile;
   }
 
-  document.getElementById("volume-slider").value = streamVolume;
-  document
-    .getElementById("volume-slider")
-    .addEventListener("input", handleVolumeChange);
+  const volumeSlider = document.getElementById("volume-slider");
+  if (volumeSlider) {
+    volumeSlider.value = streamVolume;
+  }
 
   installDisplayChangeHandler();
   populateDisplaySelect();
-
-  document
-    .getElementById("mediaWindowPlayButton")
-    .addEventListener("click", playMedia, { passive: true });
 
   if (playingMediaAudioOnly) {
     isPlaying = true;
@@ -4957,8 +4985,8 @@ function setSBFormStreamPlayer() {
   }
   restoreMediaFile();
 
-  if (document.getElementById("mdFile").value.includes(":\\fakepath\\")) {
-    document.getElementById("mdFile").value = "";
+  if (mdFile?.value.includes(":\\fakepath\\")) {
+    mdFile.value = "";
   }
 
   if (!isActiveMediaWindow()) {
@@ -5005,7 +5033,6 @@ async function setSBFormTextPlayer() {
 
   const isActiveMW = isActiveMediaWindow();
 
-  let plyBtn = document.getElementById("mediaWindowPlayButton");
   if (!isActiveMW && !playingMediaAudioOnly) {
     isPlaying = false;
   } else {
@@ -5013,7 +5040,6 @@ async function setSBFormTextPlayer() {
     send("close-media-window", 0);
   }
   updateDynUI();
-  plyBtn.addEventListener("click", playMedia, { passive: true });
 
   const scriptureInput = document.getElementById("scriptureInput");
   const versesDisplay = document.getElementById("versesDisplay");
@@ -5283,36 +5309,179 @@ function stashLivePreview() {
 }
 
 /**
- * Replace the freshly-rendered <video id="preview"> placeholder in #dyneForm
- * with the persistent video element from the stash, if one exists. A stashed
- * <img id="preview"> is reattached as a sibling, mirroring the layout that
- * `handleImageDisplay` produces. Returns true when a stashed video was
- * restored (callers can use this to skip redundant restoration paths).
+ * Ensure the two persistent tab shells exist under `#dyneForm`. Destroyed when
+ * switching to Text mode (`cleanRefs({ fullDestroy })`), recreated here on next
+ * Media/Streams visit.
  */
-function restoreLivePreview() {
-  const stash = document.getElementById(PREVIEW_STASH_ID);
-  if (!stash) return false;
+function ensureDyneTabShell() {
   const dyne = document.getElementById("dyneForm");
-  if (!dyne) return false;
+  if (!dyne) return;
+  if (!document.getElementById(TAB_PANEL_MEDIA_ID)) {
+    dyne.innerHTML =
+      `<div id="${TAB_PANEL_MEDIA_ID}" class="tab-panel tab-panel--media"></div>` +
+      `<div id="${TAB_PANEL_STREAMS_ID}" class="tab-panel tab-panel--streams" hidden></div>`;
+  }
+}
 
-  const placeholder = dyne.querySelector("video#preview");
-  if (!placeholder) return false;
+function generateStreamsPanelHTML() {
+  return `
+    <div class="media-container">
+        <div class="video-wrapper stream-preview-host" aria-hidden="true"></div>
+        <div class="control-panel">
+            <div class="control-group">
+                <span class="control-label">URL</span>
+                <input type="url"
+                       name="mdFile"
+                       id="mdFile"
+                       placeholder="Paste your video URL here..."
+                       class="url-input"
+                       accept="video/mp4,video/x-m4v,video/*,audio/x-m4a,audio/*">
+            </div>
 
-  const stashedVideo = stash.querySelector("video#preview");
-  if (!stashedVideo) return false;
+            <div class="control-group">
+                <span class="control-label">Display</span>
+                <select name="dspSelctStreams" id="dspSelctStreams" class="display-select">
+                    <option value="" disabled>Select Display</option>
+                </select>
+            </div>
 
-  const wrapper = placeholder.parentNode;
+            <div class="control-group">
+                <span class="control-label">Volume</span>
+                <div class="volume-control">
+                    <input
+                    id="volume-slider"
+                    class="volume-slider"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value="1"
+                    >
+                </div>
+            </div>
+        </div>
+    </div>
+    `;
+}
+
+function ensureMediaPanelBuilt() {
+  ensureDyneTabShell();
+  const panel = document.getElementById(TAB_PANEL_MEDIA_ID);
+  if (!panel || panel.dataset.mediaShellBuilt === "1") {
+    return;
+  }
+  panel.innerHTML = generateMediaFormHTML(video);
+  panel.dataset.mediaShellBuilt = "1";
+}
+
+function ensureStreamsPanelBuilt() {
+  ensureDyneTabShell();
+  const panel = document.getElementById(TAB_PANEL_STREAMS_ID);
+  if (!panel || panel.dataset.streamsShellBuilt === "1") {
+    return;
+  }
+  panel.innerHTML = generateStreamsPanelHTML();
+  panel.dataset.streamsShellBuilt = "1";
+  const vol = panel.querySelector("#volume-slider");
+  if (vol && panel.dataset.streamsVolumeBound !== "1") {
+    panel.dataset.streamsVolumeBound = "1";
+    vol.addEventListener("input", handleVolumeChange);
+  }
+}
+
+function getPreviewMountWrapperForPanel(panelEl) {
+  if (!panelEl) return null;
+  const streamHost = panelEl.querySelector(".stream-preview-host");
+  if (streamHost) return streamHost;
+  const mediaWrap = panelEl.querySelector(".video-wrapper");
+  if (mediaWrap && !mediaWrap.classList.contains("stream-preview-host")) {
+    return mediaWrap;
+  }
+  const legacyPreview = panelEl.querySelector("video#preview");
+  return legacyPreview?.parentElement ?? null;
+}
+
+/**
+ * Move the stashed live preview (`video#preview` / `img#preview`) into the
+ * given tab panel. Streams uses an empty `.stream-preview-host` (no duplicate
+ * `#preview` ids while both shells exist); Media uses `.video-wrapper` with a
+ * placeholder `<video id="preview">` from `generateMediaFormHTML`, or inserts one
+ * if the wrapper was left empty after a stash.
+ */
+function restoreLivePreviewIntoPanel(panelEl) {
+  const stash = document.getElementById(PREVIEW_STASH_ID);
+  if (!stash || !panelEl) return false;
+
+  const wrapper = getPreviewMountWrapperForPanel(panelEl);
   if (!wrapper) return false;
 
-  if (stashedVideo !== placeholder) {
-    wrapper.replaceChild(stashedVideo, placeholder);
+  const stashedVideo = stash.querySelector("video#preview");
+  const stashedImg = stash.querySelector("img#preview");
+  const isStreamsLayout = wrapper.classList.contains("stream-preview-host");
+
+  if (stashedVideo) {
+    if (isStreamsLayout) {
+      const orphan = wrapper.querySelector("video#preview");
+      if (orphan && orphan !== stashedVideo) {
+        orphan.remove();
+      }
+      if (stashedVideo.parentNode !== wrapper) {
+        wrapper.appendChild(stashedVideo);
+      }
+    } else {
+      let placeholder = wrapper.querySelector("video#preview");
+      if (!placeholder) {
+        placeholder = document.createElement("video");
+        placeholder.id = "preview";
+        placeholder.disablePictureInPicture = true;
+        const cue = wrapper.querySelector("#previewCue");
+        const cnt = wrapper.querySelector("#mediaCntDn");
+        if (cue && cue.parentNode === wrapper) {
+          wrapper.insertBefore(placeholder, cue);
+        } else if (cnt && cnt.parentNode === wrapper) {
+          cnt.insertAdjacentElement("afterend", placeholder);
+        } else {
+          wrapper.prepend(placeholder);
+        }
+      }
+      if (placeholder !== stashedVideo) {
+        wrapper.replaceChild(stashedVideo, placeholder);
+      }
+    }
+  } else if (isStreamsLayout && !wrapper.querySelector("video#preview")) {
+    const v = document.createElement("video");
+    v.id = "preview";
+    v.disablePictureInPicture = true;
+    wrapper.appendChild(v);
   }
 
-  const stashedImg = stash.querySelector("img#preview");
   if (stashedImg) {
-    wrapper.appendChild(stashedImg);
+    const orphanImg = wrapper.querySelector("img#preview");
+    if (orphanImg && orphanImg !== stashedImg) {
+      orphanImg.remove();
+    }
+    if (stashedImg.parentNode !== wrapper) {
+      wrapper.appendChild(stashedImg);
+    }
   }
-  return true;
+
+  return Boolean(wrapper.querySelector("video#preview"));
+}
+
+/**
+ * Restore stashed preview into whichever shell matches `currentMode`, or fall
+ * back to scanning `#dyneForm` for legacy layouts (e.g. Text mode teardown).
+ */
+function restoreLivePreview() {
+  const panel =
+    currentMode === STREAMPLAYER
+      ? document.getElementById(TAB_PANEL_STREAMS_ID)
+      : document.getElementById(TAB_PANEL_MEDIA_ID);
+  if (panel) {
+    return restoreLivePreviewIntoPanel(panel);
+  }
+  const dyne = document.getElementById("dyneForm");
+  return dyne ? restoreLivePreviewIntoPanel(dyne) : false;
 }
 
 function generateMediaFormHTML(video = null) {
@@ -5500,10 +5669,26 @@ function installDisplayChangeHandler() {
   if (installDisplayChangeHandler.initialized) return;
 
   on("display-changed", async () => {
-    await populateDisplaySelect();
+    await populateDisplaySelect({ force: true });
   });
 
   installDisplayChangeHandler.initialized = true;
+}
+
+/**
+ * `get-platform` cannot change without an app restart — caching avoids an IPC
+ * round-trip on every Media-tab activation after the operator has been using
+ * Streams or letting playback run in the background.
+ */
+let cachedGetPlatformPromise = null;
+function getCachedPlatformOS() {
+  if (!cachedGetPlatformPromise) {
+    cachedGetPlatformPromise = invoke("get-platform").catch((err) => {
+      cachedGetPlatformPromise = null;
+      throw err;
+    });
+  }
+  return cachedGetPlatformPromise;
 }
 
 function loopCtlHandler(event) {
@@ -5531,13 +5716,20 @@ function setSBFormMediaPlayer() {
   currentMode = MEDIAPLAYER;
   send("set-mode", currentMode);
   updateHeaderAddMediaButtonVisibility();
-  document.getElementById("dyneForm").innerHTML = generateMediaFormHTML(video);
-  // Swap the freshly-rendered placeholder for the live preview element if
-  // one was stashed by `cleanRefs`. After this call,
-  // `document.getElementById("preview")` refers to the same element that was
-  // playing before the tab switch, with all its listeners and src intact.
-  restoreLivePreview();
-  mediaCntDn.appendChild(textNode);
+
+  ensureMediaPanelBuilt();
+
+  const streamsPanel = document.getElementById(TAB_PANEL_STREAMS_ID);
+  const mediaPanel = document.getElementById(TAB_PANEL_MEDIA_ID);
+  if (streamsPanel) streamsPanel.hidden = true;
+  if (mediaPanel) mediaPanel.hidden = false;
+
+  restoreLivePreviewIntoPanel(mediaPanel);
+
+  const mediaCntDnEl = document.getElementById("mediaCntDn");
+  if (mediaCntDnEl && textNode && !mediaCntDnEl.contains(textNode)) {
+    mediaCntDnEl.appendChild(textNode);
+  }
   installDisplayChangeHandler();
   populateDisplaySelect();
 
@@ -5547,7 +5739,7 @@ function setSBFormMediaPlayer() {
     restoreMediaFile();
     updateTimestamp();
   }
-  invoke("get-platform")
+  getCachedPlatformOS()
     .then((operatingSystem) => {
       if (video && video !== cubicWaveShaperAttachedVideo) {
         attachCubicWaveShaper(video, undefined, undefined, operatingSystem);
@@ -5561,14 +5753,15 @@ function setSBFormMediaPlayer() {
   installMediaOpenButton();
   installPreviewEmptyStateHandlers();
   installMediaOptionsExpander();
-  document
-    .getElementById("clearQueueBtn")
-    ?.addEventListener("click", onClearMediaQueueClick);
+  const clearQueueBtn = document.getElementById("clearQueueBtn");
+  if (clearQueueBtn && clearQueueBtn.dataset.clearBound !== "1") {
+    clearQueueBtn.dataset.clearBound = "1";
+    clearQueueBtn.addEventListener("click", onClearMediaQueueClick);
+  }
   installMediaQueueListDelegation();
   installCueButtonHandlers();
   renderQueue();
   const isActiveMW = isActiveMediaWindow();
-  let plyBtn = document.getElementById("mediaWindowPlayButton");
   if (!isActiveMW && !playingMediaAudioOnly) {
     isPlaying = false;
   } else {
@@ -5576,7 +5769,6 @@ function setSBFormMediaPlayer() {
   }
   updateDynUI();
   video.controls = false;
-  plyBtn.addEventListener("click", playMedia, { passive: true });
   let isImgFile;
   if (document.getElementById("preview").parentNode !== null) {
     if (!masterPauseState && video !== null && !video.paused) {
@@ -5888,32 +6080,46 @@ function modeSwitchHandler(event) {
   }
 }
 
-function cleanRefs() {
-  let vsl = document.getElementById("volume-slider");
-  if (vsl) {
-    vsl.removeEventListener("input", handleVolumeChange);
+function cleanRefs(options = {}) {
+  if (!options.fullDestroy) {
+    return;
   }
 
-  let playButton = document.querySelector("#mediaWindowPlayButton");
-  if (playButton) {
-    playButton.removeEventListener("click", playMedia);
-    playButton = null;
+  const vol = document.getElementById("volume-slider");
+  if (vol) {
+    vol.removeEventListener("input", handleVolumeChange);
+  }
+
+  const streamsPanel = document.getElementById(TAB_PANEL_STREAMS_ID);
+  if (streamsPanel) {
+    delete streamsPanel.dataset.streamsVolumeBound;
+    delete streamsPanel.dataset.streamsShellBuilt;
+  }
+
+  const mediaPanel = document.getElementById(TAB_PANEL_MEDIA_ID);
+  if (mediaPanel) {
+    delete mediaPanel.dataset.mediaShellBuilt;
   }
 
   const clearQueueBtn = document.getElementById("clearQueueBtn");
-  if (clearQueueBtn) {
+  if (clearQueueBtn && clearQueueBtn.dataset.clearBound === "1") {
     clearQueueBtn.removeEventListener("click", onClearMediaQueueClick);
+    delete clearQueueBtn.dataset.clearBound;
   }
-  let mcd = document.getElementById("mediaCntDn");
+
+  const mcd = document.getElementById("mediaCntDn");
   if (mcd && mcd.contains(textNode)) {
     mcd.removeChild(textNode);
   }
 
-  if (playPauseBtn) playPauseBtn.removeEventListener("click", unPauseMedia);
-  if (playPauseBtn) playPauseBtn.removeEventListener("click", pauseMedia);
-  if (timeline) timeline.removeEventListener("change", () => {});
-  if (timeline) timeline.removeEventListener("input", () => {});
-  if (repeatButton) repeatButton.removeEventListener("click", () => {});
+  if (setupCustomMediaControls.controller) {
+    try {
+      setupCustomMediaControls.controller.abort();
+    } catch {
+      /* ignore */
+    }
+  }
+
   playPauseBtn = null;
   playPauseIcon = null;
   timeline = null;
@@ -5921,16 +6127,7 @@ function cleanRefs() {
   durationTimeDisplay = null;
   repeatButton = null;
 
-  // Move the live <video id="preview"> (and any image overlay using the same
-  // id) into the persistent stash before the form's children are destroyed.
-  // This preserves playback state and event listeners across tab switches so
-  // the projection window keeps tracking the preview's pause / play / seek.
   stashLivePreview();
-
-  // The cue scrub overlay is NOT stashed — it is recreated alongside the
-  // rebuilt media form. Drop the stale reference so isVideoPreviewCueActive
-  // (which gates the controls' cue routing) returns false until a fresh
-  // cue is loaded into the new element.
   clearVideoPreviewCueOverlay();
   previewCueVideo = null;
 
@@ -5944,7 +6141,11 @@ function installEvents() {
       if (currentMode === MEDIAPLAYER) {
         return;
       }
-      cleanRefs();
+      if (currentMode === STREAMPLAYER) {
+        stashLivePreview();
+      } else if (currentMode === TEXTPLAYER) {
+        cleanRefs({ fullDestroy: true });
+      }
       if (mediaFile != null && mediaFile != "" && !isLiveStream(mediaFile)) {
         preModeChangeFixups();
       }
@@ -5959,7 +6160,20 @@ function installEvents() {
       if (currentMode === STREAMPLAYER) {
         return;
       }
-      cleanRefs();
+      if (currentMode === MEDIAPLAYER) {
+        if (setupCustomMediaControls.controller) {
+          try {
+            setupCustomMediaControls.controller.abort();
+          } catch {
+            /* ignore */
+          }
+        }
+        stashLivePreview();
+        clearVideoPreviewCueOverlay();
+        previewCueVideo = null;
+      } else if (currentMode === TEXTPLAYER) {
+        cleanRefs({ fullDestroy: true });
+      }
       setSBFormStreamPlayer();
     },
     { passive: true },
@@ -5971,7 +6185,7 @@ function installEvents() {
       if (currentMode === TEXTPLAYER) {
         return;
       }
-      cleanRefs();
+      cleanRefs({ fullDestroy: true });
       setSBFormTextPlayer();
     },
     { passive: true },
@@ -6368,18 +6582,22 @@ function handleVolumeChange(event) {
 }
 
 function installPreviewEventHandlers() {
-  if (!installPreviewEventHandlers.installedVideoEventListener) {
-    video.addEventListener("loadstart", loadLocalMediaHandler);
-    video.addEventListener("loadedmetadata", loadedmetadataHandler);
-    video.addEventListener("seeked", seekLocalMedia);
-    video.addEventListener("seeking", seekingLocalMedia);
-    video.addEventListener("ended", endLocalMedia);
-    video.addEventListener("pause", pauseLocalMedia);
-    video.addEventListener("play", playLocalMedia);
-    video.addEventListener("volumechange", handleVolumeChange);
-    pidController = new PIDController(video);
-    installPreviewEventHandlers.installedVideoEventListener = true;
+  if (!video) {
+    return;
   }
+  if (video.dataset.previewHandlersInstalled === "1") {
+    return;
+  }
+  video.addEventListener("loadstart", loadLocalMediaHandler);
+  video.addEventListener("loadedmetadata", loadedmetadataHandler);
+  video.addEventListener("seeked", seekLocalMedia);
+  video.addEventListener("seeking", seekingLocalMedia);
+  video.addEventListener("ended", endLocalMedia);
+  video.addEventListener("pause", pauseLocalMedia);
+  video.addEventListener("play", playLocalMedia);
+  video.addEventListener("volumechange", handleVolumeChange);
+  video.dataset.previewHandlersInstalled = "1";
+  pidController = new PIDController(video);
 }
 
 async function loadOpMode(mode) {
@@ -6479,6 +6697,12 @@ async function loadOpMode(mode) {
       windowControls.onMaximizeChange((event, isMaximized) => {
         maximizeButton.setAttribute("data-maximized", isMaximized);
       });
+
+      const headerPresentBtn = document.getElementById("mediaWindowPlayButton");
+      if (headerPresentBtn && headerPresentBtn.dataset.presentBound !== "1") {
+        headerPresentBtn.dataset.presentBound = "1";
+        headerPresentBtn.addEventListener("click", playMedia, { passive: true });
+      }
 
       // Mode setup
       if (mode === STREAMPLAYER) {
@@ -6737,7 +6961,14 @@ async function createMediaWindow(options) {
       ? document.getElementById("mdFile").value
       : mediaPlayerInputState.filePaths[0];
   var liveStreamMode = isLiveStream(mediaFile);
-  var selectedIndex = document.getElementById("dspSelct").selectedIndex - 1;
+  const displaySelectEl =
+    currentMode === STREAMPLAYER
+      ? document.getElementById("dspSelctStreams")
+      : document.getElementById("dspSelct");
+  var selectedIndex =
+    displaySelectEl && displaySelectEl.selectedIndex > 0
+      ? displaySelectEl.selectedIndex - 1
+      : 0;
   activeLiveStream = liveStreamMode;
 
   if (liveStreamMode === true) {

@@ -79,7 +79,12 @@
     </div>
   </header>
   <main>
+    <!-- Persistent shells: Media ↔ Streams switches toggle visibility instead of
+         nuking innerHTML, so the browser skips reparsing the large media UI and
+         queue list while a presentation keeps running. -->
     <div id="dyneForm">
+      <div id="tab-panel-media" class="tab-panel tab-panel--media"></div>
+      <div id="tab-panel-streams" class="tab-panel tab-panel--streams" hidden></div>
     </div>
   </main>
   </div>
