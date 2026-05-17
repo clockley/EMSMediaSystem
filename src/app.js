@@ -122,6 +122,7 @@ let currentQueueIndex = -1;
 let isQueuePlaying = false;
 /** True after natural playback end (signaled before media window closes). */
 let mediaPlaybackEndedPending = false;
+let queueSlipstreamTransitionInProgress = false;
 /** When set, closing the media window switches to this queue index instead of advancing/stopping. */
 let pendingQueueSwitchIndex = null;
 /**
@@ -666,8 +667,7 @@ async function onQueueItemActivate(index) {
 
   // Audio-only items play locally without a media window, but they're still
   // an active presentation: prompt before swapping them out.
-  const isAudioOnlyPresentation =
-    isQueuePlaying && playingMediaAudioOnly && !isActiveMediaWindow();
+  const isAudioOnlyPresentation = isAudioOnlyQueuePresentationActive();
 
   if (!isActiveMediaWindow() && !isAudioOnlyPresentation) {
     currentQueueIndex = index;
@@ -696,18 +696,25 @@ async function onQueueItemActivate(index) {
     removeFilenameFromTitlebar();
     playingMediaAudioOnly = false;
     audioOnlyFile = false;
+    isActiveMediaWindowCache = false;
     mediaPlaybackEndedPending = false;
 
     currentQueueIndex = index;
     isQueuePlaying = true;
     isPlaying = true;
+    syncPreviewAudioTrackState();
     updateDynUI();
     await playCurrentQueueItem();
     return;
   }
 
+  const switchedInPlace = await slipstreamQueueItemAtIndex(index);
+  if (switchedInPlace) {
+    return;
+  }
+
   pendingQueueSwitchIndex = index;
-  send("close-media-window", 0);
+  await closeActiveMediaWindowNow();
 }
 
 async function stopQueuePresentationUserClosed() {
@@ -875,6 +882,11 @@ async function loadQueueItemIntoControlWindow(item, opts) {
 async function playCurrentQueueItem(opts) {
   resolveQueuePresentationVideo();
   mediaPlaybackEndedPending = false;
+  if (video) {
+    // Queue items should advance; keep local preview loop disabled so its state
+    // matches the projection window behaviour.
+    video.loop = false;
+  }
   itc = performance.now() * 0.001;
   const item = mediaQueue[currentQueueIndex];
   if (!item) {
@@ -908,8 +920,7 @@ async function playCurrentQueueItem(opts) {
     audioOnlyFile || classifyQueueMediaType(item.path) === "audio";
   if (isAudioItem) {
     if (isActiveMediaWindow()) {
-      isActiveMediaWindowCache = false;
-      send("close-media-window", 0);
+      await closeActiveMediaWindowNow();
     }
     await playAudioOnlyLocally();
     return;
@@ -952,6 +963,84 @@ async function advanceQueueAfterMediaWindowClosed() {
   masterPauseState = false;
   removeFilenameFromTitlebar();
   textNode.data = "";
+}
+
+/**
+ * When a video finishes playing and the next queue item is also a video or
+ * image, send a slipstream command to keep the media window alive and load the
+ * new file directly rather than tearing down and recreating the window.
+ * Returns true if slipstream was dispatched, false if normal close should proceed.
+ */
+async function slipstreamQueueItemAtIndex(index) {
+  if (queueSlipstreamTransitionInProgress) return true;
+  if (!isQueuePlaying) return false;
+  if (!isActiveMediaWindow()) return false;
+  if (index < 0 || index >= mediaQueue.length) return false;
+
+  queueSlipstreamTransitionInProgress = true;
+  try {
+    const nextItem = mediaQueue[index];
+    const nextType = nextItem.type || classifyQueueMediaType(nextItem.path);
+    const isImgFile = isImg(nextItem.path);
+
+    // Load the target into the preview before deciding. Extension checks catch
+    // obvious audio files, but metadata is authoritative for "audio-only"
+    // containers that look like regular media files until loaded.
+    await loadQueueItemIntoControlWindow(nextItem);
+
+    // Audio must play in the local preview — destroy the media window as usual.
+    if (!isImgFile && (nextType === "audio" || audioOnlyFile)) {
+      pendingQueueSwitchIndex = index;
+      mediaPlaybackEndedPending = false;
+      await closeActiveMediaWindowNow();
+      return true;
+    }
+
+    const slipstreamData = {
+      mediaFile: nextItem.path,
+      isImg: isImgFile,
+      loopFile: false,
+      startVolume: video ? video.volume : 1,
+      startTime: 0,
+    };
+
+    const slipstreamSuccess = await invoke("slipstream-media-window", slipstreamData);
+    if (!slipstreamSuccess) return false;
+
+    // Window stays alive — advance queue state without the normal close/reopen cycle.
+    mediaPlaybackEndedPending = false;
+    currentQueueIndex = index;
+    isActiveMediaWindowCache = true;
+    isPlaying = true;
+    lastUpdateTime = 0;
+    localTimeStampUpdateIsRunning = false;
+    textNode.data = "";
+    // endLocalMedia (which runs from the preview's "ended" event right before
+    // this) marks fileEnded so the next pause is treated as a natural stop.
+    // Slipstream is not a stop — clear the flag before the new src is loaded.
+    fileEnded = false;
+    audioOnlyFile = false;
+    playingMediaAudioOnly = false;
+    updateDynUI();
+    syncPreviewAudioTrackState();
+    renderQueue();
+
+    // Mirror the media window: start the local preview so the operator sees
+    // what's projecting. In the non-slipstream path createMediaWindow's
+    // "media-window autoplay" call does this; we must do it ourselves here.
+    if (video && !isImgFile) {
+      await playVideoSafely(video, "slipstream preview play");
+    }
+
+    return true;
+  } finally {
+    queueSlipstreamTransitionInProgress = false;
+  }
+}
+
+async function trySlipstreamNextQueueItem() {
+  if (!isQueueAutoAdvanceEnabled()) return false;
+  return slipstreamQueueItemAtIndex(currentQueueIndex + 1);
 }
 
 class PIDController {
@@ -1407,6 +1496,75 @@ function getHostnameOrBasename(input) {
 
 function isActiveMediaWindow() {
   return isActiveMediaWindowCache;
+}
+
+function syncPreviewAudioTrackState() {
+  if (!video?.audioTracks || typeof video.audioTracks.length !== "number") {
+    return;
+  }
+
+  const previewShouldBeAudible = !isActiveMediaWindow() || audioOnlyFile;
+  for (let i = 0; i < video.audioTracks.length; i += 1) {
+    video.audioTracks[i].enabled = previewShouldBeAudible;
+  }
+}
+
+function isAudioOnlyQueuePresentationActive() {
+  if (isActiveMediaWindow()) return false;
+  const currentItem =
+    currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+      ? mediaQueue[currentQueueIndex]
+      : null;
+  const currentItemIsAudio =
+    !!currentItem &&
+    (currentItem.type === "audio" ||
+      classifyQueueMediaType(currentItem.path) === "audio");
+
+  const localAudioOnlyFile =
+    playingMediaAudioOnly || audioOnlyFile || currentItemIsAudio;
+  const localAudioPlaying =
+    isPlaying || playingMediaAudioOnly || video?.paused === false;
+
+  return localAudioOnlyFile && localAudioPlaying;
+}
+
+async function toggleLocalAudioOnlyPlaybackFromControls() {
+  if (!video || isActiveMediaWindow()) return false;
+  if (!audioOnlyFile && !playingMediaAudioOnly && !isAudioOnlyQueuePresentationActive()) {
+    return false;
+  }
+
+  audioOnlyFile = true;
+  playingMediaAudioOnly = true;
+  isActiveMediaWindowCache = false;
+  syncPreviewAudioTrackState();
+
+  if (video.paused) {
+    isPlaying = true;
+    updateDynUI();
+    await playVideoSafely(video, "audio-only local control toggle");
+    updateTimestamp();
+  } else {
+    await video.pause();
+    isPlaying = false;
+    localTimeStampUpdateIsRunning = false;
+    updateDynUI();
+  }
+
+  return true;
+}
+
+async function closeActiveMediaWindowNow() {
+  if (!isActiveMediaWindow()) return false;
+  isActiveMediaWindowCache = false;
+  syncPreviewAudioTrackState();
+  try {
+    return await invoke("close-media-window-now");
+  } catch (err) {
+    console.error("Failed to close media window via invoke:", err);
+    send("close-media-window", 0);
+    return false;
+  }
 }
 
 function formatTime(seconds) {
@@ -2326,10 +2484,37 @@ function updateCountdownNode() {
 
 let now = 0;
 function handleTimeMessage(_, message) {
+  const duration = Array.isArray(message) ? message[0] : message?.duration;
+  const currentTime = Array.isArray(message)
+    ? message[1]
+    : message?.currentTime;
+  const timestamp = Array.isArray(message) ? message[2] : message?.timestamp;
+  const messageMediaFile = Array.isArray(message)
+    ? message[3]
+    : message?.mediaFile;
+
+  if (
+    messageMediaFile &&
+    mediaFile &&
+    normalizeMediaPathForCompare(messageMediaFile) !==
+      normalizeMediaPathForCompare(mediaFile)
+  ) {
+    return;
+  }
+
+  if (
+    !Number.isFinite(duration) ||
+    !Number.isFinite(currentTime) ||
+    duration <= 0 ||
+    currentTime < 0
+  ) {
+    return;
+  }
+
   now = Date.now();
 
   if (currentMode === MEDIAPLAYER) {
-    SECONDSFLOAT[0] = message[0] - message[1];
+    SECONDSFLOAT[0] = Math.max(0, duration - currentTime);
     NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
     REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
     NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
@@ -2345,7 +2530,7 @@ function handleTimeMessage(_, message) {
   // Perform timestamp calculations only if enough time has passed
   if (now - lastUpdateTime > 500) {
     if (video && !video.paused && !video.seeking) {
-      targetTime = message[1] - (now - message[2] + (Date.now() - now)) * 0.001;
+      targetTime = currentTime - (now - timestamp + (Date.now() - now)) * 0.001;
       hybridSync(targetTime);
       lastUpdateTime = now;
     }
@@ -2394,8 +2579,30 @@ function installIPCHandler() {
   on("update-playback-state", handlePlaybackState);
   on("remoteplaypause", handlePlayPause);
   on("media-window-closed", handleMediaWindowClosed);
-  on("media-playback-ended", () => {
+  on("media-playback-ended", async (event, endedMediaFile) => {
+    if (
+      endedMediaFile &&
+      currentQueueIndex >= 0 &&
+      currentQueueIndex < mediaQueue.length &&
+      normalizeMediaPathForCompare(endedMediaFile) !==
+        normalizeMediaPathForCompare(mediaQueue[currentQueueIndex].path)
+    ) {
+      return;
+    }
     mediaPlaybackEndedPending = true;
+    try {
+      const slipstreamed = await trySlipstreamNextQueueItem();
+      if (slipstreamed) {
+        // Keep the renderer's cache aligned with reality: this transition keeps
+        // the projection BrowserWindow alive, so the app should remain in
+        // "active media window" state.
+        isActiveMediaWindowCache = true;
+        return;
+      }
+    } catch (err) {
+      console.error("Slipstream transition failed, falling back to close:", err);
+    }
+    send("close-media-window", 0);
   });
   on("media-seek", handleMediaseek);
   on("window-maximized", handleWindowMax);
@@ -2474,9 +2681,7 @@ async function handleMediaWindowClosed(event, id) {
   }
 
   if (video) {
-    if (video.audioTracks.length !== 0) {
-      video.audioTracks[0].enabled = true;
-    }
+    syncPreviewAudioTrackState();
 
     if (
       video.loop &&
@@ -2784,6 +2989,10 @@ async function playMedia(e) {
     saveMediaFile();
   }
 
+  if (await toggleLocalAudioOnlyPlaybackFromControls()) {
+    return;
+  }
+
   if (
     video &&
     !audioOnlyFile &&
@@ -2904,6 +3113,9 @@ async function playMedia(e) {
       addFilenameToTitlebar(normalizedPathname);
       isPlaying = true;
       playingMediaAudioOnly = true;
+      isActiveMediaWindowCache = false;
+      syncPreviewAudioTrackState();
+      updateDynUI();
       void playVideoSafely(video, "audio-only local start");
       updateTimestamp();
       return;
@@ -2918,8 +3130,9 @@ async function playMedia(e) {
     }
     startTime = 0;
     isPlaying = false;
-    updateDynUI();
-    send("close-media-window", 0);
+    if (isActiveMediaWindow()) {
+      send("close-media-window", 0);
+    }
     isActiveMediaWindowCache = false;
     playingMediaAudioOnly = false;
     if (!audioOnlyFile) activeLiveStream = true;
@@ -2934,6 +3147,8 @@ async function playMedia(e) {
       saveMediaFile();
       audioOnlyFile = false;
     }
+    syncPreviewAudioTrackState();
+    updateDynUI();
     localTimeStampUpdateIsRunning = false;
     if (mediaFile !== normalizedPathname) {
       waitForMetadata()
@@ -3564,6 +3779,17 @@ function installDisplayChangeHandler() {
 }
 
 function loopCtlHandler(event) {
+  // Queue presentation relies on `ended` events to advance/slipstream, so
+  // per-item looping must be suppressed while the queue is actively playing.
+  if (isQueuePlaying) {
+    video.loop = false;
+    event.target.checked = false;
+    if (isActiveMediaWindow()) {
+      invoke("set-media-loop-status", false);
+    }
+    return;
+  }
+
   video.loop = event.target.checked;
   if (isActiveMediaWindow()) {
     invoke("set-media-loop-status", event.target.checked);
@@ -4040,11 +4266,7 @@ function playLocalMedia(event) {
     return;
   }
 
-  if (!isActiveMediaWindow()) {
-    if (video.audioTracks.length !== 0) {
-      video.audioTracks[0].enabled = true;
-    }
-  }
+  syncPreviewAudioTrackState();
   mediaSessionPause = false;
   if (
     !audioOnlyFile &&
@@ -4061,6 +4283,9 @@ function playLocalMedia(event) {
     send("localMediaState", 0, "play");
     addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
     isPlaying = true;
+    playingMediaAudioOnly = true;
+    isActiveMediaWindowCache = false;
+    syncPreviewAudioTrackState();
     updateDynUI();
     updateTimestamp();
   }
@@ -4119,6 +4344,7 @@ function loadedmetadataHandler(e) {
     return;
   }
   audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
+  syncPreviewAudioTrackState();
 }
 
 function seekLocalMedia(e) {
@@ -4164,6 +4390,37 @@ function seekingLocalMedia(e) {
 function endLocalMedia() {
   textNode.data = "";
 
+  // When queue playback is being projected in the media window, this local
+  // preview <video> hitting "ended" is informational only. The authoritative
+  // transition owner is the projection window's "media-playback-ended" IPC
+  // path, which decides whether to slipstream or close.
+  //
+  // If we continue through this handler, we race that IPC path and corrupt
+  // state (isPlaying/fileEnded/audioOnlyFile), leaving the app thinking the
+  // media window stopped even when it is still alive.
+  if (
+    isQueuePlaying &&
+    isActiveMediaWindow() &&
+    video &&
+    !playingMediaAudioOnly
+  ) {
+    mediaPlaybackEndedPending = true;
+    void (async () => {
+      try {
+        const slipstreamed = await trySlipstreamNextQueueItem();
+        if (!slipstreamed && isActiveMediaWindow()) {
+          send("close-media-window", 0);
+        }
+      } catch (err) {
+        console.error("Queue transition after preview end failed:", err);
+        if (isActiveMediaWindow()) {
+          send("close-media-window", 0);
+        }
+      }
+    })();
+    return;
+  }
+
   // Capture before flags get cleared: an audio-only queue item just ended
   // locally with no presentation window, so the normal media-window-closed
   // path will not run. We need to drive the queue advance ourselves.
@@ -4174,9 +4431,6 @@ function endLocalMedia() {
     video &&
     !video.loop;
 
-  if (isQueuePlaying && isActiveMediaWindow() && video && !video.loop) {
-    mediaPlaybackEndedPending = true;
-  }
   isPlaying = false;
   updateDynUI();
   audioOnlyFile = false;
@@ -4207,7 +4461,12 @@ function endLocalMedia() {
   targetTime = 0;
   fileEnded = true;
   send("localMediaState", 0, "stop");
-  send("close-media-window", 0);
+  // In queue+media-window mode the media-playback-ended IPC handler decides
+  // whether to slipstream or close the window. Sending close-media-window here
+  // would race and destroy the window before slipstream gets a chance.
+  if (!(isQueuePlaying && isActiveMediaWindow())) {
+    send("close-media-window", 0);
+  }
   removeFilenameFromTitlebar();
   video?.pause();
   masterPauseState = false;
@@ -4238,6 +4497,13 @@ function pauseLocalMedia(event) {
   }
   if (fileEnded) {
     fileEnded = false;
+    return;
+  }
+  if (audioOnlyFile && !isActiveMediaWindow()) {
+    isPlaying = false;
+    localTimeStampUpdateIsRunning = false;
+    syncPreviewAudioTrackState();
+    updateDynUI();
     return;
   }
   if (!event.target.isConnected) {
@@ -4543,6 +4809,7 @@ async function playAudioOnlyLocally() {
   audioOnlyFile = true;
   playingMediaAudioOnly = true;
   isPlaying = true;
+  isActiveMediaWindowCache = false;
   send("localMediaState", 0, "play");
   if (video.src) {
     try {
@@ -4551,6 +4818,7 @@ async function playAudioOnlyLocally() {
       console.error("Failed to update titlebar for audio-only:", err);
     }
   }
+  syncPreviewAudioTrackState();
   updateDynUI();
   try {
     await video.play();
@@ -4618,6 +4886,7 @@ async function createMediaWindow(options) {
   const autoPlayEnabled = isQueuePlaybackContext || !!autoPlayCtl?.checked;
   const autoPlayExplicitlyDisabled =
     !isQueuePlaybackContext && autoPlayCtl && !autoPlayCtl.checked;
+  const effectiveLoop = isQueuePlaybackContext ? false : video.loop;
 
   if (liveStreamMode === false && video !== null) {
     startTime = video.currentTime;
@@ -4635,7 +4904,7 @@ async function createMediaWindow(options) {
         "__mediafile-ems=" + encodeURIComponent(mediaFile),
         startTime !== 0 ? "__start-time=" + startTime : "",
         strtVl !== 1 ? "__start-vol=" + strtVl : "",
-        video.loop ? "__media-loop=true" : "",
+        effectiveLoop ? "__media-loop=true" : "",
         liveStreamMode ? "__live-stream=" + liveStreamMode : "",
         isImgFile ? "__isImg" : "",
         `__autoplay=${autoPlayEnabled}`,
@@ -4655,23 +4924,10 @@ async function createMediaWindow(options) {
   }
 
   if (video) {
-    if (video.audioTracks && video.audioTracks[0]) {
-      video.audioTracks[0].enabled = false;
-    } else {
-      video.addEventListener(
-        "loadedmetadata",
-        () => {
-          if (video.audioTracks.length !== 0) {
-            video.audioTracks[0].enabled = false;
-          }
-        },
-        { once: true },
-      );
-    }
-
-    if (video.audioTracks.length !== 0 && video.audioTracks[0]) {
-      video.audioTracks[0].enabled = false;
-    }
+    syncPreviewAudioTrackState();
+    video.addEventListener("loadedmetadata", syncPreviewAudioTrackState, {
+      once: true,
+    });
     video.muted = false;
   }
   if (autoPlayEnabled) {

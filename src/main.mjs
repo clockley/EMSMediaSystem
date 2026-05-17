@@ -263,8 +263,13 @@ function stopMediaPlaybackPowerHint() {
 }
 
 function sendRemainingTime(event, arg) {
-  let tarr = new Float64Array([arg[0], arg[1], arg[2]]);
-  win?.webContents.send("timeRemaining-message", tarr, [tarr]);
+  if (!win || win.isDestroyed()) return;
+  win.webContents.send("timeRemaining-message", {
+    duration: arg?.[0],
+    currentTime: arg?.[1],
+    timestamp: arg?.[2],
+    mediaFile: arg?.[3],
+  });
 }
 
 function getSetting(_, setting) {
@@ -278,6 +283,21 @@ function handleCloseMediaWindow(event, id) {
   // Closing the projection window ends any active YouTube live HLS session;
   // clear the flag so the next item (often a VOD) isn't given the iOS UA.
   youtubeLiveSessionActive = false;
+}
+
+async function handleCloseMediaWindowNow() {
+  if (!mediaWindow || mediaWindow.isDestroyed()) {
+    youtubeLiveSessionActive = false;
+    return false;
+  }
+
+  const windowToClose = mediaWindow;
+  const closed = new Promise((resolve) => {
+    windowToClose.once("closed", () => resolve(true));
+  });
+  windowToClose.close();
+  youtubeLiveSessionActive = false;
+  return closed;
 }
 
 function localMediaStateUpdate(event, id, state) {
@@ -323,6 +343,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     };
 
     mediaWindow = new BrowserWindow(finalWindowOptions);
+    mediaWindow.setIgnoreMouseEvents(true);
     //mediaWindow.openDevTools()
     await mediaWindow.loadFile("derived/src/media.prod.html");
     mediaWindow.on("closed", () => {
@@ -1382,10 +1403,30 @@ function setIPC() {
   ipcMain.handle("get-media-current-time", handleGetMediaCurrentTime);
   ipcMain.handle("set-media-loop-status", handleSetLoopStatus);
   ipcMain.on("close-media-window", handleCloseMediaWindow);
-  ipcMain.on("media-playback-ended", () => {
-    if (win && !win.isDestroyed()) {
-      win.webContents.send("media-playback-ended");
+  ipcMain.handle("close-media-window-now", handleCloseMediaWindowNow);
+  ipcMain.on("media-playback-ended", (event, endedMediaFile) => {
+    // The window stays visible-but-transparent between queue items; the
+    // renderer hides its <video>/<img> via CSS so nothing paints on screen.
+    // Calling mediaWindow.hide() here would trigger Electron #50250, where
+    // a hidden+throttled renderer stops decoding video frames after un-hide.
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+      mediaWindow.setIgnoreMouseEvents(true);
+      mediaWindow.setSkipTaskbar(true);
     }
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("media-playback-ended", endedMediaFile);
+    }
+  });
+  ipcMain.handle("slipstream-media-window", async (event, data) => {
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+      mediaWindow.setIgnoreMouseEvents(true);
+      mediaWindow.setSkipTaskbar(false);
+      await mediaWindow.webContents.executeJavaScript(
+        `window.emsApplySlipstream(${JSON.stringify(data)})`,
+      );
+      return true;
+    }
+    return false;
   });
   ipcMain.on("timeRemaining-message", sendRemainingTime);
   ipcMain.on("vlcl", handleVlcl);
