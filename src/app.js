@@ -71,6 +71,21 @@ function attachElectronBridge() {
 var pidSeeking = false;
 var streamVolume = 1;
 var video = null;
+let previewAudio = null;
+let previewAudioCueIndex = -1;
+/**
+ * Dedicated <video> overlay used for scrubbing a cued video item without
+ * disturbing the main #preview element. Repurposing #preview for cue used
+ * to pause the live mirror; routing video cues through this element keeps
+ * the mirror playing the whole time. Hidden unless a video cue is loaded.
+ */
+let previewCueVideo = null;
+let previewCueVideoIndex = -1;
+let liveAudio = null;
+let liveAudioQueueIndex = -1;
+let previewLoadToken = 0;
+let liveStartToken = 0;
+let isHandlingLiveEnded = false;
 var masterPauseState = false;
 var activeLiveStream = false;
 var targetTime = 0;
@@ -116,15 +131,18 @@ const mediaPlayerInputState = {
   },
 };
 
-/** @type {{ path: string, name: string, type: string }[]} */
+/** @type {{ path: string, name: string, type: string, cueStartTime?: number }[]} */
 let mediaQueue = [];
 let currentQueueIndex = -1;
+let previewCueIndex = -1;
 let isQueuePlaying = false;
 /** True after natural playback end (signaled before media window closes). */
 let mediaPlaybackEndedPending = false;
 let queueSlipstreamTransitionInProgress = false;
 /** When set, closing the media window switches to this queue index instead of advancing/stopping. */
 let pendingQueueSwitchIndex = null;
+let pendingQueueSwitchStartTime = 0;
+let suppressPreviewForwarding = false;
 /**
  * When true, the next media-window-closed finishes a full-queue clear (snapshot already taken;
  * presentation was closed from the clear action).
@@ -132,7 +150,7 @@ let pendingQueueSwitchIndex = null;
 let pendingQueueClearPostClose = false;
 /**
  * Snapshot for undo after "Clear" on the media queue (HIG: perform + restore).
- * @type {null | { items: { path: string; name: string; type: string }[]; index: number; seekTime: number; wasPresentationActive: boolean }}
+ * @type {null | { items: { path: string; name: string; type: string; cueStartTime: number }[]; index: number; cueIndex: number; seekTime: number; wasPresentationActive: boolean }}
  */
 let queueClearUndoSnapshot = null;
 /** After reorder drop, ignore the synthetic click on the row. */
@@ -172,11 +190,197 @@ async function playVideoSafely(mediaEl, context = "") {
   }
 }
 
+function pathToMediaUrl(filePath) {
+  if (!filePath || typeof filePath !== "string") return "";
+  if (/^(file|https?|blob):/i.test(filePath)) return filePath;
+
+  const normalized = filePath.replace(/\\/g, "/");
+  if (normalized.startsWith("/")) {
+    return `file://${encodeURI(normalized)}`;
+  }
+  return `file:///${encodeURI(normalized)}`;
+}
+
+function clampMediaTime(time, duration) {
+  if (!Number.isFinite(time) || time < 0) return 0;
+  if (Number.isFinite(duration) && duration > 0) {
+    return Math.min(time, Math.max(0, duration - 0.05));
+  }
+  return time;
+}
+
+function seekMedia(mediaEl, requestedTime) {
+  if (!mediaEl) return Promise.resolve(0);
+  const target = clampMediaTime(requestedTime, mediaEl.duration);
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const cleanup = () => {
+      mediaEl.removeEventListener("seeked", finish);
+      mediaEl.removeEventListener("error", finish);
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : target);
+    };
+
+    mediaEl.addEventListener("seeked", finish, { once: true });
+    mediaEl.addEventListener("error", finish, { once: true });
+
+    try {
+      mediaEl.currentTime = target;
+    } catch {
+      cleanup();
+      resolve(Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0);
+      return;
+    }
+
+    if (Math.abs(mediaEl.currentTime - target) < 0.05) {
+      queueMicrotask(finish);
+    }
+    timer = window.setTimeout(finish, 800);
+  });
+}
+
+function nextPreviewLoadToken() {
+  previewLoadToken += 1;
+  return previewLoadToken;
+}
+
+function isCurrentPreviewLoad(token) {
+  return token === previewLoadToken;
+}
+
+function nextLiveStartToken() {
+  liveStartToken += 1;
+  return liveStartToken;
+}
+
 function classifyQueueMediaType(filePath) {
   if (imageRegex.test(filePath)) return "image";
-  if (/\.(mp4|webm|ogg|mkv|mov|m4v|avi)$/i.test(filePath)) return "video";
-  if (/\.(mp3|wav|flac|m4a|aac|opus)$/i.test(filePath)) return "audio";
+  if (/\.(mp4|m4v|mov|mkv|webm|avi|wmv)$/i.test(filePath)) return "video";
+  if (/\.(mp3|m4a|aac|wav|flac|ogg|opus|wma)$/i.test(filePath)) return "audio";
   return "file";
+}
+
+function isQueueItemAudio(item) {
+  return Boolean(
+    item &&
+      (item.type === "audio" || classifyQueueMediaType(item.path) === "audio"),
+  );
+}
+
+function isQueueItemImage(item) {
+  return Boolean(
+    item && (item.type === "image" || (item.path && isImg(item.path))),
+  );
+}
+
+function isLikelyVideoItem(filePath) {
+  return classifyQueueMediaType(filePath) === "video";
+}
+
+function isLikelyAudioItem(filePath) {
+  return classifyQueueMediaType(filePath) === "audio";
+}
+
+function mediaElementHasTracks(mediaEl, trackName) {
+  const tracks = mediaEl?.[trackName];
+  return Boolean(tracks && typeof tracks.length === "number" && tracks.length > 0);
+}
+
+function mediaElementLoadedAudioOnly(mediaEl, filePath) {
+  if (isLikelyAudioItem(filePath)) return true;
+  if (isImg(filePath)) return false;
+
+  const videoTracks = mediaEl?.videoTracks;
+  if (!videoTracks || typeof videoTracks.length !== "number") {
+    return false;
+  }
+
+  return videoTracks.length === 0;
+}
+
+function ensurePreviewAudioElement() {
+  if (!previewAudio) {
+    previewAudio = new Audio();
+    previewAudio.preload = "metadata";
+    previewAudio.muted = true;
+    previewAudio.volume = 0;
+    // While an audio cue is loaded, its timeline owns the countdown
+    // overlay so the operator sees the cue's "time remaining" update as
+    // they scrub — same contract as the video cue overlay.
+    const paintIfActive = () => {
+      if (isAudioPreviewCueActive()) paintCountdownFor(previewAudio);
+    };
+    previewAudio.addEventListener("timeupdate", paintIfActive);
+    previewAudio.addEventListener("seeked", paintIfActive);
+    previewAudio.addEventListener("loadedmetadata", paintIfActive);
+  }
+  return previewAudio;
+}
+
+function ensureLiveAudioElement() {
+  if (!liveAudio) {
+    liveAudio = new Audio();
+    liveAudio.preload = "auto";
+    liveAudio.addEventListener("ended", endLiveAudioPresentation);
+  }
+  return liveAudio;
+}
+
+function stopLiveAudioPresentation() {
+  liveStartToken += 1;
+  if (liveAudio) {
+    try {
+      liveAudio.pause();
+      liveAudio.removeAttribute("src");
+      liveAudio.load();
+    } catch (err) {
+      console.error("Failed to stop live audio:", err);
+    }
+  }
+  liveAudioQueueIndex = -1;
+  playingMediaAudioOnly = false;
+}
+
+function isAudioPreviewCueActive() {
+  const cue = currentPreviewCue();
+  return Boolean(
+    previewAudio &&
+      cue &&
+      isQueueItemAudio(cue.item) &&
+      previewAudioCueIndex === previewCueIndex,
+  );
+}
+
+/**
+ * True when the dedicated cue overlay holds a loaded video cue. Used by
+ * the controls so the timeline / play button drive the cue overlay
+ * instead of the live mirror while the operator is scrubbing.
+ */
+function isVideoPreviewCueActive() {
+  const cue = currentPreviewCue();
+  return Boolean(
+    previewCueVideo &&
+      cue &&
+      !isQueueItemAudio(cue.item) &&
+      previewCueVideoIndex === previewCueIndex &&
+      !previewCueVideo.hidden,
+  );
+}
+
+function getPreviewControlMediaElement() {
+  if (isAudioPreviewCueActive()) return previewAudio;
+  if (isVideoPreviewCueActive()) return previewCueVideo;
+  return video;
 }
 
 function queueBasename(filePath) {
@@ -189,6 +393,7 @@ function createQueueEntry(filePath) {
     path: filePath,
     name: queueBasename(filePath),
     type: classifyQueueMediaType(filePath),
+    cueStartTime: 0,
   };
 }
 
@@ -198,6 +403,351 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function formatCueTime(seconds) {
+  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  const totalSeconds = Math.floor(safe);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  const millis = Math.floor((safe - totalSeconds) * 1000);
+  return `${mins}:${secs.toString().padStart(2, "0")}.${millis.toString().padStart(3, "0")}`;
+}
+
+function currentLiveQueueItem() {
+  return currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+    ? mediaQueue[currentQueueIndex]
+    : null;
+}
+
+function findQueueIndexByPath(filePath) {
+  const normalized = normalizeMediaPathForCompare(filePath);
+  if (!normalized) return -1;
+  return mediaQueue.findIndex(
+    (item) => normalizeMediaPathForCompare(item.path) === normalized,
+  );
+}
+
+function currentPreviewCue() {
+  if (previewCueIndex < 0 || previewCueIndex >= mediaQueue.length) {
+    return null;
+  }
+  const item = mediaQueue[previewCueIndex];
+  if (!item) return null;
+  return {
+    index: previewCueIndex,
+    item,
+    startTime:
+      Number.isFinite(item.cueStartTime) && item.cueStartTime > 0
+        ? item.cueStartTime
+        : 0,
+  };
+}
+
+/**
+ * Fallback "next up" when the operator has not explicitly cued anything.
+ *
+ * Without this, the Presentation status card said "No item cued" forever
+ * once a show was running — even after the operator added five more files
+ * to the queue. The status card is the operator's single source of truth
+ * for "what plays after this"; if it lies, they reach for the queue list
+ * to double-check every time they add a file.
+ *
+ * Rules:
+ *   - If something is actively playing, the implicit next is the item
+ *     directly after `currentQueueIndex`.
+ *   - If nothing is playing yet, the implicit next is the head of the
+ *     queue (so adding the first file immediately shows "Next: that file"
+ *     and the operator can see what Present will start with).
+ *   - Returns null at the end of the queue or when empty.
+ *
+ * Returned shape mirrors {@link currentPreviewCue} so callers can treat
+ * the two interchangeably for label rendering.
+ */
+function currentImplicitNextItem() {
+  if (mediaQueue.length === 0) return null;
+  let nextIdx = -1;
+  if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length - 1) {
+    nextIdx = currentQueueIndex + 1;
+  } else if (currentQueueIndex < 0) {
+    nextIdx = 0;
+  }
+  if (nextIdx < 0) return null;
+  const item = mediaQueue[nextIdx];
+  if (!item) return null;
+  return {
+    index: nextIdx,
+    item,
+    startTime:
+      Number.isFinite(item.cueStartTime) && item.cueStartTime > 0
+        ? item.cueStartTime
+        : 0,
+    implicit: true,
+  };
+}
+
+function isQueuePresentationActive() {
+  return Boolean(
+    isQueuePlaying &&
+      (isPlaying || isActiveMediaWindow() || isLocalAppWindowPresentationActive()),
+  );
+}
+
+function isPreparingSeparateCue() {
+  return Boolean(
+    currentMode === MEDIAPLAYER &&
+      isQueuePresentationActive() &&
+      previewCueIndex >= 0 &&
+      previewCueIndex < mediaQueue.length &&
+      previewCueIndex !== currentQueueIndex,
+  );
+}
+
+function shouldSuppressPreviewForwarding() {
+  return suppressPreviewForwarding || isPreparingSeparateCue();
+}
+
+function updatePreviewCueUI() {
+  const liveItem = isQueuePresentationActive() ? currentLiveQueueItem() : null;
+  const explicitCue = currentPreviewCue();
+  const implicitNext = currentImplicitNextItem();
+  // "Next:" tracks what auto-advance (or pressing Space) will actually
+  // play after the current item finishes — i.e. whatever is sitting at
+  // currentQueueIndex+1 in queue order. We honor the explicit cue only
+  // when it already lines up with that slot (the normal case, since
+  // cueing a file moves it to right-after-current), or when nothing is
+  // live yet (no implicit next to compete with). The moment the
+  // operator drags the cued file out of the next slot — or drags some
+  // other file into it — the readout switches to that new "natural"
+  // next item so it reflects queue order, not a stale cue pointer.
+  // Without this the label appeared frozen on the cue's filename after
+  // any reorder that involved the next slot.
+  const explicitCueIsNext =
+    explicitCue &&
+    (currentQueueIndex < 0 ||
+      explicitCue.index === currentQueueIndex + 1);
+  // Fall back to the explicit cue when there is no natural next item
+  // (current is the last queue entry): the operator still loaded a cue
+  // and the readout should reflect that instead of claiming "No item
+  // cued" while the cue overlay is right there on screen.
+  const nextUp = explicitCueIsNext
+    ? explicitCue
+    : (implicitNext ?? explicitCue);
+  const nowPlaying = document.getElementById("nowPlayingLabel");
+  const upNext = document.getElementById("upNextLabel");
+  const audioCuePanel = document.getElementById("audioCuePanel");
+  const cueButtons = [
+    document.getElementById("cueCurrentPositionBtn"),
+    document.getElementById("playCueNowBtn"),
+  ];
+
+  if (nowPlaying) {
+    nowPlaying.textContent = liveItem
+      ? liveItem.name
+      : isPlaying
+        ? getHostnameOrBasename(mediaFile || "Presentation active")
+        : "Nothing live";
+    nowPlaying.title = nowPlaying.textContent;
+  }
+
+  if (upNext) {
+    upNext.textContent = nextUp ? nextUp.item.name : "No item cued";
+    upNext.title = upNext.textContent;
+  }
+
+  if (audioCuePanel) {
+    audioCuePanel.hidden = true;
+  }
+
+  // Cue / Play Now act on an explicit cue (the operator clicked an item to
+  // stage it). An implicit "next-in-queue" is informational only — promoting
+  // it to a clickable cue would silently turn natural queue auto-advance
+  // into an explicit-cue workflow the operator never opted into.
+  for (const btn of cueButtons) {
+    if (btn) btn.disabled = !explicitCue;
+  }
+}
+
+function setCueStartTime(index, start) {
+  if (index < 0 || index >= mediaQueue.length) return;
+  const safe = Number.isFinite(start) && start > 0 ? start : 0;
+  mediaQueue[index].cueStartTime = safe;
+  if (previewCueIndex === index) {
+    updatePreviewCueUI();
+  }
+  renderQueue();
+}
+
+function clearPreviewCue() {
+  stopPreviewAudioCue();
+  clearVideoPreviewCueOverlay();
+  previewCueIndex = -1;
+  restoreCountdownForLiveMedia();
+  updatePreviewCueUI();
+  renderQueue();
+}
+
+function clearCueAfterTake(index) {
+  if (previewCueIndex === index) {
+    stopPreviewAudioCue();
+    clearVideoPreviewCueOverlay();
+    previewCueIndex = -1;
+    restoreCountdownForLiveMedia();
+  }
+  updatePreviewCueUI();
+  renderQueue();
+}
+
+function stopPreviewAudioCue() {
+  if (previewAudio) {
+    try {
+      previewAudio.pause();
+      previewAudio.removeAttribute("src");
+      previewAudio.load();
+    } catch (err) {
+      console.error("Failed to clear preview audio cue:", err);
+    }
+  }
+  previewAudioCueIndex = -1;
+}
+
+/**
+ * Resolve the dedicated cue-scrub <video> element. The element lives next
+ * to #preview in the wrapper and is recreated whenever the media form is
+ * regenerated, so this lookup is best done lazily on each access.
+ */
+function ensurePreviewCueVideoElement() {
+  if (previewCueVideo && previewCueVideo.isConnected) return previewCueVideo;
+  previewCueVideo = document.getElementById("previewCue");
+  if (previewCueVideo) {
+    previewCueVideo.muted = true;
+    previewCueVideo.volume = 0;
+    // Force the native <video> chrome off. The HTML attribute is omitted
+    // (see generateMediaFormHTML) but we re-assert the property in JS so
+    // anything that later mutates the element can't accidentally turn the
+    // stock scrubber back on — the operator already drives the custom
+    // controls bar.
+    previewCueVideo.controls = false;
+    previewCueVideo.removeAttribute("controls");
+    try {
+      previewCueVideo.controlsList?.add(
+        "nodownload",
+        "nofullscreen",
+        "noremoteplayback",
+      );
+    } catch {
+      /* controlsList not supported — CSS rule below still hides chrome */
+    }
+    previewCueVideo.disablePictureInPicture = true;
+    if (!previewCueVideo.dataset.cueHandlersInstalled) {
+      installPreviewCueVideoHandlers(previewCueVideo);
+      previewCueVideo.dataset.cueHandlersInstalled = "true";
+    }
+  }
+  return previewCueVideo;
+}
+
+/**
+ * Tear down any loaded cue source on the overlay and hide it. The main
+ * #preview element is left untouched so the live mirror keeps playing.
+ */
+function clearVideoPreviewCueOverlay() {
+  const el = previewCueVideo || document.getElementById("previewCue");
+  previewCueVideoIndex = -1;
+  if (!el) return;
+  try {
+    el.pause();
+    el.removeAttribute("src");
+    el.load();
+  } catch (err) {
+    console.error("Failed to clear preview cue overlay:", err);
+  }
+  el.hidden = true;
+}
+
+/**
+ * Load a queued video item into the dedicated cue overlay, seek it to the
+ * cue start, and reveal it on top of the live mirror. The main #preview
+ * element is never touched, so the live mirror keeps playing the whole
+ * time the operator scrubs the cued item.
+ */
+async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
+  const token = nextPreviewLoadToken();
+  const el = ensurePreviewCueVideoElement();
+  if (!el) return;
+  previewCueVideoIndex = index;
+
+  try {
+    el.pause();
+  } catch {
+    /* ignore */
+  }
+  el.muted = true;
+  el.volume = 0;
+  el.preload = "metadata";
+  el.removeAttribute("src");
+  el.load();
+  el.src = pathToMediaUrl(item.path);
+  el.load();
+  el.hidden = false;
+
+  await waitForLoadedMetadata(el);
+  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
+    clearVideoPreviewCueOverlay();
+    return;
+  }
+
+  const actualStart = await seekMedia(el, startTime);
+  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
+    clearVideoPreviewCueOverlay();
+    return;
+  }
+
+  setCueStartTime(index, actualStart);
+  if (Number.isFinite(el.duration) && el.duration > 0) {
+    mediaQueue[index].duration = el.duration;
+  }
+
+  if (timeline && Number.isFinite(el.duration) && el.duration > 0) {
+    timeline.value = (actualStart / el.duration) * 100;
+    if (currentTimeDisplay) currentTimeDisplay.textContent = formatTime(actualStart);
+    if (durationTimeDisplay) durationTimeDisplay.textContent = formatTime(el.duration);
+    document
+      .getElementById("customControls")
+      ?.style.setProperty("visibility", "visible");
+  }
+}
+
+/**
+ * Per-element handlers for the cue overlay. The custom controls in
+ * setupCustomMediaControls already route through currentControlMedia(),
+ * which will return previewCueVideo when a video cue is active. The only
+ * extra wiring this element needs is to persist the operator's scrub
+ * position as the cue start, mirroring how `seekingLocalMedia` does it
+ * for the main #preview while in cue mode, plus drive the countdown
+ * overlay from the cue's currentTime so the displayed "time remaining"
+ * tracks the scrub instead of the live media.
+ */
+function installPreviewCueVideoHandlers(el) {
+  const persistCueStartFromScrub = (event) => {
+    if (
+      previewCueIndex < 0 ||
+      previewCueIndex !== previewCueVideoIndex ||
+      currentMode !== MEDIAPLAYER
+    ) {
+      return;
+    }
+    setCueStartTime(previewCueIndex, event.target.currentTime);
+  };
+  el.addEventListener("seeking", persistCueStartFromScrub);
+  el.addEventListener("seeked", persistCueStartFromScrub);
+
+  const paintIfActive = () => {
+    if (isVideoPreviewCueActive()) paintCountdownFor(el);
+  };
+  el.addEventListener("timeupdate", paintIfActive);
+  el.addEventListener("seeked", paintIfActive);
+  el.addEventListener("loadedmetadata", paintIfActive);
 }
 
 function queueTypeIconMarkup(type) {
@@ -219,31 +769,94 @@ function renderQueue() {
 
   if (mediaQueue.length === 0) {
     listContainer.innerHTML =
-      '<div class="list-placeholder">No media in queue</div>';
+      '<div class="list-placeholder">' +
+      '<span class="list-placeholder-title">No media in queue</span>' +
+      '<span class="list-placeholder-hint">Add media to begin</span>' +
+      "</div>";
   } else {
+    // State badges decouple status (live / cued) from row selection. The
+    // .active background still highlights the live row, but the LIVE pill
+    // says *why* it's highlighted — so a row that is just selected after
+    // load-but-not-playing reads differently from one mid-presentation.
+    const presentationLive = isQueuePresentationActive();
     listContainer.innerHTML = mediaQueue
-      .map(
-        (item, index) =>
-          `<div class="queue-item${index === currentQueueIndex ? " active" : ""}" role="listitem" data-queue-index="${index}">
+      .map((item, index) => {
+        const isLive = presentationLive && index === currentQueueIndex;
+        const isCued = index === previewCueIndex;
+        const classes = [
+          "queue-item",
+          index === currentQueueIndex ? " active" : "",
+          isCued ? " cued" : "",
+          isLive ? " live" : "",
+        ].join("");
+        const hasCueStart =
+          Number.isFinite(item.cueStartTime) && item.cueStartTime > 0;
+        const cueStartMarkup = hasCueStart
+          ? `<span class="item-cue-start">Starts ${formatCueTime(item.cueStartTime)}</span>`
+          : "";
+        const badges = [];
+        if (isLive) {
+          badges.push('<span class="state-badge state-badge--live">Live</span>');
+        }
+        if (isCued) {
+          badges.push('<span class="state-badge state-badge--cued">Cued</span>');
+        }
+        const statusMarkup =
+          badges.length || hasCueStart
+            ? `<span class="item-status-row">${badges.join("")}${cueStartMarkup}</span>`
+            : "";
+        return `<div class="${classes}" role="listitem" data-queue-index="${index}">
       <span class="queue-drag-handle" draggable="true" data-queue-index="${index}" title="Drag to reorder" aria-label="Drag to reorder">
         <svg width="12" height="16" viewBox="0 0 12 16" aria-hidden="true"><circle cx="3" cy="3" r="1.5" fill="currentColor"/><circle cx="9" cy="3" r="1.5" fill="currentColor"/><circle cx="3" cy="8" r="1.5" fill="currentColor"/><circle cx="9" cy="8" r="1.5" fill="currentColor"/><circle cx="3" cy="13" r="1.5" fill="currentColor"/><circle cx="9" cy="13" r="1.5" fill="currentColor"/></svg>
       </span>
       <span class="item-icon">${queueTypeIconMarkup(item.type)}</span>
-      <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+      <span class="item-text">
+        <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+        ${statusMarkup}
+      </span>
       <button type="button" class="remove-btn" draggable="false" data-queue-remove="${index}" title="Remove from queue" aria-label="Remove from queue">✕</button>
-    </div>`,
-      )
+    </div>`;
+      })
       .join("");
   }
   updateClearQueueButtonState();
+  updatePreviewCueUI();
 }
 
 function updateClearQueueButtonState() {
   const btn = document.getElementById("clearQueueBtn");
-  if (!btn) return;
-  const empty = mediaQueue.length === 0;
-  btn.disabled = empty;
-  btn.setAttribute("aria-disabled", empty ? "true" : "false");
+  if (btn) {
+    const empty = mediaQueue.length === 0;
+    // Per HIG: don't draw attention to actions that have no effect.
+    // Hide the Clear button entirely when there is nothing to clear,
+    // rather than leaving a disabled control next to the empty header.
+    btn.hidden = empty;
+    btn.disabled = empty;
+    btn.setAttribute("aria-disabled", empty ? "true" : "false");
+  }
+  updatePreviewEmptyState();
+}
+
+/**
+ * Show the large "Drop media here / or click Add Media" target on the preview
+ * surface only when there is no media to look at — empty queue, no preview
+ * source loaded, and we're on the Media tab. The drop itself is already
+ * accepted by the document-level drop handler; this overlay is purely a
+ * first-use affordance so removing the sidebar Open Media block does not
+ * leave the empty state without a call to action.
+ */
+function updatePreviewEmptyState() {
+  const overlay = document.getElementById("previewEmptyState");
+  if (!overlay) return;
+  if (currentMode !== MEDIAPLAYER) {
+    overlay.hidden = true;
+    return;
+  }
+  const previewEl = document.getElementById("preview");
+  const hasPreviewSrc = !!(previewEl && previewEl.src && previewEl.src !== "");
+  const hasImage = !!document.querySelector(".video-wrapper img");
+  const empty = mediaQueue.length === 0 && !hasPreviewSrc && !hasImage;
+  overlay.hidden = !empty;
 }
 
 function reorderMediaQueue(fromIndex, toIndex) {
@@ -261,6 +874,10 @@ function reorderMediaQueue(fromIndex, toIndex) {
     currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
       ? mediaQueue[currentQueueIndex].path
       : null;
+  const cuePath =
+    previewCueIndex >= 0 && previewCueIndex < mediaQueue.length
+      ? mediaQueue[previewCueIndex].path
+      : null;
 
   const [item] = mediaQueue.splice(fromIndex, 1);
   mediaQueue.splice(toIndex, 0, item);
@@ -268,6 +885,16 @@ function reorderMediaQueue(fromIndex, toIndex) {
   if (activePath !== null) {
     const ni = mediaQueue.findIndex((q) => q.path === activePath);
     currentQueueIndex = ni >= 0 ? ni : -1;
+  }
+  if (cuePath !== null) {
+    const ci = mediaQueue.findIndex((q) => q.path === cuePath);
+    previewCueIndex = ci >= 0 ? ci : -1;
+    // The cue overlay's loaded src hasn't changed — only the index did —
+    // so keep previewCueVideoIndex aligned with the new index instead of
+    // tearing the overlay down.
+    if (previewCueVideoIndex >= 0) {
+      previewCueVideoIndex = previewCueIndex;
+    }
   }
 
   ignoreNextQueueItemClick = true;
@@ -277,6 +904,13 @@ function reorderMediaQueue(fromIndex, toIndex) {
 
   invalidateQueueUndoToastAfterMutation();
   renderQueue();
+  // renderQueue() already refreshes the Presentation card's Next row via
+  // updatePreviewCueUI, but the call is made explicit here too so a future
+  // renderQueue refactor can't silently regress the "Next: <file>" label
+  // after a drag-reorder. The operator's mental model is "I moved this
+  // file, the card should reflect it now" — covering that contract at the
+  // mutation site keeps it from drifting away from rendering concerns.
+  updatePreviewCueUI();
   saveMediaFile();
 }
 
@@ -291,10 +925,26 @@ function enqueuePathsFromFilePicker(paths) {
 
 /** Electron open dialog preserves multi-selection order better than <input type="file">. */
 function installMediaOpenButton() {
-  const button = document.getElementById("mediaOpenButton");
+  // The Add Media affordance lives in the headerbar (static markup), not the
+  // dynamic sidebar. Bind once on first call; subsequent calls (from mode
+  // switches re-rendering `#dyneForm`) are no-ops thanks to the guard.
+  const button = document.getElementById("headerAddMediaButton");
   if (!button || button.dataset.openDialogBound === "1") return;
   button.dataset.openDialogBound = "1";
   button.addEventListener("click", openMediaFilesDialog);
+}
+
+/**
+ * The headerbar Add Media button only makes sense in the Media tab — the
+ * Streams tab uses a URL field, and the Text tab has its own input. Hide
+ * the button in non-Media modes instead of leaving a dead control.
+ */
+function updateHeaderAddMediaButtonVisibility() {
+  const button = document.getElementById("headerAddMediaButton");
+  if (!button) return;
+  const visible = currentMode === MEDIAPLAYER;
+  button.hidden = !visible;
+  button.setAttribute("aria-hidden", visible ? "false" : "true");
 }
 
 async function openMediaFilesDialog() {
@@ -343,14 +993,23 @@ function applyDroppedMediaPaths(paths) {
 }
 
 function clearMediaQueue() {
+  stopPreviewAudioCue();
+  clearVideoPreviewCueOverlay();
   mediaQueue = [];
   currentQueueIndex = -1;
+  previewCueIndex = -1;
   isQueuePlaying = false;
+  // Hand the countdown overlay back to the live media (or hide it if the
+  // queue clear leaves nothing playing). Without this, a cleared queue
+  // that previously hosted an image cue would leave the overlay hidden
+  // even after the operator dragged in a new audio/video clip.
+  restoreCountdownForLiveMedia();
   renderQueue();
 }
 
 /** Stop local preview playback after the queue is cleared (HIG: no “ghost” audio/video). */
 function pauseLocalPreviewAfterQueueClear() {
+  stopLiveAudioPresentation();
   if (playingMediaAudioOnly) {
     send("localMediaState", 0, "stop");
     playingMediaAudioOnly = false;
@@ -384,8 +1043,10 @@ async function captureQueueClearUndoState() {
       path: x.path,
       name: x.name,
       type: x.type,
+      cueStartTime: x.cueStartTime,
     })),
     index: currentQueueIndex,
+    cueIndex: previewCueIndex,
     seekTime,
     wasPresentationActive: Boolean(
       isQueuePlaying && isActiveMediaWindow() && isPlaying,
@@ -408,6 +1069,7 @@ function showQueueClearedUndoToast() {
 
 async function finalizeQueueClearDestructive() {
   pendingQueueSwitchIndex = null;
+  pendingQueueSwitchStartTime = 0;
   mediaPlaybackEndedPending = false;
   pendingQueueClearPostClose = false;
   isPlaying = false;
@@ -485,6 +1147,7 @@ async function restoreQueueClearUndoSnapshot() {
     path: x.path,
     name: x.name,
     type: x.type,
+    cueStartTime: x.cueStartTime || 0,
   }));
   currentQueueIndex = snap.index;
   if (mediaQueue.length === 0) {
@@ -494,6 +1157,15 @@ async function restoreQueueClearUndoSnapshot() {
   } else if (currentQueueIndex < 0) {
     currentQueueIndex = 0;
   }
+
+  // Restore the cued item (the "next" marker) and its per-item start time
+  // (already embedded in each queue entry via cueStartTime).
+  previewCueIndex =
+    typeof snap.cueIndex === "number" &&
+    snap.cueIndex >= 0 &&
+    snap.cueIndex < mediaQueue.length
+      ? snap.cueIndex
+      : -1;
 
   renderQueue();
   saveMediaFile();
@@ -522,6 +1194,7 @@ async function restoreQueueClearUndoSnapshot() {
 async function onClearMediaQueueClick() {
   if (mediaQueue.length === 0) return;
   pendingQueueSwitchIndex = null;
+  pendingQueueSwitchStartTime = 0;
   await captureQueueClearUndoState();
 
   if (isActiveMediaWindow()) {
@@ -549,6 +1222,21 @@ function removeFromQueue(index) {
   mediaQueue.splice(index, 1);
   if (currentQueueIndex > index) currentQueueIndex--;
   else if (currentQueueIndex >= mediaQueue.length) currentQueueIndex = -1;
+  if (previewCueIndex === index) {
+    previewCueIndex = -1;
+    stopPreviewAudioCue();
+    clearVideoPreviewCueOverlay();
+    // The removed item was the cue, so the cue is gone — hand the
+    // countdown overlay back to the live media (image: hidden;
+    // audio/video: repainted with live time).
+    restoreCountdownForLiveMedia();
+  } else if (previewCueIndex > index) {
+    previewCueIndex--;
+    // Keep the cue overlay's index in sync with the shifted cue index so
+    // isVideoPreviewCueActive() keeps recognising the loaded overlay as
+    // the still-active cue after the surrounding queue shrinks.
+    if (previewCueVideoIndex > index) previewCueVideoIndex--;
+  } else if (previewCueIndex >= mediaQueue.length) previewCueIndex = -1;
   renderQueue();
   if (currentMode === MEDIAPLAYER && mediaQueue.length > 0 && !isPlaying) {
     void loadQueueItemIntoControlWindow(mediaQueue[0]).catch((err) =>
@@ -662,34 +1350,241 @@ function installMediaQueueListDelegation() {
   });
 }
 
-async function onQueueItemActivate(index) {
+function installCueButtonHandlers() {
+  document
+    .getElementById("cueCurrentPositionBtn")
+    ?.addEventListener("click", cueFromCurrentPosition);
+  document
+    .getElementById("playCueNowBtn")
+    ?.addEventListener("click", () => {
+      void playCueNow().catch((err) => console.error(err));
+    });
+}
+
+/**
+ * The Options expander hides Display + Autoplay + Auto-advance behind a
+ * disclosure so the queue can dominate the sidebar. Restoring the user's
+ * last-chosen open state keeps the sidebar adaptive — operators who change
+ * the switches every show don't have to re-expand each session, while users
+ * who set them once and forget still get the compact default. We use
+ * localStorage instead of the settings IPC because there's no
+ * `set-setting` handler in main and adding one for a UI-only flag would be
+ * over-architected.
+ */
+const OPTIONS_EXPANDER_STORAGE_KEY = "ems.mediaOptionsExpander.open";
+
+function installMediaOptionsExpander() {
+  const expander = document.getElementById("mediaOptionsExpander");
+  if (!expander || expander.dataset.expanderBound === "1") return;
+  expander.dataset.expanderBound = "1";
+  try {
+    expander.open =
+      window.localStorage?.getItem(OPTIONS_EXPANDER_STORAGE_KEY) === "1";
+  } catch {
+    // localStorage can throw in restricted contexts; default to collapsed.
+  }
+  expander.addEventListener("toggle", () => {
+    try {
+      window.localStorage?.setItem(
+        OPTIONS_EXPANDER_STORAGE_KEY,
+        expander.open ? "1" : "0",
+      );
+    } catch {
+      /* swallow — UI works either way */
+    }
+  });
+}
+
+/**
+ * Make the preview empty-state placard click/Enter/Space-activatable. The
+ * card itself is in the dynamically-rendered media form, so handlers are
+ * (re)installed each time setSBFormMediaPlayer rebuilds `#dyneForm`. The
+ * card is purely a fallback affordance — drops anywhere on the document
+ * still work, and the headerbar Add Media button does the same thing.
+ */
+function installPreviewEmptyStateHandlers() {
+  const card = document.querySelector(
+    "#previewEmptyState .preview-empty-state__card",
+  );
+  if (!card || card.dataset.emptyStateBound === "1") return;
+  card.dataset.emptyStateBound = "1";
+  card.addEventListener("click", () => {
+    void openMediaFilesDialog();
+  });
+  card.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      void openMediaFilesDialog();
+    }
+  });
+}
+
+async function restorePreviewToLiveOutput(index) {
   if (index < 0 || index >= mediaQueue.length) return;
 
-  // Audio-only items play locally without a media window, but they're still
-  // an active presentation: prompt before swapping them out.
-  const isAudioOnlyPresentation = isAudioOnlyQueuePresentationActive();
+  // The main #preview element has been mirroring the live output the whole
+  // time the cue overlay was visible — it was never reloaded with the cued
+  // source — so "restoring" just means tearing down the cue scratch state.
+  // No reload, no replay, no risk of the live mirror lingering in a paused
+  // state because the resume race was lost.
+  previewCueIndex = -1;
+  stopPreviewAudioCue();
+  clearVideoPreviewCueOverlay();
+  // The cue may have hidden the countdown overlay (image cue) or pinned
+  // it to the cue's time-remaining (video/audio cue). Either way the
+  // live media is now back in charge, so re-establish whatever the live
+  // source dictates: hidden for image live, repainted with live time
+  // otherwise. handleTimeMessage takes over from the next IPC tick.
+  restoreCountdownForLiveMedia();
 
-  if (!isActiveMediaWindow() && !isAudioOnlyPresentation) {
-    currentQueueIndex = index;
-    await loadQueueItemIntoControlWindow(mediaQueue[index]);
-    renderQueue();
-    saveMediaFile();
+  if (liveAudioQueueIndex >= 0 && liveAudio?.src && liveAudio.src !== "") {
+    // The audio-cue panel may have been displayed over the audio-only mirror;
+    // refresh the scrubber so it shows liveAudio's position again.
+    refreshLiveAudioControls();
+  }
+
+  syncPreviewAudioTrackState();
+  updatePreviewCueUI();
+  renderQueue();
+}
+
+async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
+  const token = nextPreviewLoadToken();
+  const audio = ensurePreviewAudioElement();
+  previewAudioCueIndex = index;
+
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  audio.muted = true;
+  audio.volume = 0;
+  audio.preload = "metadata";
+  audio.src = pathToMediaUrl(item.path);
+
+  await waitForLoadedMetadata(audio);
+  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+
+  const duration = Number.isFinite(audio.duration) && audio.duration > 0
+    ? audio.duration
+    : item.duration || 0;
+  const actualStart = await seekMedia(audio, startTime);
+  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+
+  setCueStartTime(index, actualStart);
+  if (duration > 0) {
+    mediaQueue[index].duration = duration;
+  }
+  if (timeline && duration > 0) {
+    timeline.value = (actualStart / duration) * 100;
+    currentTimeDisplay.textContent = formatTime(actualStart);
+    durationTimeDisplay.textContent = formatTime(duration);
+    document
+      .getElementById("customControls")
+      ?.style.setProperty("visibility", "visible");
+  }
+}
+
+function moveQueueItemAfterCurrent(index) {
+  if (!isQueuePresentationActive()) return index;
+  if (currentQueueIndex < 0 || currentQueueIndex >= mediaQueue.length) return index;
+  if (index < 0 || index >= mediaQueue.length) return index;
+  if (index === currentQueueIndex || index === currentQueueIndex + 1) {
+    return index;
+  }
+
+  const liveItem = mediaQueue[currentQueueIndex];
+  const [cueItem] = mediaQueue.splice(index, 1);
+  currentQueueIndex = mediaQueue.indexOf(liveItem);
+  const insertAt = Math.min(currentQueueIndex + 1, mediaQueue.length);
+  mediaQueue.splice(insertAt, 0, cueItem);
+  currentQueueIndex = mediaQueue.indexOf(liveItem);
+  invalidateQueueUndoToastAfterMutation();
+  saveMediaFile();
+  return mediaQueue.indexOf(cueItem);
+}
+
+async function loadQueueItemIntoPreviewCue(index) {
+  if (index < 0 || index >= mediaQueue.length) return;
+  if (index === currentQueueIndex && isQueuePresentationActive()) {
+    await restorePreviewToLiveOutput(index);
     return;
   }
 
+  index = moveQueueItemAfterCurrent(index);
+  previewCueIndex = index;
   const item = mediaQueue[index];
-  const ok = await invoke("show_queue_switch_dialog", {
-    message: `Switch the presentation to "${item.name}"?\n\nThe current media will be stopped.`,
-  });
-  if (!ok) return;
+  const cueStart =
+    Number.isFinite(item.cueStartTime) && item.cueStartTime > 0
+      ? item.cueStartTime
+      : 0;
 
-  if (isAudioOnlyPresentation) {
-    // No media window to close; transition directly to the next item.
-    if (video) {
+  if (isLocalAppWindowPresentationActive() && isQueueItemAudio(item)) {
+    setCueStartTime(index, cueStart);
+    updatePreviewCueUI();
+    renderQueue();
+    return;
+  }
+
+  if (isQueueItemImage(item)) {
+    // Images have no timeline: there's nothing to scrub and no countdown
+    // to display. Tear down any video/audio cue overlay that was loaded
+    // before this click and just hide the countdown chrome so the live
+    // mirror underneath shows through cleanly. The cue is still
+    // "logically" set (previewCueIndex/Play Now still target this image)
+    // even though no scrub UI is appropriate.
+    clearVideoPreviewCueOverlay();
+    stopPreviewAudioCue();
+    setMediaCountdownOverlayVisible(false);
+    textNode.data = "";
+  } else if (isQueueItemAudio(item)) {
+    // Tear down a stale video cue overlay before loading the audio cue
+    // so the operator never sees an old video frame lingering over the
+    // live mirror after switching to audio.
+    clearVideoPreviewCueOverlay();
+    // Audio cues never load into the visible overlay video, but they
+    // need the countdown chrome visible to show the cue's time remaining
+    // (the live media may have hidden it, e.g. while displaying an
+    // image). The actual digits are painted by previewAudio's
+    // timeupdate/seeked handlers in ensurePreviewAudioElement. Clear the
+    // stale text first so we don't briefly flash the live media's
+    // countdown before the cue's metadata loads.
+    setMediaCountdownOverlayVisible(true);
+    textNode.data = "";
+    await loadAudioQueueItemIntoPreviewCue(index, item, cueStart);
+  } else {
+    // Video cues used to re-load the main #preview element with the cued
+    // source, which forcibly paused the live mirror. That confused
+    // operators who expected the live preview to keep running while they
+    // scrub a different item ("the preview that is matching the live
+    // video should never pause just because the user switched to scrub
+    // the queued media"). The cue now goes into a dedicated overlay so
+    // the mirror keeps playing underneath, undisturbed.
+    stopPreviewAudioCue();
+    // Make sure the countdown overlay is visible before the cue's
+    // metadata handler paints into it — the live media might have hidden
+    // it (image live) and we don't want a frame of blank chrome.
+    setMediaCountdownOverlayVisible(true);
+    textNode.data = "";
+    await loadVideoQueueItemIntoPreviewCueOverlay(index, item, cueStart);
+    syncPreviewAudioTrackState();
+  }
+  updatePreviewCueUI();
+  renderQueue();
+}
+
+async function takeQueueItemLive(index, startTime = 0) {
+  if (index < 0 || index >= mediaQueue.length) return;
+
+  const safeStart = Number.isFinite(startTime) && startTime > 0 ? startTime : 0;
+  mediaQueue[index].cueStartTime = safeStart;
+
+  if (isAudioOnlyQueuePresentationActive()) {
+    stopLiveAudioPresentation();
+    if (video && audioOnlyFile) {
       try {
         video.pause();
       } catch (err) {
-        console.error("Failed to pause local audio before switch:", err);
+        console.error("Failed to pause local audio before taking cue:", err);
       }
     }
     send("localMediaState", 0, "stop");
@@ -698,26 +1593,96 @@ async function onQueueItemActivate(index) {
     audioOnlyFile = false;
     isActiveMediaWindowCache = false;
     mediaPlaybackEndedPending = false;
+  }
 
+  if (isActiveMediaWindow()) {
+    const switchedInPlace = await slipstreamQueueItemAtIndex(index, {
+      startTime: safeStart,
+      clearCue: true,
+    });
+    if (switchedInPlace) {
+      return;
+    }
+    pendingQueueSwitchIndex = index;
+    pendingQueueSwitchStartTime = safeStart;
+    await closeActiveMediaWindowNow();
+    return;
+  }
+
+  currentQueueIndex = index;
+  isQueuePlaying = true;
+  isPlaying = true;
+  updateDynUI();
+  await playCurrentQueueItem({
+    preservePreviewSeek: false,
+    startTime: safeStart,
+  });
+  clearCueAfterTake(index);
+}
+
+function cueFromCurrentPosition() {
+  const cue = currentPreviewCue();
+  const controlMedia = getPreviewControlMediaElement();
+  if (!cue || !controlMedia) return;
+  const start =
+    Number.isFinite(controlMedia.currentTime) && controlMedia.currentTime > 0
+      ? controlMedia.currentTime
+      : 0;
+  setCueStartTime(cue.index, start);
+  showGnomeToast(`Cued start: ${formatCueTime(start)}`);
+}
+
+async function playCueNow() {
+  const cue = currentPreviewCue();
+  if (!cue) return;
+
+  // If something is already presenting (either the dedicated media window or
+  // an audio-only file in the app window), confirm with the operator before
+  // interrupting it. The same modal is reused that the media-window driven
+  // queue switch uses, so the interaction is consistent across paths.
+  const presentationActive =
+    isActiveMediaWindow() || isLocalAppWindowPresentationActive();
+  if (presentationActive) {
+    const liveItem =
+      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+        ? mediaQueue[currentQueueIndex]
+        : null;
+    const liveLabel = liveItem ? liveItem.name : "the current presentation";
+    const cueLabel = cue.item?.name || "the cued item";
+    const message = `Switch the live presentation from "${liveLabel}" to "${cueLabel}"?`;
+    let accepted = false;
+    try {
+      accepted = await invoke("show_queue_switch_dialog", { message });
+    } catch (err) {
+      console.error("Failed to show queue switch dialog:", err);
+      accepted = false;
+    }
+    if (!accepted) return;
+  }
+
+  await takeQueueItemLive(cue.index, cue.startTime);
+}
+
+async function onQueueItemActivate(index) {
+  if (index < 0 || index >= mediaQueue.length) return;
+
+  // Audio-only items play locally without a media window, but they're still
+  // an active presentation: prompt before swapping them out.
+  const isLocalPresentation = isLocalAppWindowPresentationActive();
+
+  if (!isActiveMediaWindow() && !isLocalPresentation) {
     currentQueueIndex = index;
-    isQueuePlaying = true;
-    isPlaying = true;
-    syncPreviewAudioTrackState();
-    updateDynUI();
-    await playCurrentQueueItem();
+    await loadQueueItemIntoControlWindow(mediaQueue[index]);
+    renderQueue();
+    saveMediaFile();
     return;
   }
 
-  const switchedInPlace = await slipstreamQueueItemAtIndex(index);
-  if (switchedInPlace) {
-    return;
-  }
-
-  pendingQueueSwitchIndex = index;
-  await closeActiveMediaWindowNow();
+  await loadQueueItemIntoPreviewCue(index);
 }
 
 async function stopQueuePresentationUserClosed() {
+  stopLiveAudioPresentation();
   isQueuePlaying = false;
   isPlaying = false;
   updateDynUI();
@@ -815,10 +1780,26 @@ function resolveQueuePresentationVideo() {
 async function loadQueueItemIntoControlWindow(item, opts) {
   resolveQueuePresentationVideo();
   const preservePreviewSeek = !opts || opts.preservePreviewSeek !== false;
+  const cueOnly = opts?.cueOnly === true;
+  const loadToken = opts?.previewLoadToken;
   const isImgFile = isImg(item.path);
 
   let resumeAt = null;
-  if (preservePreviewSeek && !isImgFile && video) {
+  if (
+    typeof opts?.startTime === "number" &&
+    Number.isFinite(opts.startTime) &&
+    opts.startTime >= 0
+  ) {
+    resumeAt = opts.startTime;
+  }
+  // For audio-only items we never resume the preview <video>'s scrub position
+  // when transitioning to live playback: liveAudio handles the audio output,
+  // and seeking the preview <video> near the end of an audio file leaves the
+  // preview element in an "almost done" state that downstream code can
+  // misread as a playback position. The explicit cue start time on the queue
+  // entry (set via "Cue from Current Position") remains the source of truth.
+  const itemIsAudio = !isImgFile && isQueueItemAudio(item);
+  if (preservePreviewSeek && !isImgFile && !itemIsAudio && video) {
     const sameClip = previewShowsSameClipAsPath(item.path);
     if (sameClip && Number.isFinite(video.currentTime) && video.currentTime > 0) {
       resumeAt = video.currentTime;
@@ -841,7 +1822,20 @@ async function loadQueueItemIntoControlWindow(item, opts) {
 
   if (!isImgFile && video) {
     video.load();
+    const previousAudioOnlyFile = audioOnlyFile;
+    const previousPlayingMediaAudioOnly = playingMediaAudioOnly;
     await waitForMetadata();
+    if (
+      cueOnly &&
+      typeof loadToken === "number" &&
+      !isCurrentPreviewLoad(loadToken)
+    ) {
+      return;
+    }
+    if (cueOnly) {
+      audioOnlyFile = previousAudioOnlyFile;
+      playingMediaAudioOnly = previousPlayingMediaAudioOnly;
+    }
     if (resumeAt !== null && resumeAt >= 0) {
       const d = video.duration;
       const safe =
@@ -849,31 +1843,32 @@ async function loadQueueItemIntoControlWindow(item, opts) {
           ? Math.min(resumeAt, Math.max(0, d - 0.05))
           : resumeAt;
       try {
-        await new Promise((resolve) => {
-          const done = () => resolve();
-          const t = window.setTimeout(done, 400);
-          const onSeeked = () => {
-            window.clearTimeout(t);
-            video.removeEventListener("seeked", onSeeked);
-            done();
-          };
-          video.addEventListener("seeked", onSeeked, { once: true });
-          video.currentTime = safe;
-        });
-        startTime = video.currentTime;
-        targetTime = startTime;
+        await seekMedia(video, safe);
+        if (
+          cueOnly &&
+          typeof loadToken === "number" &&
+          !isCurrentPreviewLoad(loadToken)
+        ) {
+          return;
+        }
+        if (!cueOnly) {
+          startTime = video.currentTime;
+          targetTime = startTime;
+        }
       } catch (err) {
         console.error(err);
       }
     }
-    audioOnlyFile =
-      !!video.videoTracks && video.videoTracks.length === 0;
-    if (audioOnlyFile) {
+    const loadedAudioOnly = mediaElementLoadedAudioOnly(video, item.path);
+    if (!cueOnly) {
+      audioOnlyFile = loadedAudioOnly;
+    }
+    if (loadedAudioOnly && !cueOnly) {
       document
         .getElementById("customControls")
         ?.style.setProperty("visibility", "");
     }
-  } else {
+  } else if (!cueOnly) {
     audioOnlyFile = false;
     playingMediaAudioOnly = false;
   }
@@ -916,8 +1911,7 @@ async function playCurrentQueueItem(opts) {
   // Audio-only items (detected via metadata or by file extension) play
   // locally in the preview <video>. If a previous queue item left a media
   // window open, tear it down first so we don't hold a stale surface.
-  const isAudioItem =
-    audioOnlyFile || classifyQueueMediaType(item.path) === "audio";
+  const isAudioItem = audioOnlyFile || isQueueItemAudio(item);
   if (isAudioItem) {
     if (isActiveMediaWindow()) {
       await closeActiveMediaWindowNow();
@@ -934,13 +1928,35 @@ async function advanceQueueAfterMediaWindowClosed() {
   updateDynUI();
   isActiveMediaWindowCache = false;
 
-  currentQueueIndex++;
-  if (currentQueueIndex < mediaQueue.length) {
+  const cue = currentPreviewCue();
+  if (cue) {
+    currentQueueIndex = cue.index;
     renderQueue();
     await new Promise((r) => setTimeout(r, 100));
     isPlaying = true;
     updateDynUI();
-    await playCurrentQueueItem();
+    await playCurrentQueueItem({
+      preservePreviewSeek: false,
+      startTime: cue.startTime,
+    });
+    clearCueAfterTake(cue.index);
+    return;
+  }
+
+  currentQueueIndex++;
+  if (currentQueueIndex < mediaQueue.length) {
+    const item = mediaQueue[currentQueueIndex];
+    renderQueue();
+    await new Promise((r) => setTimeout(r, 100));
+    isPlaying = true;
+    updateDynUI();
+    await playCurrentQueueItem({
+      preservePreviewSeek: false,
+      startTime:
+        Number.isFinite(item?.cueStartTime) && item.cueStartTime > 0
+          ? item.cueStartTime
+          : 0,
+    });
     return;
   }
 
@@ -971,7 +1987,7 @@ async function advanceQueueAfterMediaWindowClosed() {
  * new file directly rather than tearing down and recreating the window.
  * Returns true if slipstream was dispatched, false if normal close should proceed.
  */
-async function slipstreamQueueItemAtIndex(index) {
+async function slipstreamQueueItemAtIndex(index, opts = {}) {
   if (queueSlipstreamTransitionInProgress) return true;
   if (!isQueuePlaying) return false;
   if (!isActiveMediaWindow()) return false;
@@ -986,11 +2002,21 @@ async function slipstreamQueueItemAtIndex(index) {
     // Load the target into the preview before deciding. Extension checks catch
     // obvious audio files, but metadata is authoritative for "audio-only"
     // containers that look like regular media files until loaded.
-    await loadQueueItemIntoControlWindow(nextItem);
+    const requestedStart =
+      typeof opts.startTime === "number" && Number.isFinite(opts.startTime)
+        ? opts.startTime
+        : Number.isFinite(nextItem.cueStartTime) && nextItem.cueStartTime > 0
+          ? nextItem.cueStartTime
+          : 0;
+    await loadQueueItemIntoControlWindow(nextItem, {
+      preservePreviewSeek: false,
+      startTime: requestedStart,
+    });
 
     // Audio must play in the local preview — destroy the media window as usual.
     if (!isImgFile && (nextType === "audio" || audioOnlyFile)) {
       pendingQueueSwitchIndex = index;
+      pendingQueueSwitchStartTime = requestedStart;
       mediaPlaybackEndedPending = false;
       await closeActiveMediaWindowNow();
       return true;
@@ -1001,7 +2027,7 @@ async function slipstreamQueueItemAtIndex(index) {
       isImg: isImgFile,
       loopFile: false,
       startVolume: video ? video.volume : 1,
-      startTime: 0,
+      startTime: requestedStart,
     };
 
     const slipstreamSuccess = await invoke("slipstream-media-window", slipstreamData);
@@ -1024,6 +2050,9 @@ async function slipstreamQueueItemAtIndex(index) {
     updateDynUI();
     syncPreviewAudioTrackState();
     renderQueue();
+    if (opts.clearCue !== false) {
+      clearCueAfterTake(index);
+    }
 
     // Mirror the media window: start the local preview so the operator sees
     // what's projecting. In the non-slipstream path createMediaWindow's
@@ -1039,8 +2068,22 @@ async function slipstreamQueueItemAtIndex(index) {
 }
 
 async function trySlipstreamNextQueueItem() {
+  const cue = currentPreviewCue();
+  if (cue) {
+    return slipstreamQueueItemAtIndex(cue.index, {
+      startTime: cue.startTime,
+      clearCue: true,
+    });
+  }
   if (!isQueueAutoAdvanceEnabled()) return false;
-  return slipstreamQueueItemAtIndex(currentQueueIndex + 1);
+  const nextIndex = currentQueueIndex + 1;
+  const nextItem = mediaQueue[nextIndex];
+  return slipstreamQueueItemAtIndex(nextIndex, {
+    startTime:
+      Number.isFinite(nextItem?.cueStartTime) && nextItem.cueStartTime > 0
+        ? nextItem.cueStartTime
+        : 0,
+  });
 }
 
 class PIDController {
@@ -1503,7 +2546,10 @@ function syncPreviewAudioTrackState() {
     return;
   }
 
-  const previewShouldBeAudible = !isActiveMediaWindow() || audioOnlyFile;
+  const previewShouldBeAudible =
+    !shouldSuppressPreviewForwarding() &&
+    !isLocalAppWindowPresentationActive() &&
+    !isActiveMediaWindow();
   for (let i = 0; i < video.audioTracks.length; i += 1) {
     video.audioTracks[i].enabled = previewShouldBeAudible;
   }
@@ -1521,11 +2567,38 @@ function isAudioOnlyQueuePresentationActive() {
       classifyQueueMediaType(currentItem.path) === "audio");
 
   const localAudioOnlyFile =
-    playingMediaAudioOnly || audioOnlyFile || currentItemIsAudio;
+    playingMediaAudioOnly || liveAudioQueueIndex >= 0 || audioOnlyFile || currentItemIsAudio;
   const localAudioPlaying =
-    isPlaying || playingMediaAudioOnly || video?.paused === false;
+    isPlaying ||
+    playingMediaAudioOnly ||
+    liveAudio?.paused === false ||
+    (audioOnlyFile && video?.paused === false);
 
   return localAudioOnlyFile && localAudioPlaying;
+}
+
+function isLocalAppWindowPresentationActive() {
+  if (currentMode !== MEDIAPLAYER || isActiveMediaWindow()) return false;
+  const localPlaying = Boolean(
+    isPlaying ||
+      playingMediaAudioOnly ||
+      liveAudio?.paused === false ||
+      (audioOnlyFile && video?.paused === false),
+  );
+  if (!localPlaying) return false;
+
+  const currentItem =
+    currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+      ? mediaQueue[currentQueueIndex]
+      : null;
+  const sourcePath = mediaFile || video?.src || currentItem?.path || "";
+  return Boolean(
+    playingMediaAudioOnly ||
+      liveAudioQueueIndex >= 0 ||
+      audioOnlyFile ||
+      isQueueItemAudio(currentItem) ||
+      mediaElementLoadedAudioOnly(video, sourcePath),
+  );
 }
 
 async function toggleLocalAudioOnlyPlaybackFromControls() {
@@ -1534,22 +2607,38 @@ async function toggleLocalAudioOnlyPlaybackFromControls() {
     return false;
   }
 
+  // Decide direction based on actual presentation state, not video.paused.
+  // liveAudio is the canonical live element; video is preview-only, so it may
+  // be paused even while a live audio presentation is active.
+  const presentationIsActive =
+    isPlaying || liveAudio?.paused === false || playingMediaAudioOnly;
+
+  if (!presentationIsActive) {
+    // Nothing is actually presenting yet. Return false so playMedia's normal
+    // queue path (playCurrentQueueItem → playAudioOnlyLocally) handles the
+    // start. That guarantees audio always comes from liveAudio, never from the
+    // preview <video> element.
+    return false;
+  }
+
+  // STOP path – tear down any live audio presentation and reset state.
   audioOnlyFile = true;
   playingMediaAudioOnly = true;
   isActiveMediaWindowCache = false;
   syncPreviewAudioTrackState();
 
-  if (video.paused) {
-    isPlaying = true;
-    updateDynUI();
-    await playVideoSafely(video, "audio-only local control toggle");
-    updateTimestamp();
-  } else {
+  stopLiveAudioPresentation();
+  if (!video.paused) {
     await video.pause();
-    isPlaying = false;
-    localTimeStampUpdateIsRunning = false;
-    updateDynUI();
   }
+  isPlaying = false;
+  isQueuePlaying = false;
+  currentQueueIndex = -1;
+  renderQueue();
+  send("localMediaState", 0, "stop");
+  removeFilenameFromTitlebar();
+  localTimeStampUpdateIsRunning = false;
+  updateDynUI();
 
   return true;
 }
@@ -1580,12 +2669,51 @@ function timelineSync() {
   if ((video && video.src === "") || currentMode !== MEDIAPLAYER) return;
   playPauseBtn = document.getElementById("playPauseBtn");
   playPauseIcon = document.getElementById("playPauseIcon");
-  timeline.value = (video.currentTime / video.duration) * 100;
-  if (video.paused) {
+  // Use liveAudio as the reference when it is the active live element.
+  const syncEl =
+    liveAudioQueueIndex >= 0 && liveAudio?.src && liveAudio.src !== ""
+      ? liveAudio
+      : video;
+  if (syncEl.duration && isFinite(syncEl.duration)) {
+    timeline.value = (syncEl.currentTime / syncEl.duration) * 100;
+  }
+  if (syncEl.paused) {
     playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
   } else {
     playPauseIcon.innerHTML = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
   }
+}
+
+// Called whenever we transition into "mirror mode" (video.src === liveAudio.src)
+// so that the custom controls immediately reflect liveAudio's current state rather
+// than waiting for the next timeupdate event (which does not update the duration
+// display or the play/pause icon).
+function refreshLiveAudioControls() {
+  if (!liveAudio || liveAudioQueueIndex < 0 || !liveAudio.src) return;
+  if (!timeline || !playPauseIcon) return;
+  const d = liveAudio.duration;
+  const c = liveAudio.currentTime;
+  if (isFinite(d) && d > 0) {
+    const fmtTime = (sec) => {
+      if (!isFinite(sec) || sec < 0) return "0:00";
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${s.toString().padStart(2, "0")}`;
+    };
+    if (durationTimeDisplay) durationTimeDisplay.textContent = fmtTime(d);
+    if (currentTimeDisplay) currentTimeDisplay.textContent = fmtTime(c);
+    timeline.min = 0;
+    timeline.max = 100;
+    timeline.value = (c / d) * 100;
+    const overlay = document.getElementById("customControls");
+    if (overlay) {
+      overlay.style.display = "";
+      overlay.style.visibility = "visible";
+    }
+  }
+  playPauseIcon.innerHTML = liveAudio.paused
+    ? `<path d="M8 5v14l11-7z"/>`
+    : `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
 }
 
 function getFocusableControls() {
@@ -1640,6 +2768,11 @@ function setupCustomMediaControls() {
   durationTimeDisplay = document.getElementById("durationTime");
   repeatButton = document.getElementById("mediaWindowRepeatButton");
   video = document.getElementById("preview");
+  // The dedicated cue overlay lives next to #preview in the wrapper. It is
+  // recreated whenever the media form is rebuilt, so its control-side
+  // listeners are registered alongside the main element's listeners below
+  // (under the same AbortController) and torn down on the next rebuild.
+  const previewCue = ensurePreviewCueVideoElement();
   videoWrapper = document.querySelector(".video-wrapper");
   controlsOverlay = document.querySelector(".controls-overlay");
   const overlay = document.getElementById("customControls");
@@ -1669,9 +2802,14 @@ function setupCustomMediaControls() {
   const controller = new AbortController();
   setupCustomMediaControls.controller = controller;
   const sig = { signal: controller.signal };
+  ensurePreviewAudioElement();
+  // Ensure liveAudio element exists so we can attach control listeners to it
+  // before any audio-only playback begins.
+  const la = ensureLiveAudioElement();
 
   let isDragging = false; // Track drag interaction
   let wasPlayingBeforeDrag = false;
+  let timelineSeekToken = 0;
 
   // --- Format time utility ---
   const fmt = (sec) => {
@@ -1679,6 +2817,64 @@ function setupCustomMediaControls() {
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
     return `${m}:${s.toString().padStart(2, "0")}`;
+  };
+  // Routes the custom controls (scrubber, play/pause, time display) to the
+  // right media element for the current operator intent:
+  //
+  //   1. Cue overlays first — getPreviewControlMediaElement returns the
+  //      dedicated cue element (previewAudio or previewCueVideo) whenever
+  //      a cue is loaded. The operator is intentionally scrubbing a
+  //      non-live item, so the controls must drive that scrubber instead
+  //      of the live mirror.
+  //   2. liveAudio mirror — when an audio-only item is the live output
+  //      and no cue is active, the visible <video id="preview"> has no
+  //      meaningful timeline of its own; route to liveAudio so the
+  //      scrubber tracks the real audio source.
+  //   3. The main #preview element, for everything else.
+  const cueMediaEl = () => {
+    const el = getPreviewControlMediaElement();
+    return el && el !== video ? el : null;
+  };
+  const currentControlMedia = () => {
+    const cue = cueMediaEl();
+    if (cue) return cue;
+    if (liveAudioQueueIndex >= 0 && liveAudio?.src && liveAudio.src !== "") {
+      return liveAudio;
+    }
+    return video;
+  };
+  const updateControlsForMetadata = (mediaEl) => {
+    if (currentMode !== MEDIAPLAYER || mediaEl !== currentControlMedia()) {
+      return;
+    }
+    timeline.min = 0;
+    timeline.max = 100;
+    timeline.value = 0;
+
+    const hasSeekableMedia = isFinite(mediaEl.duration) && mediaEl.duration > 0;
+
+    currentTimeDisplay.textContent = "0:00";
+    durationTimeDisplay.textContent = fmt(mediaEl.duration);
+
+    playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`; // Play icon
+
+    if (overlay) {
+      overlay.style.display = "";
+      overlay.style.visibility = hasSeekableMedia ? "visible" : "hidden";
+    }
+
+    repeatButton.classList.toggle("active", video.loop);
+  };
+  const updateControlsForTime = (mediaEl) => {
+    if (mediaEl !== currentControlMedia()) return;
+    if (!mediaEl.duration || timeline === null) return;
+    if (currentTimeDisplay !== null) {
+      currentTimeDisplay.textContent = fmt(mediaEl.currentTime);
+    }
+
+    if (!isDragging) {
+      timeline.value = (mediaEl.currentTime / mediaEl.duration) * 100;
+    }
   };
 
   if (videoWrapper && controlsOverlay) {
@@ -1702,89 +2898,190 @@ function setupCustomMediaControls() {
 
   // --- PLAY / PAUSE ---
   playPauseBtn.addEventListener("click", async () => {
-    if (video.src === "") return;
+    const mediaEl = currentControlMedia();
+    if (!mediaEl || mediaEl.src === "") return;
 
-    if (video.paused) {
-      await playVideoSafely(video, "custom controls toggle");
+    if (mediaEl.paused) {
+      // When an audio item is cued silently (previewAudio is the control
+      // element) and a presentation is already live, pressing play should
+      // take the cued audio live — the silent muted preview is otherwise
+      // a no-op from the operator's perspective.
+      if (
+        mediaEl === previewAudio &&
+        (isActiveMediaWindow() || isLocalAppWindowPresentationActive())
+      ) {
+        const cue = currentPreviewCue();
+        if (cue) {
+          void takeQueueItemLive(cue.index, cue.startTime);
+          return;
+        }
+      }
+      // When the current control element is the preview <video> with an
+      // audio-only file and no live presentation is running, treat the play
+      // button as the headerbar "Present" action. Route audio through
+      // liveAudio (the dedicated live output element) rather than playing
+      // the preview video directly — identical to clicking Present.
+      if (
+        mediaEl === video &&
+        !isLocalAppWindowPresentationActive() &&
+        (audioOnlyFile ||
+          mediaElementLoadedAudioOnly(
+            video,
+            mediaFile || removeFileProtocol(decodeURI(video.src)),
+          ))
+      ) {
+        void playMedia();
+        return;
+      }
+      await playVideoSafely(mediaEl, "custom controls toggle");
     } else {
-      await video.pause();
+      await mediaEl.pause();
     }
   });
 
   video.addEventListener(
     "play",
-    () => {
-      if (video.src === "" || currentMode !== MEDIAPLAYER) return;
+    (event) => {
+      if (event.target !== currentControlMedia()) return;
+      if (event.target.src === "" || currentMode !== MEDIAPLAYER) return;
       playPauseIcon.innerHTML = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
     },
     sig,
   );
+  previewAudio.addEventListener(
+    "play",
+    (event) => {
+      if (event.target !== currentControlMedia()) return;
+      if (event.target.src === "" || currentMode !== MEDIAPLAYER) return;
+      playPauseIcon.innerHTML = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
+    },
+    sig,
+  );
+  la.addEventListener(
+    "play",
+    (event) => {
+      if (event.target !== currentControlMedia()) return;
+      if (event.target.src === "" || currentMode !== MEDIAPLAYER) return;
+      playPauseIcon.innerHTML = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
+      // Restart the countdown-timer RAF loop (normally triggered by playLocalMedia
+      // on the video element, but liveAudio plays independently of video).
+      localTimeStampUpdateIsRunning = false;
+      updateTimestamp();
+    },
+    sig,
+  );
+  if (previewCue) {
+    previewCue.addEventListener(
+      "play",
+      (event) => {
+        if (event.target !== currentControlMedia()) return;
+        if (event.target.src === "" || currentMode !== MEDIAPLAYER) return;
+        playPauseIcon.innerHTML = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
+      },
+      sig,
+    );
+  }
 
   video.addEventListener(
     "pause",
-    () => {
+    (event) => {
+      if (event.target !== currentControlMedia()) return;
       // Play icon
       if (playPauseIcon === null) return;
       playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
     },
     sig,
   );
-
-  video.addEventListener(
-    "loadedmetadata",
-    () => {
-      if (currentMode !== MEDIAPLAYER) {
-        return;
-      }
-      timeline.min = 0;
-      timeline.max = 100;
-      timeline.value = 0;
-
-      const hasSeekableMedia = isFinite(video.duration) && video.duration > 0;
-
-      currentTimeDisplay.textContent = "0:00";
-      durationTimeDisplay.textContent = fmt(video.duration);
-
-      playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`; // Play icon
-
-      if (overlay) {
-        overlay.style.display = "";
-        overlay.style.visibility = hasSeekableMedia ? "visible" : "hidden";
-      }
-
-      repeatButton.classList.toggle("active", video.loop);
+  previewAudio.addEventListener(
+    "pause",
+    (event) => {
+      if (event.target !== currentControlMedia()) return;
+      if (playPauseIcon === null) return;
+      playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
     },
     sig,
   );
+  la.addEventListener(
+    "pause",
+    (event) => {
+      if (event.target !== currentControlMedia()) return;
+      if (playPauseIcon === null) return;
+      playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
+    },
+    sig,
+  );
+  if (previewCue) {
+    previewCue.addEventListener(
+      "pause",
+      (event) => {
+        if (event.target !== currentControlMedia()) return;
+        if (playPauseIcon === null) return;
+        playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
+      },
+      sig,
+    );
+  }
+
+  video.addEventListener(
+    "loadedmetadata",
+    (event) => updateControlsForMetadata(event.target),
+    sig,
+  );
+  ensurePreviewAudioElement().addEventListener(
+    "loadedmetadata",
+    (event) => updateControlsForMetadata(event.target),
+    sig,
+  );
+  la.addEventListener(
+    "loadedmetadata",
+    (event) => updateControlsForMetadata(event.target),
+    sig,
+  );
+  if (previewCue) {
+    previewCue.addEventListener(
+      "loadedmetadata",
+      (event) => updateControlsForMetadata(event.target),
+      sig,
+    );
+  }
 
   // --- DRAGGING THE TIMELINE (HYBRID LIVE SCRUBBING) ---
   timeline.addEventListener("mousedown", () => {
-    if (!video.duration) return;
-    wasPlayingBeforeDrag = !video.paused;
+    const mediaEl = currentControlMedia();
+    if (!mediaEl?.duration) return;
+    wasPlayingBeforeDrag = !mediaEl.paused;
     isDragging = true;
     // Pause playback for stable seeking
-    video.pause();
+    mediaEl.pause();
   });
   timeline.addEventListener(
     "touchstart",
     () => {
-      if (!video.duration) return;
-      wasPlayingBeforeDrag = !video.paused;
+      const mediaEl = currentControlMedia();
+      if (!mediaEl?.duration) return;
+      wasPlayingBeforeDrag = !mediaEl.paused;
       isDragging = true;
       // Pause playback for stable seeking
-      video.pause();
+      mediaEl.pause();
     },
     { passive: true },
   );
 
   // Seek immediately on 'input' for live frame updates
   timeline.addEventListener("input", () => {
-    if (!video.duration) return;
-    const seekTime = (timeline.value / 100) * video.duration;
-
-    video.currentTime = seekTime;
+    const mediaEl = currentControlMedia();
+    if (!mediaEl?.duration) return;
+    const seekTime = (timeline.value / 100) * mediaEl.duration;
+    const seekToken = ++timelineSeekToken;
 
     currentTimeDisplay.textContent = fmt(seekTime);
+    void seekMedia(mediaEl, seekTime).then((actualTime) => {
+      if (seekToken !== timelineSeekToken) return;
+      currentTimeDisplay.textContent = fmt(actualTime);
+      if (isPreparingSeparateCue()) {
+        setCueStartTime(previewCueIndex, actualTime);
+      }
+    });
   });
 
   timeline.addEventListener("change", () => {
@@ -1792,7 +3089,7 @@ function setupCustomMediaControls() {
 
     if (wasPlayingBeforeDrag) {
       // Use .catch() for promise errors if browser auto-play is blocked (common with video.play())
-      video.play().catch((e) => {
+      currentControlMedia()?.play().catch((e) => {
         if (isPlayInterruptedError(e)) return;
         modeChangeFixups(e);
       });
@@ -1805,18 +3102,26 @@ function setupCustomMediaControls() {
   // --- TIMEUPDATE ---
   video.addEventListener(
     "timeupdate",
-    () => {
-      if (!video.duration || timeline === null) return;
-      if (currentTimeDisplay !== null) {
-        currentTimeDisplay.textContent = fmt(video.currentTime);
-      }
-
-      if (!isDragging) {
-        timeline.value = (video.currentTime / video.duration) * 100;
-      }
-    },
+    (event) => updateControlsForTime(event.target),
     sig,
   );
+  previewAudio.addEventListener(
+    "timeupdate",
+    (event) => updateControlsForTime(event.target),
+    sig,
+  );
+  la.addEventListener(
+    "timeupdate",
+    (event) => updateControlsForTime(event.target),
+    sig,
+  );
+  if (previewCue) {
+    previewCue.addEventListener(
+      "timeupdate",
+      (event) => updateControlsForTime(event.target),
+      sig,
+    );
+  }
 
   // --- LOOP / REPEAT ---
   repeatButton.addEventListener("click", () => {
@@ -1830,6 +3135,7 @@ function setupCustomMediaControls() {
   video.addEventListener(
     "ended",
     () => {
+      if (video !== currentControlMedia()) return;
       if (!video.loop && currentMode === MEDIAPLAYER) {
         video.currentTime = 0;
         video.pause();
@@ -1839,6 +3145,41 @@ function setupCustomMediaControls() {
     },
     sig,
   );
+  previewAudio.addEventListener(
+    "ended",
+    () => {
+      if (!isAudioPreviewCueActive() || currentMode !== MEDIAPLAYER) return;
+      previewAudio.currentTime = 0;
+      previewAudio.pause();
+      timeline.value = 0;
+      currentTimeDisplay.textContent = "0:00";
+    },
+    sig,
+  );
+  // liveAudio ended: scrubber reset is handled here; actual queue advance is
+  // driven by endLiveAudioPresentation (attached permanently to the element).
+  la.addEventListener(
+    "ended",
+    () => {
+      if (la !== currentControlMedia() || currentMode !== MEDIAPLAYER) return;
+      timeline.value = 0;
+      currentTimeDisplay.textContent = "0:00";
+    },
+    sig,
+  );
+  if (previewCue) {
+    previewCue.addEventListener(
+      "ended",
+      () => {
+        if (previewCue !== currentControlMedia() || currentMode !== MEDIAPLAYER) return;
+        previewCue.currentTime = 0;
+        previewCue.pause();
+        timeline.value = 0;
+        currentTimeDisplay.textContent = "0:00";
+      },
+      sig,
+    );
+  }
 
   if (clickTarget) {
     // The click target may be the persistent <video id="preview">, so this
@@ -1846,14 +3187,15 @@ function setupCustomMediaControls() {
     clickTarget.addEventListener(
       "click",
       (event) => {
-        if (video.src === "") return;
+        const mediaEl = currentControlMedia();
+        if (!mediaEl || mediaEl.src === "") return;
         const isControl = event.target.closest("#customControls");
 
         if (!isControl) {
-          if (video.paused) {
-            void playVideoSafely(video, "preview click toggle");
+          if (mediaEl.paused) {
+            void playVideoSafely(mediaEl, "preview click toggle");
           } else {
-            video.pause();
+            mediaEl.pause();
           }
         }
         event.stopPropagation();
@@ -2338,7 +3680,7 @@ function showPreviewWarningToast() {
 
   // 5. Set Text (GNOME HID Compliant Message)
   toast.textContent =
-    'Press "Start Presentation" to show on the selected display.';
+    'Press "Present" to show on the selected display.';
 
   // 6. Manage Animation and Timer
   // Force a reflow to ensure the transition triggers if element was just added
@@ -2384,13 +3726,22 @@ function showPreviewWarningToast() {
 }
 
 function update(time) {
-  if (video.paused | (currentMode !== MEDIAPLAYER)) {
+  // When liveAudio is performing the live presentation, drive the countdown
+  // timer from it instead of from the preview video element.
+  const activeEl = liveAudio?.paused === false ? liveAudio : video;
+  if (activeEl.paused | (currentMode !== MEDIAPLAYER)) {
     localTimeStampUpdateIsRunning = 0;
     return;
   }
 
-  if (time - lastUpdateTimeLocalPlayer > 33) {
-    NUM_BUFFER[3] = video.duration - video.currentTime;
+  // Same rule as handleTimeMessage: a loaded cue owns the countdown,
+  // so the live-media RAF loop steps aside while the operator scrubs.
+  // The loop itself keeps going (so it resumes painting immediately when
+  // the cue is cleared) — only the NUM_BUFFER write is skipped.
+  const cueOwnsCountdown =
+    getCountdownSourceElement() !== null || isImagePreviewCueActive();
+  if (!cueOwnsCountdown && time - lastUpdateTimeLocalPlayer > 33) {
+    NUM_BUFFER[3] = activeEl.duration - activeEl.currentTime;
 
     NUM_BUFFER[0] = (NUM_BUFFER[3] * 0.000277777777778) | 0;
     NUM_BUFFER[1] =
@@ -2424,13 +3775,9 @@ function updateTimestamp() {
     return;
   }
 
-  if (!video.paused) {
+  if (!video.paused || liveAudio?.paused === false) {
     localTimeStampUpdateIsRunning = true;
-    if (!video.paused) {
-      requestAnimationFrame(update);
-    } else {
-      localTimeStampUpdateIsRunning = false;
-    }
+    requestAnimationFrame(update);
   }
 }
 
@@ -2444,6 +3791,154 @@ const PAD_CODES = new Uint16Array(128);
 for (let i = 0; i < 64; i++) {
   PAD_CODES[i * 2] = 48 + ((i / 10) | 0);
   PAD_CODES[i * 2 + 1] = 48 + (i % 10);
+}
+
+/**
+ * Decide which media element owns the countdown overlay. Cue scrubs win
+ * over the live mirror: while the operator is previewing a cued video or
+ * audio item, the big "time remaining" display in the corner should
+ * reflect what they're scrubbing, not the projection.
+ *
+ * Returns null when:
+ *   - no cue is loaded (the live media drives the countdown), OR
+ *   - the cue is an image (no meaningful countdown exists — caller hides
+ *     the overlay instead).
+ */
+function getCountdownSourceElement() {
+  if (isAudioPreviewCueActive() && previewAudio) {
+    return previewAudio;
+  }
+  if (isVideoPreviewCueActive() && previewCueVideo) {
+    return previewCueVideo;
+  }
+  return null;
+}
+
+/**
+ * True when an image is cued. The countdown overlay must be hidden in
+ * this case — there is no duration to count down from — and re-shown when
+ * the cue clears (assuming the live media is not also an image).
+ */
+function isImagePreviewCueActive() {
+  const cue = currentPreviewCue();
+  return Boolean(cue && isQueueItemImage(cue.item));
+}
+
+/**
+ * Per-cue scratch buffer. The live mirror has its own NUM_BUFFER /
+ * STRING_BUFFER / requestAnimationFrame pipeline driven by
+ * handleTimeMessage + update(); reusing those structures from the cue
+ * scrub path would mean two independent sources mutating a single
+ * shared buffer and racing for the same RAF slot. Even with strict
+ * source-switching guards, the architecture is fragile — one missed
+ * guard and the two countdowns interleave into torn digits. The cue
+ * gets its own private buffer here and writes the formatted string
+ * straight into the textNode, so a cue scrub can never corrupt the
+ * live path's in-flight NUM_BUFFER state and vice versa.
+ *
+ * The buffer is pre-sized for "HH:MM:SS.mmm" (12 chars) and indexed by
+ * absolute position so we never allocate a string just to format the
+ * countdown — paintCountdownFor runs once per timeupdate (≈4 Hz) and
+ * once per seek, well below the live RAF rate, but keeping it
+ * allocation-free still avoids waking the GC inside event callbacks.
+ */
+const CUE_COUNTDOWN_CHARS = new Uint16Array(12);
+CUE_COUNTDOWN_CHARS[2] = CUE_COUNTDOWN_CHARS[5] = ":".charCodeAt(0);
+CUE_COUNTDOWN_CHARS[8] = ".".charCodeAt(0);
+
+function writeTwoDigits(value, offset) {
+  if (value < 0) value = 0;
+  if (value > 99) value = 99;
+  CUE_COUNTDOWN_CHARS[offset] = ZERO + ((value / 10) | 0);
+  CUE_COUNTDOWN_CHARS[offset + 1] = ZERO + (value % 10);
+}
+
+function writeThreeDigits(value, offset) {
+  if (value < 0) value = 0;
+  if (value > 999) value = 999;
+  CUE_COUNTDOWN_CHARS[offset] = ZERO + ((value / 100) | 0);
+  CUE_COUNTDOWN_CHARS[offset + 1] = ZERO + (((value / 10) | 0) % 10);
+  CUE_COUNTDOWN_CHARS[offset + 2] = ZERO + (value % 10);
+}
+
+/**
+ * Compute (duration − currentTime) for the cue scrub element and write
+ * the formatted "HH:MM:SS.mmm" string straight into the textNode. This
+ * deliberately does NOT touch NUM_BUFFER / STRING_BUFFER / updatePending
+ * so the live mirror's RAF pipeline keeps owning its own state — even
+ * while a cue is loaded, the live path can continue painting into its
+ * private buffers (the source-switching guards just stop it from
+ * applying those buffers to the on-screen textNode).
+ *
+ * Wired from previewCueVideo's timeupdate/seeked/loadedmetadata
+ * listeners and previewAudio's equivalents, plus the one-shot redraw
+ * inside restoreCountdownForLiveMedia for fast handoff back to live.
+ */
+function paintCountdownFor(mediaEl) {
+  if (!mediaEl) return;
+  const duration = mediaEl.duration;
+  const currentTime = mediaEl.currentTime;
+  if (
+    !Number.isFinite(duration) ||
+    duration <= 0 ||
+    !Number.isFinite(currentTime) ||
+    currentTime < 0
+  ) {
+    return;
+  }
+  let remaining = duration - currentTime;
+  if (remaining < 0) remaining = 0;
+  const wholeSeconds = remaining | 0;
+  const hours = (wholeSeconds / 3600) | 0;
+  const rem = wholeSeconds - hours * 3600;
+  const minutes = (rem / 60) | 0;
+  const seconds = rem - minutes * 60;
+  const millis = ((remaining - wholeSeconds) * 1000 + 0.5) | 0;
+  writeTwoDigits(hours, 0);
+  writeTwoDigits(minutes, 3);
+  writeTwoDigits(seconds, 6);
+  writeThreeDigits(millis > 999 ? 999 : millis, 9);
+  textNode.data = String.fromCharCode(
+    CUE_COUNTDOWN_CHARS[0],
+    CUE_COUNTDOWN_CHARS[1],
+    CUE_COUNTDOWN_CHARS[2],
+    CUE_COUNTDOWN_CHARS[3],
+    CUE_COUNTDOWN_CHARS[4],
+    CUE_COUNTDOWN_CHARS[5],
+    CUE_COUNTDOWN_CHARS[6],
+    CUE_COUNTDOWN_CHARS[7],
+    CUE_COUNTDOWN_CHARS[8],
+    CUE_COUNTDOWN_CHARS[9],
+    CUE_COUNTDOWN_CHARS[10],
+    CUE_COUNTDOWN_CHARS[11],
+  );
+}
+
+/**
+ * Restore the countdown overlay's visibility to whatever the live media
+ * requires. Called when a cue clears (the cue might have hidden the
+ * overlay for an image preview, or pinned it to the cue's time), so the
+ * operator sees the live time again for audio/video and nothing for an
+ * image or empty live source.
+ */
+function restoreCountdownForLiveMedia() {
+  const hasLiveSource = Boolean(mediaFile);
+  const liveIsImage = hasLiveSource && isImg(mediaFile);
+  const showCountdown = hasLiveSource && !liveIsImage;
+  setMediaCountdownOverlayVisible(showCountdown);
+  if (!showCountdown) {
+    textNode.data = "";
+    return;
+  }
+  // Prefer liveAudio's clock for audio-only live presentations — the
+  // main video element may be paused/empty in that mode. Otherwise fall
+  // back to the main mirror so we paint immediately instead of waiting
+  // for the next projection time message.
+  if (liveAudio?.src && liveAudio.src !== "" && !liveAudio.paused) {
+    paintCountdownFor(liveAudio);
+  } else if (video) {
+    paintCountdownFor(video);
+  }
 }
 
 function updateCountdownNode() {
@@ -2514,17 +4009,51 @@ function handleTimeMessage(_, message) {
   now = Date.now();
 
   if (currentMode === MEDIAPLAYER) {
-    SECONDSFLOAT[0] = Math.max(0, duration - currentTime);
-    NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
-    REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
-    NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
-    NUM_BUFFER[2] = REM_BUFFER[0] % 60;
-    NUM_BUFFER[3] =
-      ((SECONDSFLOAT[0] - (SECONDSFLOAT[0] | 0)) * 1000 + 0.5) | 0;
-    if (!updatePending[0]) {
-      updatePending[0] = 1;
-      requestAnimationFrame(updateCountdownNode);
+    // Cue scrubs own the countdown while a cue is loaded — the operator
+    // is reading "time remaining on the thing I'm previewing", not on the
+    // live media. The cue's own timeupdate/seeked handlers drive the
+    // overlay (or hide it entirely for an image cue), so we just step
+    // out of the way here.
+    if (!getCountdownSourceElement() && !isImagePreviewCueActive()) {
+      SECONDSFLOAT[0] = Math.max(0, duration - currentTime);
+      NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
+      REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
+      NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
+      NUM_BUFFER[2] = REM_BUFFER[0] % 60;
+      NUM_BUFFER[3] =
+        ((SECONDSFLOAT[0] - (SECONDSFLOAT[0] | 0)) * 1000 + 0.5) | 0;
+      // Keep the PAD_CODES lookup metadata in sync with NUM_BUFFER on
+      // every IPC tick. Historically only the local update() RAF loop
+      // refreshed mask*/idx*, which meant updateCountdownNode would
+      // render the hours/minutes/seconds digits from a stale lookup
+      // whenever this IPC path won the race to schedule the next paint
+      // — most visible right after a cue clears (update() skipped the
+      // refresh while the cue owned the countdown). Refresh here too so
+      // the live countdown is fully self-sufficient and never gets
+      // "stuck" digits.
+      idx0 = NUM_BUFFER[0] << 1;
+      mask0 = NUM_BUFFER[0] < 10;
+      idx1 = NUM_BUFFER[1] << 1;
+      mask1 = NUM_BUFFER[1] < 10;
+      idx2 = NUM_BUFFER[2] << 1;
+      mask2 = NUM_BUFFER[2] < 10;
+      if (!updatePending[0]) {
+        updatePending[0] = 1;
+        requestAnimationFrame(updateCountdownNode);
+      }
     }
+  }
+
+  // The PID sync must run unconditionally while the live mirror is
+  // playing. In the old architecture this path early-returned whenever a
+  // cue was loaded (shouldSuppressPreviewForwarding was true), which
+  // froze the PID controller and let the mirror's playbackRate drift
+  // away from the projection. With the cue scrub on a dedicated overlay
+  // the main #preview is always the live mirror, so we keep adjusting it
+  // — only the explicit suppressPreviewForwarding flag (used briefly
+  // during projection→preview sync to break feedback) is honored here.
+  if (suppressPreviewForwarding) {
+    return;
   }
 
   // Perform timestamp calculations only if enough time has passed
@@ -2541,16 +4070,32 @@ async function handlePlaybackState(event, playbackState) {
   if (!video) {
     return;
   }
+  // The main #preview is the live mirror at all times — including while a
+  // cue is loaded into the overlay — so this projection→preview sync must
+  // run unconditionally. Without it, the mirror gets stuck in whatever
+  // play/pause state it happened to be in when the cue was loaded, and
+  // clearing the cue reveals a paused or out-of-sync preview accompanied
+  // by an audio glitch as it catches up. The explicit
+  // suppressPreviewForwarding window prevents the sync-induced play/pause
+  // event from looping back through pauseLocalMedia / playLocalMedia.
   if (playbackState.playing && video.paused) {
     masterPauseState = false;
-    if (video && !isImg(mediaFile)) {
-      await playVideoSafely(video, "playback state sync");
+    if (!isImg(mediaFile)) {
+      suppressPreviewForwarding = true;
+      try {
+        await playVideoSafely(video, "playback state sync");
+      } finally {
+        suppressPreviewForwarding = false;
+      }
     }
   } else if (!playbackState.playing && !video.paused) {
     masterPauseState = true;
-    if (video) {
+    suppressPreviewForwarding = true;
+    try {
       video.currentTime = playbackState.currentTime;
       await video.pause();
+    } finally {
+      suppressPreviewForwarding = false;
     }
   }
 }
@@ -2560,6 +4105,9 @@ function handlePlayPause(event, arg) {
 }
 
 function handleMediaseek(event, seekTime) {
+  if (shouldSuppressPreviewForwarding()) {
+    return;
+  }
   if (video) {
     const newTime = video.currentTime + seekTime;
     if (newTime >= 0 && newTime <= video.duration) {
@@ -2629,7 +4177,9 @@ async function handleMediaWindowClosed(event, id) {
 
   if (pendingQueueSwitchIndex !== null) {
     const idx = pendingQueueSwitchIndex;
+    const switchStartTime = pendingQueueSwitchStartTime;
     pendingQueueSwitchIndex = null;
+    pendingQueueSwitchStartTime = 0;
     mediaPlaybackEndedPending = false;
 
     isPlaying = false;
@@ -2637,7 +4187,10 @@ async function handleMediaWindowClosed(event, id) {
     isActiveMediaWindowCache = false;
 
     currentQueueIndex = idx;
-    await loadQueueItemIntoControlWindow(mediaQueue[idx]);
+    await loadQueueItemIntoControlWindow(mediaQueue[idx], {
+      preservePreviewSeek: false,
+      startTime: switchStartTime,
+    });
     renderQueue();
 
     isPlaying = true;
@@ -2659,13 +4212,14 @@ async function handleMediaWindowClosed(event, id) {
     } else {
       await createMediaWindow();
     }
+    clearCueAfterTake(idx);
     return;
   }
 
   if (isQueuePlaying) {
     if (mediaPlaybackEndedPending) {
       mediaPlaybackEndedPending = false;
-      if (isQueueAutoAdvanceEnabled()) {
+      if (currentPreviewCue() || isQueueAutoAdvanceEnabled()) {
         await advanceQueueAfterMediaWindowClosed();
       } else {
         await stopQueuePresentationUserClosed();
@@ -2730,8 +4284,15 @@ function handleMediaPlayback(isImgFile) {
   }
 }
 
+function setMediaCountdownOverlayVisible(isVisible) {
+  const countdownEl = document.getElementById("mediaCntDn");
+  if (!countdownEl) return;
+  countdownEl.style.display = isVisible ? "inline-flex" : "none";
+}
+
 function handleImageDisplay(isImgFile, imgEle) {
   const previewEl = document.getElementById("preview");
+  setMediaCountdownOverlayVisible(!isImgFile);
   if (imgEle && !isImgFile) {
     imgEle.remove();
     imgEle.src = "";
@@ -2802,6 +4363,9 @@ function isImg(pathname) {
 function vlCtl(v) {
   if (!audioOnlyFile) {
     send("vlcl", v, 0);
+  } else if (liveAudio && liveAudioQueueIndex >= 0) {
+    liveAudio.volume = v;
+    if (video) video.volume = v;
   } else {
     video.volume = v;
   }
@@ -2857,7 +4421,7 @@ function handleCanPlayThrough(e, resolve) {
     resolve(video);
     return;
   }
-  audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
+  audioOnlyFile = mediaElementLoadedAudioOnly(video, mediaFile || video.src);
 
   resolve(video);
 }
@@ -2876,6 +4440,49 @@ const HAVE_METADATA = 1;
  * that the UI doesn't appear hung if the pipeline is sick.
  */
 const WAIT_FOR_METADATA_TIMEOUT_MS = 4000;
+
+function waitForLoadedMetadata(mediaEl) {
+  if (!mediaEl || !mediaEl.src || mediaEl.src === "") {
+    return Promise.reject(new Error("Invalid media element source."));
+  }
+  if (mediaEl.readyState >= HAVE_METADATA) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+
+    const cleanup = () => {
+      mediaEl.removeEventListener("loadedmetadata", onLoaded);
+      mediaEl.removeEventListener("error", onError);
+      if (timer !== null) {
+        window.clearTimeout(timer);
+        timer = null;
+      }
+    };
+    const finishOk = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const onLoaded = () => finishOk();
+    const onError = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(mediaEl.error ?? new Error("Failed to load media metadata"));
+    };
+
+    mediaEl.addEventListener("loadedmetadata", onLoaded, { once: true });
+    mediaEl.addEventListener("error", onError, { once: true });
+    if (mediaEl.readyState === HAVE_NOTHING) {
+      mediaEl.load();
+    }
+    timer = window.setTimeout(finishOk, WAIT_FOR_METADATA_TIMEOUT_MS);
+  });
+}
 
 /**
  * Resolve when the current preview video has enough metadata to inspect
@@ -2997,8 +4604,7 @@ async function playMedia(e) {
     video &&
     !audioOnlyFile &&
     video.readyState &&
-    video.videoTracks &&
-    video.videoTracks.length === 0
+    mediaElementLoadedAudioOnly(video, mediaFile)
   ) {
     audioOnlyFile = true;
     document.getElementById("customControls").style.visibility = "";
@@ -3109,20 +4715,22 @@ async function playMedia(e) {
       return;
     }
     if (audioOnlyFile) {
-      send("localMediaState", 0, "play");
-      addFilenameToTitlebar(normalizedPathname);
-      isPlaying = true;
-      playingMediaAudioOnly = true;
-      isActiveMediaWindowCache = false;
-      syncPreviewAudioTrackState();
-      updateDynUI();
-      void playVideoSafely(video, "audio-only local start");
-      updateTimestamp();
+      await playAudioOnlyLocally();
       return;
     }
 
     await createMediaWindow();
   } else {
+    // A presentation is currently live. If the operator has cued a different
+    // item in the Preview/Cue panel and hits Present, treat that as "take
+    // the cued item live" (the same action as the Play Now button) — not as
+    // a global stop. Without this, cueing an audio file while a video is
+    // live and pressing the play button would simply stop everything.
+    const cue = currentPreviewCue();
+    if (cue && currentMode === MEDIAPLAYER) {
+      await takeQueueItemLive(cue.index, cue.startTime);
+      return;
+    }
     if (isQueuePlaying) {
       isQueuePlaying = false;
       currentQueueIndex = -1;
@@ -3134,7 +4742,11 @@ async function playMedia(e) {
       send("close-media-window", 0);
     }
     isActiveMediaWindowCache = false;
-    playingMediaAudioOnly = false;
+    if (playingMediaAudioOnly || liveAudio?.paused === false) {
+      stopLiveAudioPresentation();
+    } else {
+      playingMediaAudioOnly = false;
+    }
     if (!audioOnlyFile) activeLiveStream = true;
     if (video) {
       await video.pause();
@@ -3168,9 +4780,16 @@ function updateDynUI() {
   textNode.data = "";
   const playButton = document.getElementById("mediaWindowPlayButton");
   if (playButton) {
-    playButton.textContent = isPlaying
-      ? "Stop Presentation"
-      : "Start Presentation";
+    // The button now wraps an icon + label; write only into the label span
+    // so the SVG glyphs survive each state change. The `data-playing`
+    // attribute drives which icon (▶ vs ■) is visible via CSS.
+    playButton.dataset.playing = isPlaying ? "true" : "false";
+    const label = document.getElementById("mediaWindowPlayButtonLabel");
+    if (label) {
+      label.textContent = isPlaying ? "Stop" : "Present";
+    } else {
+      playButton.textContent = isPlaying ? "Stop" : "Present";
+    }
   }
 
   if (document.getElementById("dspSelct")) {
@@ -3184,6 +4803,15 @@ function updateDynUI() {
     document.getElementById("autoPlayCtl").disabled =
       (isPlaying && audioOnlyFile) || iM;
   }
+
+  // Presentation status mirrors `isPlaying` (the play-button label reads
+  // off the same flag). Keep them in sync at one choke point so callers
+  // don't have to remember to refresh the status card after flipping
+  // playback state — e.g. `playCurrentQueueItem` calls `renderQueue` while
+  // `isPlaying` is still false, then sets it true, then `updateDynUI`.
+  // Without this, a one-file queue stayed at "Nothing live" forever
+  // because no later path called `renderQueue`/`updatePreviewCueUI` again.
+  updatePreviewCueUI();
 }
 
 async function populateDisplaySelect() {
@@ -3221,6 +4849,7 @@ function setSBFormStreamPlayer() {
   }
   currentMode = STREAMPLAYER;
   send("set-mode", currentMode);
+  updateHeaderAddMediaButtonVisibility();
 
   document.getElementById("dyneForm").innerHTML = `
     <div class="media-container">
@@ -3314,6 +4943,7 @@ async function setSBFormTextPlayer() {
   }
   currentMode = TEXTPLAYER;
   send("set-mode", currentMode);
+  updateHeaderAddMediaButtonVisibility();
 
   if (isActiveMediaWindow()) {
   }
@@ -3657,75 +5287,141 @@ function generateMediaFormHTML(video = null) {
   return `
   <div class="media-container">
     <form onsubmit="return false;" class="control-panel control-panel--media">
-      <div class="control-group">
-        <span class="control-label">Media</span>
-        <button type="button" class="file-input-label" id="mediaOpenButton">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
-            <path
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M2.5 2.5h11a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"
-            />
-            <circle cx="5.5" cy="5.5" r="1" fill="currentColor"/>
-            <path
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              d="M3.5 11.5l2.5-2.5c.4-.4 1-.4 1.4 0l2.1 2.1m-1-1l1-1c.4-.4 1-.4 1.4 0l2.1 2.1"
-            />
-          </svg>
-          <span>Open</span>
-        </button>
-      </div>
-
-      <div class="control-group">
-        <span class="control-label">Display</span>
-        <div class="display-select-group">
-          <select name="dspSelct" id="dspSelct" class="display-select">
-            <option value="" disabled>--Select Display Device--</option>
-          </select>
+      <!--
+        Compact, merged status card. The previous Live Output + Preview/Cue
+        cards stacked two full Adwaita boxed sections (each with a 14px title
+        and 6px gaps) before the queue ever appeared. On a 960×548 window the
+        queue had ~120px of usable height — barely two rows. Merging both into
+        a single "Presentation" card with key/value rows reclaims roughly
+        70px for the queue at the same window size without losing any state
+        or action the operator needs.
+      -->
+      <section class="presentation-status-card" aria-label="Presentation status">
+        <span class="presentation-status-card__heading">Presentation</span>
+        <div class="presentation-status-row">
+          <span class="presentation-status-row__label">Now:</span>
+          <span id="nowPlayingLabel" class="presentation-status-row__value">Nothing live</span>
         </div>
-      </div>
-
-      <div class="control-group media-toggle-rows">
-        <div class="loop-control">
-          <span class="control-label">Autoplay</span>
-          <label class="switch">
-            <input type="checkbox" checked name="autoPlayCtl" id="autoPlayCtl">
-            <span class="switch-track"></span>
-            <span class="switch-thumb"></span>
-          </label>
+        <div class="presentation-status-row">
+          <span class="presentation-status-row__label">Next:</span>
+          <span id="upNextLabel" class="presentation-status-row__value">No item cued</span>
         </div>
-        <div class="loop-control queue-auto-advance-control">
-          <span class="control-label" id="queueAutoAdvanceLbl">Auto-advance</span>
-          <label class="switch">
-            <input type="checkbox" checked name="queueAutoAdvanceCtl" id="queueAutoAdvanceCtl" aria-labelledby="queueAutoAdvanceLbl">
-            <span class="switch-track"></span>
-            <span class="switch-thumb"></span>
-          </label>
+        <!--
+          The cue start position used to live in a third "Start: 2:24.172"
+          row here, but that duplicated the per-item "Starts 2:24.172" badge
+          rendered inside the queue row itself. One source of truth (the
+          queue row) is enough; the card stays compact for small screens.
+        -->
+        <div class="cue-button-row">
+          <button type="button" id="cueCurrentPositionBtn" class="pill-button secondary" title="Cue from current position" aria-label="Cue from current position" disabled>Cue</button>
+          <button type="button" id="playCueNowBtn" class="pill-button secondary" disabled>Play Now</button>
         </div>
-      </div>
+      </section>
 
-      <div id="mediaCntDn"></div>
-
+      <!--
+        Queue is the dominant sidebar content per GNOME HIG adaptive guidance:
+        primary task surface fills the space, secondary controls (output
+        selector, switches) sit below in a collapsed expander so the queue
+        gets every spare pixel.
+      -->
       <div class="queue-section">
         <div class="list-header">
           <span class="queue-section-title">Media Queue</span>
-          <button type="button" id="clearQueueBtn" class="pill-button destructive-action" title="Clear the queue" aria-label="Clear queue">Clear</button>
+          <button type="button" id="clearQueueBtn" class="pill-button destructive-action" title="Clear the queue" aria-label="Clear queue" hidden>Clear</button>
         </div>
         <div id="mediaQueueList" class="boxed-list" role="list" aria-label="Media queue">
-          <div class="list-placeholder">No media in queue</div>
+          <div class="list-placeholder">
+            <span class="list-placeholder-title">No media in queue</span>
+            <span class="list-placeholder-hint">Add media to begin</span>
+          </div>
         </div>
       </div>
+
+      <!--
+        Options expander: Output Display, Autoplay, Auto-advance. Collapsed
+        by default to maximize queue real estate; open-state is persisted to
+        localStorage so users who routinely toggle the switches don't have
+        to re-expand each session.
+      -->
+      <details class="options-expander" id="mediaOptionsExpander">
+        <summary class="options-expander__summary">
+          <span class="options-expander__title">Options</span>
+          <svg class="options-expander__chevron" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M6 4l4 4-4 4"/>
+          </svg>
+        </summary>
+        <div class="options-expander__body">
+          <div class="control-group">
+            <span class="control-label">Output Display</span>
+            <div class="display-select-group">
+              <select name="dspSelct" id="dspSelct" class="display-select">
+                <option value="" disabled>--Select Display Device--</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="control-group media-toggle-rows">
+            <div class="loop-control">
+              <span class="control-label">Autoplay</span>
+              <label class="switch">
+                <input type="checkbox" checked name="autoPlayCtl" id="autoPlayCtl">
+                <span class="switch-track"></span>
+                <span class="switch-thumb"></span>
+              </label>
+            </div>
+            <div class="loop-control queue-auto-advance-control">
+              <span class="control-label" id="queueAutoAdvanceLbl">Auto-advance</span>
+              <label class="switch">
+                <input type="checkbox" checked name="queueAutoAdvanceCtl" id="queueAutoAdvanceCtl" aria-labelledby="queueAutoAdvanceLbl">
+                <span class="switch-track"></span>
+                <span class="switch-thumb"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </details>
     </form>
 
     <div class="video-wrapper">
+      <div id="mediaCntDn"></div>
       <video id="preview" disablePictureInPicture controls=false></video>
+      <!--
+        Dedicated cue scrub element. The main #preview element used to be
+        re-loaded with the cued media's src when the operator clicked a
+        non-live queue item, which forcibly paused the live mirror. With
+        a separate #previewCue overlay the main mirror keeps playing
+        uninterrupted while the operator scrubs the cued item on top of
+        it. Hidden by default; revealed only while a video cue is loaded.
+      -->
+      <!--
+        controls is a boolean HTML attribute: any value (even "false") turns
+        the native scrubber on. We omit the attribute entirely and re-assert
+        controls=false in JS (see ensurePreviewCueVideoElement) so the
+        operator never sees two scrubbers — the custom controls bar and the
+        browser's stock <video> chrome — stacked on top of each other.
+      -->
+      <video id="previewCue" class="preview-cue-overlay" disablePictureInPicture muted hidden></video>
+      <div id="previewEmptyState" class="preview-empty-state" hidden>
+        <div class="preview-empty-state__card" role="button" tabindex="0" aria-label="Add media to queue">
+          <svg class="preview-empty-state__icon" width="48" height="48" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                  d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>
+            <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                  d="M12 11v6M9 14h6"/>
+          </svg>
+          <span class="preview-empty-state__title">Drop media here</span>
+          <span class="preview-empty-state__hint">or click <strong>Add Media</strong></span>
+        </div>
+      </div>
+      <div id="audioCuePanel" class="audio-cue-panel" hidden>
+        <div class="audio-cue-icon" aria-hidden="true">Audio</div>
+        <div class="audio-cue-copy">
+          <span class="audio-cue-heading">Preview / Cue Audio Track</span>
+          <span id="audioCueTitle" class="audio-cue-title"></span>
+          <span id="audioCueStart" class="audio-cue-start">Start from: 0:00.000</span>
+          <span id="audioCueHelp" class="audio-cue-help">Scrubbing is silent so the live output is not interrupted.</span>
+        </div>
+      </div>
 
       <div id="customControls" class="controls-overlay">
 
@@ -3802,6 +5498,7 @@ function setSBFormMediaPlayer() {
   }
   currentMode = MEDIAPLAYER;
   send("set-mode", currentMode);
+  updateHeaderAddMediaButtonVisibility();
   document.getElementById("dyneForm").innerHTML = generateMediaFormHTML(video);
   // Swap the freshly-rendered placeholder for the live preview element if
   // one was stashed by `cleanRefs`. After this call,
@@ -3809,29 +5506,12 @@ function setSBFormMediaPlayer() {
   // playing before the tab switch, with all its listeners and src intact.
   restoreLivePreview();
   mediaCntDn.appendChild(textNode);
-  mediaCntDn.style.color = "#5c87b2";
   installDisplayChangeHandler();
   populateDisplaySelect();
 
   if (video === null) {
     video = document.getElementById("preview");
   } else {
-    if (mediaFile) {
-      const fileNameSpan = document.querySelector(".file-input-label span");
-      if (fileNameSpan) {
-        fileNameSpan.textContent = getHostnameOrBasename(mediaFile);
-        fileNameSpan.title = getHostnameOrBasename(mediaFile);
-      }
-    }
-
-    if (
-      isLiveStream(document.querySelector(".file-input-label span").innerText)
-    ) {
-      document.querySelector(".file-input-label span").innerText = "Open";
-      document.querySelector(".file-input-label span").title = "Open";
-    }
-
-    // Call restoreMediaFile but it won't set input value
     restoreMediaFile();
     updateTimestamp();
   }
@@ -3847,10 +5527,13 @@ function setSBFormMediaPlayer() {
     });
 
   installMediaOpenButton();
+  installPreviewEmptyStateHandlers();
+  installMediaOptionsExpander();
   document
     .getElementById("clearQueueBtn")
     ?.addEventListener("click", onClearMediaQueueClick);
   installMediaQueueListDelegation();
+  installCueButtonHandlers();
   renderQueue();
   const isActiveMW = isActiveMediaWindow();
   let plyBtn = document.getElementById("mediaWindowPlayButton");
@@ -4212,6 +5895,13 @@ function cleanRefs() {
   // the projection window keeps tracking the preview's pause / play / seek.
   stashLivePreview();
 
+  // The cue scrub overlay is NOT stashed — it is recreated alongside the
+  // rebuilt media form. Drop the stale reference so isVideoPreviewCueActive
+  // (which gates the controls' cue routing) returns false until a fresh
+  // cue is loaded into the new element.
+  clearVideoPreviewCueOverlay();
+  previewCueVideo = null;
+
   document.getElementById("dyneForm").innerHTML = "";
 }
 
@@ -4271,15 +5961,29 @@ function playLocalMedia(event) {
   if (
     !audioOnlyFile &&
     video.readyState &&
-    video.videoTracks &&
-    video.videoTracks.length === 0
+    mediaElementLoadedAudioOnly(video, mediaFile || video.src)
   ) {
     audioOnlyFile = true;
     if (currentMode === MEDIAPLAYER) {
       document.getElementById("customControls").style.visibility = "";
     }
   }
+  if (shouldSuppressPreviewForwarding()) {
+    updatePreviewCueUI();
+    return;
+  }
   if (audioOnlyFile) {
+    if (!isQueuePlaying && currentMode === MEDIAPLAYER) {
+      const queueIndex = findQueueIndexByPath(mediaFile || video.src);
+      if (queueIndex >= 0) {
+        currentQueueIndex = queueIndex;
+        isQueuePlaying = true;
+      } else if (mediaFile && mediaQueue.length === 0) {
+        mediaQueue = [createQueueEntry(mediaFile)];
+        currentQueueIndex = 0;
+        isQueuePlaying = true;
+      }
+    }
     send("localMediaState", 0, "play");
     addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
     isPlaying = true;
@@ -4287,6 +5991,7 @@ function playLocalMedia(event) {
     isActiveMediaWindowCache = false;
     syncPreviewAudioTrackState();
     updateDynUI();
+    renderQueue();
     updateTimestamp();
   }
   if (isActiveMediaWindow()) {
@@ -4343,7 +6048,12 @@ function loadedmetadataHandler(e) {
   if (video.src === "" || isImg(video.src)) {
     return;
   }
-  audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
+  if (shouldSuppressPreviewForwarding()) {
+    syncPreviewAudioTrackState();
+    updatePreviewCueUI();
+    return;
+  }
+  audioOnlyFile = mediaElementLoadedAudioOnly(video, mediaFile || video.src);
   syncPreviewAudioTrackState();
 }
 
@@ -4356,6 +6066,15 @@ function seekLocalMedia(e) {
   }
   if (video.src === "") {
     e.preventDefault();
+    return;
+  }
+  // The old architecture re-used #preview as the cue scrub element, so a
+  // seek here could mean "operator is dragging the cue scrubber" and was
+  // forwarded to setCueStartTime. The new architecture keeps cue scrubs on
+  // a dedicated overlay (previewCueVideo) with its own seek handler, so
+  // any seek that lands here is either projection→preview sync or an
+  // explicit user scrub of the live mirror — never a cue write.
+  if (shouldSuppressPreviewForwarding()) {
     return;
   }
   if (e.target.isConnected) {
@@ -4375,6 +6094,13 @@ function seekingLocalMedia(e) {
     e.preventDefault();
   } else {
     pidController.reset();
+  }
+  if (video.src === "") {
+    e.preventDefault();
+    return;
+  }
+  if (shouldSuppressPreviewForwarding()) {
+    return;
   }
   if (e.target.isConnected) {
     send("timeGoto-message", {
@@ -4418,6 +6144,17 @@ function endLocalMedia() {
         }
       }
     })();
+    return;
+  }
+
+  // When liveAudio is the live output, the preview <video> element may have
+  // an audio file as its source purely for preview/seeking purposes. Its
+  // "ended" event is irrelevant to the live presentation — liveAudio has its
+  // own "ended" listener (endLiveAudioPresentation) that drives queue advance.
+  // Guard only on whether liveAudio is *actually playing*; liveAudioQueueIndex
+  // can be stale (set before a failed play() in playAudioOnlyLocally) and
+  // must not block queue advance when audio never actually started.
+  if (liveAudio?.paused === false) {
     return;
   }
 
@@ -4476,7 +6213,7 @@ function endLocalMedia() {
   // Audio-only queue item finished: drive the same advance/stop logic that
   // handleMediaWindowClosed normally does when a real media window closes.
   if (wasAudioOnlyQueueItem) {
-    if (isQueueAutoAdvanceEnabled()) {
+    if (currentPreviewCue() || isQueueAutoAdvanceEnabled()) {
       void advanceQueueAfterMediaWindowClosed().catch((err) =>
         console.error("Queue advance after audio-only end failed:", err),
       );
@@ -4489,6 +6226,11 @@ function endLocalMedia() {
 }
 
 function pauseLocalMedia(event) {
+  if (shouldSuppressPreviewForwarding()) {
+    localTimeStampUpdateIsRunning = false;
+    updatePreviewCueUI();
+    return;
+  }
   if (mediaSessionPause) {
     invoke("get-media-current-time").then((r) => {
       targetTime = r;
@@ -4500,6 +6242,15 @@ function pauseLocalMedia(event) {
     return;
   }
   if (audioOnlyFile && !isActiveMediaWindow()) {
+    // When liveAudio is carrying the live presentation, a pause on the preview
+    // <video> element (e.g. video.pause() called at the end of
+    // playAudioOnlyLocally, or from a preview-load) must not reset the
+    // presentation's isPlaying flag — liveAudio is still running.
+    if (liveAudio?.paused === false || liveAudioQueueIndex >= 0) {
+      localTimeStampUpdateIsRunning = false;
+      syncPreviewAudioTrackState();
+      return;
+    }
     isPlaying = false;
     localTimeStampUpdateIsRunning = false;
     syncPreviewAudioTrackState();
@@ -4532,7 +6283,7 @@ function pauseLocalMedia(event) {
   if (event.target.clientHeight === 0) {
     // The Streams tab hosts the persistent <video> inside a wrapper with
     // `display: none`, so its `clientHeight` is always 0 there. Without this
-    // guard, clicking Stop Presentation while on the Streams tab with an
+    // guard, clicking the Stop button while on the Streams tab with an
     // audio-only file playing would re-trigger playback immediately, because
     // this branch was treating "hidden" as "incidentally detached, resume it".
     if (!isPlaying) return;
@@ -4798,6 +6549,42 @@ function isLiveStream(mediaFile) {
   return /(?:m3u8|mpd|youtube\.com|videoplayback|youtu\.be)/i.test(mediaFile);
 }
 
+async function endLiveAudioPresentation() {
+  if (isHandlingLiveEnded) return;
+  isHandlingLiveEnded = true;
+  textNode.data = "";
+  try {
+    const wasAudioOnlyQueueItem =
+      isQueuePlaying &&
+      !isActiveMediaWindow() &&
+      playingMediaAudioOnly &&
+      !liveAudio?.loop;
+
+    isPlaying = false;
+    audioOnlyFile = false;
+    playingMediaAudioOnly = false;
+    liveAudioQueueIndex = -1;
+    updateDynUI();
+    send("localMediaState", 0, "stop");
+    removeFilenameFromTitlebar();
+    masterPauseState = false;
+    localTimeStampUpdateIsRunning = false;
+
+    if (wasAudioOnlyQueueItem) {
+      if (currentPreviewCue() || isQueueAutoAdvanceEnabled()) {
+        await advanceQueueAfterMediaWindowClosed();
+        return;
+      }
+      await stopQueuePresentationUserClosed();
+      return;
+    }
+  } catch (err) {
+    console.error("Queue transition after audio-only end failed:", err);
+  } finally {
+    isHandlingLiveEnded = false;
+  }
+}
+
 /**
  * Play the currently-loaded audio-only file in the local preview <video>
  * without creating a fullscreen media window. Audio-only files do not need
@@ -4806,14 +6593,38 @@ function isLiveStream(mediaFile) {
  */
 async function playAudioOnlyLocally() {
   if (!video) return;
+  const token = nextLiveStartToken();
+  const audio = ensureLiveAudioElement();
+  const source = mediaFile || removeFileProtocol(decodeURI(video.src || ""));
+
+  // The playback start position for an audio-only queue item is the explicit
+  // cue start time on the queue entry (set by "Cue from Current Position").
+  // Do NOT silently fall back to the preview <video> element's currentTime —
+  // that value is only a *preview* scrub position. Using it as the playback
+  // start causes the audio to start at, or one frame before, the file's end
+  // whenever the operator has scrubbed near the end of the preview, which in
+  // turn fires "ended" on liveAudio immediately and advances the queue. The
+  // operator's mental model is: clicking Start plays the file from the start
+  // (or from the cue point I explicitly set), not from wherever I last
+  // scrubbed the preview to.
+  const audioUrl = pathToMediaUrl(source);
+  const queueCueStart =
+    currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+      ? (mediaQueue[currentQueueIndex]?.cueStartTime || 0)
+      : 0;
+  const startAt = Number.isFinite(queueCueStart) && queueCueStart > 0
+    ? queueCueStart
+    : 0;
+
   audioOnlyFile = true;
   playingMediaAudioOnly = true;
   isPlaying = true;
   isActiveMediaWindowCache = false;
+  liveAudioQueueIndex = currentQueueIndex;
   send("localMediaState", 0, "play");
-  if (video.src) {
+  if (source) {
     try {
-      addFilenameToTitlebar(decodeURI(removeFileProtocol(video.src)));
+      addFilenameToTitlebar(source);
     } catch (err) {
       console.error("Failed to update titlebar for audio-only:", err);
     }
@@ -4821,9 +6632,40 @@ async function playAudioOnlyLocally() {
   syncPreviewAudioTrackState();
   updateDynUI();
   try {
-    await video.play();
+    if (normalizeMediaPathForCompare(audio.src) !== normalizeMediaPathForCompare(audioUrl)) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      audio.src = audioUrl;
+      audio.load();
+      await waitForLoadedMetadata(audio);
+    }
+    if (token !== liveStartToken) return;
+    if (Number.isFinite(startAt) && startAt > 0) {
+      await seekMedia(audio, startAt);
+    }
+    if (token !== liveStartToken) return;
+    audio.volume = video.volume;
+    audio.muted = false;
+    await audio.play();
+    if (token !== liveStartToken) return;
+    video.pause();
+    // Immediately sync the custom controls to liveAudio's state so the user sees
+    // correct duration, position, and play icon without waiting for the first
+    // timeupdate event. This also handles the case where the liveAudio.loadedmetadata
+    // event fired while video.src still pointed to a different file (preview mode).
+    refreshLiveAudioControls();
   } catch (err) {
     console.error("Audio-only local playback failed:", err);
+    // Playback failed — undo the live-audio state flags so that guards in
+    // endLocalMedia and pauseLocalMedia don't treat this as an active
+    // presentation and permanently block subsequent queue advances.
+    if (token === liveStartToken) {
+      liveAudioQueueIndex = -1;
+      playingMediaAudioOnly = false;
+      isPlaying = false;
+      updateDynUI();
+    }
   }
   updateTimestamp();
 }
@@ -4865,7 +6707,11 @@ async function createMediaWindow(options) {
   // dedicated fullscreen media window (queue mode included). This keeps the
   // user in control: nothing flickers on the secondary display, and audio
   // continues to play exactly the way the local <video> preview already does.
-  if (audioOnlyFile && !isActiveMediaWindow()) {
+  if (
+    audioOnlyFile &&
+    !isActiveMediaWindow() &&
+    !isImgFile
+  ) {
     if (!isImgFile) {
       await playAudioOnlyLocally();
     } else {

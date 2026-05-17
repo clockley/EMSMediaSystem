@@ -253,8 +253,7 @@ footer {
     padding-bottom: 24px;
 }
 
-.media-container .control-panel--media>.control-group,
-.media-container .control-panel--media>#mediaCntDn {
+.media-container .control-panel--media>.control-group {
     flex-shrink: 0;
 }
 
@@ -264,6 +263,127 @@ footer {
     overflow: hidden;
     display: flex;
     flex-direction: column;
+}
+
+/*
+ * Compact Presentation status card. Replaces the two stacked Live Output and
+ * Preview / Cue boxes — same data, half the vertical footprint. Uses a
+ * key/value row layout so labels line up at a fixed gutter width and values
+ * truncate gracefully when filenames get long.
+ */
+.presentation-status-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--card-bg-color) 94%, var(--window-fg-color));
+    flex-shrink: 0;
+}
+
+.presentation-status-card__heading {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--window-fg-color);
+    margin-bottom: 2px;
+}
+
+.presentation-status-row {
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr);
+    align-items: baseline;
+    column-gap: 6px;
+    min-width: 0;
+}
+
+/*
+ * Sentence-case `Now:` / `Next:` instead of an UPPERCASE 11px gutter. Same
+ * function, less visual weight — the row values are what the operator
+ * reads, the labels are just orientation.
+ */
+.presentation-status-row__label {
+    font-size: 13px;
+    font-weight: 700;
+    color: color-mix(in srgb, var(--window-fg-color) 70%, transparent);
+}
+
+.presentation-status-row__value {
+    min-width: 0;
+    font-size: 13px;
+    color: var(--window-fg-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cue-button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+/*
+ * Adwaita-style disclosure for less-frequent controls (Output Display,
+ * Autoplay, Auto-advance). Collapsed by default — open state persists in
+ * localStorage so power users who toggle the switches each session don't
+ * pay the disclosure cost twice.
+ */
+.options-expander {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--card-bg-color) 96%, var(--window-fg-color));
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.options-expander__summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    cursor: default;
+    user-select: none;
+    color: var(--window-fg-color);
+    transition: background-color 75ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.options-expander__summary::-webkit-details-marker {
+    display: none;
+}
+
+.options-expander__summary:hover {
+    background: color-mix(in srgb, var(--card-bg-color) 88%, var(--window-fg-color));
+}
+
+.options-expander__summary:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: -2px;
+}
+
+.options-expander__title {
+    font-weight: 700;
+    font-size: 14px;
+}
+
+.options-expander__chevron {
+    color: color-mix(in srgb, var(--window-fg-color) 65%, transparent);
+    transition: transform 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.options-expander[open] > .options-expander__summary .options-expander__chevron {
+    transform: rotate(90deg);
+}
+
+.options-expander__body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 4px 12px 12px;
+    border-top: 1px solid var(--border-color);
 }
 
 .media-container .control-panel--media .queue-section .list-header {
@@ -437,8 +557,6 @@ footer {
     height: 16px;
 }
 
-video {}
-
 /* Video area */
 .video-wrapper {
     background: black;
@@ -468,25 +586,104 @@ video {}
     border-radius: 12px;
 }
 
+.audio-cue-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 32px;
+    box-sizing: border-box;
+    background:
+        radial-gradient(circle at center, color-mix(in srgb, var(--accent-bg-color) 24%, transparent), transparent 42%),
+        #000000;
+    color: #ffffff;
+    text-align: left;
+    border-radius: 12px;
+}
+
+.audio-cue-panel[hidden] {
+    display: none;
+}
+
+.audio-cue-icon {
+    flex: 0 0 auto;
+    padding: 10px 14px;
+    border: 1px solid rgb(255 255 255 / 28%);
+    border-radius: 999px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgb(255 255 255 / 88%);
+}
+
+.audio-cue-copy {
+    min-width: 0;
+    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.audio-cue-heading {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgb(255 255 255 / 70%);
+}
+
+.audio-cue-title {
+    font-size: clamp(22px, 3vw, 36px);
+    line-height: 1.1;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.audio-cue-start {
+    font-feature-settings: "tnum" 1;
+    font-size: 16px;
+    color: rgb(255 255 255 / 86%);
+}
+
+.audio-cue-help {
+    font-size: 13px;
+    color: rgb(255 255 255 / 64%);
+}
+
 #preview video::-webkit-media-controls-panel {
     display: flex !important;
     opacity: 1 !important;
 }
 
-/* Timer display */
+/* Timer display (foldback-style overlay on preview) */
 #mediaCntDn {
-    margin-top: auto;
-    /* Push to bottom of flex container */
-    padding: 16px 0;
-    font-size: 11pt;
-    width: 100%;
-    display: flex;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
+    min-width: 90px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgb(255 255 255 / 22%);
+    background: rgb(0 0 0 / 58%);
+    backdrop-filter: blur(6px);
+    font-size: 12px;
+    line-height: 1.2;
     text-align: center;
-    color: var(--window-fg-color);
+    color: #fff;
     font-family: "Adwaita";
-    font-weight: 400;
+    font-weight: 700;
     font-feature-settings: "tnum" 1, "ss01" 1;
+    letter-spacing: 0.02em;
+    pointer-events: none;
 }
 
 /* Focus styles */
@@ -661,9 +858,12 @@ button:focus-visible,
 }
 
 #mediaWindowPlayButton {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-weight: 400;
     -webkit-app-region: no-drag;
-    padding: 6px 14px;
+    padding: 6px 12px;
     border-radius: 6px;
     border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
     background: transparent;
@@ -675,6 +875,74 @@ button:focus-visible,
 
 #mediaWindowPlayButton:hover {
     background: color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+#mediaWindowPlayButton .mediaWindowPlayButton-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+#mediaWindowPlayButton[data-playing="true"] .mediaWindowPlayButton-icon--play,
+#mediaWindowPlayButton[data-playing="false"] .mediaWindowPlayButton-icon--stop {
+    display: none;
+}
+
+/* Active-presentation tint hints at the destructive nature of stopping. */
+#mediaWindowPlayButton[data-playing="true"] {
+    color: var(--destructive-bg-color, #c01c28);
+    border-color: color-mix(in srgb, var(--destructive-bg-color, #c01c28) 35%, transparent);
+}
+
+#mediaWindowPlayButton[data-playing="true"]:hover {
+    background: color-mix(in srgb, var(--destructive-bg-color, #c01c28) 12%, transparent);
+}
+
+/*
+ * Headerbar action button (e.g. Add Media). Matches #mediaWindowPlayButton's
+ * pill shape so the two sit side-by-side in the headerbar as a coherent
+ * action cluster, but uses a slimmer icon + label layout to read as a
+ * secondary "Open" action rather than a primary call to action.
+ */
+.headerbar-action {
+    -webkit-app-region: no-drag;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+    background: transparent;
+    color: CanvasText;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 400;
+    cursor: pointer;
+    transition: background-color 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.headerbar-action:hover {
+    background: color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+.headerbar-action:active {
+    background: color-mix(in srgb, CanvasText 15%, transparent);
+    border-color: color-mix(in srgb, CanvasText 20%, transparent);
+}
+
+.headerbar-action:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
+.headerbar-action[hidden] {
+    display: none;
+}
+
+.headerbar-action svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
 }
 
 .window-title {
@@ -1204,6 +1472,76 @@ ul {
     background: var(--view-bg-color, #1d1d20);
 }
 
+/*
+ * First-use empty state in the preview surface. Visible only when the queue
+ * is empty AND no preview source is loaded (see updatePreviewEmptyState).
+ * Removing the sidebar Open Media block would otherwise leave new users with
+ * no obvious starting point; this card surfaces both the drop affordance and
+ * the headerbar Add Media call to action right where their attention is.
+ */
+.preview-empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    pointer-events: none;
+    z-index: 3;
+}
+
+.preview-empty-state[hidden] {
+    display: none;
+}
+
+.preview-empty-state__card {
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 32px 40px;
+    border-radius: 16px;
+    border: 1px dashed color-mix(in srgb, white 35%, transparent);
+    background: color-mix(in srgb, black 35%, transparent);
+    color: color-mix(in srgb, white 92%, transparent);
+    text-align: center;
+    cursor: default;
+    transition: background-color 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+                border-color 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.preview-empty-state__card:hover {
+    background: color-mix(in srgb, black 25%, transparent);
+    border-color: color-mix(in srgb, white 55%, transparent);
+}
+
+.preview-empty-state__card:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 3px;
+}
+
+.preview-empty-state__icon {
+    width: 48px;
+    height: 48px;
+    color: color-mix(in srgb, white 70%, transparent);
+}
+
+.preview-empty-state__title {
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.preview-empty-state__hint {
+    font-size: 13px;
+    color: color-mix(in srgb, white 70%, transparent);
+}
+
+.preview-empty-state__hint strong {
+    font-weight: 700;
+    color: inherit;
+}
+
 #preview {
     width: 100%;
     height: 100%;
@@ -1213,12 +1551,54 @@ ul {
     /* Ensure the video element itself is transparent */
 }
 
+/*
+ * Dedicated cue scrub video overlay. Sits exactly on top of #preview so
+ * the operator can scrub a cued item visually while the underlying
+ * #preview keeps playing the live mirror without interruption. Hidden by
+ * default; revealed only while a video cue is loaded (see
+ * loadVideoQueueItemIntoPreviewCueOverlay). Pointer events stay live so
+ * the overlay-level click-to-pause behaviour on the wrapper still works.
+ */
+#previewCue {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    background: var(--view-bg-color, #1d1d20);
+    z-index: 2;
+}
+
+#previewCue[hidden] {
+    display: none;
+}
+
+/*
+ * Belt-and-suspenders defence against the native <video> chrome ever
+ * appearing on the cue overlay. The HTML omits the `controls` attribute
+ * and JS sets `controls = false`, but some Chromium builds (and the
+ * accessibility tree) can still render the panel transiently — hide
+ * every webkit-prefixed control surface explicitly so the operator only
+ * ever sees the app's custom controls bar.
+ */
+#previewCue::-webkit-media-controls,
+#previewCue::-webkit-media-controls-panel,
+#previewCue::-webkit-media-controls-enclosure,
+#previewCue::-webkit-media-controls-overlay-play-button,
+#previewCue::-webkit-media-controls-start-playback-button {
+    display: none !important;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+}
+
 /* --- Custom Controls Bar Styling (Adwaita Fidelity) --- */
 .controls-overlay {
     position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
+    z-index: 4;
     padding: 8px 16px;
     display: flex;
     align-items: center;
@@ -1417,6 +1797,11 @@ ul {
     outline-offset: 2px;
 }
 
+.pill-button.secondary:disabled {
+    opacity: 0.42;
+    pointer-events: none;
+}
+
 /* Media queue list only (scrolls inside sidebar, not the whole sidebar) */
 .media-container .control-panel--media .boxed-list {
     background: var(--card-bg-color);
@@ -1435,6 +1820,19 @@ ul {
     text-align: center;
     color: color-mix(in srgb, var(--window-fg-color) 55%, transparent);
     font-size: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.list-placeholder-title {
+    color: color-mix(in srgb, var(--window-fg-color) 70%, transparent);
+}
+
+.list-placeholder-hint {
+    font-size: 12px;
+    color: color-mix(in srgb, var(--window-fg-color) 50%, transparent);
 }
 
 .queue-item {
@@ -1460,6 +1858,10 @@ ul {
 
 .queue-item.active:hover {
     background: var(--accent-bg-color-hover);
+}
+
+.queue-item.cued:not(.active) {
+    background: color-mix(in srgb, var(--accent-bg-color) 16%, transparent);
 }
 
 .queue-drag-handle {
@@ -1500,13 +1902,74 @@ ul {
     display: block;
 }
 
-.item-label {
+.item-text {
     flex-grow: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.item-label {
     font-size: 14px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
+}
+
+/*
+ * Secondary row beneath the filename: LIVE / CUED pills plus the cue start
+ * time. Selection (the blue active row background) and presentation state
+ * (LIVE / CUED) are different concepts; the pills name the state so the
+ * operator does not have to infer it from the background color alone.
+ */
+.item-status-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.state-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.5;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.state-badge--live {
+    background: var(--destructive-bg-color, #c01c28);
+    color: var(--destructive-fg-color, #ffffff);
+}
+
+.state-badge--cued {
+    background: var(--accent-bg-color);
+    color: #ffffff;
+}
+
+/* On the active (blue) row, the CUED accent pill would disappear; outline it instead. */
+.queue-item.active .state-badge--cued {
+    background: transparent;
+    color: #ffffff;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+
+.item-cue-start {
+    font-size: 12px;
+    font-feature-settings: "tnum" 1;
+    color: color-mix(in srgb, currentColor 72%, transparent);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .queue-item .remove-btn {
