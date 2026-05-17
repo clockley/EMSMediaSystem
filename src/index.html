@@ -26,7 +26,22 @@
     <div id="WindowTitle">EMS Media System</div>
 
     <div class="headerbar-end">
-      <button id="mediaWindowPlayButton" type="button">Start Presentation</button>
+      <button id="headerAddMediaButton" class="headerbar-action" type="button" aria-label="Add media to queue" title="Add media to queue">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                d="M8 3.5v9M3.5 8h9"/>
+        </svg>
+        <span>Add Media</span>
+      </button>
+      <button id="mediaWindowPlayButton" type="button" data-playing="false">
+        <svg class="mediaWindowPlayButton-icon mediaWindowPlayButton-icon--play" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4 3l9 5-9 5z" fill="currentColor"/>
+        </svg>
+        <svg class="mediaWindowPlayButton-icon mediaWindowPlayButton-icon--stop" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/>
+        </svg>
+        <span id="mediaWindowPlayButtonLabel">Present</span>
+      </button>
       <button id="hamburgerMenuButton" class="hamburger-menu" aria-label="Menu">
         <svg width="16" height="16" viewBox="0 0 16 16">
           <path stroke="currentColor" stroke-width="1.5" stroke-linecap="round" 
