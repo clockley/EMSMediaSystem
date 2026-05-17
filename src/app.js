@@ -69,6 +69,38 @@ function attachElectronBridge() {
 }
 
 var pidSeeking = false;
+/**
+ * Timer id (or null) for the deferred reset of `pidSeeking`. Writing
+ * `video.currentTime` fires BOTH a `seeking` and a `seeked` event (and
+ * occasionally extra events when the browser settles), so the swallow
+ * flag must outlive the first handler call — otherwise the second event
+ * sees `pidSeeking === false`, falls through, and echoes a
+ * `timeGoto-message` back to the projection (visible as periodic
+ * pauses/glitches, especially on the Streams tab where the hidden,
+ * throttled preview drifts more and PID corrections fire more often).
+ * The timer is the single source of truth for when the swallow window
+ * closes; handlers no longer reset the flag themselves.
+ */
+var pidSeekingResetTimer = null;
+
+/**
+ * Open a "swallow PID seek events" window. Any seeking/seeked event the
+ * preview fires in the next ~500 ms is treated as PID-driven and is
+ * NOT echoed back to the projection. Re-arming during the window just
+ * pushes the timeout out — that's correct: a rapid burst of PID
+ * corrections is still one logical "do not forward" period.
+ */
+function beginPidSeekSuppression() {
+  pidSeeking = true;
+  if (pidSeekingResetTimer !== null) {
+    clearTimeout(pidSeekingResetTimer);
+  }
+  pidSeekingResetTimer = setTimeout(() => {
+    pidSeeking = false;
+    pidSeekingResetTimer = null;
+  }, 500);
+}
+
 var streamVolume = 1;
 var video = null;
 let previewAudio = null;
@@ -2399,7 +2431,7 @@ class PIDController {
     const wallTimeDelta = wallNow - this.lastWallTime;
 
     if (wallTimeDelta > this.maxTimeGap) {
-      pidSeeking = true;
+      beginPidSeekSuppression();
       this.video.currentTime = targetTime;
       this.lastWallTime = wallNow;
       this.isFirstAdjustment = false;
@@ -6059,11 +6091,22 @@ function loadedmetadataHandler(e) {
 
 function seekLocalMedia(e) {
   if (pidSeeking) {
-    pidSeeking = false;
+    // Critical: a PID-driven seek MUST NOT be echoed back to the
+    // projection. Writing video.currentTime fires both `seeking` and
+    // `seeked` (and sometimes extra settle events) — we do NOT reset
+    // pidSeeking here, because the very next event would then see
+    // pidSeeking=false and forward a timeGoto-message to the
+    // projection, causing the projection to seek, which the next
+    // time message reports back, which the PID corrects again, ad
+    // infinitum. The visible symptom was the projection pausing /
+    // glitching every few seconds, worst on the Streams tab where
+    // the hidden preview drifts more and PID corrections fire more
+    // often. beginPidSeekSuppression's timer is the single source of
+    // truth for when the swallow window closes.
     e.preventDefault();
-  } else {
-    pidController.reset();
+    return;
   }
+  pidController.reset();
   if (video.src === "") {
     e.preventDefault();
     return;
@@ -6090,11 +6133,14 @@ function seekLocalMedia(e) {
 
 function seekingLocalMedia(e) {
   if (pidSeeking) {
-    pidSeeking = false;
+    // See seekLocalMedia for the full rationale. The pidSeeking flag
+    // is reset by beginPidSeekSuppression's timer, never by this
+    // handler — otherwise the paired `seeked` event would slip
+    // through and the projection feedback loop would be re-opened.
     e.preventDefault();
-  } else {
-    pidController.reset();
+    return;
   }
+  pidController.reset();
   if (video.src === "") {
     e.preventDefault();
     return;
@@ -6777,11 +6823,11 @@ async function createMediaWindow(options) {
     video.muted = false;
   }
   if (autoPlayEnabled) {
-    pidSeeking = true;
+    beginPidSeekSuppression();
     unPauseMedia();
     if (isQueuePlaybackContext || currentMode !== STREAMPLAYER) {
       if (video !== null && !isImgFile) {
-        pidSeeking = true;
+        beginPidSeekSuppression();
         await playVideoSafely(video, "media-window autoplay");
       }
     }
