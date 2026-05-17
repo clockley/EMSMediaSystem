@@ -693,6 +693,7 @@ function clearVideoPreviewCueOverlay() {
   try {
     el.pause();
     el.removeAttribute("src");
+    el.removeAttribute("poster");
     el.load();
   } catch (err) {
     console.error("Failed to clear preview cue overlay:", err);
@@ -1543,6 +1544,25 @@ function moveQueueItemAfterCurrent(index) {
   return mediaQueue.indexOf(cueItem);
 }
 
+function clearVideoPreviewCueOverlay() {
+  const el = previewCueVideo || document.getElementById("previewCue");
+  previewCueVideoIndex = -1;
+  if (!el) return;
+  const hadPoster = el.hasAttribute("poster");
+  try {
+    el.pause();
+    el.removeAttribute("src");
+    el.removeAttribute("poster");
+    el.load();
+  } catch (err) {
+    console.error("Failed to clear preview cue overlay:", err);
+  }
+  el.hidden = true;
+  if (hadPoster) {
+    document.getElementById("customControls")?.style.setProperty("visibility", "");
+  }
+}
+
 async function loadQueueItemIntoPreviewCue(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   if (index === currentQueueIndex && isQueuePresentationActive()) {
@@ -1566,16 +1586,26 @@ async function loadQueueItemIntoPreviewCue(index) {
   }
 
   if (isQueueItemImage(item)) {
-    // Images have no timeline: there's nothing to scrub and no countdown
-    // to display. Tear down any video/audio cue overlay that was loaded
-    // before this click and just hide the countdown chrome so the live
-    // mirror underneath shows through cleanly. The cue is still
-    // "logically" set (previewCueIndex/Play Now still target this image)
-    // even though no scrub UI is appropriate.
     clearVideoPreviewCueOverlay();
     stopPreviewAudioCue();
+    // Show the image in the cue overlay so the operator sees what's staged.
+    // The <video #previewCue> element renders its poster when it has no src,
+    // giving us the image preview without loading a video or disturbing the
+    // live mirror underneath. previewCueVideoIndex is intentionally left at
+    // -1 (set by clearVideoPreviewCueOverlay) so isVideoPreviewCueActive()
+    // stays false and the custom controls keep driving the live mirror, not
+    // this static image display.
+    const cueEl = ensurePreviewCueVideoElement();
+    if (cueEl) {
+      cueEl.poster = pathToMediaUrl(item.path);
+      cueEl.hidden = false;
+    }
     setMediaCountdownOverlayVisible(false);
     textNode.data = "";
+    // No timeline to scrub for a static image — hide the transport controls
+    // so the operator isn't offered play/seek/loop actions that have no effect.
+    // clearVideoPreviewCueOverlay restores visibility when the cue clears.
+    document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemAudio(item)) {
     // Tear down a stale video cue overlay before loading the audio cue
     // so the operator never sees an old video frame lingering over the
