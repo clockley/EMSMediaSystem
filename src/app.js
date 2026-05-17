@@ -1399,7 +1399,7 @@ function installCueButtonHandlers() {
 }
 
 /**
- * The Options expander hides Display + Autoplay + Auto-advance behind a
+ * The Settings expander hides Display + Autoplay + Auto-advance behind a
  * disclosure so the queue can dominate the sidebar. Restoring the user's
  * last-chosen open state keeps the sidebar adaptive — operators who change
  * the switches every show don't have to re-expand each session, while users
@@ -5539,14 +5539,14 @@ function generateMediaFormHTML(video = null) {
       </div>
 
       <!--
-        Options expander: Output Display, Autoplay, Auto-advance. Collapsed
+        Settings expander: Output Display, Autoplay, Auto-advance. Collapsed
         by default to maximize queue real estate; open-state is persisted to
         localStorage so users who routinely toggle the switches don't have
         to re-expand each session.
       -->
       <details class="options-expander" id="mediaOptionsExpander">
         <summary class="options-expander__summary">
-          <span class="options-expander__title">Options</span>
+          <span class="options-expander__title">Settings</span>
           <svg class="options-expander__chevron" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
             <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M6 4l4 4-4 4"/>
           </svg>
