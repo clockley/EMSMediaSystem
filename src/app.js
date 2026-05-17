@@ -755,16 +755,31 @@ function updateQueueFileLabel(name) {
   }
 }
 
+/** Canonical form for comparing a queue path to the preview element's `src`. */
+function normalizeMediaPathForCompare(filePath) {
+  if (!filePath || typeof filePath !== "string") return "";
+  try {
+    let s = filePath.trim();
+    if (s.startsWith("file://")) {
+      s = decodeURI(removeFileProtocol(s));
+    } else {
+      s = decodeURI(s);
+    }
+    return s.replace(/\\/g, "/");
+  } catch {
+    return filePath.replace(/\\/g, "/");
+  }
+}
+
 /** True when the preview <video> is showing the same local file as `filePath`. */
 function previewShowsSameClipAsPath(filePath) {
   if (!video || !video.src) return false;
   if (!filePath || isImg(filePath) || isLiveStream(filePath)) return false;
   if (isImg(video.src) || isLiveStream(video.src)) return false;
-  try {
-    return decodeURI(removeFileProtocol(video.src)) === filePath;
-  } catch {
-    return false;
-  }
+  return (
+    normalizeMediaPathForCompare(video.src) ===
+    normalizeMediaPathForCompare(filePath)
+  );
 }
 
 /**
@@ -796,14 +811,18 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   const isImgFile = isImg(item.path);
 
   let resumeAt = null;
-  if (
-    preservePreviewSeek &&
-    !isImgFile &&
-    video &&
-    previewShowsSameClipAsPath(item.path) &&
-    Number.isFinite(video.currentTime)
-  ) {
-    resumeAt = video.currentTime;
+  if (preservePreviewSeek && !isImgFile && video) {
+    const sameClip = previewShowsSameClipAsPath(item.path);
+    if (sameClip && Number.isFinite(video.currentTime) && video.currentTime > 0) {
+      resumeAt = video.currentTime;
+    } else if (
+      sameClip &&
+      typeof opts?.previewSeekTime === "number" &&
+      Number.isFinite(opts.previewSeekTime) &&
+      opts.previewSeekTime > 0
+    ) {
+      resumeAt = opts.previewSeekTime;
+    }
   }
 
   mediaFile = item.path;
@@ -853,7 +872,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   }
 }
 
-async function playCurrentQueueItem() {
+async function playCurrentQueueItem(opts) {
   resolveQueuePresentationVideo();
   mediaPlaybackEndedPending = false;
   itc = performance.now() * 0.001;
@@ -865,7 +884,7 @@ async function playCurrentQueueItem() {
     return;
   }
 
-  await loadQueueItemIntoControlWindow(item);
+  await loadQueueItemIntoControlWindow(item, opts);
   renderQueue();
 
   isPlaying = true;
@@ -2499,20 +2518,9 @@ async function handleMediaWindowClosed(event, id) {
   removeFilenameFromTitlebar();
   textNode.data = "";
 }
-function isAudioFile() {
-  return (
-    currentMode === MEDIAPLAYER &&
-    video.videoTracks &&
-    video.videoTracks.length === 0
-  );
-}
-
 function handleMediaPlayback(isImgFile) {
   if (!video) return;
   if (!isImgFile) {
-    if (video.src !== "") {
-      waitForMetadata().then(isAudioFile);
-    }
     video.src = mediaFile;
   }
 }
@@ -2644,7 +2652,6 @@ function handleCanPlayThrough(e, resolve) {
     resolve(video);
     return;
   }
-  video.currentTime = 0;
   audioOnlyFile = video.videoTracks && video.videoTracks.length === 0;
 
   resolve(video);
@@ -2813,7 +2820,7 @@ async function playMedia(e) {
     if (!isLiveStream(mediaQueue[startIdx].path)) {
       isQueuePlaying = true;
       currentQueueIndex = startIdx;
-      await playCurrentQueueItem();
+      await playCurrentQueueItem({ previewSeekTime: startTime });
       return;
     }
   }
@@ -2836,7 +2843,7 @@ async function playMedia(e) {
     }
     saveMediaFile();
     isQueuePlaying = true;
-    await playCurrentQueueItem();
+    await playCurrentQueueItem({ previewSeekTime: startTime });
     return;
   }
 
@@ -3847,11 +3854,20 @@ function saveMediaFile() {
         let uncachedLoad;
         if (
           (uncachedLoad =
-            mediaFile !== decodeURI(removeFileProtocol(video.src)))
+            normalizeMediaPathForCompare(mediaFile) !==
+            normalizeMediaPathForCompare(video.src))
         ) {
           video.setAttribute("src", mediaFile);
         }
         video.id = "preview";
+        if (
+          prePathname === mediaFile &&
+          Number.isFinite(video.currentTime) &&
+          video.currentTime > 0
+        ) {
+          startTime = video.currentTime;
+          targetTime = startTime;
+        }
         video.currentTime = startTime;
         video.controls = false;
         if (uncachedLoad) {
