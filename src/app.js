@@ -695,6 +695,12 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
   if (!el) return;
   previewCueVideoIndex = index;
 
+  // When an image is the current live output, img#preview sits after
+  // #previewCue in the DOM and paints over it. Hide it so the operator
+  // can see the video cue overlay. Restored in clearVideoPreviewCueOverlay.
+  const liveImg = document.querySelector("img#preview");
+  if (liveImg) liveImg.style.display = "none";
+
   try {
     el.pause();
   } catch {
@@ -1550,6 +1556,14 @@ function clearVideoPreviewCueOverlay() {
   el.hidden = true;
   if (hadPoster) {
     document.getElementById("customControls")?.style.setProperty("visibility", "");
+  }
+
+  // If the live output is still an image, restore its visibility now that
+  // the cue overlay is gone. Without this the preview goes blank after
+  // the operator dismisses a video cue while an image is presenting.
+  if (mediaFile && isImg(mediaFile)) {
+    const liveImg = document.querySelector("img#preview");
+    if (liveImg) liveImg.style.display = "";
   }
 }
 
