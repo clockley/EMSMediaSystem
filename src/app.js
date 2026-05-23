@@ -480,6 +480,25 @@ function currentPreviewCue() {
   };
 }
 
+function currentCueEditableQueueIndex() {
+  const explicitCue = currentPreviewCue();
+  if (explicitCue) return explicitCue.index;
+
+  // Before pressing Present, the selected/previewed queue item is still
+  // allowed to receive a cue start time. This lets the operator prep the
+  // queue before going live.
+  if (
+    currentMode === MEDIAPLAYER &&
+    !isQueuePresentationActive() &&
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length
+  ) {
+    return currentQueueIndex;
+  }
+
+  return -1;
+}
+
 /**
  * Fallback "next up" when the operator has not explicitly cued anything.
  *
@@ -572,10 +591,8 @@ function updatePreviewCueUI() {
   const nowPlaying = document.getElementById("nowPlayingLabel");
   const upNext = document.getElementById("upNextLabel");
   const audioCuePanel = document.getElementById("audioCuePanel");
-  const cueButtons = [
-    document.getElementById("cueCurrentPositionBtn"),
-    document.getElementById("playCueNowBtn"),
-  ];
+  const cueBtn = document.getElementById("cueCurrentPositionBtn");
+  const playNowBtn = document.getElementById("playCueNowBtn");
 
   if (nowPlaying) {
     nowPlaying.textContent = liveItem
@@ -595,12 +612,17 @@ function updatePreviewCueUI() {
     audioCuePanel.hidden = true;
   }
 
-  // Cue / Play Now act on an explicit cue (the operator clicked an item to
-  // stage it). An implicit "next-in-queue" is informational only — promoting
-  // it to a clickable cue would silently turn natural queue auto-advance
-  // into an explicit-cue workflow the operator never opted into.
-  for (const btn of cueButtons) {
-    if (btn) btn.disabled = !explicitCue;
+  const editableCueIndex = currentCueEditableQueueIndex();
+
+  // Allow cue-start editing before Present.
+  if (cueBtn) {
+    cueBtn.disabled = editableCueIndex < 0;
+  }
+
+  // Play Now should only be available while a presentation is already live
+  // and a separate explicit cue exists.
+  if (playNowBtn) {
+    playNowBtn.disabled = !explicitCue || !isQueuePresentationActive();
   }
 }
 
@@ -1699,14 +1721,17 @@ async function takeQueueItemLive(index, startTime = 0) {
 }
 
 function cueFromCurrentPosition() {
-  const cue = currentPreviewCue();
+  const index = currentCueEditableQueueIndex();
   const controlMedia = getPreviewControlMediaElement();
-  if (!cue || !controlMedia) return;
+
+  if (index < 0 || !controlMedia) return;
+
   const start =
     Number.isFinite(controlMedia.currentTime) && controlMedia.currentTime > 0
       ? controlMedia.currentTime
       : 0;
-  setCueStartTime(cue.index, start);
+
+  setCueStartTime(index, start);
   showGnomeToast(`Cued start: ${formatCueTime(start)}`);
 }
 
