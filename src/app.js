@@ -2067,8 +2067,6 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
   if (index < 0 || index >= mediaQueue.length) return false;
 
   queueSlipstreamTransitionInProgress = true;
-  resolveQueuePresentationVideo();
-  const localVideo = video;
   try {
     const nextItem = mediaQueue[index];
     const nextType = nextItem.type || classifyQueueMediaType(nextItem.path);
@@ -2087,6 +2085,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       preservePreviewSeek: false,
       startTime: requestedStart,
     });
+    resolveQueuePresentationVideo();
 
     // Audio must play in the local preview — destroy the media window as usual.
     if (!isImgFile && (nextType === "audio" || audioOnlyFile)) {
@@ -2101,11 +2100,12 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       mediaFile: nextItem.path,
       isImg: isImgFile,
       loopFile: false,
-      startVolume: localVideo ? localVideo.volume : 1,
+      startVolume: video ? video.volume : 1,
       startTime: requestedStart,
     };
 
     const slipstreamSuccess = await invoke("slipstream-media-window", slipstreamData);
+    resolveQueuePresentationVideo();
     if (!slipstreamSuccess) return false;
 
     // Window stays alive — advance queue state without the normal close/reopen cycle.
@@ -2132,8 +2132,8 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     // Mirror the media window: start the local preview so the operator sees
     // what's projecting. In the non-slipstream path createMediaWindow's
     // "media-window autoplay" call does this; we must do it ourselves here.
-    if (localVideo && !isImgFile) {
-      await playVideoSafely(localVideo, "slipstream preview play");
+    if (video && !isImgFile) {
+      await playVideoSafely(video, "slipstream preview play");
     }
 
     return true;
@@ -3345,6 +3345,8 @@ function setupCustomMediaControls() {
       sig,
     );
   }
+
+  setupCustomMediaControls.updateControlsForMetadata = updateControlsForMetadata;
 }
 
 function closeVolumePopup() {
@@ -5894,8 +5896,20 @@ function setSBFormMediaPlayer() {
   setupCustomMediaControls();
   setupGtkVolumeControl();
   if (isFinite(video.duration) && video.duration > 0) {
-    document.getElementById("customControls").style.display = "";
+    setupCustomMediaControls.updateControlsForMetadata?.(video);
     timelineSync();
+  } else if (isQueuePlaying && isActiveMediaWindow()) {
+    // Slipstream in progress: loadedmetadata may have already fired while
+    // the controls listener was absent (aborted during the tab switch away).
+    // Re-attach a one-shot listener now so the controls reveal when it fires.
+    video.addEventListener(
+      "loadedmetadata",
+      () => {
+        setupCustomMediaControls.updateControlsForMetadata?.(video);
+        timelineSync();
+      },
+      { once: true },
+    );
   }
   if (encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
     saveMediaFile();
