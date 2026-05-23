@@ -118,6 +118,7 @@ let liveAudioQueueIndex = -1;
 let previewLoadToken = 0;
 let liveStartToken = 0;
 let isHandlingLiveEnded = false;
+let isAdvancingQueue = false;
 var masterPauseState = false;
 var activeLiveStream = false;
 var targetTime = 0;
@@ -683,25 +684,6 @@ function ensurePreviewCueVideoElement() {
 }
 
 /**
- * Tear down any loaded cue source on the overlay and hide it. The main
- * #preview element is left untouched so the live mirror keeps playing.
- */
-function clearVideoPreviewCueOverlay() {
-  const el = previewCueVideo || document.getElementById("previewCue");
-  previewCueVideoIndex = -1;
-  if (!el) return;
-  try {
-    el.pause();
-    el.removeAttribute("src");
-    el.removeAttribute("poster");
-    el.load();
-  } catch (err) {
-    console.error("Failed to clear preview cue overlay:", err);
-  }
-  el.hidden = true;
-}
-
-/**
  * Load a queued video item into the dedicated cue overlay, seek it to the
  * cue start, and reveal it on top of the live mirror. The main #preview
  * element is never touched, so the live mirror keeps playing the whole
@@ -1126,6 +1108,9 @@ async function resumeQueuePresentationAtTime(seekTime) {
       : null;
   if (!item) return;
 
+  resolveQueuePresentationVideo();
+  const localVideo = video;
+
   mediaPlaybackEndedPending = false;
   await loadQueueItemIntoControlWindow(item, {
     preservePreviewSeek: false,
@@ -1139,16 +1124,16 @@ async function resumeQueuePresentationAtTime(seekTime) {
   const iM = isImg(mediaFile);
   if (iM) {
     await createMediaWindow();
-    if (video && !video.paused) {
-      video.removeAttribute("src");
-      video.load();
+    if (localVideo && !localVideo.paused) {
+      localVideo.removeAttribute("src");
+      localVideo.load();
     }
     return;
   }
 
   const live = isLiveStream(mediaFile);
-  if (!live && video && seekTime > 0.05) {
-    const d = video.duration;
+  if (!live && localVideo && seekTime > 0.05) {
+    const d = localVideo.duration;
     let safe = seekTime;
     if (Number.isFinite(d) && d > 0) {
       safe = Math.min(seekTime, Math.max(0, d - 0.25));
@@ -1159,13 +1144,13 @@ async function resumeQueuePresentationAtTime(seekTime) {
         const t = window.setTimeout(done, 400);
         const onSeeked = () => {
           window.clearTimeout(t);
-          video.removeEventListener("seeked", onSeeked);
+          localVideo.removeEventListener("seeked", onSeeked);
           done();
         };
-        video.addEventListener("seeked", onSeeked, { once: true });
-        video.currentTime = safe;
+        localVideo.addEventListener("seeked", onSeeked, { once: true });
+        localVideo.currentTime = safe;
       });
-      startTime = video.currentTime;
+      startTime = localVideo.currentTime;
       targetTime = startTime;
     } catch (err) {
       console.error(err);
@@ -1545,6 +1530,10 @@ function moveQueueItemAfterCurrent(index) {
   return mediaQueue.indexOf(cueItem);
 }
 
+/**
+ * Tear down any loaded cue source on the overlay and hide it. The main
+ * #preview element is left untouched so the live mirror keeps playing.
+ */
 function clearVideoPreviewCueOverlay() {
   const el = previewCueVideo || document.getElementById("previewCue");
   previewCueVideoIndex = -1;
@@ -1645,6 +1634,7 @@ async function loadQueueItemIntoPreviewCue(index) {
 
 async function takeQueueItemLive(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
+  if (pendingQueueSwitchIndex !== null) return;
 
   const safeStart = Number.isFinite(startTime) && startTime > 0 ? startTime : 0;
   mediaQueue[index].cueStartTime = safeStart;
@@ -1672,6 +1662,9 @@ async function takeQueueItemLive(index, startTime = 0) {
       clearCue: true,
     });
     if (switchedInPlace) {
+      return;
+    }
+    if (queueSlipstreamTransitionInProgress) {
       return;
     }
     pendingQueueSwitchIndex = index;
@@ -1742,8 +1735,15 @@ async function onQueueItemActivate(index) {
   const isLocalPresentation = isLocalAppWindowPresentationActive();
 
   if (!isActiveMediaWindow() && !isLocalPresentation) {
-    currentQueueIndex = index;
-    await loadQueueItemIntoControlWindow(mediaQueue[index]);
+    const activateIndex = index;
+    currentQueueIndex = activateIndex;
+    const token = nextPreviewLoadToken();
+    await loadQueueItemIntoControlWindow(mediaQueue[activateIndex], {
+      previewLoadToken: token,
+    });
+    if (!isCurrentPreviewLoad(token) || currentQueueIndex !== activateIndex) {
+      return;
+    }
     renderQueue();
     saveMediaFile();
     return;
@@ -1850,6 +1850,7 @@ function resolveQueuePresentationVideo() {
 
 async function loadQueueItemIntoControlWindow(item, opts) {
   resolveQueuePresentationVideo();
+  const localVideo = video;
   const preservePreviewSeek = !opts || opts.preservePreviewSeek !== false;
   const cueOnly = opts?.cueOnly === true;
   const loadToken = opts?.previewLoadToken;
@@ -1870,10 +1871,10 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   // misread as a playback position. The explicit cue start time on the queue
   // entry (set via "Cue from Current Position") remains the source of truth.
   const itemIsAudio = !isImgFile && isQueueItemAudio(item);
-  if (preservePreviewSeek && !isImgFile && !itemIsAudio && video) {
+  if (preservePreviewSeek && !isImgFile && !itemIsAudio && localVideo) {
     const sameClip = previewShowsSameClipAsPath(item.path);
-    if (sameClip && Number.isFinite(video.currentTime) && video.currentTime > 0) {
-      resumeAt = video.currentTime;
+    if (sameClip && Number.isFinite(localVideo.currentTime) && localVideo.currentTime > 0) {
+      resumeAt = localVideo.currentTime;
     } else if (
       sameClip &&
       typeof opts?.previewSeekTime === "number" &&
@@ -1891,16 +1892,12 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   handleMediaPlayback(isImgFile);
   handleImageDisplay(isImgFile, document.querySelector("img"));
 
-  if (!isImgFile && video) {
-    video.load();
+  if (!isImgFile && localVideo) {
+    localVideo.load();
     const previousAudioOnlyFile = audioOnlyFile;
     const previousPlayingMediaAudioOnly = playingMediaAudioOnly;
-    await waitForMetadata();
-    if (
-      cueOnly &&
-      typeof loadToken === "number" &&
-      !isCurrentPreviewLoad(loadToken)
-    ) {
+    await waitForMetadata(localVideo);
+    if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) {
       return;
     }
     if (cueOnly) {
@@ -1908,29 +1905,25 @@ async function loadQueueItemIntoControlWindow(item, opts) {
       playingMediaAudioOnly = previousPlayingMediaAudioOnly;
     }
     if (resumeAt !== null && resumeAt >= 0) {
-      const d = video.duration;
+      const d = localVideo.duration;
       const safe =
         Number.isFinite(d) && d > 0
           ? Math.min(resumeAt, Math.max(0, d - 0.05))
           : resumeAt;
       try {
-        await seekMedia(video, safe);
-        if (
-          cueOnly &&
-          typeof loadToken === "number" &&
-          !isCurrentPreviewLoad(loadToken)
-        ) {
+        await seekMedia(localVideo, safe);
+        if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) {
           return;
         }
         if (!cueOnly) {
-          startTime = video.currentTime;
+          startTime = localVideo.currentTime;
           targetTime = startTime;
         }
       } catch (err) {
         console.error(err);
       }
     }
-    const loadedAudioOnly = mediaElementLoadedAudioOnly(video, item.path);
+    const loadedAudioOnly = mediaElementLoadedAudioOnly(localVideo, item.path);
     if (!cueOnly) {
       audioOnlyFile = loadedAudioOnly;
     }
@@ -1947,11 +1940,12 @@ async function loadQueueItemIntoControlWindow(item, opts) {
 
 async function playCurrentQueueItem(opts) {
   resolveQueuePresentationVideo();
+  const localVideo = video;
   mediaPlaybackEndedPending = false;
-  if (video) {
+  if (localVideo) {
     // Queue items should advance; keep local preview loop disabled so its state
     // matches the projection window behaviour.
-    video.loop = false;
+    localVideo.loop = false;
   }
   itc = performance.now() * 0.001;
   const item = mediaQueue[currentQueueIndex];
@@ -1971,10 +1965,12 @@ async function playCurrentQueueItem(opts) {
   const iM = isImg(mediaFile);
   if (iM) {
     await createMediaWindow();
-    video.currentTime = 0;
-    if (!video.paused) {
-      video.removeAttribute("src");
-      video.load();
+    if (localVideo) {
+      localVideo.currentTime = 0;
+      if (!localVideo.paused) {
+        localVideo.removeAttribute("src");
+        localVideo.load();
+      }
     }
     return;
   }
@@ -1995,61 +1991,67 @@ async function playCurrentQueueItem(opts) {
 }
 
 async function advanceQueueAfterMediaWindowClosed() {
-  isPlaying = false;
-  updateDynUI();
-  isActiveMediaWindowCache = false;
-
-  const cue = currentPreviewCue();
-  if (cue) {
-    currentQueueIndex = cue.index;
-    renderQueue();
-    await new Promise((r) => setTimeout(r, 100));
-    isPlaying = true;
+  if (isAdvancingQueue) return;
+  isAdvancingQueue = true;
+  try {
+    isPlaying = false;
     updateDynUI();
-    await playCurrentQueueItem({
-      preservePreviewSeek: false,
-      startTime: cue.startTime,
-    });
-    clearCueAfterTake(cue.index);
-    return;
-  }
+    isActiveMediaWindowCache = false;
 
-  currentQueueIndex++;
-  if (currentQueueIndex < mediaQueue.length) {
-    const item = mediaQueue[currentQueueIndex];
+    const cue = currentPreviewCue();
+    if (cue) {
+      currentQueueIndex = cue.index;
+      renderQueue();
+      await new Promise((r) => setTimeout(r, 100));
+      isPlaying = true;
+      updateDynUI();
+      await playCurrentQueueItem({
+        preservePreviewSeek: false,
+        startTime: cue.startTime,
+      });
+      clearCueAfterTake(cue.index);
+      return;
+    }
+
+    currentQueueIndex++;
+    if (currentQueueIndex < mediaQueue.length) {
+      const item = mediaQueue[currentQueueIndex];
+      renderQueue();
+      await new Promise((r) => setTimeout(r, 100));
+      isPlaying = true;
+      updateDynUI();
+      await playCurrentQueueItem({
+        preservePreviewSeek: false,
+        startTime:
+          Number.isFinite(item?.cueStartTime) && item.cueStartTime > 0
+            ? item.cueStartTime
+            : 0,
+      });
+      return;
+    }
+
+    isQueuePlaying = false;
+    currentQueueIndex = -1;
     renderQueue();
-    await new Promise((r) => setTimeout(r, 100));
-    isPlaying = true;
-    updateDynUI();
-    await playCurrentQueueItem({
-      preservePreviewSeek: false,
-      startTime:
-        Number.isFinite(item?.cueStartTime) && item.cueStartTime > 0
-          ? item.cueStartTime
-          : 0,
-    });
-    return;
+
+    if (mediaQueue.length > 0) {
+      mediaFile = mediaQueue[0].path;
+      mediaPlayerInputState.filePaths = [mediaFile];
+      const head = mediaQueue[0];
+      updateQueueFileLabel(head.name);
+    }
+
+    const isImgFile = isImg(mediaFile);
+    handleMediaPlayback(isImgFile);
+    handleImageDisplay(isImgFile, document.querySelector("img"));
+    resetVideoState();
+    updatePlayButtonOnMediaWindow();
+    masterPauseState = false;
+    removeFilenameFromTitlebar();
+    textNode.data = "";
+  } finally {
+    isAdvancingQueue = false;
   }
-
-  isQueuePlaying = false;
-  currentQueueIndex = -1;
-  renderQueue();
-
-  if (mediaQueue.length > 0) {
-    mediaFile = mediaQueue[0].path;
-    mediaPlayerInputState.filePaths = [mediaFile];
-    const head = mediaQueue[0];
-    updateQueueFileLabel(head.name);
-  }
-
-  const isImgFile = isImg(mediaFile);
-  handleMediaPlayback(isImgFile);
-  handleImageDisplay(isImgFile, document.querySelector("img"));
-  resetVideoState();
-  updatePlayButtonOnMediaWindow();
-  masterPauseState = false;
-  removeFilenameFromTitlebar();
-  textNode.data = "";
 }
 
 /**
@@ -2059,12 +2061,14 @@ async function advanceQueueAfterMediaWindowClosed() {
  * Returns true if slipstream was dispatched, false if normal close should proceed.
  */
 async function slipstreamQueueItemAtIndex(index, opts = {}) {
-  if (queueSlipstreamTransitionInProgress) return true;
+  if (queueSlipstreamTransitionInProgress) return false;
   if (!isQueuePlaying) return false;
   if (!isActiveMediaWindow()) return false;
   if (index < 0 || index >= mediaQueue.length) return false;
 
   queueSlipstreamTransitionInProgress = true;
+  resolveQueuePresentationVideo();
+  const localVideo = video;
   try {
     const nextItem = mediaQueue[index];
     const nextType = nextItem.type || classifyQueueMediaType(nextItem.path);
@@ -2097,7 +2101,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       mediaFile: nextItem.path,
       isImg: isImgFile,
       loopFile: false,
-      startVolume: video ? video.volume : 1,
+      startVolume: localVideo ? localVideo.volume : 1,
       startTime: requestedStart,
     };
 
@@ -2128,8 +2132,8 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     // Mirror the media window: start the local preview so the operator sees
     // what's projecting. In the non-slipstream path createMediaWindow's
     // "media-window autoplay" call does this; we must do it ourselves here.
-    if (video && !isImgFile) {
-      await playVideoSafely(video, "slipstream preview play");
+    if (localVideo && !isImgFile) {
+      await playVideoSafely(localVideo, "slipstream preview play");
     }
 
     return true;
@@ -4292,6 +4296,9 @@ function installIPCHandler() {
         isActiveMediaWindowCache = true;
         return;
       }
+      if (queueSlipstreamTransitionInProgress) {
+        return;
+      }
     } catch (err) {
       console.error("Slipstream transition failed, falling back to close:", err);
     }
@@ -4302,6 +4309,9 @@ function installIPCHandler() {
 }
 
 async function handleMediaWindowClosed(event, id) {
+  resolveQueuePresentationVideo();
+  const localVideo = video;
+
   try {
     await invoke("dismiss-queue-switch-dialog");
   } catch (err) {
@@ -4344,10 +4354,12 @@ async function handleMediaWindowClosed(event, id) {
     const iM = isImg(mediaFile);
     if (iM) {
       await createMediaWindow();
-      video.currentTime = 0;
-      if (!video.paused) {
-        video.removeAttribute("src");
-        video.load();
+      if (localVideo) {
+        localVideo.currentTime = 0;
+        if (!localVideo.paused) {
+          localVideo.removeAttribute("src");
+          localVideo.load();
+        }
       }
     } else if (
       audioOnlyFile ||
@@ -4379,18 +4391,18 @@ async function handleMediaWindowClosed(event, id) {
     saveMediaFile();
   }
 
-  if (video) {
+  if (localVideo) {
     syncPreviewAudioTrackState();
 
     if (
-      video.loop &&
-      video.currentTime > 0 &&
-      video.duration - video.currentTime < 0.5
+      localVideo.loop &&
+      localVideo.currentTime > 0 &&
+      localVideo.duration - localVideo.currentTime < 0.5
     ) {
       startTime = 0;
       targetTime = 0;
-      video.currentTime = 0;
-      await playVideoSafely(video, "loop restart after window close");
+      localVideo.currentTime = 0;
+      await playVideoSafely(localVideo, "loop restart after window close");
       await createMediaWindow();
       return;
     }
@@ -4560,15 +4572,15 @@ async function unPauseMedia(e) {
   }
 }
 
-function handleCanPlayThrough(e, resolve) {
-  if (video.src === "") {
+function handleCanPlayThrough(e, resolve, mediaEl = video) {
+  if (mediaEl.src === "") {
     if (e && typeof e.preventDefault === "function") e.preventDefault();
-    resolve(video);
+    resolve(mediaEl);
     return;
   }
-  audioOnlyFile = mediaElementLoadedAudioOnly(video, mediaFile || video.src);
+  audioOnlyFile = mediaElementLoadedAudioOnly(mediaEl, mediaFile || mediaEl.src);
 
-  resolve(video);
+  resolve(mediaEl);
 }
 
 function handleError(e, reject) {
@@ -4659,13 +4671,13 @@ function waitForLoadedMetadata(mediaEl) {
  * Rejection semantics for invalid sources are preserved so existing
  * `.catch()` paths (e.g. `saveMediaFile`) keep working.
  */
-function waitForMetadata() {
+function waitForMetadata(mediaEl = video) {
   if (
-    !video ||
-    !video.src ||
-    video.src === "" ||
-    isLiveStream(video.src) ||
-    isImg(video.src)
+    !mediaEl ||
+    !mediaEl.src ||
+    mediaEl.src === "" ||
+    isLiveStream(mediaEl.src) ||
+    isImg(mediaEl.src)
   ) {
     playingMediaAudioOnly = false;
     audioOnlyFile = false;
@@ -4677,9 +4689,9 @@ function waitForMetadata() {
     let timer = null;
 
     const cleanup = () => {
-      video.removeEventListener("loadedmetadata", onMetadata);
-      video.removeEventListener("canplaythrough", onCanPlayThrough);
-      video.removeEventListener("error", onError);
+      mediaEl.removeEventListener("loadedmetadata", onMetadata);
+      mediaEl.removeEventListener("canplaythrough", onCanPlayThrough);
+      mediaEl.removeEventListener("error", onError);
       if (timer !== null) {
         window.clearTimeout(timer);
         timer = null;
@@ -4689,7 +4701,7 @@ function waitForMetadata() {
       if (settled) return;
       settled = true;
       cleanup();
-      handleCanPlayThrough(e || {}, resolve);
+      handleCanPlayThrough(e || {}, resolve, mediaEl);
     };
     const onMetadata = () => finishOk();
     const onCanPlayThrough = (e) => finishOk(e);
@@ -4705,17 +4717,17 @@ function waitForMetadata() {
     // the same file or after `loadedmetadata` fired before this listener
     // attached). Resolve synchronously instead of waiting for an event
     // that will never come.
-    if (video.readyState >= HAVE_METADATA) {
+    if (mediaEl.readyState >= HAVE_METADATA) {
       finishOk();
       return;
     }
 
-    video.addEventListener("loadedmetadata", onMetadata, { once: true });
-    video.addEventListener("canplaythrough", onCanPlayThrough, { once: true });
-    video.addEventListener("error", onError, { once: true });
+    mediaEl.addEventListener("loadedmetadata", onMetadata, { once: true });
+    mediaEl.addEventListener("canplaythrough", onCanPlayThrough, { once: true });
+    mediaEl.addEventListener("error", onError, { once: true });
 
-    if (video.readyState === HAVE_NOTHING) {
-      video.load();
+    if (mediaEl.readyState === HAVE_NOTHING) {
+      mediaEl.load();
     }
 
     timer = window.setTimeout(() => finishOk(), WAIT_FOR_METADATA_TIMEOUT_MS);
@@ -6457,11 +6469,20 @@ function endLocalMedia() {
     void (async () => {
       try {
         const slipstreamed = await trySlipstreamNextQueueItem();
-        if (!slipstreamed && isActiveMediaWindow()) {
+        if (slipstreamed) {
+          return;
+        }
+        if (queueSlipstreamTransitionInProgress) {
+          return;
+        }
+        if (isActiveMediaWindow()) {
           send("close-media-window", 0);
         }
       } catch (err) {
         console.error("Queue transition after preview end failed:", err);
+        if (queueSlipstreamTransitionInProgress) {
+          return;
+        }
         if (isActiveMediaWindow()) {
           send("close-media-window", 0);
         }
@@ -6925,10 +6946,12 @@ async function endLiveAudioPresentation() {
  * confuses users and can race the window's open/close lifecycle.
  */
 async function playAudioOnlyLocally() {
-  if (!video) return;
+  resolveQueuePresentationVideo();
+  const localVideo = video;
+  if (!localVideo) return;
   const token = nextLiveStartToken();
   const audio = ensureLiveAudioElement();
-  const source = mediaFile || removeFileProtocol(decodeURI(video.src || ""));
+  const source = mediaFile || removeFileProtocol(decodeURI(localVideo.src || ""));
 
   // The playback start position for an audio-only queue item is the explicit
   // cue start time on the queue entry (set by "Cue from Current Position").
@@ -6978,11 +7001,11 @@ async function playAudioOnlyLocally() {
       await seekMedia(audio, startAt);
     }
     if (token !== liveStartToken) return;
-    audio.volume = video.volume;
+    audio.volume = localVideo.volume;
     audio.muted = false;
     await audio.play();
     if (token !== liveStartToken) return;
-    video.pause();
+    localVideo.pause();
     // Immediately sync the custom controls to liveAudio's state so the user sees
     // correct duration, position, and play icon without waiting for the first
     // timeupdate event. This also handles the case where the liveAudio.loadedmetadata
