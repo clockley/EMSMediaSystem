@@ -27,7 +27,7 @@ import {
   session,
   shell,
 } from "electron/main";
-import { readdir, readFile } from "fs/promises";
+import { readdir, readFile, stat } from "fs/promises";
 import path from "path";
 import settings from "./settings.min.mjs";
 let sessionID = 0;
@@ -1355,6 +1355,63 @@ const ALLOWED_MEDIA_EXTENSION_SET = new Set(
   ALLOWED_MEDIA_EXTENSIONS.map((ext) => "." + ext.toLowerCase()),
 );
 
+function readSettings() {
+  const data = settings.getSync();
+  return data && typeof data === "object" ? { ...data } : {};
+}
+
+async function writeSettings(partial) {
+  if (!partial || typeof partial !== "object") return;
+  await settings.set({ ...readSettings(), ...partial });
+  await settings.flush();
+}
+
+async function pathExists(dir) {
+  if (typeof dir !== "string" || dir.length === 0) return false;
+  try {
+    const info = await stat(dir);
+    return info.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function rememberMediaFolder(fileOrFolderPath) {
+  if (typeof fileOrFolderPath !== "string" || fileOrFolderPath.length === 0) {
+    return;
+  }
+  let folder = fileOrFolderPath;
+  try {
+    const info = await stat(fileOrFolderPath);
+    folder = info.isDirectory()
+      ? fileOrFolderPath
+      : path.dirname(fileOrFolderPath);
+  } catch {
+    folder = path.dirname(fileOrFolderPath);
+  }
+  if (!(await pathExists(folder))) return;
+  await writeSettings({ lastMediaFolder: folder });
+}
+
+async function getInitialMediaFolder() {
+  const { lastMediaFolder } = readSettings();
+  if (lastMediaFolder && (await pathExists(lastMediaFolder))) {
+    return lastMediaFolder;
+  }
+  for (const name of ["videos", "music", "documents", "home"]) {
+    let candidate;
+    try {
+      candidate = app.getPath(name);
+    } catch {
+      continue;
+    }
+    if (candidate && (await pathExists(candidate))) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 async function handleShowMediaFilesDialog(event) {
   const mainWindow = BrowserWindow.fromWebContents(event.sender);
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -1362,6 +1419,7 @@ async function handleShowMediaFilesDialog(event) {
   }
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Open media",
+    defaultPath: await getInitialMediaFolder(),
     properties: ["openFile", "multiSelections"],
     filters: [
       { name: "Media", extensions: ALLOWED_MEDIA_EXTENSIONS },
@@ -1371,7 +1429,18 @@ async function handleShowMediaFilesDialog(event) {
   if (result.canceled || !result.filePaths?.length) {
     return { canceled: true, filePaths: [] };
   }
+  await rememberMediaFolder(result.filePaths[0]);
   return { canceled: false, filePaths: result.filePaths };
+}
+
+async function handleRememberMediaFolder(_, paths) {
+  if (!Array.isArray(paths)) return;
+  for (const p of paths) {
+    if (typeof p === "string" && p.length > 0) {
+      await rememberMediaFolder(p);
+      return;
+    }
+  }
 }
 
 /** Filter renderer-supplied dropped paths to those with a recognized media extension. */
@@ -1396,6 +1465,7 @@ function setIPC() {
   ipcMain.handle("get-setting", getSetting);
   ipcMain.handle("get-all-displays", handleGetAllDisplays);
   ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
+  ipcMain.handle("remember-media-folder", handleRememberMediaFolder);
   ipcMain.handle("filter-media-drop-paths", handleFilterMediaDropPaths);
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);
