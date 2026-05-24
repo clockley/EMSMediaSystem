@@ -23,8 +23,6 @@
     "terser": "^5.43.1"
   },
   "dependencies": {
-    "atem-connection": "^3.6.0",
-    "bonjour": "^3.5.0",
     "dashjs": "^5.1.1",
     "hls.js": "^1.6.15",
     "write-file-atomic": "^7.0.0",
