@@ -826,18 +826,28 @@ function renderQueue() {
     // says *why* it's highlighted — so a row that is just selected after
     // load-but-not-playing reads differently from one mid-presentation.
     const presentationLive = isQueuePresentationActive();
+    const editableCueIndex = currentCueEditableQueueIndex();
+
     listContainer.innerHTML = mediaQueue
       .map((item, index) => {
+        const hasCueStart =
+          Number.isFinite(item.cueStartTime) && item.cueStartTime > 0;
+
         const isLive = presentationLive && index === currentQueueIndex;
-        const isCued = index === previewCueIndex;
+
+        // Explicit cue while presenting, or a prepared cue before Present.
+        // Before Present, only show the Cued badge after the operator has
+        // actually stored a non-zero cue start time.
+        const isCued =
+          index === previewCueIndex ||
+          (!presentationLive && index === editableCueIndex && hasCueStart);
+
         const classes = [
           "queue-item",
           index === currentQueueIndex ? " active" : "",
           isCued ? " cued" : "",
           isLive ? " live" : "",
         ].join("");
-        const hasCueStart =
-          Number.isFinite(item.cueStartTime) && item.cueStartTime > 0;
         const cueStartMarkup = hasCueStart
           ? `<span class="item-cue-start">Starts ${formatCueTime(item.cueStartTime)}</span>`
           : "";
@@ -2996,14 +3006,25 @@ function setupCustomMediaControls() {
     }
     timeline.min = 0;
     timeline.max = 100;
-    timeline.value = 0;
 
+    const isPlaying =
+      !mediaEl.paused &&
+      Number.isFinite(mediaEl.currentTime) &&
+      mediaEl.currentTime > 0;
     const hasSeekableMedia = isFinite(mediaEl.duration) && mediaEl.duration > 0;
 
-    currentTimeDisplay.textContent = "0:00";
+    timeline.value =
+      isPlaying && hasSeekableMedia
+        ? (mediaEl.currentTime / mediaEl.duration) * 100
+        : 0;
+    currentTimeDisplay.textContent = isPlaying
+      ? fmt(mediaEl.currentTime)
+      : "0:00";
     durationTimeDisplay.textContent = fmt(mediaEl.duration);
 
-    playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`; // Play icon
+    playPauseIcon.innerHTML = mediaEl.paused
+      ? `<path d="M8 5v14l11-7z"/>`
+      : `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
 
     if (overlay) {
       overlay.style.display = "";
