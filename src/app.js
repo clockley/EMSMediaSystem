@@ -1047,6 +1047,9 @@ function applyDroppedMediaPaths(paths) {
     enqueuePathsFromFilePicker(paths);
   }
   saveMediaFile();
+  invoke("remember-media-folder", paths).catch((err) => {
+    console.error("remember-media-folder failed:", err);
+  });
 }
 
 function clearMediaQueue() {
