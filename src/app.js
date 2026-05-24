@@ -59,7 +59,7 @@ function attachElectronBridge() {
   webUtils = electron.webUtils;
   attachCubicWaveShaper = electron.attachCubicWaveShaper;
   __dirname = electron.__dirname;
-
+  
   send = ipcRenderer.send;
   invoke = ipcRenderer.invoke;
   on = ipcRenderer.on;
@@ -113,6 +113,20 @@ let previewAudioCueIndex = -1;
  */
 let previewCueVideo = null;
 let previewCueVideoIndex = -1;
+/**
+ * Volume (0–1) for the actively-loaded cue. While a cue is loaded the GTK
+ * slider writes here (and to mediaQueue[previewCueIndex].cueVolume) instead
+ * of to `video.volume` so the live output is never touched. Null when no cue
+ * is active.
+ */
+let pendingCueVolume = null;
+/** True only after the operator moves the cue volume slider or mute control. */
+let cueVolumeDirty = false;
+/**
+ * Saved reference to the GTK icon-update closure so helpers outside
+ * setupGtkVolumeControl can repaint the icon after programmatic slider changes.
+ */
+let gtkUpdateVolIcon = null;
 let liveAudio = null;
 let liveAudioQueueIndex = -1;
 let previewLoadToken = 0;
@@ -164,7 +178,7 @@ const mediaPlayerInputState = {
   },
 };
 
-/** @type {{ path: string, name: string, type: string, cueStartTime?: number }[]} */
+/** @type {{ path: string, name: string, type: string, cueStartTime?: number, cueVolume?: number }[]} */
 let mediaQueue = [];
 let currentQueueIndex = -1;
 let previewCueIndex = -1;
@@ -183,7 +197,7 @@ let suppressPreviewForwarding = false;
 let pendingQueueClearPostClose = false;
 /**
  * Snapshot for undo after "Clear" on the media queue (HIG: perform + restore).
- * @type {null | { items: { path: string; name: string; type: string; cueStartTime: number }[]; index: number; cueIndex: number; seekTime: number; wasPresentationActive: boolean }}
+ * @type {null | { items: { path: string; name: string; type: string; cueStartTime: number; cueVolume?: number }[]; index: number; cueIndex: number; seekTime: number; wasPresentationActive: boolean }}
  */
 let queueClearUndoSnapshot = null;
 /** After reorder drop, ignore the synthetic click on the row. */
@@ -636,10 +650,60 @@ function setCueStartTime(index, start) {
   renderQueue();
 }
 
+function setActiveCueVolume(vol) {
+  pendingCueVolume = vol;
+  cueVolumeDirty = true;
+  if (previewCueIndex >= 0 && previewCueIndex < mediaQueue.length) {
+    mediaQueue[previewCueIndex].cueVolume = vol;
+  }
+}
+
+function isPreviewCueVolumeActive() {
+  return previewCueIndex >= 0;
+}
+
+/** Slider level while a cue is loaded — stored cueVolume wins over live mirror. */
+function getPreviewCueDisplayVolume() {
+  if (previewCueIndex < 0 || previewCueIndex >= mediaQueue.length) {
+    return null;
+  }
+  const item = mediaQueue[previewCueIndex];
+  if (Number.isFinite(item?.cueVolume)) return item.cueVolume;
+  if (pendingCueVolume !== null) return pendingCueVolume;
+  return video?.muted ? 0 : (video?.volume ?? 1);
+}
+
+/** Persist the in-memory cue slider value onto the active queue entry. */
+function commitActiveCueVolume() {
+  if (
+    !cueVolumeDirty ||
+    previewCueIndex < 0 ||
+    previewCueIndex >= mediaQueue.length ||
+    pendingCueVolume === null
+  ) {
+    return;
+  }
+  mediaQueue[previewCueIndex].cueVolume = pendingCueVolume;
+  cueVolumeDirty = false;
+}
+
+function resolveQueueItemPlaybackVolume(index) {
+  if (index >= 0 && index < mediaQueue.length) {
+    const itemVol = mediaQueue[index].cueVolume;
+    if (Number.isFinite(itemVol)) return itemVol;
+  }
+  if (pendingCueVolume !== null) return pendingCueVolume;
+  return null;
+}
+
 function clearPreviewCue() {
+  commitActiveCueVolume();
   stopPreviewAudioCue();
   clearVideoPreviewCueOverlay();
   previewCueIndex = -1;
+  pendingCueVolume = null;
+  cueVolumeDirty = false;
+  syncGtkSliderToCueState();
   restoreCountdownForLiveMedia();
   updatePreviewCueUI();
   renderQueue();
@@ -650,6 +714,9 @@ function clearCueAfterTake(index) {
     stopPreviewAudioCue();
     clearVideoPreviewCueOverlay();
     previewCueIndex = -1;
+    pendingCueVolume = null;
+    cueVolumeDirty = false;
+    syncGtkSliderToCueState();
     restoreCountdownForLiveMedia();
   }
   updatePreviewCueUI();
@@ -1104,6 +1171,7 @@ async function captureQueueClearUndoState() {
       name: x.name,
       type: x.type,
       cueStartTime: x.cueStartTime,
+      cueVolume: x.cueVolume,
     })),
     index: currentQueueIndex,
     cueIndex: previewCueIndex,
@@ -1211,6 +1279,7 @@ async function restoreQueueClearUndoSnapshot() {
     name: x.name,
     type: x.type,
     cueStartTime: x.cueStartTime || 0,
+    cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
   }));
   currentQueueIndex = snap.index;
   if (mediaQueue.length === 0) {
@@ -1222,13 +1291,21 @@ async function restoreQueueClearUndoSnapshot() {
   }
 
   // Restore the cued item (the "next" marker) and its per-item start time
-  // (already embedded in each queue entry via cueStartTime).
+  // and volume (embedded in each queue entry).
   previewCueIndex =
     typeof snap.cueIndex === "number" &&
     snap.cueIndex >= 0 &&
     snap.cueIndex < mediaQueue.length
       ? snap.cueIndex
       : -1;
+  if (previewCueIndex >= 0) {
+    const cueItem = mediaQueue[previewCueIndex];
+    pendingCueVolume = Number.isFinite(cueItem?.cueVolume) ? cueItem.cueVolume : 1;
+  } else {
+    pendingCueVolume = null;
+  }
+  cueVolumeDirty = false;
+  syncGtkSliderToCueState();
 
   renderQueue();
   saveMediaFile();
@@ -1493,7 +1570,11 @@ async function restorePreviewToLiveOutput(index) {
   // source — so "restoring" just means tearing down the cue scratch state.
   // No reload, no replay, no risk of the live mirror lingering in a paused
   // state because the resume race was lost.
+  commitActiveCueVolume();
   previewCueIndex = -1;
+  pendingCueVolume = null;
+  cueVolumeDirty = false;
+  syncGtkSliderToCueState();
   stopPreviewAudioCue();
   clearVideoPreviewCueOverlay();
   // The cue may have hidden the countdown overlay (image cue) or pinned
@@ -1609,9 +1690,13 @@ async function loadQueueItemIntoPreviewCue(index) {
     return;
   }
 
+  commitActiveCueVolume();
   index = moveQueueItemAfterCurrent(index);
   previewCueIndex = index;
+  cueVolumeDirty = false;
   const item = mediaQueue[index];
+  pendingCueVolume = Number.isFinite(item.cueVolume) ? item.cueVolume : 1;
+  syncGtkSliderToCueState();
   const cueStart =
     Number.isFinite(item.cueStartTime) && item.cueStartTime > 0
       ? item.cueStartTime
@@ -2148,6 +2233,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       return true;
     }
 
+    consumePendingCueVolume(index);
     const slipstreamData = {
       mediaFile: nextItem.path,
       isImg: isImgFile,
@@ -3435,8 +3521,15 @@ function setupGtkVolumeControl() {
   }
 
   if (slider.dataset.gtkVolBound === "1") {
-    slider.value = Math.round((video.volume || 1) * 100);
-    if (video.muted) slider.value = 0;
+    const cueVol = getPreviewCueDisplayVolume();
+    const displayVol =
+      cueVol !== null
+        ? cueVol
+        : video.muted
+          ? 0
+          : (video.volume ?? 1);
+    slider.value = Math.round(displayVol * 100);
+    gtkUpdateVolIcon?.(slider.value);
     return;
   }
   slider.dataset.gtkVolBound = "1";
@@ -3505,22 +3598,28 @@ function setupGtkVolumeControl() {
     }
   }
 
-  // --- EVENT LISTENERS ---
+  gtkUpdateVolIcon = updateIcon;
 
-  // 1. Slider Input Handler (User adjusts volume)
   slider.addEventListener("input", () => {
     const v = slider.value / 100;
-    video.volume = v;
-
-    // If the user moves the slider from 0, unmute the video
-    if (v > 0) video.muted = false;
-
-    updateIcon(slider.value);
+    if (isPreviewCueVolumeActive()) {
+      setActiveCueVolume(v);
+      const savedMuted = video.muted;
+      video.muted = false;
+      updateIcon(slider.value);
+      video.muted = savedMuted;
+    } else {
+      video.volume = v;
+      if (v > 0) video.muted = false;
+      if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
+        mediaQueue[currentQueueIndex].cueVolume = v;
+      }
+      updateIcon(slider.value);
+    }
   });
 
-  // 2. Volume Change Handler (Sync with programmatic changes/mute)
   video.addEventListener("volumechange", () => {
-    // Update slider position if mute state changes or volume changes elsewhere
+    if (isPreviewCueVolumeActive()) return;
     if (video.muted) {
       slider.value = 0;
     } else {
@@ -3529,24 +3628,67 @@ function setupGtkVolumeControl() {
     updateIcon(slider.value);
   });
 
-  // 3. Mute/Unmute Button Click Handler
-  let lastVolume = slider.value / 100; // Store last known non-zero volume
+  let lastVolume = slider.value / 100;
 
   button.addEventListener("click", () => {
-    if (video.muted) {
-      // UNMUTE: Restore to last volume (or default to 100%)
-      video.volume = lastVolume > 0 ? lastVolume : 1;
-      video.muted = false;
+    if (isPreviewCueVolumeActive()) {
+      const currentCueVol = getPreviewCueDisplayVolume() ?? video.volume ?? 1;
+      if (currentCueVol === 0) {
+        setActiveCueVolume(lastVolume > 0 ? lastVolume : 1);
+      } else {
+        lastVolume = currentCueVol;
+        setActiveCueVolume(0);
+      }
+      slider.value = Math.round(pendingCueVolume * 100);
+      const savedMuted = video.muted;
+      video.muted = pendingCueVolume === 0;
+      updateIcon(slider.value);
+      video.muted = savedMuted;
     } else {
-      // MUTE: Store current volume before muting
-      lastVolume = video.volume;
-      video.muted = true;
+      if (video.muted) {
+        video.volume = lastVolume > 0 ? lastVolume : 1;
+        video.muted = false;
+      } else {
+        lastVolume = video.volume;
+        video.muted = true;
+      }
     }
-    // The 'volumechange' event handles the UI update via updateIcon
   });
 
   // Initial icon setup on load
   updateIcon(slider.value);
+}
+
+/**
+ * Re-sync the GTK volume slider to reflect whichever source owns the
+ * controls: the cued item (pendingCueVolume) or the live output (video.volume).
+ */
+function syncGtkSliderToCueState() {
+  const slider = document.getElementById("gtkVolSlider");
+  if (!slider) return;
+  const cueVol = getPreviewCueDisplayVolume();
+  const displayVol =
+    cueVol !== null
+      ? cueVol
+      : (video?.muted ? 0 : (video?.volume ?? 1));
+  slider.value = Math.round(displayVol * 100);
+  gtkUpdateVolIcon?.(slider.value);
+}
+
+/**
+ * If the operator changed volume while a cue was loaded, that value was held
+ * in pendingCueVolume (and on the queue entry as cueVolume) to avoid
+ * disturbing the live output. Consume it here — right before playback begins.
+ */
+function consumePendingCueVolume(playbackIndex) {
+  const index =
+    typeof playbackIndex === "number" ? playbackIndex : currentQueueIndex;
+  const vol = resolveQueueItemPlaybackVolume(index) ?? 1;
+  pendingCueVolume = null;
+  cueVolumeDirty = false;
+
+  if (video) video.volume = vol;
+  syncGtkSliderToCueState();
 }
 
 let lastUpdateTimeLocalPlayer = 0;
@@ -7078,6 +7220,7 @@ async function playAudioOnlyLocally() {
       await seekMedia(audio, startAt);
     }
     if (token !== liveStartToken) return;
+    consumePendingCueVolume();
     audio.volume = localVideo.volume;
     audio.muted = false;
     await audio.play();
@@ -7162,6 +7305,7 @@ async function createMediaWindow(options) {
   } else {
     playingMediaAudioOnly = false;
   }
+  consumePendingCueVolume();
   let strtVl = 0;
   if (isQueuePlaybackContext || currentMode === MEDIAPLAYER) {
     strtVl = video.volume;
