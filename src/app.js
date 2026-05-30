@@ -1694,6 +1694,9 @@ async function loadQueueItemIntoPreviewCue(index) {
   index = moveQueueItemAfterCurrent(index);
   previewCueIndex = index;
   cueVolumeDirty = false;
+  // Paint the Cued badge immediately — the overlay/metadata load below is
+  // async and callers may flip playback flags before it finishes.
+  renderQueue();
   const item = mediaQueue[index];
   pendingCueVolume = Number.isFinite(item.cueVolume) ? item.cueVolume : 1;
   syncGtkSliderToCueState();
@@ -5168,14 +5171,15 @@ function updateDynUI() {
       (isPlaying && audioOnlyFile) || iM;
   }
 
-  // Presentation status mirrors `isPlaying` (the play-button label reads
-  // off the same flag). Keep them in sync at one choke point so callers
-  // don't have to remember to refresh the status card after flipping
-  // playback state — e.g. `playCurrentQueueItem` calls `renderQueue` while
+  // Presentation status and queue badges (Live / Cued) mirror `isPlaying`
+  // and related flags. Keep them in sync at one choke point so callers
+  // don't have to remember to refresh the sidebar after flipping playback
+  // state — e.g. `playCurrentQueueItem` calls `renderQueue` while
   // `isPlaying` is still false, then sets it true, then `updateDynUI`.
-  // Without this, a one-file queue stayed at "Nothing live" forever
-  // because no later path called `renderQueue`/`updatePreviewCueUI` again.
-  updatePreviewCueUI();
+  // Without this, a one-file queue stayed at "Nothing live" forever and
+  // the Live / Cued pills never appeared because no later path called
+  // `renderQueue` again.
+  renderQueue();
 }
 
 async function populateDisplaySelect(options = {}) {
