@@ -6036,6 +6036,16 @@ function setSBFormMediaPlayer() {
       console.error("Failed to get platform, skipping audio setup:", error);
     });
 
+
+  if (
+    video &&
+    (!setupCustomMediaControls.controller ||
+      setupCustomMediaControls.controller.signal.aborted)
+  ) {
+    delete video.dataset.previewHandlersInstalled;
+  }
+  installPreviewEventHandlers();
+
   installMediaOpenButton();
   installPreviewEmptyStateHandlers();
   installMediaOptionsExpander();
