@@ -26,8 +26,14 @@ var strtTm = 0;
 var isText = false;
 var liveStreamMode = false;
 var isImg = false;
+var isPptx = false;
+var pptxStartSlide = 0;
+var pptxCurrentSlide = 0;
 var autoPlay = false;
 var seekOnly = false;
+let pptxIpcHandlersInstalled = false;
+const PPTX_SMALL_DECK_MAX_SLIDES = 30;
+const PPTX_LARGE_DECK_MIN_SLIDES = 151;
 /** Live edge: true HLS-style live (no sync/duration UI); false for YouTube VOD in stream mode. */
 var streamActsAsLiveEdge = false;
 let i = argv.length - 1;
@@ -37,6 +43,10 @@ do {
     mediaFile = decodeURIComponent(argv[i].substring(16));
   } else if (argv[i] === "__isImg") {
     isImg = true;
+  } else if (argv[i] === "__isPptx") {
+    isPptx = true;
+  } else if (argv[i].startsWith("__pptxSlide=")) {
+    pptxStartSlide = parseInt(argv[i].substring(12), 10) || 0;
   } else if (argv[i] === "__live-stream=true") {
     liveStreamMode = true;
   } else if (argv[i].startsWith("__start-t")) {
@@ -54,6 +64,31 @@ do {
   }
   --i;
 } while (argv[i][0] !== "-");
+
+function getPptxListRenderOptions(slideCount) {
+  if (Number.isFinite(slideCount) && slideCount <= PPTX_SMALL_DECK_MAX_SLIDES) {
+    return {
+      batchSize: 12,
+      windowed: true,
+      initialSlides: 4,
+      overscanViewport: 1.5,
+    };
+  }
+  if (Number.isFinite(slideCount) && slideCount >= PPTX_LARGE_DECK_MIN_SLIDES) {
+    return {
+      batchSize: 4,
+      windowed: true,
+      initialSlides: 2,
+      overscanViewport: 2,
+    };
+  }
+  return {
+    batchSize: 8,
+    windowed: true,
+    initialSlides: 4,
+    overscanViewport: 1.5,
+  };
+}
 
 /**
  * hls.js tuning for network streams (YouTube live HLS, generic m3u8) in the
@@ -198,6 +233,62 @@ async function applySlipstream(data) {
   mediaFile = data.mediaFile;
   loopFile = !!data.loopFile;
   isImg = !!data.isImg;
+  const newIsPptx = !!data.isPptx;
+
+  if (newIsPptx) {
+    isPptx = true;
+    installPptxIpcHandlers();
+    if (!globalThis.process) {
+      globalThis.process = { env: {} };
+    } else if (!globalThis.process.env) {
+      globalThis.process.env = {};
+    }
+    const pptxCanvas = document.getElementById("pptxCanvas");
+    try {
+      video.pause();
+    } catch {}
+    video.removeAttribute("src");
+    video.load();
+    pptxCanvas.style.display = "flex";
+    document.querySelector("video").style.display = "none";
+    if (img) img.style.display = "none";
+    if (window._pptxMediaViewer) {
+      try {
+        window._pptxMediaViewer.destroy();
+      } catch {}
+      window._pptxMediaViewer = null;
+    }
+    pptxCanvas.innerHTML = "";
+    const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
+      "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
+    );
+    const arrayBuffer = await ipcRenderer.invoke(
+      "read-file-as-arraybuffer",
+      mediaFile
+    );
+    window._pptxMediaViewer = await PptxViewer.open(arrayBuffer, pptxCanvas, {
+      zipLimits: RECOMMENDED_ZIP_LIMITS,
+      fitMode: "contain",
+      renderMode: "slide",
+      // Single-slide mode is already cheap; list renders use windowed mounting.
+      listOptions: getPptxListRenderOptions(),
+    });
+    await applyPptxContainPolicyMedia();
+    await showPptxSlideInMediaWindow(data.pptxStartSlide || 0);
+    return;
+  }
+
+  if (isPptx && !newIsPptx) {
+    isPptx = false;
+    const pptxCanvas = document.getElementById("pptxCanvas");
+    if (pptxCanvas) pptxCanvas.style.display = "none";
+    if (window._pptxMediaViewer) {
+      try {
+        window._pptxMediaViewer.destroy();
+      } catch {}
+      window._pptxMediaViewer = null;
+    }
+  }
 
   if (isImg) {
     try {
@@ -270,6 +361,65 @@ function installICPHandlers() {
 
   ipcRenderer.on("slipstream", async (event, data) => {
     await applySlipstream(data);
+  });
+}
+
+function getPptxSlidesInMediaWindow(pptxCanvas) {
+  const queried = Array.from(pptxCanvas.querySelectorAll("[data-slide-index]"));
+  if (queried.length > 0) {
+    const byIndex = new Map();
+    queried.forEach((el) => {
+      const idx = Number.parseInt(el.getAttribute("data-slide-index"), 10);
+      if (Number.isFinite(idx) && !byIndex.has(idx)) byIndex.set(idx, { idx, el });
+    });
+    if (byIndex.size > 0) {
+      return Array.from(byIndex.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map((entry) => entry[1]);
+    }
+  }
+  return Array.from(pptxCanvas.children)
+    .filter((el) => el && el.nodeType === 1)
+    .map((el, idx) => ({ idx, el }));
+}
+
+async function showPptxSlideInMediaWindow(index) {
+  const pptxCanvas = document.getElementById("pptxCanvas");
+  if (!pptxCanvas) return;
+  pptxCurrentSlide = index;
+  try {
+    await window._pptxMediaViewer?.renderSlide(index);
+  } catch {}
+  const slides = Array.from(pptxCanvas.children).filter((el) => el && el.nodeType === 1);
+  slides.forEach((slideEl) => {
+    slideEl.style.display = "flex";
+    const svgs = slideEl.querySelectorAll("svg");
+    svgs.forEach((svg) => {
+      svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      svg.style.width = "100%";
+      svg.style.height = "100%";
+      svg.style.display = "block";
+    });
+  });
+  await applyPptxContainPolicyMedia();
+}
+
+async function applyPptxContainPolicyMedia() {
+  const viewer = window._pptxMediaViewer;
+  if (!viewer) return;
+  try {
+    await viewer.setFitMode("contain");
+    await viewer.setZoom(100);
+  } catch {}
+}
+
+function installPptxIpcHandlers() {
+  if (pptxIpcHandlersInstalled) return;
+  pptxIpcHandlersInstalled = true;
+  ipcRenderer.on("pptx-goto-slide", (event, data) => {
+    if (typeof data?.slideIndex === "number") {
+      void showPptxSlideInMediaWindow(data.slideIndex);
+    }
   });
 }
 
@@ -377,6 +527,8 @@ async function loadMedia() {
   }
 
   textCanvas.style.display = "none";
+  const pptxCanvas = document.getElementById("pptxCanvas");
+  if (pptxCanvas) pptxCanvas.style.display = "none";
 
   if (isImg) {
     // Slipstream still needs to work when the first queue item is an image
@@ -388,6 +540,47 @@ async function loadMedia() {
     img.setAttribute("id", "bigPlayer");
     document.body.appendChild(img);
     document.querySelector("video").style.display = "none";
+    return;
+  }
+
+  if (isPptx) {
+    installICPHandlers();
+    installPptxIpcHandlers();
+    if (!globalThis.process) {
+      globalThis.process = { env: {} };
+    } else if (!globalThis.process.env) {
+      globalThis.process.env = {};
+    }
+    document.querySelector("video").style.display = "none";
+    try {
+      video.pause();
+    } catch {}
+    video.removeAttribute("src");
+    video.load();
+    if (pptxCanvas) pptxCanvas.style.display = "flex";
+    const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
+      "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
+    );
+    const arrayBuffer = await ipcRenderer.invoke(
+      "read-file-as-arraybuffer",
+      mediaFile
+    );
+    window._pptxMediaViewer = await PptxViewer.open(arrayBuffer, pptxCanvas, {
+      zipLimits: RECOMMENDED_ZIP_LIMITS,
+      fitMode: "contain",
+      renderMode: "slide",
+      // Single-slide mode is already cheap; list renders use windowed mounting.
+      listOptions: getPptxListRenderOptions(),
+    });
+    await applyPptxContainPolicyMedia();
+    await showPptxSlideInMediaWindow(pptxStartSlide);
+    if (!window._pptxResizeBound) {
+      window._pptxResizeBound = true;
+      window.addEventListener("resize", () => {
+        void applyPptxContainPolicyMedia();
+        void showPptxSlideInMediaWindow(pptxCurrentSlide);
+      });
+    }
     return;
   }
 

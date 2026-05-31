@@ -15,6 +15,13 @@
     frame-src 'self';
     media-src * 'self' blob: data:;
   ">
+    <script type="importmap">
+      {
+        "imports": {
+          "jszip": "../../src/jszip-esm-wrapper.js"
+        }
+      }
+    </script>
     <style>
         body {
             margin: 0;
@@ -33,6 +40,25 @@
             width: 100vw;
             height: 100vh;
             object-fit: contain;
+        }
+
+        #pptxCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: black;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            z-index: 5;
+        }
+
+        #pptxCanvas .pptx-slide > * {
+            max-width: 100%;
+            max-height: 100%;
         }
 
         #textCanvas {
@@ -60,6 +86,7 @@
 
 <body>
     <video id="bigPlayer"></video>
+    <div id="pptxCanvas"></div>
     <div id="textCanvas">
         <div id="textContent"></div>
     </div>

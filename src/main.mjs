@@ -1349,6 +1349,7 @@ const ALLOWED_MEDIA_EXTENSIONS = [
   "webp",
   "bmp",
   "svg",
+  "pptx",
 ];
 
 const ALLOWED_MEDIA_EXTENSION_SET = new Set(
@@ -1423,6 +1424,7 @@ async function handleShowMediaFilesDialog(event) {
     properties: ["openFile", "multiSelections"],
     filters: [
       { name: "Media", extensions: ALLOWED_MEDIA_EXTENSIONS },
+      { name: "PowerPoint Presentations", extensions: ["pptx"] },
       { name: "All files", extensions: ["*"] },
     ],
   });
@@ -1457,6 +1459,11 @@ function handleFilterMediaDropPaths(_, paths) {
   return out;
 }
 
+async function handleReadFileAsArrayBuffer(_, filePath) {
+  const buf = await readFile(filePath);
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
 function setIPC() {
   ipcMain.handle("get-system-time", getSystemTIme);
   ipcMain.handle("get-platform", getPlatform);
@@ -1467,6 +1474,7 @@ function setIPC() {
   ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
   ipcMain.handle("remember-media-folder", handleRememberMediaFolder);
   ipcMain.handle("filter-media-drop-paths", handleFilterMediaDropPaths);
+  ipcMain.handle("read-file-as-arraybuffer", handleReadFileAsArrayBuffer);
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);
@@ -1503,6 +1511,11 @@ function setIPC() {
   ipcMain.handle("create-media-window", handleCreateMediaWindow);
   ipcMain.on("timeGoto-message", handleTimeGotoMessage);
   ipcMain.on("play-ctl", handlePlayCtl);
+  ipcMain.on("pptx-goto-slide", (_event, data) => {
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+      mediaWindow.webContents.send("pptx-goto-slide", data);
+    }
+  });
   ipcMain.on("set-display-index", handleSetDisplayIndex);
   ipcMain.on("media-seekto", (event, seekTime) => {
     win?.webContents.send("timeGoto-message", {
