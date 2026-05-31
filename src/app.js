@@ -2267,6 +2267,7 @@ function clearVideoPreviewCueOverlay() {
 }
 
 async function loadQueueItemIntoPreviewCue(index) {
+  hidePptxPreview()
   if (index < 0 || index >= mediaQueue.length) return;
   if (index === currentQueueIndex && isQueuePresentationActive()) {
     await restorePreviewToLiveOutput(index);
@@ -2528,6 +2529,7 @@ async function stopQueuePresentationUserClosed() {
   saveMediaFile();
   removeFilenameFromTitlebar();
   textNode.data = "";
+  syncPreviewAudioTrackState();
 }
 
 function updateQueueFileLabel(name) {
@@ -7455,6 +7457,10 @@ function endLocalMedia() {
       );
     }
   }
+
+  if (!isActiveMediaWindow() && video && !playingMediaAudioOnly) {
+    syncPreviewAudioTrackState();
+  }
 }
 
 function pauseLocalMedia(event) {
@@ -7843,6 +7849,7 @@ async function endLiveAudioPresentation() {
  */
 async function playAudioOnlyLocally() {
   resolveQueuePresentationVideo();
+  hidePptxPreview();
   const localVideo = video;
   if (!localVideo) return;
   const token = nextLiveStartToken();
