@@ -161,6 +161,9 @@ const MEDIAPLAYER = 0,
   BULKMEDIAPLAYER = 5,
   TEXTPLAYER = 6;
 const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
+const pptxRegex = /\.pptx$/i;
+const PPTX_SMALL_DECK_MAX_SLIDES = 30;
+const PPTX_LARGE_DECK_MIN_SLIDES = 151;
 let isActiveMediaWindowCache = false;
 const SECONDS = new Int32Array(1);
 const SECONDSFLOAT = new Float64Array(1);
@@ -183,6 +186,14 @@ let mediaQueue = [];
 let currentQueueIndex = -1;
 let previewCueIndex = -1;
 let isQueuePlaying = false;
+let pptxViewer = null;
+let pptxViewerHost = null;
+let pptxPreviewSlideHandle = null;
+let pptxThumbnailHandles = new Map();
+let pptxThumbnailObserver = null;
+let pptxSlideCount = 0;
+let pptxCurrentSlide = 0;
+let pptxFilePath = null;
 /** True after natural playback end (signaled before media window closes). */
 let mediaPlaybackEndedPending = false;
 let queueSlipstreamTransitionInProgress = false;
@@ -315,6 +326,7 @@ function nextLiveStartToken() {
 
 function classifyQueueMediaType(filePath) {
   if (imageRegex.test(filePath)) return "image";
+  if (pptxRegex.test(filePath)) return "pptx";
   if (/\.(mp4|m4v|mov|mkv|webm|avi|wmv)$/i.test(filePath)) return "video";
   if (/\.(mp3|m4a|aac|wav|flac|ogg|opus|wma)$/i.test(filePath)) return "audio";
   return "file";
@@ -331,6 +343,482 @@ function isQueueItemImage(item) {
   return Boolean(
     item && (item.type === "image" || (item.path && isImg(item.path))),
   );
+}
+
+function isQueueItemPptx(item) {
+  return Boolean(
+    item && (item.type === "pptx" || (item.path && pptxRegex.test(item.path))),
+  );
+}
+
+function clampPptxSlideIndex(index, count = pptxSlideCount) {
+  const maxIndex = Math.max(0, (Number.isFinite(count) ? count : 1) - 1);
+  if (!Number.isFinite(index)) return 0;
+  return Math.min(Math.max(0, Math.floor(index)), maxIndex);
+}
+
+function resolvePptxPreviewStartSlide(filePath, opts) {
+  if (Number.isFinite(opts?.startSlide)) {
+    return Math.max(0, Math.floor(opts.startSlide));
+  }
+  const sameDeck =
+    pptxFilePath &&
+    normalizeMediaPathForCompare(pptxFilePath) === normalizeMediaPathForCompare(filePath);
+  return sameDeck ? clampPptxSlideIndex(pptxCurrentSlide) : 0;
+}
+
+function getPptxListRenderOptions(slideCount) {
+  if (Number.isFinite(slideCount) && slideCount <= PPTX_SMALL_DECK_MAX_SLIDES) {
+    return {
+      batchSize: 12,
+      windowed: true,
+      initialSlides: 4,
+      overscanViewport: 1.5,
+    };
+  }
+  if (Number.isFinite(slideCount) && slideCount >= PPTX_LARGE_DECK_MIN_SLIDES) {
+    return {
+      batchSize: 4,
+      windowed: true,
+      initialSlides: 2,
+      overscanViewport: 2,
+    };
+  }
+  return {
+    batchSize: 8,
+    windowed: true,
+    initialSlides: 4,
+    overscanViewport: 1.5,
+  };
+}
+
+async function loadPptxPreview(filePath, opts = {}) {
+  const startSlide = resolvePptxPreviewStartSlide(filePath, opts);
+  // Some third-party ESM bundles expect a Node-like `process` object.
+  // Electron renderer (browser context) does not provide it by default.
+  if (!globalThis.process) {
+    globalThis.process = { env: {} };
+  } else if (!globalThis.process.env) {
+    globalThis.process.env = {};
+  }
+  const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
+    "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
+  );
+  const container = document.getElementById("pptxPreviewContainer");
+  if (!container) return;
+  stopLiveAudioPresentation();
+  stopPreviewAudioCue();
+  clearVideoPreviewCueOverlay();
+  if (video) {
+    try {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    } catch {}
+  }
+  document
+    .getElementById("customControls")
+    ?.style.setProperty("visibility", "hidden");
+  const videoPreview = document.getElementById("preview");
+  if (videoPreview) videoPreview.style.display = "none";
+  disposePptxThumbnails();
+  if (pptxViewer) {
+    try {
+      pptxViewer.destroy();
+    } catch {}
+    pptxViewer = null;
+  }
+  if (pptxPreviewSlideHandle) {
+    try {
+      pptxPreviewSlideHandle.dispose();
+    } catch {}
+    pptxPreviewSlideHandle = null;
+  }
+  container.innerHTML = "";
+  container.style.display = "flex";
+  ensurePptxPreviewShell(container);
+  const arrayBuffer = await invoke("read-file-as-arraybuffer", filePath);
+  const viewerHost = ensurePptxViewerHost();
+  viewerHost.innerHTML = "";
+  pptxViewer = await PptxViewer.open(arrayBuffer, viewerHost, {
+    zipLimits: RECOMMENDED_ZIP_LIMITS,
+    fitMode: "contain",
+    renderMode: "slide",
+    // `renderMode: "slide"` keeps preview cheap; these options apply if the
+    // viewer is later asked to render a list (windowed mounting by default).
+    listOptions: getPptxListRenderOptions(),
+  });
+  pptxFilePath = filePath;
+  pptxSlideCount = pptxViewer.slideCount ?? pptxViewer.slides?.length ?? 1;
+  buildPptxNavigator();
+  if (container.dataset.pptxResizeBound !== "1") {
+    container.dataset.pptxResizeBound = "1";
+    window.addEventListener("resize", () => {
+      if (!pptxViewer) return;
+      ensurePptxPreviewShell(container);
+      void showPptxSlide(pptxCurrentSlide);
+      buildPptxNavigator();
+    });
+  }
+  await showPptxSlide(clampPptxSlideIndex(startSlide, pptxSlideCount));
+  const navBar = document.getElementById("pptxNavBar");
+  if (navBar) navBar.style.display = "flex";
+  updatePptxNavButtons();
+}
+
+function enforcePptxCoverFit(slideEl) {
+  if (!slideEl) return;
+  const svgs = slideEl.querySelectorAll("svg");
+  svgs.forEach((svg) => {
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    svg.style.width = "100%";
+    svg.style.height = "100%";
+    svg.style.display = "block";
+  });
+}
+
+function disposePptxThumbnails() {
+  if (pptxThumbnailObserver) {
+    try {
+      pptxThumbnailObserver.disconnect();
+    } catch {}
+    pptxThumbnailObserver = null;
+  }
+  pptxThumbnailHandles.forEach((handle) => {
+    try {
+      handle?.dispose?.();
+    } catch {}
+  });
+  pptxThumbnailHandles.clear();
+}
+
+function ensurePptxViewerHost() {
+  if (pptxViewerHost?.isConnected) return pptxViewerHost;
+  pptxViewerHost = document.createElement("div");
+  pptxViewerHost.id = "pptxRendererHost";
+  pptxViewerHost.setAttribute("aria-hidden", "true");
+  document.body.appendChild(pptxViewerHost);
+  return pptxViewerHost;
+}
+
+function disposePptxViewerHost() {
+  if (!pptxViewerHost) return;
+  try {
+    pptxViewerHost.remove();
+  } catch {}
+  pptxViewerHost = null;
+}
+
+function waitForNextFrame() {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+function getPptxRenderedSlideElement(stage) {
+  return pptxPreviewSlideHandle?.element || stage?.firstElementChild || null;
+}
+
+function getPptxSlideElementFromHandle(handle, stage) {
+  return handle?.element || stage?.firstElementChild || null;
+}
+
+function getPptxNaturalSlideSize(slideEl) {
+  const svg = slideEl?.querySelector?.("svg");
+  const viewBox = svg?.getAttribute?.("viewBox")?.split(/\s+/).map(Number);
+  const viewBoxWidth = viewBox?.length === 4 && Number.isFinite(viewBox[2]) ? viewBox[2] : 0;
+  const viewBoxHeight = viewBox?.length === 4 && Number.isFinite(viewBox[3]) ? viewBox[3] : 0;
+  const rect = slideEl?.getBoundingClientRect?.();
+  const width =
+    slideEl?.offsetWidth ||
+    slideEl?.scrollWidth ||
+    rect?.width ||
+    viewBoxWidth ||
+    pptxViewer?.slideWidth ||
+    16;
+  const height =
+    slideEl?.offsetHeight ||
+    slideEl?.scrollHeight ||
+    rect?.height ||
+    viewBoxHeight ||
+    pptxViewer?.slideHeight ||
+    9;
+  return { width, height };
+}
+
+function getElementContentSize(el) {
+  if (!el) return { width: 0, height: 0 };
+  const styles = window.getComputedStyle(el);
+  const horizontalPadding =
+    Number.parseFloat(styles.paddingLeft || "0") +
+    Number.parseFloat(styles.paddingRight || "0");
+  const verticalPadding =
+    Number.parseFloat(styles.paddingTop || "0") +
+    Number.parseFloat(styles.paddingBottom || "0");
+  return {
+    width: Math.max(0, el.clientWidth - horizontalPadding),
+    height: Math.max(0, el.clientHeight - verticalPadding),
+  };
+}
+
+function ensurePptxPreviewShell(container) {
+  let mainPane = document.getElementById("pptxMainSlidePane");
+  let thumbnailList = document.getElementById("pptxThumbnailList");
+  if (mainPane && thumbnailList) return { mainPane, thumbnailList };
+
+  container.innerHTML = "";
+  const sidebar = document.createElement("aside");
+  sidebar.id = "pptxSlideNavigator";
+  sidebar.setAttribute("aria-label", "PowerPoint slide navigator");
+
+  const heading = document.createElement("div");
+  heading.className = "pptx-slide-navigator__heading";
+  heading.textContent = "Slides";
+
+  thumbnailList = document.createElement("div");
+  thumbnailList.id = "pptxThumbnailList";
+  thumbnailList.className = "pptx-thumbnail-list";
+  thumbnailList.setAttribute("role", "listbox");
+  thumbnailList.setAttribute("aria-label", "PowerPoint slides");
+
+  mainPane = document.createElement("div");
+  mainPane.id = "pptxMainSlidePane";
+  mainPane.setAttribute("aria-label", "Selected PowerPoint slide");
+
+  sidebar.appendChild(heading);
+  sidebar.appendChild(thumbnailList);
+  container.appendChild(sidebar);
+  container.appendChild(mainPane);
+  return { mainPane, thumbnailList };
+}
+
+function updatePptxNavigatorSelection() {
+  const thumbnailList = document.getElementById("pptxThumbnailList");
+  if (!thumbnailList) return;
+  thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
+    const isActive = Number(button.dataset.slideIndex) === pptxCurrentSlide;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+    button.tabIndex = isActive ? 0 : -1;
+  });
+  const active = thumbnailList.querySelector(".pptx-thumbnail-button.is-active");
+  active?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+}
+
+async function renderPptxThumbnail(index, button) {
+  if (!pptxViewer || !button || pptxThumbnailHandles.has(index)) return;
+  const viewport = button.querySelector(".pptx-thumbnail-viewport");
+  if (!viewport) return;
+  viewport.innerHTML = "";
+  const stage = document.createElement("div");
+  stage.className = "pptx-thumbnail-stage";
+  viewport.appendChild(stage);
+
+  let handle = null;
+  try {
+    handle = pptxViewer.renderSlideToContainer(index, stage, 1);
+  } catch (err) {
+    console.error("Failed to render PPTX thumbnail:", err);
+  }
+  if (!handle) return;
+  pptxThumbnailHandles.set(index, handle);
+  await waitForNextFrame();
+
+  const slideEl = getPptxSlideElementFromHandle(handle, stage);
+  const { width, height } = getPptxNaturalSlideSize(slideEl);
+  const vw = viewport.clientWidth;
+  const vh = viewport.clientHeight;
+  const scale = vw && vh ? Math.min(vw / width, vh / height) : 1;
+  stage.style.width = `${width * scale}px`;
+  stage.style.height = `${height * scale}px`;
+  if (slideEl) {
+    slideEl.style.width = `${width}px`;
+    slideEl.style.height = `${height}px`;
+    slideEl.style.maxWidth = "none";
+    slideEl.style.maxHeight = "none";
+    slideEl.style.transform = `scale(${scale})`;
+    slideEl.style.transformOrigin = "top left";
+  }
+  enforcePptxCoverFit(stage);
+}
+
+function unmountPptxThumbnail(index, button) {
+  const handle = pptxThumbnailHandles.get(index);
+  if (!handle) return;
+  try {
+    handle.dispose?.();
+  } catch {}
+  pptxThumbnailHandles.delete(index);
+  const viewport = button?.querySelector?.(".pptx-thumbnail-viewport");
+  if (viewport) viewport.innerHTML = "";
+}
+
+function buildPptxNavigator() {
+  const container = document.getElementById("pptxPreviewContainer");
+  if (!container) return;
+  const { thumbnailList } = ensurePptxPreviewShell(container);
+  disposePptxThumbnails();
+  thumbnailList.innerHTML = "";
+
+  for (let i = 0; i < pptxSlideCount; i++) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "pptx-thumbnail-button";
+    button.dataset.slideIndex = String(i);
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-label", `Go to slide ${i + 1}`);
+    button.innerHTML = `
+      <span class="pptx-thumbnail-number">${i + 1}</span>
+      <span class="pptx-thumbnail-viewport"></span>
+    `;
+    button.addEventListener("click", () => {
+      void jumpToPptxSlide(i);
+    });
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        const next = thumbnailList.querySelector(
+          `.pptx-thumbnail-button[data-slide-index="${Math.min(i + 1, pptxSlideCount - 1)}"]`,
+        );
+        next?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const prev = thumbnailList.querySelector(
+          `.pptx-thumbnail-button[data-slide-index="${Math.max(i - 1, 0)}"]`,
+        );
+        prev?.focus();
+      } else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        void jumpToPptxSlide(i);
+      }
+    });
+    thumbnailList.appendChild(button);
+  }
+
+  if ("IntersectionObserver" in window) {
+    pptxThumbnailObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const index = Number(entry.target.dataset.slideIndex);
+          if (!Number.isFinite(index)) return;
+          if (entry.isIntersecting) {
+            void renderPptxThumbnail(index, entry.target);
+          } else {
+            unmountPptxThumbnail(index, entry.target);
+          }
+        });
+      },
+      {
+        root: thumbnailList,
+        rootMargin: "240px 0px",
+      },
+    );
+    thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
+      pptxThumbnailObserver.observe(button);
+    });
+  } else {
+    thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
+      const index = Number(button.dataset.slideIndex);
+      if (Number.isFinite(index)) void renderPptxThumbnail(index, button);
+    });
+  }
+  updatePptxNavigatorSelection();
+}
+
+async function showPptxSlide(index) {
+  const container = document.getElementById("pptxPreviewContainer");
+  if (!container) return;
+  const { mainPane } = ensurePptxPreviewShell(container);
+  const slideIndex = clampPptxSlideIndex(index);
+  if (pptxPreviewSlideHandle) {
+    try {
+      pptxPreviewSlideHandle.dispose();
+    } catch {}
+    pptxPreviewSlideHandle = null;
+  }
+  mainPane.innerHTML = "";
+  const stage = document.createElement("div");
+  stage.className = "pptx-preview-stage";
+  mainPane.appendChild(stage);
+  try {
+    pptxPreviewSlideHandle = pptxViewer?.renderSlideToContainer(slideIndex, stage, 1) || null;
+  } catch {}
+  await waitForNextFrame();
+  const slideEl = getPptxRenderedSlideElement(stage);
+  const { width, height } = getPptxNaturalSlideSize(slideEl);
+  const { width: cw, height: ch } = getElementContentSize(mainPane);
+  const scale = cw && ch ? Math.min(cw / width, ch / height) : 1;
+  stage.style.width = `${width * scale}px`;
+  stage.style.height = `${height * scale}px`;
+  if (slideEl) {
+    slideEl.style.width = `${width}px`;
+    slideEl.style.height = `${height}px`;
+    slideEl.style.maxWidth = "none";
+    slideEl.style.maxHeight = "none";
+    slideEl.style.transform = `scale(${scale})`;
+    slideEl.style.transformOrigin = "top left";
+  }
+  enforcePptxCoverFit(stage);
+  pptxCurrentSlide = slideIndex;
+  updatePptxNavButtons();
+  updatePptxNavigatorSelection();
+}
+
+function updatePptxNavButtons() {
+  const prevBtn = document.getElementById("pptxPrevBtn");
+  const nextBtn = document.getElementById("pptxNextBtn");
+  const counter = document.getElementById("pptxSlideCounter");
+  if (prevBtn) prevBtn.disabled = pptxCurrentSlide <= 0;
+  if (nextBtn) nextBtn.disabled = pptxCurrentSlide >= pptxSlideCount - 1;
+  if (counter) {
+    counter.textContent = `Slide ${pptxCurrentSlide + 1} / ${Math.max(1, pptxSlideCount)}`;
+  }
+}
+
+function sendPptxSlideToMediaWindow(slideIndex) {
+  send("pptx-goto-slide", { slideIndex, filePath: pptxFilePath });
+}
+
+async function jumpToPptxSlide(index) {
+  await showPptxSlide(index);
+  if (isActiveMediaWindow()) sendPptxSlideToMediaWindow(pptxCurrentSlide);
+}
+
+function pptxPrevSlide() {
+  if (pptxCurrentSlide > 0) {
+    void jumpToPptxSlide(pptxCurrentSlide - 1);
+  }
+}
+
+function pptxNextSlide() {
+  if (pptxCurrentSlide < pptxSlideCount - 1) {
+    void jumpToPptxSlide(pptxCurrentSlide + 1);
+  }
+}
+
+function hidePptxPreview() {
+  const container = document.getElementById("pptxPreviewContainer");
+  if (container) container.style.display = "none";
+  const navBar = document.getElementById("pptxNavBar");
+  if (navBar) navBar.style.display = "none";
+  const videoPreview = document.getElementById("preview");
+  if (videoPreview) videoPreview.style.display = "";
+  if (mediaFile && isImg(mediaFile)) {
+    document
+      .getElementById("customControls")
+      ?.style.setProperty("visibility", "hidden");
+  } else {
+    document.getElementById("customControls")?.style.setProperty("visibility", "");
+  }
+  if (pptxViewer) {
+    try {
+      pptxViewer.destroy();
+    } catch {}
+    pptxViewer = null;
+  }
+  disposePptxThumbnails();
+  disposePptxViewerHost();
+  pptxFilePath = null;
+  pptxSlideCount = 0;
+  pptxCurrentSlide = 0;
 }
 
 function isLikelyVideoItem(filePath) {
@@ -872,6 +1360,8 @@ function queueTypeIconMarkup(type) {
       return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M12 1v9.5a2.5 2.5 0 1 1-1-2.15V5H8V1h4zM5.5 9A1.5 1.5 0 1 0 7 10.5 1.5 1.5 0 0 0 5.5 9z"/></svg>`;
     case "image":
       return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h12v12H2V2zm1 1v8.59l2.5-2.5 2 2L13 5.41V3H3zm7.5 1a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></svg>`;
+    case "pptx":
+      return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h8l4 4v8H2V2zm8 1.2V6h2.8L10 3.2zM4 8h8v1H4V8zm0 2h8v1H4v-1z"/></svg>`;
     default:
       return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2h10v12H3V2zm1 1v10h8V3H4zm1 1h6v1H5V4zm0 2h4v1H5V6zm0 2h6v1H5V8z"/></svg>`;
   }
@@ -1041,10 +1531,19 @@ function reorderMediaQueue(fromIndex, toIndex) {
 function enqueuePathsFromFilePicker(paths) {
   if (currentMode !== MEDIAPLAYER || !paths.length) return;
   invalidateQueueUndoToastAfterMutation();
+  const firstNewIndex = mediaQueue.length;
   for (const p of paths) {
     mediaQueue.push(createQueueEntry(p));
   }
   renderQueue();
+  if (
+    !isActiveMediaWindow() &&
+    !isLocalAppWindowPresentationActive() &&
+    currentQueueIndex < 0 &&
+    mediaQueue[firstNewIndex]
+  ) {
+    void onQueueItemActivate(firstNewIndex).catch((err) => console.error(err));
+  }
 }
 
 /** Electron open dialog preserves multi-selection order better than <input type="file">. */
@@ -1712,6 +2211,15 @@ async function loadQueueItemIntoPreviewCue(index) {
     return;
   }
 
+  if (isQueueItemPptx(item)) {
+    clearVideoPreviewCueOverlay();
+    stopPreviewAudioCue();
+    await loadPptxPreview(item.path);
+    updatePreviewCueUI();
+    renderQueue();
+    return;
+  }
+
   if (isQueueItemImage(item)) {
     clearVideoPreviewCueOverlay();
     stopPreviewAudioCue();
@@ -2028,6 +2536,15 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   mediaFile = item.path;
   mediaPlayerInputState.filePaths = [item.path];
   updateQueueFileLabel(item.name);
+  if (isQueueItemPptx(item)) {
+    await loadPptxPreview(item.path, {
+      startSlide: Number.isFinite(opts?.pptxStartSlide) ? opts.pptxStartSlide : undefined,
+    });
+    audioOnlyFile = false;
+    playingMediaAudioOnly = false;
+    return;
+  }
+  if (pptxViewer) hidePptxPreview();
 
   handleMediaPlayback(isImgFile);
   handleImageDisplay(isImgFile, document.querySelector("img"));
@@ -2211,6 +2728,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     const nextItem = mediaQueue[index];
     const nextType = nextItem.type || classifyQueueMediaType(nextItem.path);
     const isImgFile = isImg(nextItem.path);
+    const isPptxFile = isQueueItemPptx(nextItem);
 
     // Load the target into the preview before deciding. Extension checks catch
     // obvious audio files, but metadata is authoritative for "audio-only"
@@ -2228,7 +2746,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     resolveQueuePresentationVideo();
 
     // Audio must play in the local preview — destroy the media window as usual.
-    if (!isImgFile && (nextType === "audio" || audioOnlyFile)) {
+    if (!isImgFile && !isPptxFile && (nextType === "audio" || audioOnlyFile)) {
       pendingQueueSwitchIndex = index;
       pendingQueueSwitchStartTime = requestedStart;
       mediaPlaybackEndedPending = false;
@@ -2240,6 +2758,8 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     const slipstreamData = {
       mediaFile: nextItem.path,
       isImg: isImgFile,
+      isPptx: isPptxFile,
+      pptxStartSlide: isPptxFile ? clampPptxSlideIndex(pptxCurrentSlide) : 0,
       loopFile: false,
       startVolume: video ? video.volume : 1,
       startTime: requestedStart,
@@ -2273,7 +2793,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     // Mirror the media window: start the local preview so the operator sees
     // what's projecting. In the non-slipstream path createMediaWindow's
     // "media-window autoplay" call does this; we must do it ourselves here.
-    if (video && !isImgFile) {
+    if (video && !isImgFile && !isPptxFile) {
       await playVideoSafely(video, "slipstream preview play");
     }
 
@@ -4660,6 +5180,7 @@ async function handleMediaWindowClosed(event, id) {
 }
 function handleMediaPlayback(isImgFile) {
   if (!video) return;
+  if (mediaFile && pptxRegex.test(mediaFile)) return;
   if (!isImgFile) {
     video.src = mediaFile;
   }
@@ -5902,6 +6423,12 @@ function generateMediaFormHTML(video = null) {
         browser's stock <video> chrome — stacked on top of each other.
       -->
       <video id="previewCue" class="preview-cue-overlay" disablePictureInPicture muted hidden></video>
+      <div id="pptxPreviewContainer"></div>
+      <div id="pptxNavBar">
+        <button id="pptxPrevBtn" onclick="pptxPrevSlide()" disabled>Prev</button>
+        <span id="pptxSlideCounter">Slide 1 / 1</span>
+        <button id="pptxNextBtn" onclick="pptxNextSlide()">Next</button>
+      </div>
       <div id="previewEmptyState" class="preview-empty-state" hidden>
         <div class="preview-empty-state__card" role="button" tabindex="0" aria-label="Add media to queue">
           <svg class="preview-empty-state__icon" width="48" height="48" viewBox="0 0 24 24" aria-hidden="true">
@@ -7329,6 +7856,8 @@ async function createMediaWindow(options) {
   }
 
   const isImgFile = isImg(mediaFile);
+  const isPptxFile = pptxRegex.test(mediaFile);
+  const pptxStartSlide = isPptxFile ? clampPptxSlideIndex(pptxCurrentSlide) : 0;
 
   // Audio-only files always play in the local preview, never in the
   // dedicated fullscreen media window (queue mode included). This keeps the
@@ -7337,7 +7866,8 @@ async function createMediaWindow(options) {
   if (
     audioOnlyFile &&
     !isActiveMediaWindow() &&
-    !isImgFile
+    !isImgFile &&
+    !isPptxFile
   ) {
     if (!isImgFile) {
       await playAudioOnlyLocally();
@@ -7381,6 +7911,8 @@ async function createMediaWindow(options) {
         effectiveLoop ? "__media-loop=true" : "",
         liveStreamMode ? "__live-stream=" + liveStreamMode : "",
         isImgFile ? "__isImg" : "",
+        isPptxFile ? "__isPptx" : "",
+        isPptxFile ? `__pptxSlide=${pptxStartSlide}` : "",
         `__autoplay=${autoPlayEnabled}`,
         seekOnly ? "__seek-only" : "",
         birth,
@@ -7392,6 +7924,11 @@ async function createMediaWindow(options) {
 
   isActiveMediaWindowCache = true;
   await invoke("create-media-window", windowOptions, selectedIndex);
+  if (isPptxFile) {
+    setTimeout(() => {
+      sendPptxSlideToMediaWindow(pptxStartSlide);
+    }, 800);
+  }
 
   if (pidController) {
     pidController.reset();
@@ -7408,7 +7945,7 @@ async function createMediaWindow(options) {
     beginPidSeekSuppression();
     unPauseMedia();
     if (isQueuePlaybackContext || currentMode !== STREAMPLAYER) {
-      if (video !== null && !isImgFile) {
+      if (video !== null && !isImgFile && !isPptxFile) {
         beginPidSeekSuppression();
         await playVideoSafely(video, "media-window autoplay");
       }
