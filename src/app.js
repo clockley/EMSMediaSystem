@@ -196,6 +196,8 @@ let pptxCurrentSlide = 0;
 let pptxFilePath = null;
 /** True after natural playback end (signaled before media window closes). */
 let mediaPlaybackEndedPending = false;
+/** True when the operator pressed Stop, so the close must not advance the queue. */
+let userStopPresentationPending = false;
 let queueSlipstreamTransitionInProgress = false;
 /** When set, closing the media window switches to this queue index instead of advancing/stopping. */
 let pendingQueueSwitchIndex = null;
@@ -213,6 +215,7 @@ let pendingQueueClearPostClose = false;
 let queueClearUndoSnapshot = null;
 /** After reorder drop, ignore the synthetic click on the row. */
 let ignoreNextQueueItemClick = false;
+let ignoreQueueItemClicksUntil = 0;
 /** Last <video> element that received cubic waveshaper wiring. */
 let cubicWaveShaperAttachedVideo = null;
 
@@ -394,6 +397,7 @@ function getPptxListRenderOptions(slideCount) {
 
 async function loadPptxPreview(filePath, opts = {}) {
   const startSlide = resolvePptxPreviewStartSlide(filePath, opts);
+  const preserveLiveAudio = opts?.preserveLiveAudio === true;
   // Some third-party ESM bundles expect a Node-like `process` object.
   // Electron renderer (browser context) does not provide it by default.
   if (!globalThis.process) {
@@ -406,10 +410,10 @@ async function loadPptxPreview(filePath, opts = {}) {
   );
   const container = document.getElementById("pptxPreviewContainer");
   if (!container) return;
-  stopLiveAudioPresentation();
+  if (!preserveLiveAudio) stopLiveAudioPresentation();
   stopPreviewAudioCue();
   clearVideoPreviewCueOverlay();
-  if (video) {
+  if (video && !preserveLiveAudio) {
     try {
       video.pause();
       video.removeAttribute("src");
@@ -464,6 +468,9 @@ async function loadPptxPreview(filePath, opts = {}) {
   const navBar = document.getElementById("pptxNavBar");
   if (navBar) navBar.style.display = "flex";
   updatePptxNavButtons();
+  if (preserveLiveAudio) {
+    syncPreviewAudioTrackState();
+  }
 }
 
 function enforcePptxCoverFit(slideEl) {
@@ -654,6 +661,11 @@ function unmountPptxThumbnail(index, button) {
 function buildPptxNavigator() {
   const container = document.getElementById("pptxPreviewContainer");
   if (!container) return;
+  if (container.dataset.stopMediaToggleBound !== "1") {
+    container.dataset.stopMediaToggleBound = "1";
+    container.addEventListener("click", (event) => event.stopPropagation());
+    container.addEventListener("dblclick", (event) => event.stopPropagation());
+  }
   const { thumbnailList } = ensurePptxPreviewShell(container);
   disposePptxThumbnails();
   thumbnailList.innerHTML = "";
@@ -777,6 +789,15 @@ function sendPptxSlideToMediaWindow(slideIndex) {
   send("pptx-goto-slide", { slideIndex, filePath: pptxFilePath });
 }
 
+function pptxStartSlideForItem(item) {
+  if (!isQueueItemPptx(item)) return 0;
+  const sameDeck =
+    pptxFilePath &&
+    item?.path &&
+    normalizeMediaPathForCompare(pptxFilePath) === normalizeMediaPathForCompare(item.path);
+  return sameDeck ? clampPptxSlideIndex(pptxCurrentSlide) : 0;
+}
+
 async function jumpToPptxSlide(index) {
   await showPptxSlide(index);
   if (isActiveMediaWindow()) sendPptxSlideToMediaWindow(pptxCurrentSlide);
@@ -794,13 +815,14 @@ function pptxNextSlide() {
   }
 }
 
-function hidePptxPreview() {
+function hidePptxPreview(options = {}) {
+  const restoreVideoPreview = options.restoreVideoPreview !== false;
   const container = document.getElementById("pptxPreviewContainer");
   if (container) container.style.display = "none";
   const navBar = document.getElementById("pptxNavBar");
   if (navBar) navBar.style.display = "none";
   const videoPreview = document.getElementById("preview");
-  if (videoPreview) videoPreview.style.display = "";
+  if (videoPreview && restoreVideoPreview) videoPreview.style.display = "";
   if (mediaFile && isImg(mediaFile)) {
     document
       .getElementById("customControls")
@@ -819,6 +841,20 @@ function hidePptxPreview() {
   pptxFilePath = null;
   pptxSlideCount = 0;
   pptxCurrentSlide = 0;
+}
+
+function isPptxPreviewVisible() {
+  const container = document.getElementById("pptxPreviewContainer");
+  const navBar = document.getElementById("pptxNavBar");
+  return Boolean(
+    pptxViewer ||
+      (container && container.style.display !== "none" && container.style.display !== "") ||
+      (navBar && navBar.style.display !== "none" && navBar.style.display !== ""),
+  );
+}
+
+function hidePptxPreviewIfNeeded(options = {}) {
+  if (isPptxPreviewVisible()) hidePptxPreview(options);
 }
 
 function isLikelyVideoItem(filePath) {
@@ -980,6 +1016,38 @@ function currentPreviewCue() {
         ? item.cueStartTime
         : 0,
   };
+}
+
+function currentAudioPreviewQueueIndex() {
+  const cue = currentPreviewCue();
+  if (cue && isQueueItemAudio(cue.item) && isAudioPreviewCueActive()) {
+    return cue.index;
+  }
+
+  const source = mediaFile || video?.src || "";
+  const queueIndex = findQueueIndexByPath(source);
+  if (queueIndex >= 0 && isQueueItemAudio(mediaQueue[queueIndex])) {
+    return queueIndex;
+  }
+
+  if (
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length &&
+    isQueueItemAudio(mediaQueue[currentQueueIndex])
+  ) {
+    return currentQueueIndex;
+  }
+
+  return -1;
+}
+
+function queueStartIndexForPresent() {
+  const audioPreviewIndex = currentAudioPreviewQueueIndex();
+  if (audioPreviewIndex >= 0) return audioPreviewIndex;
+  if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
+    return currentQueueIndex;
+  }
+  return 0;
 }
 
 function currentCueEditableQueueIndex() {
@@ -1488,6 +1556,11 @@ function reorderMediaQueue(fromIndex, toIndex) {
     currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
       ? mediaQueue[currentQueueIndex].path
       : null;
+  const movedItemWasLiveAudio =
+    fromIndex === currentQueueIndex &&
+    (playingMediaAudioOnly ||
+      liveAudio?.paused === false ||
+      isQueueItemAudio(mediaQueue[fromIndex]));
   const cuePath =
     previewCueIndex >= 0 && previewCueIndex < mediaQueue.length
       ? mediaQueue[previewCueIndex].path
@@ -1512,6 +1585,7 @@ function reorderMediaQueue(fromIndex, toIndex) {
   }
 
   ignoreNextQueueItemClick = true;
+  ignoreQueueItemClicksUntil = performance.now() + 1500;
   window.setTimeout(() => {
     ignoreNextQueueItemClick = false;
   }, 400);
@@ -1525,6 +1599,13 @@ function reorderMediaQueue(fromIndex, toIndex) {
   // file, the card should reflect it now" — covering that contract at the
   // mutation site keeps it from drifting away from rendering concerns.
   updatePreviewCueUI();
+  if (movedItemWasLiveAudio) {
+    hidePptxPreviewIfNeeded();
+    restoreCountdownForLiveMedia();
+    refreshLiveAudioControls();
+    syncPlayPauseIconToControlMedia();
+    syncPreviewAudioTrackState();
+  }
   saveMediaFile();
 }
 
@@ -1899,7 +1980,9 @@ function installMediaQueueListDelegation() {
       return;
     }
     if (e.target.closest(".queue-drag-handle")) return;
-    if (ignoreNextQueueItemClick) return;
+    if (ignoreNextQueueItemClick || performance.now() < ignoreQueueItemClicksUntil) {
+      return;
+    }
     const row = e.target.closest(".queue-item[data-queue-index]");
     if (!row || !list.contains(row)) return;
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
@@ -2176,7 +2259,8 @@ function clearVideoPreviewCueOverlay() {
   // If the live output is still an image, restore its visibility now that
   // the cue overlay is gone. Without this the preview goes blank after
   // the operator dismisses a video cue while an image is presenting.
-  if (mediaFile && isImg(mediaFile)) {
+  const liveItem = currentLiveQueueItem();
+  if ((mediaFile && isImg(mediaFile)) || isQueueItemImage(liveItem)) {
     const liveImg = document.querySelector("img#preview");
     if (liveImg) liveImg.style.display = "";
   }
@@ -2214,11 +2298,15 @@ async function loadQueueItemIntoPreviewCue(index) {
   if (isQueueItemPptx(item)) {
     clearVideoPreviewCueOverlay();
     stopPreviewAudioCue();
-    await loadPptxPreview(item.path);
+    await loadPptxPreview(item.path, {
+      preserveLiveAudio: isLocalAppWindowPresentationActive(),
+    });
     updatePreviewCueUI();
     renderQueue();
     return;
   }
+
+  hidePptxPreviewIfNeeded();
 
   if (isQueueItemImage(item)) {
     clearVideoPreviewCueOverlay();
@@ -2402,6 +2490,9 @@ async function onQueueItemActivate(index) {
 
 async function stopQueuePresentationUserClosed() {
   stopLiveAudioPresentation();
+  mediaPlaybackEndedPending = false;
+  pendingQueueSwitchIndex = null;
+  pendingQueueSwitchStartTime = 0;
   isQueuePlaying = false;
   isPlaying = false;
   updateDynUI();
@@ -2424,6 +2515,7 @@ async function stopQueuePresentationUserClosed() {
   }
 
   let isImgFile = isImg(mediaFile);
+  if (!pptxRegex.test(mediaFile || "")) hidePptxPreviewIfNeeded();
   handleMediaPlayback(isImgFile);
 
   let imgEle = document.querySelector("img");
@@ -2503,6 +2595,10 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   const cueOnly = opts?.cueOnly === true;
   const loadToken = opts?.previewLoadToken;
   const isImgFile = isImg(item.path);
+  const itemIsPptx = isQueueItemPptx(item);
+  if (!itemIsPptx) {
+    hidePptxPreviewIfNeeded({ restoreVideoPreview: !isImgFile });
+  }
 
   let resumeAt = null;
   if (
@@ -2536,7 +2632,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   mediaFile = item.path;
   mediaPlayerInputState.filePaths = [item.path];
   updateQueueFileLabel(item.name);
-  if (isQueueItemPptx(item)) {
+  if (itemIsPptx) {
     await loadPptxPreview(item.path, {
       startSlide: Number.isFinite(opts?.pptxStartSlide) ? opts.pptxStartSlide : undefined,
     });
@@ -2544,7 +2640,6 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     playingMediaAudioOnly = false;
     return;
   }
-  if (pptxViewer) hidePptxPreview();
 
   handleMediaPlayback(isImgFile);
   handleImageDisplay(isImgFile, document.querySelector("img"));
@@ -2699,6 +2794,7 @@ async function advanceQueueAfterMediaWindowClosed() {
     }
 
     const isImgFile = isImg(mediaFile);
+    if (!pptxRegex.test(mediaFile || "")) hidePptxPreviewIfNeeded();
     handleMediaPlayback(isImgFile);
     handleImageDisplay(isImgFile, document.querySelector("img"));
     resetVideoState();
@@ -2759,7 +2855,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       mediaFile: nextItem.path,
       isImg: isImgFile,
       isPptx: isPptxFile,
-      pptxStartSlide: isPptxFile ? clampPptxSlideIndex(pptxCurrentSlide) : 0,
+      pptxStartSlide: isPptxFile ? pptxStartSlideForItem(nextItem) : 0,
       loopFile: false,
       startVolume: video ? video.volume : 1,
       startTime: requestedStart,
@@ -3698,14 +3794,10 @@ function setupCustomMediaControls() {
       if (!mediaEl || mediaEl.src === "") return;
 
       if (mediaEl.paused) {
-        // When an audio item is cued silently (previewAudio is the control
-        // element) and a presentation is already live, pressing play should
-        // take the cued audio live — the silent muted preview is otherwise
-        // a no-op from the operator's perspective.
-        if (
-          mediaEl === previewAudio &&
-          (isActiveMediaWindow() || isLocalAppWindowPresentationActive())
-        ) {
+        // Audio-only files do not have a separate preview mode: the silent
+        // previewAudio element is just a scrub/cue surface. Pressing Play
+        // here means "present this audio from the queue".
+        if (mediaEl === previewAudio) {
           const cue = currentPreviewCue();
           if (cue) {
             void takeQueueItemLive(cue.index, cue.startTime);
@@ -5007,6 +5099,10 @@ function installIPCHandler() {
   on("remoteplaypause", handlePlayPause);
   on("media-window-closed", handleMediaWindowClosed);
   on("media-playback-ended", async (event, endedMediaFile) => {
+    if (userStopPresentationPending) {
+      mediaPlaybackEndedPending = false;
+      return;
+    }
     if (
       endedMediaFile &&
       currentQueueIndex >= 0 &&
@@ -5050,6 +5146,7 @@ async function handleMediaWindowClosed(event, id) {
 
   if (pendingQueueClearPostClose) {
     pendingQueueClearPostClose = false;
+    userStopPresentationPending = false;
     mediaPlaybackEndedPending = false;
     isPlaying = false;
     isQueuePlaying = false;
@@ -5057,6 +5154,15 @@ async function handleMediaWindowClosed(event, id) {
     isActiveMediaWindowCache = false;
     saveMediaFile();
     pauseLocalPreviewAfterQueueClear();
+    return;
+  }
+
+  if (userStopPresentationPending) {
+    userStopPresentationPending = false;
+    mediaPlaybackEndedPending = false;
+    pendingQueueSwitchIndex = null;
+    pendingQueueSwitchStartTime = 0;
+    await stopQueuePresentationUserClosed();
     return;
   }
 
@@ -5165,6 +5271,7 @@ async function handleMediaWindowClosed(event, id) {
   }
 
   let isImgFile = isImg(mediaFile);
+  if (!pptxRegex.test(mediaFile || "")) hidePptxPreviewIfNeeded();
   handleMediaPlayback(isImgFile);
 
   let imgEle = document.querySelector("img");
@@ -5530,14 +5637,12 @@ async function playMedia(e) {
     currentMode === MEDIAPLAYER &&
     mediaQueue.length > 0
   ) {
-    const startIdx =
-      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
-        ? currentQueueIndex
-        : 0;
+    const startIdx = queueStartIndexForPresent();
     if (!isLiveStream(mediaQueue[startIdx].path)) {
       isQueuePlaying = true;
       currentQueueIndex = startIdx;
       await playCurrentQueueItem({ previewSeekTime: startTime });
+      if (previewCueIndex === startIdx) clearCueAfterTake(startIdx);
       return;
     }
   }
@@ -5571,6 +5676,11 @@ async function playMedia(e) {
   ) {
     if (isPlaying) {
       isPlaying = false;
+      isQueuePlaying = false;
+      mediaPlaybackEndedPending = false;
+      pendingQueueSwitchIndex = null;
+      pendingQueueSwitchStartTime = 0;
+      userStopPresentationPending = isActiveMediaWindow();
       send("close-media-window", 0);
       saveMediaFile();
       if (video) {
@@ -5623,16 +5733,11 @@ async function playMedia(e) {
 
     await createMediaWindow();
   } else {
-    // A presentation is currently live. If the operator has cued a different
-    // item in the Preview/Cue panel and hits Present, treat that as "take
-    // the cued item live" (the same action as the Play Now button) — not as
-    // a global stop. Without this, cueing an audio file while a video is
-    // live and pressing the play button would simply stop everything.
-    const cue = currentPreviewCue();
-    if (cue && currentMode === MEDIAPLAYER) {
-      await takeQueueItemLive(cue.index, cue.startTime);
-      return;
-    }
+    // The header button reads "Stop" while a presentation is live; keep that
+    // action terminal even if another queue item is cued.
+    mediaPlaybackEndedPending = false;
+    pendingQueueSwitchIndex = null;
+    pendingQueueSwitchStartTime = 0;
     if (isQueuePlaying) {
       isQueuePlaying = false;
       currentQueueIndex = -1;
@@ -5641,6 +5746,7 @@ async function playMedia(e) {
     startTime = 0;
     isPlaying = false;
     if (isActiveMediaWindow()) {
+      userStopPresentationPending = true;
       send("close-media-window", 0);
     }
     isActiveMediaWindowCache = false;
@@ -7069,7 +7175,7 @@ function playLocalMedia(event) {
   }
   if (audioOnlyFile) {
     if (!isQueuePlaying && currentMode === MEDIAPLAYER) {
-      const queueIndex = findQueueIndexByPath(mediaFile || video.src);
+      const queueIndex = currentAudioPreviewQueueIndex();
       if (queueIndex >= 0) {
         currentQueueIndex = queueIndex;
         isQueuePlaying = true;
@@ -7857,7 +7963,9 @@ async function createMediaWindow(options) {
 
   const isImgFile = isImg(mediaFile);
   const isPptxFile = pptxRegex.test(mediaFile);
-  const pptxStartSlide = isPptxFile ? clampPptxSlideIndex(pptxCurrentSlide) : 0;
+  const pptxStartSlide = isPptxFile
+    ? pptxStartSlideForItem({ path: mediaFile, type: "pptx" })
+    : 0;
 
   // Audio-only files always play in the local preview, never in the
   // dedicated fullscreen media window (queue mode included). This keeps the
