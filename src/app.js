@@ -4589,6 +4589,20 @@ async function handleMediaWindowClosed(event, id) {
       if (currentPreviewCue() || isQueueAutoAdvanceEnabled()) {
         await advanceQueueAfterMediaWindowClosed();
       } else {
+        // Auto-advance is off but the item ended naturally. Advance the index
+        // so the next Present press starts from the next item rather than
+        // replaying the one that just finished. If already at the end of the
+        // queue, wrap back to the first item so the queue is ready to replay
+        // from the top — consistent with what advanceQueueAfterMediaWindowClosed
+        // does when it exhausts the queue.
+        if (
+          currentQueueIndex >= 0 &&
+          currentQueueIndex + 1 < mediaQueue.length
+        ) {
+          currentQueueIndex++;
+        } else if (mediaQueue.length > 0) {
+          currentQueueIndex = 0;
+        }
         await stopQueuePresentationUserClosed();
       }
     } else {
@@ -6795,6 +6809,14 @@ function endLocalMedia() {
         console.error("Queue advance after audio-only end failed:", err),
       );
     } else {
+      if (
+        currentQueueIndex >= 0 &&
+        currentQueueIndex + 1 < mediaQueue.length
+      ) {
+        currentQueueIndex++;
+      } else if (mediaQueue.length > 0) {
+        currentQueueIndex = 0;
+      }
       void stopQueuePresentationUserClosed().catch((err) =>
         console.error("Queue stop after audio-only end failed:", err),
       );
@@ -7161,6 +7183,14 @@ async function endLiveAudioPresentation() {
       if (currentPreviewCue() || isQueueAutoAdvanceEnabled()) {
         await advanceQueueAfterMediaWindowClosed();
         return;
+      }
+      if (
+        currentQueueIndex >= 0 &&
+        currentQueueIndex + 1 < mediaQueue.length
+      ) {
+        currentQueueIndex++;
+      } else if (mediaQueue.length > 0) {
+        currentQueueIndex = 0;
       }
       await stopQueuePresentationUserClosed();
       return;
