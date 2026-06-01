@@ -181,7 +181,7 @@ const mediaPlayerInputState = {
   },
 };
 
-/** @type {{ path: string, name: string, type: string, cueStartTime?: number, cueVolume?: number }[]} */
+/** @type {{ path: string, name: string, type: string, cueStartTime?: number, cueVolume?: number, pptxSlideIndex?: number }[]} */
 let mediaQueue = [];
 let currentQueueIndex = -1;
 let previewCueIndex = -1;
@@ -216,6 +216,7 @@ let queueClearUndoSnapshot = null;
 /** After reorder drop, ignore the synthetic click on the row. */
 let ignoreNextQueueItemClick = false;
 let ignoreQueueItemClicksUntil = 0;
+let queueItemClickTimer = null;
 /** Last <video> element that received cubic waveshaper wiring. */
 let cubicWaveShaperAttachedVideo = null;
 
@@ -360,6 +361,10 @@ function clampPptxSlideIndex(index, count = pptxSlideCount) {
   return Math.min(Math.max(0, Math.floor(index)), maxIndex);
 }
 
+function isSavedPptxSlideIndex(index) {
+  return Number.isFinite(index) && index >= 0;
+}
+
 function resolvePptxPreviewStartSlide(filePath, opts) {
   if (Number.isFinite(opts?.startSlide)) {
     return Math.max(0, Math.floor(opts.startSlide));
@@ -367,7 +372,21 @@ function resolvePptxPreviewStartSlide(filePath, opts) {
   const sameDeck =
     pptxFilePath &&
     normalizeMediaPathForCompare(pptxFilePath) === normalizeMediaPathForCompare(filePath);
-  return sameDeck ? clampPptxSlideIndex(pptxCurrentSlide) : 0;
+  if (sameDeck) return clampPptxSlideIndex(pptxCurrentSlide);
+  const queueIndex = findQueueIndexByPath(filePath);
+  const savedSlide = queueIndex >= 0 ? mediaQueue[queueIndex]?.pptxSlideIndex : null;
+  return isSavedPptxSlideIndex(savedSlide) ? clampPptxSlideIndex(savedSlide) : 0;
+}
+
+function rememberPptxSlide(filePath, slideIndex) {
+  if (!filePath || !Number.isFinite(slideIndex)) return;
+  const safeSlide = Math.max(0, Math.floor(slideIndex));
+  const normalized = normalizeMediaPathForCompare(filePath);
+  mediaQueue.forEach((item) => {
+    if (isQueueItemPptx(item) && normalizeMediaPathForCompare(item.path) === normalized) {
+      item.pptxSlideIndex = safeSlide;
+    }
+  });
 }
 
 function getPptxListRenderOptions(slideCount) {
@@ -795,7 +814,11 @@ function pptxStartSlideForItem(item) {
     pptxFilePath &&
     item?.path &&
     normalizeMediaPathForCompare(pptxFilePath) === normalizeMediaPathForCompare(item.path);
-  return sameDeck ? clampPptxSlideIndex(pptxCurrentSlide) : 0;
+  if (sameDeck) return clampPptxSlideIndex(pptxCurrentSlide);
+  const savedSlide = isSavedPptxSlideIndex(item?.pptxSlideIndex)
+    ? item.pptxSlideIndex
+    : null;
+  return isSavedPptxSlideIndex(savedSlide) ? clampPptxSlideIndex(savedSlide) : 0;
 }
 
 async function jumpToPptxSlide(index) {
@@ -857,12 +880,110 @@ function hidePptxPreviewIfNeeded(options = {}) {
   if (isPptxPreviewVisible()) hidePptxPreview(options);
 }
 
+function restoreNonPptxPreviewSurface(options = {}) {
+  const isImage = options.isImage === true;
+  hidePptxPreviewIfNeeded({ restoreVideoPreview: !isImage });
+  restoreLivePreview();
+  resolveQueuePresentationVideo();
+
+  if (!isImage) {
+    const liveImg = document.querySelector("img#preview");
+    if (liveImg) {
+      liveImg.remove();
+      liveImg.src = "";
+    }
+    const previewEl = document.querySelector("video#preview");
+    if (previewEl) {
+      video = previewEl;
+      previewEl.hidden = false;
+      previewEl.style.display = "";
+      previewEl.style.visibility = "";
+    }
+  }
+}
+
+function currentPptxPreviewFilePath() {
+  if (mediaFile && pptxRegex.test(mediaFile)) return mediaFile;
+  const liveItem = currentLiveQueueItem();
+  if (isQueuePresentationActive() && isQueueItemPptx(liveItem)) return liveItem.path;
+  return null;
+}
+
+function savedPptxSlideForPath(filePath) {
+  const queueIndex = findQueueIndexByPath(filePath);
+  const savedSlide = queueIndex >= 0 ? mediaQueue[queueIndex]?.pptxSlideIndex : null;
+  return isSavedPptxSlideIndex(savedSlide) ? savedSlide : undefined;
+}
+
+async function getLivePptxSlideFromMediaWindow(filePath) {
+  if (!isActiveMediaWindow()) return undefined;
+  try {
+    const slide = await invoke("get-pptx-current-slide");
+    if (!isSavedPptxSlideIndex(slide)) return undefined;
+    rememberPptxSlide(filePath, slide);
+    return slide;
+  } catch (err) {
+    console.error("Failed to get current PPTX slide from media window:", err);
+    return undefined;
+  }
+}
+
+async function restorePptxPreviewForMediaTab() {
+  const pptxPath = currentPptxPreviewFilePath();
+  if (!pptxPath) return;
+
+  mediaFile = pptxPath;
+  mediaPlayerInputState.filePaths = [pptxPath];
+  const queueIndex = findQueueIndexByPath(pptxPath);
+  if (queueIndex >= 0) updateQueueFileLabel(mediaQueue[queueIndex].name);
+
+  const container = document.getElementById("pptxPreviewContainer");
+  const navBar = document.getElementById("pptxNavBar");
+  const liveSlide = await getLivePptxSlideFromMediaWindow(pptxPath);
+  const savedSlide = isSavedPptxSlideIndex(liveSlide)
+    ? liveSlide
+    : savedPptxSlideForPath(pptxPath);
+  const sameDeck =
+    pptxViewer &&
+    pptxFilePath &&
+    normalizeMediaPathForCompare(pptxFilePath) === normalizeMediaPathForCompare(pptxPath);
+
+  if (sameDeck) {
+    const videoPreview = document.querySelector("video#preview");
+    const imagePreview = document.querySelector("img#preview");
+    if (videoPreview) videoPreview.style.display = "none";
+    if (imagePreview) imagePreview.style.display = "none";
+    if (container) container.style.display = "flex";
+    if (navBar) navBar.style.display = "flex";
+    if (isSavedPptxSlideIndex(savedSlide) && savedSlide !== pptxCurrentSlide) {
+      await showPptxSlide(savedSlide);
+    } else {
+      updatePptxNavButtons();
+      updatePptxNavigatorSelection();
+    }
+  } else {
+    await loadPptxPreview(pptxPath, {
+      startSlide: savedSlide,
+      preserveLiveAudio: isLocalAppWindowPresentationActive(),
+    });
+  }
+
+  document
+    .getElementById("customControls")
+    ?.style.setProperty("visibility", "hidden");
+}
+
 function isLikelyVideoItem(filePath) {
   return classifyQueueMediaType(filePath) === "video";
 }
 
 function isLikelyAudioItem(filePath) {
   return classifyQueueMediaType(filePath) === "audio";
+}
+
+function currentPreviewSourcePath() {
+  const src = video?.src || "";
+  return mediaFile || (src.startsWith("file://") ? removeFileProtocol(decodeURI(src)) : src);
 }
 
 function mediaElementHasTracks(mediaEl, trackName) {
@@ -963,11 +1084,13 @@ function queueBasename(filePath) {
 }
 
 function createQueueEntry(filePath) {
+  const type = classifyQueueMediaType(filePath);
   return {
     path: filePath,
     name: queueBasename(filePath),
-    type: classifyQueueMediaType(filePath),
+    type,
     cueStartTime: 0,
+    pptxSlideIndex: type === "pptx" ? -1 : undefined,
   };
 }
 
@@ -1042,8 +1165,6 @@ function currentAudioPreviewQueueIndex() {
 }
 
 function queueStartIndexForPresent() {
-  const audioPreviewIndex = currentAudioPreviewQueueIndex();
-  if (audioPreviewIndex >= 0) return audioPreviewIndex;
   if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
     return currentQueueIndex;
   }
@@ -1136,63 +1257,33 @@ function updatePreviewCueUI() {
   const liveItem = isQueuePresentationActive() ? currentLiveQueueItem() : null;
   const explicitCue = currentPreviewCue();
   const implicitNext = currentImplicitNextItem();
-  // "Next:" tracks what auto-advance (or pressing Space) will actually
-  // play after the current item finishes — i.e. whatever is sitting at
-  // currentQueueIndex+1 in queue order. We honor the explicit cue only
-  // when it already lines up with that slot (the normal case, since
-  // cueing a file moves it to right-after-current), or when nothing is
-  // live yet (no implicit next to compete with). The moment the
-  // operator drags the cued file out of the next slot — or drags some
-  // other file into it — the readout switches to that new "natural"
-  // next item so it reflects queue order, not a stale cue pointer.
-  // Without this the label appeared frozen on the cue's filename after
-  // any reorder that involved the next slot.
-  const explicitCueIsNext =
-    explicitCue &&
-    (currentQueueIndex < 0 ||
-      explicitCue.index === currentQueueIndex + 1);
-  // Fall back to the explicit cue when there is no natural next item
-  // (current is the last queue entry): the operator still loaded a cue
-  // and the readout should reflect that instead of claiming "No item
-  // cued" while the cue overlay is right there on screen.
-  const nextUp = explicitCueIsNext
-    ? explicitCue
-    : (implicitNext ?? explicitCue);
+  const selectedItem =
+    !liveItem && currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+      ? { index: currentQueueIndex, item: mediaQueue[currentQueueIndex] }
+      : null;
+  const nextUp = explicitCue ?? implicitNext ?? selectedItem;
   const nowPlaying = document.getElementById("nowPlayingLabel");
   const upNext = document.getElementById("upNextLabel");
   const audioCuePanel = document.getElementById("audioCuePanel");
-  const cueBtn = document.getElementById("cueCurrentPositionBtn");
-  const playNowBtn = document.getElementById("playCueNowBtn");
 
   if (nowPlaying) {
     nowPlaying.textContent = liveItem
       ? liveItem.name
-      : isPlaying
+      : selectedItem
+        ? selectedItem.item.name
+        : isPlaying
         ? getHostnameOrBasename(mediaFile || "Presentation active")
-        : "Nothing live";
+        : "No file selected";
     nowPlaying.title = nowPlaying.textContent;
   }
 
   if (upNext) {
-    upNext.textContent = nextUp ? nextUp.item.name : "No item cued";
+    upNext.textContent = nextUp ? nextUp.item.name : "No next item selected";
     upNext.title = upNext.textContent;
   }
 
   if (audioCuePanel) {
     audioCuePanel.hidden = true;
-  }
-
-  const editableCueIndex = currentCueEditableQueueIndex();
-
-  // Allow cue-start editing before Present.
-  if (cueBtn) {
-    cueBtn.disabled = editableCueIndex < 0;
-  }
-
-  // Play Now should only be available while a presentation is already live
-  // and a separate explicit cue exists.
-  if (playNowBtn) {
-    playNowBtn.disabled = !explicitCue || !isQueuePresentationActive();
   }
 }
 
@@ -1752,6 +1843,7 @@ async function captureQueueClearUndoState() {
       type: x.type,
       cueStartTime: x.cueStartTime,
       cueVolume: x.cueVolume,
+      pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
     })),
     index: currentQueueIndex,
     cueIndex: previewCueIndex,
@@ -1860,6 +1952,7 @@ async function restoreQueueClearUndoSnapshot() {
     type: x.type,
     cueStartTime: x.cueStartTime || 0,
     cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
+    pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
   }));
   currentQueueIndex = snap.index;
   if (mediaQueue.length === 0) {
@@ -1987,7 +2080,31 @@ function installMediaQueueListDelegation() {
     if (!row || !list.contains(row)) return;
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
-    void onQueueItemActivate(idx);
+    if (e.detail > 1) return;
+    if (queueItemClickTimer !== null) {
+      window.clearTimeout(queueItemClickTimer);
+    }
+    queueItemClickTimer = window.setTimeout(() => {
+      queueItemClickTimer = null;
+      void onQueueItemActivate(idx);
+    }, 220);
+  });
+
+  list.addEventListener("dblclick", (e) => {
+    if (e.target.closest(".queue-drag-handle") || e.target.closest("[data-queue-remove]")) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (queueItemClickTimer !== null) {
+      window.clearTimeout(queueItemClickTimer);
+      queueItemClickTimer = null;
+    }
+    const row = e.target.closest(".queue-item[data-queue-index]");
+    if (!row || !list.contains(row)) return;
+    const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+    if (Number.isNaN(idx)) return;
+    void switchQueueItemLiveWithConfirmation(idx).catch((err) => console.error(err));
   });
 
   list.addEventListener("dragstart", (e) => {
@@ -2146,6 +2263,32 @@ function installPreviewEmptyStateHandlers() {
 
 async function restorePreviewToLiveOutput(index) {
   if (index < 0 || index >= mediaQueue.length) return;
+  const item = mediaQueue[index];
+  if (isQueueItemPptx(item)) {
+    const liveSlide = await getLivePptxSlideFromMediaWindow(item.path);
+    const startSlide = isSavedPptxSlideIndex(liveSlide)
+      ? liveSlide
+      : pptxStartSlideForItem(item);
+    mediaFile = item.path;
+    mediaPlayerInputState.filePaths = [item.path];
+    updateQueueFileLabel(item.name);
+    commitActiveCueVolume();
+    previewCueIndex = -1;
+    pendingCueVolume = null;
+    cueVolumeDirty = false;
+    syncGtkSliderToCueState();
+    stopPreviewAudioCue();
+    clearVideoPreviewCueOverlay();
+    setMediaCountdownOverlayVisible(false);
+    textNode.data = "";
+    await loadPptxPreview(item.path, { startSlide });
+    updatePreviewCueUI();
+    renderQueue();
+    syncPlayPauseIconToControlMedia();
+    return;
+  } else {
+    restoreNonPptxPreviewSurface({ isImage: isQueueItemImage(item) });
+  }
 
   // The main #preview element has been mirroring the live output the whole
   // time the cue overlay was visible — it was never reloaded with the cued
@@ -2179,7 +2322,53 @@ async function restorePreviewToLiveOutput(index) {
   syncPlayPauseIconToControlMedia();
 }
 
+async function restorePreviewCueAfterPresentationStopped() {
+  const cue = currentPreviewCue();
+  if (!cue || currentMode !== MEDIAPLAYER) return false;
+
+  mediaFile = cue.item.path;
+  mediaPlayerInputState.filePaths = [mediaFile];
+  updateQueueFileLabel(cue.item.name);
+
+  if (isQueueItemPptx(cue.item)) {
+    await loadPptxPreview(cue.item.path, {
+      startSlide: pptxStartSlideForItem(cue.item),
+    });
+  } else if (isQueueItemAudio(cue.item)) {
+    setMediaCountdownOverlayVisible(true);
+    textNode.data = "";
+    if (!isAudioPreviewCueActive()) {
+      await loadAudioQueueItemIntoPreviewCue(cue.index, cue.item, cue.startTime);
+    }
+  } else if (isQueueItemImage(cue.item)) {
+    restoreNonPptxPreviewSurface({ isImage: true });
+    clearVideoPreviewCueOverlay();
+    stopPreviewAudioCue();
+    const cueEl = ensurePreviewCueVideoElement();
+    if (cueEl) {
+      cueEl.poster = pathToMediaUrl(cue.item.path);
+      cueEl.hidden = false;
+    }
+    setMediaCountdownOverlayVisible(false);
+    textNode.data = "";
+    document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+  } else {
+    restoreNonPptxPreviewSurface();
+    setMediaCountdownOverlayVisible(true);
+    textNode.data = "";
+    if (!isVideoPreviewCueActive()) {
+      await loadVideoQueueItemIntoPreviewCueOverlay(cue.index, cue.item, cue.startTime);
+    }
+  }
+
+  updatePreviewCueUI();
+  renderQueue();
+  syncPreviewMediaAfterPresentationStateChange();
+  return true;
+}
+
 async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
+  restoreNonPptxPreviewSurface();
   const token = nextPreviewLoadToken();
   const audio = ensurePreviewAudioElement();
   previewAudioCueIndex = index;
@@ -2213,6 +2402,7 @@ async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
       .getElementById("customControls")
       ?.style.setProperty("visibility", "visible");
   }
+  syncPreviewAudioCueAudibility();
 }
 
 function moveQueueItemAfterCurrent(index) {
@@ -2267,7 +2457,6 @@ function clearVideoPreviewCueOverlay() {
 }
 
 async function loadQueueItemIntoPreviewCue(index) {
-  hidePptxPreview()
   if (index < 0 || index >= mediaQueue.length) return;
   if (index === currentQueueIndex && isQueuePresentationActive()) {
     await restorePreviewToLiveOutput(index);
@@ -2290,6 +2479,7 @@ async function loadQueueItemIntoPreviewCue(index) {
       : 0;
 
   if (isLocalAppWindowPresentationActive() && isQueueItemAudio(item)) {
+    restoreNonPptxPreviewSurface();
     setCueStartTime(index, cueStart);
     updatePreviewCueUI();
     renderQueue();
@@ -2307,9 +2497,8 @@ async function loadQueueItemIntoPreviewCue(index) {
     return;
   }
 
-  hidePptxPreviewIfNeeded();
-
   if (isQueueItemImage(item)) {
+    restoreNonPptxPreviewSurface({ isImage: true });
     clearVideoPreviewCueOverlay();
     stopPreviewAudioCue();
     // Show the image in the cue overlay so the operator sees what's staged.
@@ -2331,6 +2520,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     // clearVideoPreviewCueOverlay restores visibility when the cue clears.
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemAudio(item)) {
+    restoreNonPptxPreviewSurface();
     // Tear down a stale video cue overlay before loading the audio cue
     // so the operator never sees an old video frame lingering over the
     // live mirror after switching to audio.
@@ -2346,6 +2536,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     textNode.data = "";
     await loadAudioQueueItemIntoPreviewCue(index, item, cueStart);
   } else {
+    restoreNonPptxPreviewSurface();
     // Video cues used to re-load the main #preview element with the cued
     // source, which forcibly paused the live mirror. That confused
     // operators who expected the live preview to keep running while they
@@ -2372,6 +2563,9 @@ async function takeQueueItemLive(index, startTime = 0) {
 
   const safeStart = Number.isFinite(startTime) && startTime > 0 ? startTime : 0;
   mediaQueue[index].cueStartTime = safeStart;
+  if (isQueueItemPptx(mediaQueue[index])) {
+    mediaQueue[index].pptxSlideIndex = -1;
+  }
 
   if (isAudioOnlyQueuePresentationActive()) {
     stopLiveAudioPresentation();
@@ -2436,20 +2630,33 @@ function cueFromCurrentPosition() {
 async function playCueNow() {
   const cue = currentPreviewCue();
   if (!cue) return;
+  await switchQueueItemLiveWithConfirmation(cue.index, cue.startTime);
+}
+
+async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
+  if (index < 0 || index >= mediaQueue.length) return;
+  const item = mediaQueue[index];
 
   // If something is already presenting (either the dedicated media window or
   // an audio-only file in the app window), confirm with the operator before
   // interrupting it. The same modal is reused that the media-window driven
   // queue switch uses, so the interaction is consistent across paths.
   const presentationActive =
-    isActiveMediaWindow() || isLocalAppWindowPresentationActive();
+    isQueuePresentationActive() ||
+    isActiveMediaWindow() ||
+    isLocalAppWindowPresentationActive() ||
+    Boolean(isPlaying);
+  if (!presentationActive && !isQueueItemAudio(item)) {
+    await onQueueItemActivate(index);
+    return;
+  }
   if (presentationActive) {
     const liveItem =
       currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
         ? mediaQueue[currentQueueIndex]
         : null;
     const liveLabel = liveItem ? liveItem.name : "the current presentation";
-    const cueLabel = cue.item?.name || "the cued item";
+    const cueLabel = item?.name || "the selected item";
     const message = `Switch the live presentation from "${liveLabel}" to "${cueLabel}"?`;
     let accepted = false;
     try {
@@ -2461,7 +2668,11 @@ async function playCueNow() {
     if (!accepted) return;
   }
 
-  await takeQueueItemLive(cue.index, cue.startTime);
+  const itemStart =
+    Number.isFinite(startTime) && startTime > 0
+      ? startTime
+      : (Number.isFinite(mediaQueue[index]?.cueStartTime) ? mediaQueue[index].cueStartTime : 0);
+  await takeQueueItemLive(index, itemStart);
 }
 
 async function onQueueItemActivate(index) {
@@ -2500,6 +2711,15 @@ async function stopQueuePresentationUserClosed() {
   isActiveMediaWindowCache = false;
   renderQueue();
 
+  if (await restorePreviewCueAfterPresentationStopped()) {
+    updatePlayButtonOnMediaWindow();
+    masterPauseState = false;
+    saveMediaFile();
+    removeFilenameFromTitlebar();
+    syncPreviewMediaAfterPresentationStateChange();
+    return;
+  }
+
   if (
     currentMode === MEDIAPLAYER &&
     mediaQueue.length > 0 &&
@@ -2519,7 +2739,7 @@ async function stopQueuePresentationUserClosed() {
   if (!pptxRegex.test(mediaFile || "")) hidePptxPreviewIfNeeded();
   handleMediaPlayback(isImgFile);
 
-  let imgEle = document.querySelector("img");
+  let imgEle = document.querySelector("img#preview");
   handleImageDisplay(isImgFile, imgEle);
 
   resetVideoState();
@@ -2529,7 +2749,7 @@ async function stopQueuePresentationUserClosed() {
   saveMediaFile();
   removeFilenameFromTitlebar();
   textNode.data = "";
-  syncPreviewAudioTrackState();
+  syncPreviewMediaAfterPresentationStateChange();
 }
 
 function updateQueueFileLabel(name) {
@@ -2592,15 +2812,12 @@ function resolveQueuePresentationVideo() {
 
 async function loadQueueItemIntoControlWindow(item, opts) {
   resolveQueuePresentationVideo();
-  const localVideo = video;
+  let localVideo = video;
   const preservePreviewSeek = !opts || opts.preservePreviewSeek !== false;
   const cueOnly = opts?.cueOnly === true;
   const loadToken = opts?.previewLoadToken;
   const isImgFile = isImg(item.path);
   const itemIsPptx = isQueueItemPptx(item);
-  if (!itemIsPptx) {
-    hidePptxPreviewIfNeeded({ restoreVideoPreview: !isImgFile });
-  }
 
   let resumeAt = null;
   if (
@@ -2643,8 +2860,18 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     return;
   }
 
+  restoreNonPptxPreviewSurface({ isImage: isImgFile });
+  localVideo = video;
   handleMediaPlayback(isImgFile);
-  handleImageDisplay(isImgFile, document.querySelector("img"));
+  handleImageDisplay(isImgFile, document.querySelector("img#preview"));
+
+  if (itemIsAudio && !cueOnly) {
+    audioOnlyFile = true;
+    playingMediaAudioOnly = false;
+    document
+      .getElementById("customControls")
+      ?.style.setProperty("visibility", "");
+  }
 
   if (!isImgFile && localVideo) {
     localVideo.load();
@@ -2708,6 +2935,9 @@ async function playCurrentQueueItem(opts) {
     currentQueueIndex = -1;
     renderQueue();
     return;
+  }
+  if (isQueueItemPptx(item)) {
+    item.pptxSlideIndex = -1;
   }
 
   await loadQueueItemIntoControlWindow(item, opts);
@@ -2798,7 +3028,7 @@ async function advanceQueueAfterMediaWindowClosed() {
     const isImgFile = isImg(mediaFile);
     if (!pptxRegex.test(mediaFile || "")) hidePptxPreviewIfNeeded();
     handleMediaPlayback(isImgFile);
-    handleImageDisplay(isImgFile, document.querySelector("img"));
+    handleImageDisplay(isImgFile, document.querySelector("img#preview"));
     resetVideoState();
     updatePlayButtonOnMediaWindow();
     masterPauseState = false;
@@ -2827,6 +3057,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     const nextType = nextItem.type || classifyQueueMediaType(nextItem.path);
     const isImgFile = isImg(nextItem.path);
     const isPptxFile = isQueueItemPptx(nextItem);
+    if (isPptxFile) {
+      nextItem.pptxSlideIndex = -1;
+    }
 
     // Load the target into the preview before deciding. Extension checks catch
     // obvious audio files, but metadata is authoritative for "audio-only"
@@ -3389,6 +3622,30 @@ function syncPreviewAudioTrackState() {
   }
 }
 
+function syncPreviewAudioCueAudibility() {
+  if (!previewAudio) return;
+  const cue = currentPreviewCue();
+  const shouldBeAudible = Boolean(
+    cue &&
+      isQueueItemAudio(cue.item) &&
+      previewAudioCueIndex === cue.index &&
+      !isQueuePresentationActive() &&
+      !isActiveMediaWindow(),
+  );
+  previewAudio.muted = !shouldBeAudible;
+  previewAudio.volume = shouldBeAudible ? (pendingCueVolume ?? 1) : 0;
+}
+
+function syncPreviewMediaAfterPresentationStateChange() {
+  syncPreviewAudioTrackState();
+  syncPreviewAudioCueAudibility();
+  if (isPptxPreviewVisible()) {
+    document
+      .getElementById("customControls")
+      ?.style.setProperty("visibility", "hidden");
+  }
+}
+
 function isAudioOnlyQueuePresentationActive() {
   if (isActiveMediaWindow()) return false;
   const currentItem =
@@ -3815,6 +4072,7 @@ function setupCustomMediaControls() {
           mediaEl === video &&
           !isLocalAppWindowPresentationActive() &&
           (audioOnlyFile ||
+            isLikelyAudioItem(currentPreviewSourcePath()) ||
             mediaElementLoadedAudioOnly(
               video,
               mediaFile || removeFileProtocol(decodeURI(video.src)),
@@ -4101,6 +4359,16 @@ function setupCustomMediaControls() {
 
         if (!isControl) {
           if (mediaEl.paused) {
+            if (
+              mediaEl === video &&
+              !isLocalAppWindowPresentationActive() &&
+              (audioOnlyFile ||
+                isLikelyAudioItem(currentPreviewSourcePath()) ||
+                mediaElementLoadedAudioOnly(video, mediaFile || video.src))
+            ) {
+              void playMedia();
+              return;
+            }
             void playVideoSafely(mediaEl, "preview click toggle");
           } else {
             mediaEl.pause();
@@ -5264,6 +5532,15 @@ async function handleMediaWindowClosed(event, id) {
   updateDynUI();
   isActiveMediaWindowCache = false;
 
+  if (await restorePreviewCueAfterPresentationStopped()) {
+    updatePlayButtonOnMediaWindow();
+    masterPauseState = false;
+    saveMediaFile();
+    removeFilenameFromTitlebar();
+    syncPreviewMediaAfterPresentationStateChange();
+    return;
+  }
+
   // ADDED: Restore queued file if we're in media player mode
   if (
     currentMode === MEDIAPLAYER &&
@@ -5276,7 +5553,7 @@ async function handleMediaWindowClosed(event, id) {
   if (!pptxRegex.test(mediaFile || "")) hidePptxPreviewIfNeeded();
   handleMediaPlayback(isImgFile);
 
-  let imgEle = document.querySelector("img");
+  let imgEle = document.querySelector("img#preview");
   handleImageDisplay(isImgFile, imgEle);
 
   resetVideoState();
@@ -5286,6 +5563,7 @@ async function handleMediaWindowClosed(event, id) {
   saveMediaFile();
   removeFilenameFromTitlebar();
   textNode.data = "";
+  syncPreviewMediaAfterPresentationStateChange();
 }
 function handleMediaPlayback(isImgFile) {
   if (!video) return;
@@ -5302,34 +5580,39 @@ function setMediaCountdownOverlayVisible(isVisible) {
 }
 
 function handleImageDisplay(isImgFile, imgEle) {
-  const previewEl = document.getElementById("preview");
+  const previewVideo = document.querySelector("video#preview");
+  const previewImg = imgEle?.matches?.("img#preview")
+    ? imgEle
+    : document.querySelector("img#preview");
   setMediaCountdownOverlayVisible(!isImgFile);
-  if (imgEle && !isImgFile) {
-    imgEle.remove();
-    imgEle.src = "";
-    if (previewEl) previewEl.style.display = "";
+  if (previewImg && !isImgFile) {
+    previewImg.remove();
+    previewImg.src = "";
+    if (previewVideo) previewVideo.style.display = "";
   } else if (isImgFile && video) {
     resetPreviewWarningState();
-    if (imgEle) {
-      imgEle.src = mediaFile;
-    } else {
-      if ((imgEle = document.querySelector("img#preview")) !== null) {
-        imgEle.remove();
-        imgEle.src = "";
-      }
+    let liveImg = previewImg;
+    try {
+      video.pause();
       video.removeAttribute("src");
       video.load();
-      img = document.createElement("img");
-      document
-        .getElementById("customControls")
-        ?.style.setProperty("visibility", "hidden");
-      img.src = mediaFile;
-      img.setAttribute("id", "preview");
-      if (previewEl) {
-        previewEl.style.display = "none";
-        previewEl.parentNode?.appendChild(img);
-      }
+    } catch (err) {
+      console.error("Failed to clear video preview for image display:", err);
     }
+    if (!liveImg) {
+      liveImg = document.createElement("img");
+      liveImg.setAttribute("id", "preview");
+      previewVideo?.parentNode?.appendChild(liveImg);
+    }
+    if (previewVideo) {
+      previewVideo.style.display = "none";
+    }
+    document
+      .getElementById("customControls")
+      ?.style.setProperty("visibility", "hidden");
+    liveImg.src = mediaFile;
+    liveImg.style.display = "";
+    img = liveImg;
   }
 }
 
@@ -5594,6 +5877,14 @@ async function playMedia(e) {
     startTime = video.currentTime;
   }
   targetTime = startTime;
+  if (
+    currentMode === MEDIAPLAYER &&
+    !audioOnlyFile &&
+    isLikelyAudioItem(currentPreviewSourcePath())
+  ) {
+    audioOnlyFile = true;
+    document.getElementById("customControls")?.style.setProperty("visibility", "");
+  }
   if (e === undefined && audioOnlyFile && currentMode === MEDIAPLAYER) {
     e = {};
     e.target = document.getElementById("mediaWindowPlayButton");
@@ -6429,22 +6720,12 @@ function generateMediaFormHTML(video = null) {
       <section class="presentation-status-card" aria-label="Presentation status">
         <span class="presentation-status-card__heading">Presentation</span>
         <div class="presentation-status-row">
-          <span class="presentation-status-row__label">Now:</span>
-          <span id="nowPlayingLabel" class="presentation-status-row__value">Nothing live</span>
+          <span class="presentation-status-row__label">Current:</span>
+          <span id="nowPlayingLabel" class="presentation-status-row__value">No file selected</span>
         </div>
         <div class="presentation-status-row">
           <span class="presentation-status-row__label">Next:</span>
-          <span id="upNextLabel" class="presentation-status-row__value">No item cued</span>
-        </div>
-        <!--
-          The cue start position used to live in a third "Start: 2:24.172"
-          row here, but that duplicated the per-item "Starts 2:24.172" badge
-          rendered inside the queue row itself. One source of truth (the
-          queue row) is enough; the card stays compact for small screens.
-        -->
-        <div class="cue-button-row">
-          <button type="button" id="cueCurrentPositionBtn" class="pill-button secondary" title="Cue from current position" aria-label="Cue from current position" disabled>Cue</button>
-          <button type="button" id="playCueNowBtn" class="pill-button secondary" disabled>Play Now</button>
+          <span id="upNextLabel" class="presentation-status-row__value">No next item selected</span>
         </div>
       </section>
 
@@ -6704,7 +6985,6 @@ function setSBFormMediaPlayer() {
     clearQueueBtn.addEventListener("click", onClearMediaQueueClick);
   }
   installMediaQueueListDelegation();
-  installCueButtonHandlers();
   renderQueue();
   const isActiveMW = isActiveMediaWindow();
   if (!isActiveMW && !playingMediaAudioOnly) {
@@ -6797,6 +7077,10 @@ function setSBFormMediaPlayer() {
     document.getElementById("preview").style.display = "none";
     document.getElementById("preview").parentNode.appendChild(img);
   }
+
+  void restorePptxPreviewForMediaTab().catch((err) =>
+    console.error("Failed to restore PPTX preview after returning to Media tab:", err),
+  );
 }
 
 function removeFileProtocol(filePath) {
@@ -7163,8 +7447,8 @@ function playLocalMedia(event) {
   mediaSessionPause = false;
   if (
     !audioOnlyFile &&
-    video.readyState &&
-    mediaElementLoadedAudioOnly(video, mediaFile || video.src)
+    (isLikelyAudioItem(currentPreviewSourcePath()) ||
+      (video.readyState && mediaElementLoadedAudioOnly(video, mediaFile || video.src)))
   ) {
     audioOnlyFile = true;
     if (currentMode === MEDIAPLAYER) {
