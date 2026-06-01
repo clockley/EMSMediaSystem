@@ -355,6 +355,13 @@ function isQueueItemPptx(item) {
   );
 }
 
+function isQueueItemVideo(item) {
+  return Boolean(
+    item &&
+      (item.type === "video" || classifyQueueMediaType(item.path) === "video"),
+  );
+}
+
 function clampPptxSlideIndex(index, count = pptxSlideCount) {
   const maxIndex = Math.max(0, (Number.isFinite(count) ? count : 1) - 1);
   if (!Number.isFinite(index)) return 0;
@@ -417,6 +424,8 @@ function getPptxListRenderOptions(slideCount) {
 async function loadPptxPreview(filePath, opts = {}) {
   const startSlide = resolvePptxPreviewStartSlide(filePath, opts);
   const preserveLiveAudio = opts?.preserveLiveAudio === true;
+  const preserveLiveVideo = opts?.preserveLiveVideo === true;
+  const preserveLiveMedia = preserveLiveAudio || preserveLiveVideo;
   // Some third-party ESM bundles expect a Node-like `process` object.
   // Electron renderer (browser context) does not provide it by default.
   if (!globalThis.process) {
@@ -432,7 +441,7 @@ async function loadPptxPreview(filePath, opts = {}) {
   if (!preserveLiveAudio) stopLiveAudioPresentation();
   stopPreviewAudioCue();
   clearVideoPreviewCueOverlay();
-  if (video && !preserveLiveAudio) {
+  if (video && !preserveLiveMedia) {
     try {
       video.pause();
       video.removeAttribute("src");
@@ -487,7 +496,7 @@ async function loadPptxPreview(filePath, opts = {}) {
   const navBar = document.getElementById("pptxNavBar");
   if (navBar) navBar.style.display = "flex";
   updatePptxNavButtons();
-  if (preserveLiveAudio) {
+  if (preserveLiveMedia) {
     syncPreviewAudioTrackState();
   }
 }
@@ -2405,25 +2414,6 @@ async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
   syncPreviewAudioCueAudibility();
 }
 
-function moveQueueItemAfterCurrent(index) {
-  if (!isQueuePresentationActive()) return index;
-  if (currentQueueIndex < 0 || currentQueueIndex >= mediaQueue.length) return index;
-  if (index < 0 || index >= mediaQueue.length) return index;
-  if (index === currentQueueIndex || index === currentQueueIndex + 1) {
-    return index;
-  }
-
-  const liveItem = mediaQueue[currentQueueIndex];
-  const [cueItem] = mediaQueue.splice(index, 1);
-  currentQueueIndex = mediaQueue.indexOf(liveItem);
-  const insertAt = Math.min(currentQueueIndex + 1, mediaQueue.length);
-  mediaQueue.splice(insertAt, 0, cueItem);
-  currentQueueIndex = mediaQueue.indexOf(liveItem);
-  invalidateQueueUndoToastAfterMutation();
-  saveMediaFile();
-  return mediaQueue.indexOf(cueItem);
-}
-
 /**
  * Tear down any loaded cue source on the overlay and hide it. The main
  * #preview element is left untouched so the live mirror keeps playing.
@@ -2464,7 +2454,6 @@ async function loadQueueItemIntoPreviewCue(index) {
   }
 
   commitActiveCueVolume();
-  index = moveQueueItemAfterCurrent(index);
   previewCueIndex = index;
   cueVolumeDirty = false;
   // Paint the Cued badge immediately — the overlay/metadata load below is
@@ -2491,6 +2480,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     stopPreviewAudioCue();
     await loadPptxPreview(item.path, {
       preserveLiveAudio: isLocalAppWindowPresentationActive(),
+      preserveLiveVideo: isQueuePresentationActive() && isQueueItemVideo(currentLiveQueueItem()),
     });
     updatePreviewCueUI();
     renderQueue();
