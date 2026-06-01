@@ -30,6 +30,7 @@ import {
 import { readdir, readFile, stat } from "fs/promises";
 import path from "path";
 import settings from "./settings.min.mjs";
+import { loadEmprojSnapshot, saveEmprojSnapshot } from "./emproj.min.mjs";
 let sessionID = 0;
 let innertubePromise = null;
 const isDevMode = process.env.ems_dev === "true";
@@ -1365,6 +1366,7 @@ const ALLOWED_MEDIA_EXTENSIONS = [
 const ALLOWED_MEDIA_EXTENSION_SET = new Set(
   ALLOWED_MEDIA_EXTENSIONS.map((ext) => "." + ext.toLowerCase()),
 );
+const PROJECT_FILE_EXTENSIONS = ["emproj", "zip"];
 
 function readSettings() {
   const data = settings.getSync();
@@ -1423,6 +1425,21 @@ async function getInitialMediaFolder() {
   return undefined;
 }
 
+async function rememberProjectFolder(filePath) {
+  if (typeof filePath !== "string" || filePath.length === 0) return;
+  const folder = path.dirname(filePath);
+  if (!(await pathExists(folder))) return;
+  await writeSettings({ lastProjectFolder: folder });
+}
+
+async function getInitialProjectFolder() {
+  const { lastProjectFolder } = readSettings();
+  if (lastProjectFolder && (await pathExists(lastProjectFolder))) {
+    return lastProjectFolder;
+  }
+  return getInitialMediaFolder();
+}
+
 async function handleShowMediaFilesDialog(event) {
   const mainWindow = BrowserWindow.fromWebContents(event.sender);
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -1435,7 +1452,6 @@ async function handleShowMediaFilesDialog(event) {
     filters: [
       { name: "Media", extensions: ALLOWED_MEDIA_EXTENSIONS },
       { name: "PowerPoint Presentations", extensions: ["pptx"] },
-      { name: "All files", extensions: ["*"] },
     ],
   });
   if (result.canceled || !result.filePaths?.length) {
@@ -1443,6 +1459,103 @@ async function handleShowMediaFilesDialog(event) {
   }
   await rememberMediaFolder(result.filePaths[0]);
   return { canceled: false, filePaths: result.filePaths };
+}
+
+async function handleShowOpenProjectDialog(event) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, filePaths: [] };
+  }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Open Project",
+    defaultPath: await getInitialProjectFolder(),
+    properties: ["openFile"],
+    filters: [{ name: "EMS Project", extensions: PROJECT_FILE_EXTENSIONS }],
+  });
+  if (result.canceled || !result.filePaths?.length) {
+    return { canceled: true, filePaths: [] };
+  }
+  await rememberProjectFolder(result.filePaths[0]);
+  return { canceled: false, filePaths: result.filePaths };
+}
+
+async function handleShowSaveProjectDialog(event, opts = {}) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, filePath: "" };
+  }
+  const requested = typeof opts?.defaultPath === "string" ? opts.defaultPath : "";
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: "Save Project",
+    defaultPath: requested || (await getInitialProjectFolder()),
+    filters: [{ name: "EMS Project", extensions: ["emproj"] }],
+  });
+  if (result.canceled || !result.filePath) {
+    return { canceled: true, filePath: "" };
+  }
+  await rememberProjectFolder(result.filePath);
+  return { canceled: false, filePath: result.filePath };
+}
+
+async function handleShowExportProjectDialog(event, opts = {}) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, filePath: "" };
+  }
+  const requested = typeof opts?.defaultPath === "string" ? opts.defaultPath : "";
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: "Export Portable Project",
+    defaultPath: requested || (await getInitialProjectFolder()),
+    filters: [{ name: "EMS Project", extensions: ["emproj"] }],
+  });
+  if (result.canceled || !result.filePath) {
+    return { canceled: true, filePath: "" };
+  }
+  await rememberProjectFolder(result.filePath);
+  return { canceled: false, filePath: result.filePath };
+}
+
+async function handleReadProjectFile(_, filePath) {
+  if (typeof filePath !== "string" || filePath.length === 0) {
+    throw new Error("Invalid project path");
+  }
+  const snapshot = await loadEmprojSnapshot(filePath);
+  await writeSettings({ lastOpenedProjectPath: filePath });
+  return { filePath, data: JSON.stringify(snapshot) };
+}
+
+async function handleWriteProjectFile(_, payload) {
+  const filePath = typeof payload?.filePath === "string" ? payload.filePath : "";
+  const data = typeof payload?.data === "string" ? payload.data : "";
+  const mode = payload?.mode === "packed" ? "packed" : "working";
+  if (!filePath) throw new Error("Invalid project path");
+  if (!data) throw new Error("Project data is empty");
+  let snapshot;
+  try {
+    snapshot = JSON.parse(data);
+  } catch {
+    throw new Error("Project data is invalid JSON");
+  }
+  await saveEmprojSnapshot(filePath, snapshot, app.getVersion(), {
+    packMedia: mode === "packed",
+  });
+  await rememberProjectFolder(filePath);
+  await writeSettings({ lastOpenedProjectPath: filePath });
+  return { ok: true, filePath };
+}
+
+async function handleSaveAutosaveProjectState(_, state) {
+  if (!state || typeof state !== "object") return { ok: false };
+  await writeSettings({ autosaveProjectState: state });
+  return { ok: true };
+}
+
+function handleLoadAutosaveProjectState() {
+  const { autosaveProjectState } = readSettings();
+  if (!autosaveProjectState || typeof autosaveProjectState !== "object") {
+    return null;
+  }
+  return autosaveProjectState;
 }
 
 async function handleRememberMediaFolder(_, paths) {
@@ -1482,6 +1595,13 @@ function setIPC() {
   ipcMain.handle("get-setting", getSetting);
   ipcMain.handle("get-all-displays", handleGetAllDisplays);
   ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
+  ipcMain.handle("show-open-project-dialog", handleShowOpenProjectDialog);
+  ipcMain.handle("show-save-project-dialog", handleShowSaveProjectDialog);
+  ipcMain.handle("show-export-project-dialog", handleShowExportProjectDialog);
+  ipcMain.handle("read-project-file", handleReadProjectFile);
+  ipcMain.handle("write-project-file", handleWriteProjectFile);
+  ipcMain.handle("save-autosave-project-state", handleSaveAutosaveProjectState);
+  ipcMain.handle("load-autosave-project-state", handleLoadAutosaveProjectState);
   ipcMain.handle("remember-media-folder", handleRememberMediaFolder);
   ipcMain.handle("filter-media-drop-paths", handleFilterMediaDropPaths);
   ipcMain.handle("read-file-as-arraybuffer", handleReadFileAsArrayBuffer);

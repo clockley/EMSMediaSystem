@@ -180,6 +180,10 @@ const mediaPlayerInputState = {
     this.urlInpt = null;
   },
 };
+const PROJECT_SCHEMA_VERSION = 1;
+const AUTOSAVE_WRITE_DEBOUNCE_MS = 300;
+let autosaveWriteTimer = null;
+let currentProjectPath = "";
 
 /** @type {{ path: string, name: string, type: string, cueStartTime?: number, cueVolume?: number, pptxSlideIndex?: number }[]} */
 let mediaQueue = [];
@@ -1760,6 +1764,183 @@ async function openMediaFilesDialog() {
     saveMediaFile();
   } catch (err) {
     console.error(err);
+  }
+}
+
+function buildProjectStateSnapshot() {
+  return {
+    schemaVersion: PROJECT_SCHEMA_VERSION,
+    projectPath: currentProjectPath || "",
+    currentMode,
+    currentQueueIndex,
+    previewCueIndex,
+    mediaQueue: mediaQueue.map((item) => ({
+      path: item.path,
+      name: item.name,
+      type: item.type,
+      cueStartTime: Number.isFinite(item.cueStartTime) ? item.cueStartTime : 0,
+      cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
+      pptxSlideIndex: Number.isFinite(item.pptxSlideIndex)
+        ? item.pptxSlideIndex
+        : undefined,
+    })),
+  };
+}
+
+function applyProjectStateSnapshot(state) {
+  if (!state || typeof state !== "object") return false;
+  if (!Array.isArray(state.mediaQueue)) return false;
+  mediaQueue = state.mediaQueue
+    .filter((x) => x && typeof x.path === "string" && x.path.length > 0)
+    .map((x) => ({
+      path: x.path,
+      name:
+        typeof x.name === "string" && x.name.length > 0
+          ? x.name
+          : queueBasename(x.path),
+      type: classifyQueueMediaType(x.path),
+      cueStartTime: Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
+      cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
+      pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : -1,
+    }));
+  currentQueueIndex =
+    Number.isInteger(state.currentQueueIndex) &&
+    state.currentQueueIndex >= 0 &&
+    state.currentQueueIndex < mediaQueue.length
+      ? state.currentQueueIndex
+      : -1;
+  previewCueIndex =
+    Number.isInteger(state.previewCueIndex) &&
+    state.previewCueIndex >= 0 &&
+    state.previewCueIndex < mediaQueue.length
+      ? state.previewCueIndex
+      : -1;
+  if (
+    !isQueuePresentationActive() &&
+    previewCueIndex >= 0 &&
+    previewCueIndex === currentQueueIndex
+  ) {
+    previewCueIndex = -1;
+  }
+  renderQueue();
+  updatePreviewCueUI();
+  updateDynUI();
+  if (mediaQueue.length > 0 && currentMode === MEDIAPLAYER) {
+    const previewIndex =
+      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+        ? currentQueueIndex
+        : 0;
+    void loadQueueItemIntoControlWindow(mediaQueue[previewIndex], {
+      previewLoadToken: nextPreviewLoadToken(),
+    }).catch((err) => console.error(err));
+  }
+  return true;
+}
+
+function scheduleAutosaveProjectState() {
+  if (autosaveWriteTimer !== null) {
+    clearTimeout(autosaveWriteTimer);
+  }
+  autosaveWriteTimer = setTimeout(() => {
+    autosaveWriteTimer = null;
+    void invoke("save-autosave-project-state", buildProjectStateSnapshot()).catch(
+      (err) => console.error("autosave failed:", err),
+    );
+  }, AUTOSAVE_WRITE_DEBOUNCE_MS);
+}
+
+async function openProjectDialog() {
+  try {
+    const res = await invoke("show-open-project-dialog");
+    if (!res || res.canceled || !res.filePaths?.length) return;
+    const filePath = res.filePaths[0];
+    const project = await invoke("read-project-file", filePath);
+    const parsed = JSON.parse(project.data);
+    if (!applyProjectStateSnapshot(parsed)) {
+      throw new Error("Project does not contain a valid queue.");
+    }
+    currentProjectPath = filePath;
+    scheduleAutosaveProjectState();
+    showGnomeToast("Project opened");
+  } catch (err) {
+    console.error("Failed to open project:", err);
+    showGnomeToast("Failed to open project");
+  }
+}
+
+async function saveProjectAsDialog() {
+  try {
+    const defaultPath = currentProjectPath || "Untitled.emproj";
+    const res = await invoke("show-save-project-dialog", { defaultPath });
+    if (!res || res.canceled || !res.filePath) return false;
+    currentProjectPath = res.filePath;
+    const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
+    await invoke("write-project-file", {
+      filePath: currentProjectPath,
+      data,
+      mode: "working",
+    });
+    scheduleAutosaveProjectState();
+    showGnomeToast("Project saved");
+    return true;
+  } catch (err) {
+    console.error("Failed to save project as:", err);
+    showGnomeToast("Failed to save project");
+    return false;
+  }
+}
+
+async function saveProject() {
+  if (!currentProjectPath) {
+    return saveProjectAsDialog();
+  }
+  try {
+    const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
+    await invoke("write-project-file", {
+      filePath: currentProjectPath,
+      data,
+      mode: "working",
+    });
+    scheduleAutosaveProjectState();
+    showGnomeToast("Project saved");
+    return true;
+  } catch (err) {
+    console.error("Failed to save project:", err);
+    showGnomeToast("Failed to save project");
+    return false;
+  }
+}
+
+async function exportPortableProjectDialog() {
+  try {
+    const defaultPath = currentProjectPath || "Untitled-Portable.emproj";
+    const res = await invoke("show-export-project-dialog", { defaultPath });
+    if (!res || res.canceled || !res.filePath) return false;
+    const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
+    await invoke("write-project-file", {
+      filePath: res.filePath,
+      data,
+      mode: "packed",
+    });
+    showGnomeToast("Portable project exported");
+    return true;
+  } catch (err) {
+    console.error("Failed to export portable project:", err);
+    showGnomeToast("Failed to export project");
+    return false;
+  }
+}
+
+async function restoreAutosavedProjectState() {
+  try {
+    const state = await invoke("load-autosave-project-state");
+    if (!state) return;
+    if (applyProjectStateSnapshot(state)) {
+      currentProjectPath =
+        typeof state.projectPath === "string" ? state.projectPath : "";
+    }
+  } catch (err) {
+    console.error("Failed to restore autosave:", err);
   }
 }
 
@@ -7078,6 +7259,7 @@ function removeFileProtocol(filePath) {
 }
 
 function saveMediaFile() {
+  scheduleAutosaveProjectState();
   resetPreviewWarningState();
   textNode.data = "";
   const mdfileElement = document.getElementById("mdFile");
@@ -7286,13 +7468,15 @@ function shortcutHandler(event) {
   }
   if (event.ctrlKey || event.metaKey) {
     if (event.key === "o" || event.key === "O") {
-      if (currentMode === MEDIAPLAYER) {
-        void openMediaFilesDialog();
+      void openProjectDialog();
+    }
+
+    if (event.key === "s" || event.key === "S") {
+      event.preventDefault();
+      if (event.shiftKey) {
+        void saveProjectAsDialog();
       } else {
-        const stream = document.getElementById("mdFile");
-        if (stream && typeof stream.focus === "function") {
-          stream.focus();
-        }
+        void saveProject();
       }
     }
 
@@ -7932,6 +8116,18 @@ async function loadOpMode(mode) {
           dropdownMenu.classList.add("hidden");
         });
       });
+      document
+        .getElementById("menuOpenProject")
+        ?.addEventListener("click", () => void openProjectDialog());
+      document
+        .getElementById("menuSaveProject")
+        ?.addEventListener("click", () => void saveProject());
+      document
+        .getElementById("menuSaveProjectAs")
+        ?.addEventListener("click", () => void saveProjectAsDialog());
+      document
+        .getElementById("menuExportProject")
+        ?.addEventListener("click", () => void exportPortableProjectDialog());
 
       // Window control functionality
       const minimizeButton = document.querySelector(".window-control.minimize");
@@ -7979,6 +8175,7 @@ async function loadOpMode(mode) {
         setSBFormMediaPlayer();
         installPreviewEventHandlers();
       }
+      await restoreAutosavedProjectState();
 
       // Drag and drop: the renderer is the OS-level drop target (Electron does
       // not surface drop events to the main process). The renderer only
@@ -8005,6 +8202,9 @@ async function loadOpMode(mode) {
         } else {
           console.warn("No valid media files were dropped.");
         }
+      });
+      window.addEventListener("beforeunload", () => {
+        void invoke("save-autosave-project-state", buildProjectStateSnapshot());
       });
 
       console.log("Application initialized successfully");
