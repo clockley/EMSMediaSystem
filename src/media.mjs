@@ -331,6 +331,7 @@ async function applySlipstream(data) {
 }
 
 window.emsApplySlipstream = applySlipstream;
+window.emsGetPptxCurrentSlide = () => (isPptx ? pptxCurrentSlide : null);
 
 function installICPHandlers() {
   if (!streamActsAsLiveEdge) {

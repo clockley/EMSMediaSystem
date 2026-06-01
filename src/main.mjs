@@ -455,6 +455,16 @@ async function handleGetMediaCurrentTime() {
   return 0;
 }
 
+async function handleGetPptxCurrentSlide() {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+    const slide = await mediaWindow.webContents.executeJavaScript(
+      "typeof window.emsGetPptxCurrentSlide === 'function' ? window.emsGetPptxCurrentSlide() : null",
+    );
+    return typeof slide === "number" && Number.isFinite(slide) ? slide : null;
+  }
+  return null;
+}
+
 async function handleSetLoopStatus(event, arg) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     if (arg !== undefined) {
@@ -1479,6 +1489,7 @@ function setIPC() {
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);
   ipcMain.handle("get-media-current-time", handleGetMediaCurrentTime);
+  ipcMain.handle("get-pptx-current-slide", handleGetPptxCurrentSlide);
   ipcMain.handle("set-media-loop-status", handleSetLoopStatus);
   ipcMain.on("close-media-window", handleCloseMediaWindow);
   ipcMain.handle("close-media-window-now", handleCloseMediaWindowNow);
