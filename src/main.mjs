@@ -226,6 +226,7 @@ function handleMaximizeChangeHelpWindow(isMaximized) {
 }
 
 function createWindow() {
+  if (!gotSingleInstanceLock) return;
   win = measurePerformance(
     "Creating BrowserWindow",
     () => new BrowserWindow(mainWindowOptions),
@@ -258,7 +259,10 @@ function createWindow() {
       win,
       `${path.dirname(import.meta.dirname)}/src/index.prod.html`,
     ),
-  );
+  ).catch((error) => {
+    if (app.isQuitting || !gotSingleInstanceLock) return;
+    console.error("Failed to load main window:", error);
+  });
 }
 
 function startMediaPlaybackPowerHint() {
@@ -1778,6 +1782,7 @@ app.once("browser-window-created", setIPC);
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
+  app.isQuitting = true;
   app.quit();
 } else {
   app.on("second-instance", (_event, argv) => {
@@ -1812,6 +1817,7 @@ app.on("activate", () => {
 });
 
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return;
   const startupProjectPath = firstProjectPathFromArgv(process.argv.slice(1));
   if (startupProjectPath) {
     pendingProjectOpenPath = startupProjectPath;
