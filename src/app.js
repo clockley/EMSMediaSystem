@@ -671,13 +671,24 @@ function updatePptxNavigatorSelection() {
   active?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
 }
 
-async function renderPptxThumbnail(index, button) {
-  if (!pptxViewer || !button || pptxThumbnailHandles.has(index)) return;
+async function renderPptxThumbnail(index, button, opts = {}) {
+  if (!pptxViewer || !button) return;
+  const force = opts?.force === true;
   const viewport = button.querySelector(".pptx-thumbnail-viewport");
   if (!viewport) return;
+  const existingHandle = pptxThumbnailHandles.get(index);
+  if (existingHandle) {
+    const existingSlide = getPptxSlideElementFromHandle(existingHandle);
+    if (!force && existingSlide && viewport.contains(existingSlide)) return;
+    try {
+      existingHandle.dispose?.();
+    } catch {}
+    pptxThumbnailHandles.delete(index);
+  }
   viewport.innerHTML = "";
   const stage = document.createElement("div");
   stage.className = "pptx-thumbnail-stage";
+  stage.style.visibility = "hidden";
   viewport.appendChild(stage);
 
   let handle = null;
@@ -706,17 +717,39 @@ async function renderPptxThumbnail(index, button) {
     slideEl.style.transformOrigin = "top left";
   }
   enforcePptxCoverFit(stage);
+  stage.style.visibility = "";
 }
 
 function unmountPptxThumbnail(index, button) {
   const handle = pptxThumbnailHandles.get(index);
   if (!handle) return;
+  const viewport = button?.querySelector?.(".pptx-thumbnail-viewport");
+  if (viewport?.isConnected) return;
   try {
     handle.dispose?.();
   } catch {}
   pptxThumbnailHandles.delete(index);
-  const viewport = button?.querySelector?.(".pptx-thumbnail-viewport");
-  if (viewport) viewport.innerHTML = "";
+}
+
+function refreshVisiblePptxThumbnails() {
+  const thumbnailList = document.getElementById("pptxThumbnailList");
+  if (!pptxViewer || !thumbnailList) return;
+  const listRect = thumbnailList.getBoundingClientRect();
+  thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
+    const index = Number(button.dataset.slideIndex);
+    if (!Number.isFinite(index)) return;
+    const rect = button.getBoundingClientRect();
+    const isVisible =
+      rect.bottom >= listRect.top - 240 && rect.top <= listRect.bottom + 240;
+    if (isVisible) void renderPptxThumbnail(index, button, { force: true });
+  });
+}
+
+function schedulePptxThumbnailRefresh() {
+  requestAnimationFrame(() => {
+    refreshVisiblePptxThumbnails();
+    requestAnimationFrame(refreshVisiblePptxThumbnails);
+  });
 }
 
 function buildPptxNavigator() {
@@ -810,6 +843,7 @@ async function showPptxSlide(index) {
   mainPane.innerHTML = "";
   const stage = document.createElement("div");
   stage.className = "pptx-preview-stage";
+  stage.style.visibility = "hidden";
   mainPane.appendChild(stage);
   try {
     pptxPreviewSlideHandle = pptxViewer?.renderSlideToContainer(slideIndex, stage, 1) || null;
@@ -830,6 +864,7 @@ async function showPptxSlide(index) {
     slideEl.style.transformOrigin = "top left";
   }
   enforcePptxCoverFit(stage);
+  stage.style.visibility = "";
   pptxCurrentSlide = slideIndex;
   updatePptxNavButtons();
   updatePptxNavigatorSelection();
@@ -1910,6 +1945,8 @@ function buildProjectStateSnapshot() {
           : queueBasename(item.path),
       sha256: typeof item.sha256 === "string" ? item.sha256 : undefined,
       sizeBytes: Number.isFinite(item.sizeBytes) ? item.sizeBytes : undefined,
+      modifiedTime:
+        typeof item.modifiedTime === "string" ? item.modifiedTime : undefined,
       autoAdvance: item.autoAdvance !== false,
       cueStartTime: Number.isFinite(item.cueStartTime) ? item.cueStartTime : 0,
       cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
@@ -1943,6 +1980,8 @@ function applyProjectStateSnapshot(state) {
           : queueBasename(x.originalPath || x.path),
       sha256: typeof x.sha256 === "string" ? x.sha256 : undefined,
       sizeBytes: Number.isFinite(x.sizeBytes) ? x.sizeBytes : undefined,
+      modifiedTime:
+        typeof x.modifiedTime === "string" ? x.modifiedTime : undefined,
       autoAdvance: x.autoAdvance !== false,
       cueStartTime: Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
       cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
@@ -2043,6 +2082,7 @@ async function relinkMissingFilesDialog() {
         originalName: item.originalName || queueBasename(item.originalPath || item.path),
         sha256: item.sha256,
         sizeBytes: item.sizeBytes,
+        modifiedTime: item.modifiedTime,
       })),
     });
 
@@ -2060,6 +2100,9 @@ async function relinkMissingFilesDialog() {
       item.originalName = item.originalName || queueBasename(item.originalPath || match.path);
       if (Number.isFinite(match.sizeBytes)) item.sizeBytes = match.sizeBytes;
       if (typeof match.sha256 === "string") item.sha256 = match.sha256;
+      if (typeof match.modifiedTime === "string") {
+        item.modifiedTime = match.modifiedTime;
+      }
       if (!item.name || item.name === queueBasename(item.originalPath || "")) {
         item.name = queueBasename(match.path);
       }
@@ -2534,6 +2577,7 @@ function toggleQueueItemAutoAdvance(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   mediaQueue[index].autoAdvance = mediaQueue[index].autoAdvance === false;
   renderQueue();
+  schedulePptxThumbnailRefresh();
   saveMediaFile();
 }
 

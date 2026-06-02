@@ -11,6 +11,7 @@ import {
 import os from "os";
 import path from "path";
 import { pipeline } from "stream/promises";
+import { fileURLToPath } from "url";
 import yauzl from "yauzl";
 import yazl from "yazl";
 
@@ -31,6 +32,10 @@ function normalizeArchivePath(p) {
 function basenameAny(p) {
   const parts = String(p || "").split(/[/\\]/);
   return parts[parts.length - 1] || String(p || "");
+}
+
+function fileUrlToPath(p) {
+  return fileURLToPath(p);
 }
 
 function assertSafeArchivePath(p) {
@@ -76,6 +81,12 @@ async function sha256File(filePath) {
     input.on("error", reject);
   });
   return hash.digest("hex");
+}
+
+function statModifiedTime(info) {
+  return info?.mtime instanceof Date && Number.isFinite(info.mtime.getTime())
+    ? info.mtime.toISOString()
+    : undefined;
 }
 
 function openZip(zipPath) {
@@ -136,6 +147,8 @@ function queueItemFromSequenceItem(item, resolvedPath, asset = null) {
     originalName,
     sha256: typeof asset?.sha256 === "string" ? asset.sha256 : undefined,
     sizeBytes: Number.isFinite(asset?.sizeBytes) ? asset.sizeBytes : undefined,
+    modifiedTime:
+      typeof asset?.modifiedTime === "string" ? asset.modifiedTime : undefined,
     autoAdvance: item?.playback?.autoAdvance !== false,
     cueStartTime: Number.isFinite(item?.playback?.startTime) ? item.playback.startTime : 0,
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
@@ -229,7 +242,7 @@ export async function loadEmprojSnapshot(projectPath) {
       if (!extractedPath && item?.source?.kind !== "bundled") {
         try {
           const fsPath = /^file:\/\//i.test(resolvedPath)
-            ? new URL(resolvedPath).pathname
+            ? fileUrlToPath(resolvedPath)
             : resolvedPath;
           const info = await stat(fsPath);
           queueItem.missing = !info.isFile();
@@ -290,20 +303,25 @@ export async function saveEmprojSnapshot(
     if (!item || typeof item.path !== "string" || item.path.length === 0) continue;
     const sourcePath = item.path;
     const isFileUrl = /^file:\/\//i.test(sourcePath);
-    const normalizedPath = isFileUrl ? new URL(sourcePath).pathname : sourcePath;
+    const normalizedPath = isFileUrl ? fileUrlToPath(sourcePath) : sourcePath;
     const isExternalUrl = /^(https?|m3u8|mpd):/i.test(sourcePath);
     let sourceKind = "external";
     let bundledPath = normalizedPath;
     let assetId = "";
     let assetSize = Number.isFinite(item.sizeBytes) ? item.sizeBytes : undefined;
     let assetSha = typeof item.sha256 === "string" ? item.sha256 : undefined;
+    let assetModifiedTime =
+      typeof item.modifiedTime === "string" ? item.modifiedTime : undefined;
     let assetMissing = item.missing === true;
     let assetRegistered = false;
     if (!isExternalUrl) {
       try {
         const info = await stat(normalizedPath);
         if (info.isFile()) {
+          const previousSize = assetSize;
+          const previousModifiedTime = assetModifiedTime;
           assetSize = info.size;
+          assetModifiedTime = statModifiedTime(info);
           assetMissing = false;
           if (packMedia) sourceKind = "bundled";
           const kind = classifyKindFromPath(normalizedPath);
@@ -321,6 +339,13 @@ export async function saveEmprojSnapshot(
               const bundledName = `${String(fileIndex.size + 1).padStart(4, "0")}_${safeBase}`;
               bundledPath = `${folder}/${bundledName}`;
               fileEntries.push({ realPath: normalizedPath, path: bundledPath, compress: false });
+            }
+            if (
+              packMedia ||
+              !assetSha ||
+              previousSize !== assetSize ||
+              previousModifiedTime !== assetModifiedTime
+            ) {
               assetSha = await sha256File(normalizedPath);
             }
             fileIndex.set(normalizedPath, { bundledPath, assetId });
@@ -337,6 +362,7 @@ export async function saveEmprojSnapshot(
                 : undefined,
               sha256: assetSha,
               sizeBytes: assetSize,
+              modifiedTime: assetModifiedTime,
               missingBehavior: "showPlaceholder",
               compatibilityWarnings: [],
             });
@@ -370,6 +396,7 @@ export async function saveEmprojSnapshot(
                 : undefined,
               sha256: assetSha,
               sizeBytes: assetSize,
+              modifiedTime: assetModifiedTime,
               missingBehavior: "showPlaceholder",
               compatibilityWarnings: assetMissing ? ["missing"] : [],
             });
