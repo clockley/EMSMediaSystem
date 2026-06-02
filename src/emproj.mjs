@@ -114,6 +114,8 @@ function queueItemFromSequenceItem(item, resolvedPath) {
     path: resolvedPath,
     name: item?.label || path.basename(resolvedPath),
     type: kind === "presentation" ? "pptx" : kind,
+    missing: item?.source?.kind === "missing",
+    autoAdvance: item?.playback?.autoAdvance !== false,
     cueStartTime: Number.isFinite(item?.playback?.startTime) ? item.playback.startTime : 0,
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
     pptxSlideIndex: Number.isFinite(item?.startSlide) ? item.startSlide - 1 : -1,
@@ -171,24 +173,37 @@ export async function loadEmprojSnapshot(projectPath) {
   const queueJson = JSON.parse(queueJsonRaw.toString("utf8"));
   const sequence = Array.isArray(queueJson.sequence) ? queueJson.sequence : [];
 
-  const mediaQueue = sequence
-    .map((item) => {
+  const mediaQueue = (
+    await Promise.all(sequence.map(async (item) => {
       if (!item || typeof item !== "object") return null;
       let relPath = "";
       if (typeof item?.source?.path === "string") relPath = item.source.path;
       else if (typeof item?.presentationPath === "string") relPath = item.presentationPath;
       else if (typeof item?.path === "string") relPath = item.path;
       if (!relPath) return null;
-      const resolvedPath = extractedMediaPaths.get(relPath) || relPath;
-      return queueItemFromSequenceItem(item, resolvedPath);
-    })
-    .filter(Boolean);
+      const extractedPath = extractedMediaPaths.get(relPath);
+      const resolvedPath = extractedPath || relPath;
+      const queueItem = queueItemFromSequenceItem(item, resolvedPath);
+      if (!extractedPath && item?.source?.kind !== "bundled") {
+        try {
+          const fsPath = /^file:\/\//i.test(resolvedPath)
+            ? new URL(resolvedPath).pathname
+            : resolvedPath;
+          const info = await stat(fsPath);
+          queueItem.missing = !info.isFile();
+        } catch {
+          queueItem.missing = true;
+        }
+      }
+      return queueItem;
+    }))
+  ).filter(Boolean);
 
   return {
     schemaVersion: 1,
     projectPath,
     currentMode: 0,
-    currentQueueIndex: mediaQueue.length > 0 ? 0 : -1,
+    currentQueueIndex: -1,
     previewCueIndex: -1,
     mediaQueue,
   };
@@ -303,7 +318,7 @@ export async function saveEmprojSnapshot(
         startTime: Number.isFinite(item.cueStartTime) ? item.cueStartTime : 0,
         volume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
         loop: false,
-        autoAdvance: true,
+        autoAdvance: item.autoAdvance !== false,
       },
       routing: {
         main: true,

@@ -221,6 +221,7 @@ let queueClearUndoSnapshot = null;
 let ignoreNextQueueItemClick = false;
 let ignoreQueueItemClicksUntil = 0;
 let queueItemClickTimer = null;
+let queueDragFromIndex = -1;
 /** Last <video> element that received cubic waveshaper wiring. */
 let cubicWaveShaperAttachedVideo = null;
 
@@ -230,9 +231,34 @@ const PREVIEW_STASH_ID = "previewStash";
 const TAB_PANEL_MEDIA_ID = "tab-panel-media";
 const TAB_PANEL_STREAMS_ID = "tab-panel-streams";
 
-function isQueueAutoAdvanceEnabled() {
-  const el = document.getElementById("queueAutoAdvanceCtl");
-  return !el || el.checked;
+function isQueueItemAutoAdvanceEnabled(index) {
+  if (index < 0 || index >= mediaQueue.length) return true;
+  return mediaQueue[index]?.autoAdvance !== false;
+}
+
+function isNextQueueItemAutoAdvanceEnabled() {
+  const nextIndex = currentQueueIndex + 1;
+  if (nextIndex < 0 || nextIndex >= mediaQueue.length) return false;
+  return isQueueItemAutoAdvanceEnabled(nextIndex);
+}
+
+function shouldAutoTransitionToIndex(nextIndex) {
+  if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= mediaQueue.length) {
+    return false;
+  }
+  const cue = currentPreviewCue();
+  // Explicit cue to a different item always wins (intentional operator action).
+  if (cue && cue.index === nextIndex && cue.index !== currentQueueIndex) {
+    return true;
+  }
+  return (
+    isQueueItemAutoAdvanceEnabled(currentQueueIndex) &&
+    isQueueItemAutoAdvanceEnabled(nextIndex)
+  );
+}
+
+function shouldAdvanceAfterCurrentItemEnds() {
+  return shouldAutoTransitionToIndex(currentQueueIndex + 1);
 }
 
 function isPlayInterruptedError(error) {
@@ -1102,6 +1128,8 @@ function createQueueEntry(filePath) {
     path: filePath,
     name: queueBasename(filePath),
     type,
+    missing: false,
+    autoAdvance: true,
     cueStartTime: 0,
     pptxSlideIndex: type === "pptx" ? -1 : undefined,
   };
@@ -1245,6 +1273,26 @@ function currentImplicitNextItem() {
   };
 }
 
+function currentImplicitPreviousItem() {
+  if (mediaQueue.length === 0) return null;
+  let prevIdx = -1;
+  if (currentQueueIndex > 0 && currentQueueIndex < mediaQueue.length) {
+    prevIdx = currentQueueIndex - 1;
+  }
+  if (prevIdx < 0) return null;
+  const item = mediaQueue[prevIdx];
+  if (!item) return null;
+  return {
+    index: prevIdx,
+    item,
+    startTime:
+      Number.isFinite(item.cueStartTime) && item.cueStartTime > 0
+        ? item.cueStartTime
+        : 0,
+    implicit: true,
+  };
+}
+
 function isQueuePresentationActive() {
   return Boolean(
     isQueuePlaying &&
@@ -1269,13 +1317,16 @@ function shouldSuppressPreviewForwarding() {
 function updatePreviewCueUI() {
   const liveItem = isQueuePresentationActive() ? currentLiveQueueItem() : null;
   const explicitCue = currentPreviewCue();
+  const implicitPrev = currentImplicitPreviousItem();
   const implicitNext = currentImplicitNextItem();
   const selectedItem =
     !liveItem && currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
       ? { index: currentQueueIndex, item: mediaQueue[currentQueueIndex] }
       : null;
+  const prevUp = implicitPrev;
   const nextUp = explicitCue ?? implicitNext ?? selectedItem;
   const nowPlaying = document.getElementById("nowPlayingLabel");
+  const upPrev = document.getElementById("upPrevLabel");
   const upNext = document.getElementById("upNextLabel");
   const audioCuePanel = document.getElementById("audioCuePanel");
 
@@ -1288,6 +1339,11 @@ function updatePreviewCueUI() {
         ? getHostnameOrBasename(mediaFile || "Presentation active")
         : "No file selected";
     nowPlaying.title = nowPlaying.textContent;
+  }
+
+  if (upPrev) {
+    upPrev.textContent = prevUp ? prevUp.item.name : "No previous item";
+    upPrev.title = upPrev.textContent;
   }
 
   if (upNext) {
@@ -1524,7 +1580,15 @@ function installPreviewCueVideoHandlers(el) {
   el.addEventListener("loadedmetadata", paintIfActive);
 }
 
-function queueTypeIconMarkup(type) {
+function queueTypeIconMarkup(itemOrType) {
+  const item =
+    typeof itemOrType === "object" && itemOrType !== null
+      ? itemOrType
+      : { type: itemOrType };
+  if (item?.missing) {
+    return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.5l6.2 11A1 1 0 0 1 13.3 14H2.7a1 1 0 0 1-.9-1.5l6.2-11zM7.3 6.2v3.9h1.4V6.2H7.3zm0 5.2v1.4h1.4v-1.4H7.3z"/></svg>`;
+  }
+  const type = item.type;
   switch (type) {
     case "video":
       return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V8.5l3 2V4.5l-3 2V4a1 1 0 0 0-1-1H2z"/></svg>`;
@@ -1591,15 +1655,15 @@ function renderQueue() {
           badges.length || hasCueStart
             ? `<span class="item-status-row">${badges.join("")}${cueStartMarkup}</span>`
             : "";
-        return `<div class="${classes}" role="listitem" data-queue-index="${index}">
-      <span class="queue-drag-handle" draggable="true" data-queue-index="${index}" title="Drag to reorder" aria-label="Drag to reorder">
-        <svg width="12" height="16" viewBox="0 0 12 16" aria-hidden="true"><circle cx="3" cy="3" r="1.5" fill="currentColor"/><circle cx="9" cy="3" r="1.5" fill="currentColor"/><circle cx="3" cy="8" r="1.5" fill="currentColor"/><circle cx="9" cy="8" r="1.5" fill="currentColor"/><circle cx="3" cy="13" r="1.5" fill="currentColor"/><circle cx="9" cy="13" r="1.5" fill="currentColor"/></svg>
-      </span>
-      <span class="item-icon">${queueTypeIconMarkup(item.type)}</span>
+        const autoAdvanceEnabled = item.autoAdvance !== false;
+        const autoAdvanceMarkup = `<button type="button" class="row-auto-advance-btn" data-queue-auto="${index}" aria-label="Toggle auto-advance for this item" title="Toggle auto-advance for this item">${autoAdvanceEnabled ? "Auto" : "Manual"}</button>`;
+        return `<div class="${classes}" role="listitem" data-queue-index="${index}" draggable="true">
+      <span class="item-icon">${queueTypeIconMarkup(item)}</span>
       <span class="item-text">
         <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
         ${statusMarkup}
       </span>
+      ${autoAdvanceMarkup}
       <button type="button" class="remove-btn" draggable="false" data-queue-remove="${index}" title="Remove from queue" aria-label="Remove from queue">✕</button>
     </div>`;
       })
@@ -1696,13 +1760,7 @@ function reorderMediaQueue(fromIndex, toIndex) {
 
   invalidateQueueUndoToastAfterMutation();
   renderQueue();
-  // renderQueue() already refreshes the Presentation card's Next row via
-  // updatePreviewCueUI, but the call is made explicit here too so a future
-  // renderQueue refactor can't silently regress the "Next: <file>" label
-  // after a drag-reorder. The operator's mental model is "I moved this
-  // file, the card should reflect it now" — covering that contract at the
-  // mutation site keeps it from drifting away from rendering concerns.
-  updatePreviewCueUI();
+  // renderQueue() refreshes previous/next status in a single pass.
   if (movedItemWasLiveAudio) {
     hidePptxPreviewIfNeeded();
     restoreCountdownForLiveMedia();
@@ -1778,6 +1836,8 @@ function buildProjectStateSnapshot() {
       path: item.path,
       name: item.name,
       type: item.type,
+      missing: item.missing === true,
+      autoAdvance: item.autoAdvance !== false,
       cueStartTime: Number.isFinite(item.cueStartTime) ? item.cueStartTime : 0,
       cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
       pptxSlideIndex: Number.isFinite(item.pptxSlideIndex)
@@ -1799,6 +1859,8 @@ function applyProjectStateSnapshot(state) {
           ? x.name
           : queueBasename(x.path),
       type: classifyQueueMediaType(x.path),
+      missing: x.missing === true,
+      autoAdvance: x.autoAdvance !== false,
       cueStartTime: Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
       cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : -1,
@@ -1849,6 +1911,34 @@ function scheduleAutosaveProjectState() {
   }, AUTOSAVE_WRITE_DEBOUNCE_MS);
 }
 
+async function refreshMissingFlagsAndWarn() {
+  if (!Array.isArray(mediaQueue) || mediaQueue.length === 0) return;
+  const paths = mediaQueue.map((item) => item.path);
+  let probe = [];
+  try {
+    probe = await invoke("check-media-paths-exist", paths);
+  } catch (err) {
+    console.error("check-media-paths-exist failed:", err);
+    return;
+  }
+  const missingFiles = [];
+  for (let i = 0; i < mediaQueue.length; i += 1) {
+    const exists = probe?.[i]?.exists === true;
+    mediaQueue[i].missing = !exists;
+    if (!exists && typeof mediaQueue[i].path === "string") {
+      missingFiles.push(mediaQueue[i].path);
+    }
+  }
+  renderQueue();
+  if (missingFiles.length > 0) {
+    try {
+      await invoke("show-missing-project-files-dialog", { missingFiles });
+    } catch (err) {
+      console.error("Failed to show missing-files dialog:", err);
+    }
+  }
+}
+
 async function openProjectDialog() {
   try {
     const res = await invoke("show-open-project-dialog");
@@ -1859,6 +1949,7 @@ async function openProjectDialog() {
     if (!applyProjectStateSnapshot(parsed)) {
       throw new Error("Project does not contain a valid queue.");
     }
+    await refreshMissingFlagsAndWarn();
     currentProjectPath = filePath;
     scheduleAutosaveProjectState();
     showGnomeToast("Project opened");
@@ -1936,6 +2027,7 @@ async function restoreAutosavedProjectState() {
     const state = await invoke("load-autosave-project-state");
     if (!state) return;
     if (applyProjectStateSnapshot(state)) {
+      await refreshMissingFlagsAndWarn();
       currentProjectPath =
         typeof state.projectPath === "string" ? state.projectPath : "";
     }
@@ -2249,11 +2341,26 @@ function removeFromQueue(index) {
   }
 }
 
+function toggleQueueItemAutoAdvance(index) {
+  if (index < 0 || index >= mediaQueue.length) return;
+  mediaQueue[index].autoAdvance = mediaQueue[index].autoAdvance === false;
+  renderQueue();
+  saveMediaFile();
+}
+
 function installMediaQueueListDelegation() {
   const list = document.getElementById("mediaQueueList");
   if (!list || list.dataset.queueDelegation === "1") return;
   list.dataset.queueDelegation = "1";
   list.addEventListener("click", (e) => {
+    const autoBtn = e.target.closest("[data-queue-auto]");
+    if (autoBtn && list.contains(autoBtn)) {
+      e.preventDefault();
+      toggleQueueItemAutoAdvance(
+        Number.parseInt(autoBtn.getAttribute("data-queue-auto"), 10),
+      );
+      return;
+    }
     const removeBtn = e.target.closest("[data-queue-remove]");
     if (removeBtn && list.contains(removeBtn)) {
       e.preventDefault();
@@ -2262,7 +2369,6 @@ function installMediaQueueListDelegation() {
       );
       return;
     }
-    if (e.target.closest(".queue-drag-handle")) return;
     if (ignoreNextQueueItemClick || performance.now() < ignoreQueueItemClicksUntil) {
       return;
     }
@@ -2281,7 +2387,7 @@ function installMediaQueueListDelegation() {
   });
 
   list.addEventListener("dblclick", (e) => {
-    if (e.target.closest(".queue-drag-handle") || e.target.closest("[data-queue-remove]")) {
+    if (e.target.closest("[data-queue-remove]")) {
       return;
     }
     e.preventDefault();
@@ -2298,18 +2404,24 @@ function installMediaQueueListDelegation() {
   });
 
   list.addEventListener("dragstart", (e) => {
-    const handle = e.target.closest(".queue-drag-handle");
-    if (!handle || !list.contains(handle)) return;
+    const row = e.target.closest(".queue-item[data-queue-index]");
+    if (!row || !list.contains(row)) return;
+    if (e.target.closest("[data-queue-remove]")) {
+      e.preventDefault();
+      return;
+    }
     e.stopPropagation();
-    const idx = Number.parseInt(handle.getAttribute("data-queue-index"), 10);
+    const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
+    queueDragFromIndex = idx;
     e.dataTransfer.setData("application/x-queue-index", String(idx));
+    e.dataTransfer.setData("text/plain", String(idx));
     e.dataTransfer.effectAllowed = "move";
-    const row = handle.closest(".queue-item");
     if (row) row.classList.add("queue-item-dragging");
   });
 
   list.addEventListener("dragend", (e) => {
+    queueDragFromIndex = -1;
     list.querySelectorAll(".queue-item-dragging").forEach((el) => {
       el.classList.remove("queue-item-dragging");
     });
@@ -2319,7 +2431,9 @@ function installMediaQueueListDelegation() {
   });
 
   list.addEventListener("dragover", (e) => {
+    const hasInternalQueueDrag = queueDragFromIndex >= 0;
     if (
+      !hasInternalQueueDrag &&
       e.dataTransfer?.types &&
       Array.from(e.dataTransfer.types).includes("Files")
     ) {
@@ -2351,6 +2465,23 @@ function installMediaQueueListDelegation() {
   });
 
   list.addEventListener("drop", async (e) => {
+    const hasInternalQueueDrag = queueDragFromIndex >= 0;
+    if (hasInternalQueueDrag) {
+      const row = e.target.closest(".queue-item[data-queue-index]");
+      if (!row || !list.contains(row)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const from = queueDragFromIndex;
+      const to = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+      list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
+        el.classList.remove("queue-item-drag-over");
+      });
+      queueDragFromIndex = -1;
+      if (Number.isNaN(to) || Number.isNaN(from)) return;
+      reorderMediaQueue(from, to);
+      return;
+    }
+
     const hasOSFiles =
       e.dataTransfer?.files?.length > 0 ||
       (e.dataTransfer?.types &&
@@ -2365,18 +2496,10 @@ function installMediaQueueListDelegation() {
       applyDroppedMediaPaths(paths);
       return;
     }
-    const row = e.target.closest(".queue-item[data-queue-index]");
-    if (!row || !list.contains(row)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const fromStr = e.dataTransfer.getData("application/x-queue-index");
-    const from = Number.parseInt(fromStr, 10);
-    const to = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+    // Neither internal queue drag nor OS file drop.
     list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
       el.classList.remove("queue-item-drag-over");
     });
-    if (Number.isNaN(from) || Number.isNaN(to)) return;
-    reorderMediaQueue(from, to);
   });
 }
 
@@ -3168,8 +3291,9 @@ async function advanceQueueAfterMediaWindowClosed() {
       return;
     }
 
-    currentQueueIndex++;
-    if (currentQueueIndex < mediaQueue.length) {
+    const nextIndex = currentQueueIndex + 1;
+    if (nextIndex < mediaQueue.length && shouldAutoTransitionToIndex(nextIndex)) {
+      currentQueueIndex = nextIndex;
       const item = mediaQueue[currentQueueIndex];
       renderQueue();
       await new Promise((r) => setTimeout(r, 100));
@@ -3313,7 +3437,9 @@ async function trySlipstreamNextQueueItem() {
       clearCue: true,
     });
   }
-  if (!isQueueAutoAdvanceEnabled()) return false;
+  if (!shouldAutoTransitionToIndex(currentQueueIndex + 1)) {
+    return false;
+  }
   const nextIndex = currentQueueIndex + 1;
   const nextItem = mediaQueue[nextIndex];
   return slipstreamQueueItemAtIndex(nextIndex, {
@@ -5653,7 +5779,7 @@ async function handleMediaWindowClosed(event, id) {
   if (isQueuePlaying) {
     if (mediaPlaybackEndedPending) {
       mediaPlaybackEndedPending = false;
-      if (currentPreviewCue() || isQueueAutoAdvanceEnabled()) {
+      if (shouldAdvanceAfterCurrentItemEnds()) {
         await advanceQueueAfterMediaWindowClosed();
       } else {
         // Auto-advance is off but the item ended naturally. Advance the index
@@ -6880,27 +7006,6 @@ function generateMediaFormHTML(video = null) {
   <div class="media-container">
     <form onsubmit="return false;" class="control-panel control-panel--media">
       <!--
-        Compact, merged status card. The previous Live Output + Preview/Cue
-        cards stacked two full Adwaita boxed sections (each with a 14px title
-        and 6px gaps) before the queue ever appeared. On a 960×548 window the
-        queue had ~120px of usable height — barely two rows. Merging both into
-        a single "Presentation" card with key/value rows reclaims roughly
-        70px for the queue at the same window size without losing any state
-        or action the operator needs.
-      -->
-      <section class="presentation-status-card" aria-label="Presentation status">
-        <span class="presentation-status-card__heading">Presentation</span>
-        <div class="presentation-status-row">
-          <span class="presentation-status-row__label">Current:</span>
-          <span id="nowPlayingLabel" class="presentation-status-row__value">No file selected</span>
-        </div>
-        <div class="presentation-status-row">
-          <span class="presentation-status-row__label">Next:</span>
-          <span id="upNextLabel" class="presentation-status-row__value">No next item selected</span>
-        </div>
-      </section>
-
-      <!--
         Queue is the dominant sidebar content per GNOME HIG adaptive guidance:
         primary task surface fills the space, secondary controls (output
         selector, switches) sit below in a collapsed expander so the queue
@@ -6920,10 +7025,10 @@ function generateMediaFormHTML(video = null) {
       </div>
 
       <!--
-        Settings expander: Output Display, Autoplay, Auto-advance. Collapsed
-        by default to maximize queue real estate; open-state is persisted to
-        localStorage so users who routinely toggle the switches don't have
-        to re-expand each session.
+        Settings expander: Output Display and Autoplay. Collapsed by default
+        to maximize queue real estate; open-state is persisted to localStorage
+        so users who routinely toggle the switches don't have to re-expand
+        each session.
       -->
       <details class="options-expander" id="mediaOptionsExpander">
         <summary class="options-expander__summary">
@@ -6947,14 +7052,6 @@ function generateMediaFormHTML(video = null) {
               <span class="control-label">Autoplay</span>
               <label class="switch">
                 <input type="checkbox" checked name="autoPlayCtl" id="autoPlayCtl">
-                <span class="switch-track"></span>
-                <span class="switch-thumb"></span>
-              </label>
-            </div>
-            <div class="loop-control queue-auto-advance-control">
-              <span class="control-label" id="queueAutoAdvanceLbl">Auto-advance</span>
-              <label class="switch">
-                <input type="checkbox" checked name="queueAutoAdvanceCtl" id="queueAutoAdvanceCtl" aria-labelledby="queueAutoAdvanceLbl">
                 <span class="switch-track"></span>
                 <span class="switch-thumb"></span>
               </label>
@@ -7897,7 +7994,7 @@ function endLocalMedia() {
   // Audio-only queue item finished: drive the same advance/stop logic that
   // handleMediaWindowClosed normally does when a real media window closes.
   if (wasAudioOnlyQueueItem) {
-    if (currentPreviewCue() || isQueueAutoAdvanceEnabled()) {
+    if (shouldAdvanceAfterCurrentItemEnds()) {
       void advanceQueueAfterMediaWindowClosed().catch((err) =>
         console.error("Queue advance after audio-only end failed:", err),
       );
@@ -8293,7 +8390,7 @@ async function endLiveAudioPresentation() {
     localTimeStampUpdateIsRunning = false;
 
     if (wasAudioOnlyQueueItem) {
-      if (currentPreviewCue() || isQueueAutoAdvanceEnabled()) {
+      if (shouldAdvanceAfterCurrentItemEnds()) {
         await advanceQueueAfterMediaWindowClosed();
         return;
       }
