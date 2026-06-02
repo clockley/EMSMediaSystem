@@ -2048,20 +2048,6 @@ ul {
     background: color-mix(in srgb, var(--accent-bg-color) 16%, transparent);
 }
 
-.queue-drag-handle {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    margin-right: 8px;
-    color: color-mix(in srgb, var(--window-fg-color) 65%, transparent);
-    opacity: 0.92;
-    -webkit-app-region: no-drag;
-}
-
-.queue-item.active .queue-drag-handle {
-    color: rgba(255, 255, 255, 0.88);
-}
-
 .queue-item-dragging {
     opacity: 0.5;
 }

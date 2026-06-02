@@ -1515,6 +1515,30 @@ async function handleShowExportProjectDialog(event, opts = {}) {
   return { canceled: false, filePath: result.filePath };
 }
 
+async function handleShowMissingProjectFilesDialog(event, opts = {}) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const missingFiles = Array.isArray(opts?.missingFiles) ? opts.missingFiles : [];
+  if (missingFiles.length === 0) return false;
+  const previewLines = missingFiles.slice(0, 10).map((x) => `• ${x}`);
+  const extra = missingFiles.length > 10
+    ? `\n… and ${missingFiles.length - 10} more`
+    : "";
+  const detail =
+    "The project loaded, but some media files could not be found:\n\n" +
+    previewLines.join("\n") +
+    extra;
+  await dialog.showMessageBox(mainWindow, {
+    type: "warning",
+    title: "Missing Project Files",
+    message: `${missingFiles.length} file(s) are missing`,
+    detail,
+    buttons: ["OK"],
+    defaultId: 0,
+  });
+  return true;
+}
+
 async function handleReadProjectFile(_, filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) {
     throw new Error("Invalid project path");
@@ -1587,6 +1611,28 @@ async function handleReadFileAsArrayBuffer(_, filePath) {
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
 }
 
+async function handleCheckMediaPathsExist(_, paths) {
+  if (!Array.isArray(paths)) return [];
+  const out = [];
+  for (const p of paths) {
+    if (typeof p !== "string" || p.length === 0) {
+      out.push({ path: p, exists: false });
+      continue;
+    }
+    if (/^(https?|m3u8|mpd|blob|file):/i.test(p)) {
+      out.push({ path: p, exists: true });
+      continue;
+    }
+    try {
+      const info = await stat(p);
+      out.push({ path: p, exists: info.isFile() });
+    } catch {
+      out.push({ path: p, exists: false });
+    }
+  }
+  return out;
+}
+
 function setIPC() {
   ipcMain.handle("get-system-time", getSystemTIme);
   ipcMain.handle("get-platform", getPlatform);
@@ -1598,6 +1644,7 @@ function setIPC() {
   ipcMain.handle("show-open-project-dialog", handleShowOpenProjectDialog);
   ipcMain.handle("show-save-project-dialog", handleShowSaveProjectDialog);
   ipcMain.handle("show-export-project-dialog", handleShowExportProjectDialog);
+  ipcMain.handle("show-missing-project-files-dialog", handleShowMissingProjectFilesDialog);
   ipcMain.handle("read-project-file", handleReadProjectFile);
   ipcMain.handle("write-project-file", handleWriteProjectFile);
   ipcMain.handle("save-autosave-project-state", handleSaveAutosaveProjectState);
@@ -1605,6 +1652,7 @@ function setIPC() {
   ipcMain.handle("remember-media-folder", handleRememberMediaFolder);
   ipcMain.handle("filter-media-drop-paths", handleFilterMediaDropPaths);
   ipcMain.handle("read-file-as-arraybuffer", handleReadFileAsArrayBuffer);
+  ipcMain.handle("check-media-paths-exist", handleCheckMediaPathsExist);
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);
