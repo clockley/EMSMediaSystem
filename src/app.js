@@ -190,6 +190,7 @@ let mediaQueue = [];
 let currentQueueIndex = -1;
 let previewCueIndex = -1;
 let isQueuePlaying = false;
+let manualBoundaryPauseIndex = -1;
 let pptxViewer = null;
 let pptxViewerHost = null;
 let pptxPreviewSlideHandle = null;
@@ -246,10 +247,7 @@ function shouldAutoTransitionToIndex(nextIndex) {
   if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= mediaQueue.length) {
     return false;
   }
-  return (
-    isQueueItemAutoAdvanceEnabled(currentQueueIndex) &&
-    isQueueItemAutoAdvanceEnabled(nextIndex)
-  );
+  return isQueueItemAutoAdvanceEnabled(nextIndex);
 }
 
 function shouldAdvanceAfterCurrentItemEnds() {
@@ -415,18 +413,23 @@ function resolvePptxPreviewStartSlide(filePath, opts) {
   if (sameDeck) return clampPptxSlideIndex(pptxCurrentSlide);
   const queueIndex = findQueueIndexByPath(filePath);
   const savedSlide = queueIndex >= 0 ? mediaQueue[queueIndex]?.pptxSlideIndex : null;
-  return isSavedPptxSlideIndex(savedSlide) ? clampPptxSlideIndex(savedSlide) : 0;
+  return isSavedPptxSlideIndex(savedSlide) ? Math.max(0, Math.floor(savedSlide)) : 0;
 }
 
 function rememberPptxSlide(filePath, slideIndex) {
-  if (!filePath || !Number.isFinite(slideIndex)) return;
+  if (!filePath || !Number.isFinite(slideIndex)) return false;
   const safeSlide = Math.max(0, Math.floor(slideIndex));
   const normalized = normalizeMediaPathForCompare(filePath);
+  let changed = false;
   mediaQueue.forEach((item) => {
     if (isQueueItemPptx(item) && normalizeMediaPathForCompare(item.path) === normalized) {
-      item.pptxSlideIndex = safeSlide;
+      if (item.pptxSlideIndex !== safeSlide) {
+        item.pptxSlideIndex = safeSlide;
+        changed = true;
+      }
     }
   });
+  return changed;
 }
 
 function getPptxListRenderOptions(slideCount) {
@@ -526,6 +529,9 @@ async function loadPptxPreview(filePath, opts = {}) {
     });
   }
   await showPptxSlide(clampPptxSlideIndex(startSlide, pptxSlideCount));
+  if (rememberPptxSlide(filePath, pptxCurrentSlide)) {
+    scheduleAutosaveProjectState();
+  }
   const navBar = document.getElementById("pptxNavBar");
   if (navBar) navBar.style.display = "flex";
   updatePptxNavButtons();
@@ -900,6 +906,9 @@ function pptxStartSlideForItem(item) {
 
 async function jumpToPptxSlide(index) {
   await showPptxSlide(index);
+  if (pptxFilePath && rememberPptxSlide(pptxFilePath, pptxCurrentSlide)) {
+    scheduleAutosaveProjectState();
+  }
   if (isActiveMediaWindow()) sendPptxSlideToMediaWindow(pptxCurrentSlide);
 }
 
@@ -1053,6 +1062,21 @@ async function getLivePptxSlideFromMediaWindow(filePath) {
   } catch (err) {
     console.error("Failed to get current PPTX slide from media window:", err);
     return undefined;
+  }
+}
+
+async function syncCurrentPptxSlideForProjectSnapshot() {
+  const pptxPath = currentPptxPreviewFilePath();
+  if (!pptxPath) return;
+
+  const liveSlide = await getLivePptxSlideFromMediaWindow(pptxPath);
+  if (isSavedPptxSlideIndex(liveSlide)) return;
+
+  const samePreviewDeck =
+    pptxFilePath &&
+    normalizeMediaPathForCompare(pptxFilePath) === normalizeMediaPathForCompare(pptxPath);
+  if (samePreviewDeck && isSavedPptxSlideIndex(pptxCurrentSlide)) {
+    rememberPptxSlide(pptxPath, pptxCurrentSlide);
   }
 }
 
@@ -2163,6 +2187,7 @@ async function saveProjectAsDialog() {
     const res = await invoke("show-save-project-dialog", { defaultPath });
     if (!res || res.canceled || !res.filePath) return false;
     currentProjectPath = res.filePath;
+    await syncCurrentPptxSlideForProjectSnapshot();
     const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
     await invoke("write-project-file", {
       filePath: currentProjectPath,
@@ -2184,6 +2209,7 @@ async function saveProject() {
     return saveProjectAsDialog();
   }
   try {
+    await syncCurrentPptxSlideForProjectSnapshot();
     const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
     await invoke("write-project-file", {
       filePath: currentProjectPath,
@@ -2205,6 +2231,7 @@ async function exportPortableProjectDialog() {
     const defaultPath = currentProjectPath || "Untitled-Portable.emproj";
     const res = await invoke("show-export-project-dialog", { defaultPath });
     if (!res || res.canceled || !res.filePath) return false;
+    await syncCurrentPptxSlideForProjectSnapshot();
     const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
     await invoke("write-project-file", {
       filePath: res.filePath,
@@ -2288,6 +2315,7 @@ function clearMediaQueue() {
   currentQueueIndex = -1;
   previewCueIndex = -1;
   isQueuePlaying = false;
+  manualBoundaryPauseIndex = -1;
   // Hand the countdown overlay back to the live media (or hide it if the
   // queue clear leaves nothing playing). Without this, a cleared queue
   // that previously hosted an image cue would leave the overlay hidden
@@ -2536,6 +2564,13 @@ function removeFromQueue(index) {
       currentQueueIndex = index;
     }
   } else if (currentQueueIndex >= mediaQueue.length) currentQueueIndex = -1;
+  if (manualBoundaryPauseIndex === index) {
+    manualBoundaryPauseIndex = -1;
+  } else if (manualBoundaryPauseIndex > index) {
+    manualBoundaryPauseIndex--;
+  } else if (manualBoundaryPauseIndex >= mediaQueue.length) {
+    manualBoundaryPauseIndex = -1;
+  }
   if (previewCueIndex === index) {
     previewCueIndex = -1;
     stopPreviewAudioCue();
@@ -2576,9 +2611,43 @@ function removeFromQueue(index) {
 function toggleQueueItemAutoAdvance(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   mediaQueue[index].autoAdvance = mediaQueue[index].autoAdvance === false;
+  const autoAdvanceEnabled = mediaQueue[index].autoAdvance !== false;
   renderQueue();
   schedulePptxThumbnailRefresh();
   saveMediaFile();
+  if (autoAdvanceEnabled) {
+    void resumeQueueFromManualBoundaryIfReady(index).catch((err) =>
+      console.error("Failed to resume queue after auto-advance toggle:", err),
+    );
+  }
+}
+
+async function resumeQueueFromManualBoundaryIfReady(index) {
+  if (
+    manualBoundaryPauseIndex !== index ||
+    isQueuePlaying ||
+    isPlaying ||
+    index < 0 ||
+    index >= mediaQueue.length ||
+    currentQueueIndex !== index ||
+    mediaQueue[index]?.autoAdvance === false
+  ) {
+    return;
+  }
+
+  manualBoundaryPauseIndex = -1;
+  isQueuePlaying = true;
+  isPlaying = true;
+  updateDynUI();
+  renderQueue();
+  const item = mediaQueue[index];
+  await playCurrentQueueItem({
+    preservePreviewSeek: false,
+    startTime:
+      Number.isFinite(item?.cueStartTime) && item.cueStartTime > 0
+        ? item.cueStartTime
+        : 0,
+  });
 }
 
 function installMediaQueueListDelegation() {
@@ -3100,9 +3169,6 @@ async function takeQueueItemLive(index, startTime = 0) {
 
   const safeStart = Number.isFinite(startTime) && startTime > 0 ? startTime : 0;
   mediaQueue[index].cueStartTime = safeStart;
-  if (isQueueItemPptx(mediaQueue[index])) {
-    mediaQueue[index].pptxSlideIndex = -1;
-  }
 
   if (isAudioOnlyQueuePresentationActive()) {
     stopLiveAudioPresentation();
@@ -3242,6 +3308,7 @@ async function stopQueuePresentationUserClosed() {
   mediaPlaybackEndedPending = false;
   pendingQueueSwitchIndex = null;
   pendingQueueSwitchStartTime = 0;
+  manualBoundaryPauseIndex = -1;
   isQueuePlaying = false;
   isPlaying = false;
   updateDynUI();
@@ -3294,6 +3361,10 @@ async function pauseQueuePresentationAtBoundary(index) {
   mediaPlaybackEndedPending = false;
   pendingQueueSwitchIndex = null;
   pendingQueueSwitchStartTime = 0;
+  manualBoundaryPauseIndex =
+    index >= 0 && index < mediaQueue.length && mediaQueue[index]?.autoAdvance === false
+      ? index
+      : -1;
   isQueuePlaying = false;
   isPlaying = false;
   isActiveMediaWindowCache = false;
@@ -3503,6 +3574,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
 async function playCurrentQueueItem(opts) {
   resolveQueuePresentationVideo();
   const localVideo = video;
+  manualBoundaryPauseIndex = -1;
   mediaPlaybackEndedPending = false;
   if (localVideo) {
     // Queue items should advance; keep local preview loop disabled so its state
@@ -3516,9 +3588,6 @@ async function playCurrentQueueItem(opts) {
     currentQueueIndex = -1;
     renderQueue();
     return;
-  }
-  if (isQueueItemPptx(item)) {
-    item.pptxSlideIndex = -1;
   }
 
   await loadQueueItemIntoControlWindow(item, opts);
@@ -3647,9 +3716,6 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     const nextType = nextItem.type || classifyQueueMediaType(nextItem.path);
     const isImgFile = isImg(nextItem.path);
     const isPptxFile = isQueueItemPptx(nextItem);
-    if (isPptxFile) {
-      nextItem.pptxSlideIndex = -1;
-    }
 
     // Load the target into the preview before deciding. Extension checks catch
     // obvious audio files, but metadata is authoritative for "audio-only"
@@ -7668,7 +7734,6 @@ function saveMediaFile() {
   if (playingMediaAudioOnly && currentMode === MEDIAPLAYER) {
     const f0 = mdfileElement?.files?.[0];
     if (f0 != null && f0.length > 0) {
-      showGnomeToast("File queued for playback");
       mediaFile = getPathForFile(f0);
       return;
     }
@@ -7677,7 +7742,6 @@ function saveMediaFile() {
         currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
           ? currentQueueIndex
           : 0;
-      showGnomeToast("File queued for playback");
       mediaFile = mediaQueue[qi].path;
       return;
     }
@@ -7695,9 +7759,6 @@ function saveMediaFile() {
     }
 
     mediaPlayerInputState.clear();
-    if (isActiveMediaWindow() || (audioOnlyFile && video && !video.paused)) {
-      showGnomeToast("File queued for playback");
-    }
 
     if (mediaQueue.length > 0) {
       const qi =
@@ -7712,9 +7773,6 @@ function saveMediaFile() {
       currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
         ? currentQueueIndex
         : 0;
-    if (isActiveMediaWindow() || (audioOnlyFile && video && !video.paused)) {
-      showGnomeToast("File queued for playback");
-    }
     mediaPlayerInputState.filePaths = [mediaQueue[qi].path];
   }
   const isActiveMW = isActiveMediaWindow();
