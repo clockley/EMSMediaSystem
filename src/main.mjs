@@ -42,6 +42,7 @@ let helpWindow = null;
 let queueSwitchDialogWindow = null;
 /** IPC channel for queue-switch modal; use invoke/handle so responses are routed reliably. */
 const QUEUE_SWITCH_DIALOG_IPC_CHANNEL = "queue-switch-dialog-response";
+let pendingProjectOpenPath = null;
 
 app.commandLine.appendSwitch("js-flags", "--maglev --no-use-osr");
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
@@ -108,6 +109,29 @@ function getHelpWindowBounds() {
 let mediaWindow = null;
 let windowBounds = measurePerformance("Getting window bounds", getWindowBounds);
 let win = null;
+
+function isProjectFilePath(filePath) {
+  return (
+    typeof filePath === "string" &&
+    /\.(emproj|zip)$/i.test(filePath)
+  );
+}
+
+function firstProjectPathFromArgv(argv) {
+  if (!Array.isArray(argv)) return null;
+  for (const arg of argv) {
+    if (isProjectFilePath(arg)) return arg;
+  }
+  return null;
+}
+
+function dispatchProjectOpenPath(filePath) {
+  if (!isProjectFilePath(filePath)) return;
+  pendingProjectOpenPath = filePath;
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send("open-project-path", filePath);
+  }
+}
 
 function saveWindowBounds(bounds) {
   settings.set("windowBounds", bounds).catch((error) => {
@@ -214,6 +238,11 @@ function createWindow() {
   }
 
   win.webContents.on("did-finish-load", lateInit);
+  win.webContents.on("did-finish-load", () => {
+    if (pendingProjectOpenPath) {
+      win.webContents.send("open-project-path", pendingProjectOpenPath);
+    }
+  });
   win.on("maximize", handleMaximizeChange.bind(null, true));
   win.on("unmaximize", handleMaximizeChange.bind(null, false));
 
@@ -1747,6 +1776,29 @@ function setIPC() {
 
 app.once("browser-window-created", setIPC);
 
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+    const projectPath = firstProjectPathFromArgv(argv);
+    if (projectPath) {
+      dispatchProjectOpenPath(projectPath);
+    }
+  });
+}
+
+app.on("open-file", (event, filePath) => {
+  event.preventDefault();
+  if (isProjectFilePath(filePath)) {
+    dispatchProjectOpenPath(filePath);
+  }
+});
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
@@ -1760,6 +1812,10 @@ app.on("activate", () => {
 });
 
 app.whenReady().then(async () => {
+  const startupProjectPath = firstProjectPathFromArgv(process.argv.slice(1));
+  if (startupProjectPath) {
+    pendingProjectOpenPath = startupProjectPath;
+  }
   // The main UI enables COOP + COEP (`require-corp`) for high-resolution timers /
   // SharedArrayBuffer; that policy blocks cross-origin XHR from hls.js to
   // `*.googlevideo.com` because those responses do not opt into CORP.

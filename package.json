@@ -51,7 +51,15 @@
       "target": [
         "nsis"
       ],
-      "icon": "src/icon.png"
+      "icon": "src/icon.png",
+      "fileAssociations": [
+        {
+          "ext": "emproj",
+          "name": "EMS Project",
+          "description": "EMS Media System Project",
+          "role": "Editor"
+        }
+      ]
     },
     "linux": {
       "target": [

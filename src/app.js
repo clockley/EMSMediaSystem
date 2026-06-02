@@ -1931,11 +1931,9 @@ async function refreshMissingFlagsAndWarn() {
   }
   renderQueue();
   if (missingFiles.length > 0) {
-    try {
-      await invoke("show-missing-project-files-dialog", { missingFiles });
-    } catch (err) {
-      console.error("Failed to show missing-files dialog:", err);
-    }
+    void invoke("show-missing-project-files-dialog", { missingFiles }).catch(
+      (err) => console.error("Failed to show missing-files dialog:", err),
+    );
   }
 }
 
@@ -1943,20 +1941,25 @@ async function openProjectDialog() {
   try {
     const res = await invoke("show-open-project-dialog");
     if (!res || res.canceled || !res.filePaths?.length) return;
-    const filePath = res.filePaths[0];
-    const project = await invoke("read-project-file", filePath);
-    const parsed = JSON.parse(project.data);
-    if (!applyProjectStateSnapshot(parsed)) {
-      throw new Error("Project does not contain a valid queue.");
-    }
-    await refreshMissingFlagsAndWarn();
-    currentProjectPath = filePath;
-    scheduleAutosaveProjectState();
-    showGnomeToast("Project opened");
+    await openProjectByPath(res.filePaths[0]);
   } catch (err) {
     console.error("Failed to open project:", err);
     showGnomeToast("Failed to open project");
   }
+}
+
+async function openProjectByPath(filePath) {
+  if (typeof filePath !== "string" || filePath.length === 0) return false;
+  const project = await invoke("read-project-file", filePath);
+  const parsed = JSON.parse(project.data);
+  if (!applyProjectStateSnapshot(parsed)) {
+    throw new Error("Project does not contain a valid queue.");
+  }
+  await refreshMissingFlagsAndWarn();
+  currentProjectPath = filePath;
+  scheduleAutosaveProjectState();
+  showGnomeToast("Project opened");
+  return true;
 }
 
 async function saveProjectAsDialog() {
@@ -2059,6 +2062,17 @@ async function extractAndFilterDroppedMediaPaths(dataTransfer) {
     console.error("filter-media-drop-paths failed:", err);
     return [];
   }
+}
+
+function firstDroppedProjectPath(dataTransfer) {
+  if (!dataTransfer?.files?.length) return null;
+  for (const file of dataTransfer.files) {
+    const p = getPathForFile(file);
+    if (typeof p === "string" && /\.(emproj|zip)$/i.test(p)) {
+      return p;
+    }
+  }
+  return null;
 }
 
 function applyDroppedMediaPaths(paths) {
@@ -2492,6 +2506,16 @@ function installMediaQueueListDelegation() {
       list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
         el.classList.remove("queue-item-drag-over");
       });
+      const droppedProject = firstDroppedProjectPath(e.dataTransfer);
+      if (droppedProject) {
+        try {
+          await openProjectByPath(droppedProject);
+        } catch (err) {
+          console.error("Failed to open dropped project:", err);
+          showGnomeToast("Failed to open project");
+        }
+        return;
+      }
       const paths = await extractAndFilterDroppedMediaPaths(e.dataTransfer);
       applyDroppedMediaPaths(paths);
       return;
@@ -5699,6 +5723,14 @@ function installIPCHandler() {
   });
   on("media-seek", handleMediaseek);
   on("window-maximized", handleWindowMax);
+  on("open-project-path", async (_event, filePath) => {
+    try {
+      await openProjectByPath(filePath);
+    } catch (err) {
+      console.error("Failed to open project from launcher:", err);
+      showGnomeToast("Failed to open project");
+    }
+  });
 }
 
 async function handleMediaWindowClosed(event, id) {
@@ -8291,6 +8323,16 @@ async function loadOpMode(mode) {
           (event.dataTransfer?.types &&
             Array.from(event.dataTransfer.types).includes("Files"));
         if (!hasOSFiles) return;
+        const droppedProject = firstDroppedProjectPath(event.dataTransfer);
+        if (droppedProject) {
+          try {
+            await openProjectByPath(droppedProject);
+          } catch (err) {
+            console.error("Failed to open dropped project:", err);
+            showGnomeToast("Failed to open project");
+          }
+          return;
+        }
         const paths = await extractAndFilterDroppedMediaPaths(
           event.dataTransfer,
         );
