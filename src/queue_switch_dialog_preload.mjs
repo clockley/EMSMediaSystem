@@ -11,10 +11,7 @@ import { contextBridge, ipcRenderer } from "electron/renderer";
 const QUEUE_SWITCH_DIALOG_IPC_CHANNEL = "queue-switch-dialog-response";
 
 function respond(accepted) {
-  return ipcRenderer.invoke(
-    QUEUE_SWITCH_DIALOG_IPC_CHANNEL,
-    accepted === true,
-  );
+  ipcRenderer.send(QUEUE_SWITCH_DIALOG_IPC_CHANNEL, accepted === true);
 }
 
 contextBridge.exposeInMainWorld("queueSwitchDialog", { respond });
@@ -33,15 +30,30 @@ function wireDialogButtons() {
   }
   queueSwitchDialogButtonsWired = true;
 
-  cancel.addEventListener("click", () => {
-    void respond(false);
-  });
-  confirm.addEventListener("click", () => {
-    void respond(true);
-  });
-  closeBtn?.addEventListener("click", () => {
-    void respond(false);
-  });
+  const addResponseHandlers = (element, accepted) => {
+    let responded = false;
+    const handleResponse = (event) => {
+      if (
+        responded ||
+        (typeof event.button === "number" && event.button !== 0)
+      ) {
+        return;
+      }
+      responded = true;
+      event.preventDefault();
+      event.stopPropagation();
+      respond(accepted);
+    };
+    element.addEventListener("pointerup", handleResponse, { capture: true });
+    element.addEventListener("mouseup", handleResponse, { capture: true });
+    element.addEventListener("click", handleResponse, { capture: true });
+  };
+
+  addResponseHandlers(cancel, false);
+  addResponseHandlers(confirm, true);
+  if (closeBtn) {
+    addResponseHandlers(closeBtn, false);
+  }
 }
 
 function wireDialogButtonsWhenReady() {

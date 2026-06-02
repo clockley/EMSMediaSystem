@@ -42,8 +42,9 @@ let wasDisplayDisconnected = false;
 let aboutWindow = null;
 let helpWindow = null;
 let queueSwitchDialogWindow = null;
-/** IPC channel for queue-switch modal; use invoke/handle so responses are routed reliably. */
+/** IPC channel for queue-switch modal responses. */
 const QUEUE_SWITCH_DIALOG_IPC_CHANNEL = "queue-switch-dialog-response";
+let queueSwitchDialogResponseListener = null;
 let pendingProjectOpenPath = null;
 
 app.commandLine.appendSwitch("js-flags", "--maglev --no-use-osr");
@@ -1017,6 +1018,13 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
       } catch {
         /* no handler registered */
       }
+      if (queueSwitchDialogResponseListener) {
+        ipcMain.removeListener(
+          QUEUE_SWITCH_DIALOG_IPC_CHANNEL,
+          queueSwitchDialogResponseListener,
+        );
+        queueSwitchDialogResponseListener = null;
+      }
       resolve(accepted === true);
     };
 
@@ -1043,6 +1051,14 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
     } catch {
       /* channel had no handler */
     }
+    if (queueSwitchDialogResponseListener) {
+      ipcMain.removeListener(
+        QUEUE_SWITCH_DIALOG_IPC_CHANNEL,
+        queueSwitchDialogResponseListener,
+      );
+    }
+    queueSwitchDialogResponseListener = onResponse;
+    ipcMain.on(QUEUE_SWITCH_DIALOG_IPC_CHANNEL, onResponse);
     ipcMain.handle(QUEUE_SWITCH_DIALOG_IPC_CHANNEL, onResponse);
 
     queueSwitchDialogWindow = new BrowserWindow({
@@ -1695,6 +1711,10 @@ async function scoreRelinkCandidate(item, candidatePath, expectedName) {
     path: candidatePath,
     score,
     sizeBytes: info.size,
+    modifiedTime:
+      info.mtime instanceof Date && Number.isFinite(info.mtime.getTime())
+        ? info.mtime.toISOString()
+        : undefined,
     sha256: sha256 || undefined,
   };
 }
@@ -1762,6 +1782,7 @@ async function handleRelinkMissingMedia(_, payload = {}) {
       path: scored[0].path,
       originalPath: item.originalPath,
       sizeBytes: scored[0].sizeBytes,
+      modifiedTime: scored[0].modifiedTime,
       sha256: scored[0].sha256 || item.sha256,
     });
   }
