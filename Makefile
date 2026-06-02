@@ -74,12 +74,13 @@ else
   JS_FILES := $(shell find ./src \( $(EXCLUDES) \) -prune -o -type f \( -name "*.js" -o -name "*.mjs" \) ! -name "*.min.*" -print)
 endif
 
+JS_FILES := $(patsubst ./%,%,$(JS_FILES))
+
 # Corresponding destination files in derived directory.
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
 IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
 DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all images
 
-# --- Color Definitions (Unchanged) ---
 ifeq ($(NO_COLOR), 1)
   COLOR_GREEN =
   COLOR_BLUE =
@@ -173,19 +174,14 @@ $(CSS_MIN_MAP): $(CSS_SRC)
 ifeq ($(WINDOWS), 1)
   $(DERIVED_DIR)/%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
-	@echo "$(COLOR_BLUE)Building production HTML for $< with inlined CSS...$(COLOR_RESET)"
-	powershell -NoProfile -ExecutionPolicy Bypass -File build-scripts/embed-css.ps1 -HtmlFile "$<" -CssFile "$(CSS_SRC)" -OutputFile "$@" -CssMapFile "$(CSS_MIN_MAP)"
+	@echo "$(COLOR_BLUE)Building production HTML for $< with pruned inlined CSS...$(COLOR_RESET)"
+	@$(NODE) build-scripts/inline-pruned-css.cjs --html "$<" --css "$(CSS_SRC)" --out "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Created $@$(COLOR_RESET)"
 else
   $(DERIVED_DIR)/%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP)
 	@mkdir -p $(dir $@)
-	@echo "$(COLOR_BLUE)Building production HTML for $< with inlined CSS...$(COLOR_RESET)"
-	@$(NODE) -e "const csso = require('csso'); const fs = require('fs'); const css = fs.readFileSync('$(CSS_SRC)', 'utf8'); const result = csso.minify(css, { sourceMap: true, filename: '$(CSS_SRC)' }); console.log(result.css + '\n/*# sourceMappingURL=$(CSS_MIN_MAP) */');" | \
-	awk -v pat="$(notdir $(CSS_SRC))" ' \
-		BEGIN { css_line_count = 0; while ((getline line < "-") > 0) css[css_line_count++] = line } \
-		FNR==1 { close("-") } \
-		{ if ($$0 ~ "<link" && $$0 ~ pat) { print "<style>"; for (i = 0; i < css_line_count; ++i) print css[i]; print "</style>"; } else print $$0; }' $< | \
-	$(HTML_MINIFIER) --collapse-whitespace --remove-comments --minify-css false --minify-js true > $@
+	@echo "$(COLOR_BLUE)Building production HTML for $< with pruned inlined CSS...$(COLOR_RESET)"
+	@$(NODE) build-scripts/inline-pruned-css.cjs --html "$<" --css "$(CSS_SRC)" --out "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Created $@$(COLOR_RESET)"
 endif
 
@@ -200,6 +196,8 @@ ifeq ($(WINDOWS), 1)
 else
 	@mkdir -p $(dir $@)
 endif
+	@echo "$(COLOR_YELLOW)Checking $<$(COLOR_RESET)"
+	@$(NODE) --check "$<"
 	@echo "$(COLOR_YELLOW)Minifying $< → $@$(COLOR_RESET)"
 	@$(TERSER) "$<" \
 		--compress \
@@ -213,6 +211,8 @@ ifeq ($(WINDOWS), 1)
 else
 	@mkdir -p $(dir $@)
 endif
+	@echo "$(COLOR_YELLOW)Checking $<$(COLOR_RESET)"
+	@$(NODE) --check "$<"
 	@echo "$(COLOR_YELLOW)Minifying $< → $@$(COLOR_RESET)"
 	@$(TERSER) "$<" \
 		--compress \
