@@ -246,11 +246,6 @@ function shouldAutoTransitionToIndex(nextIndex) {
   if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= mediaQueue.length) {
     return false;
   }
-  const cue = currentPreviewCue();
-  // Explicit cue to a different item always wins (intentional operator action).
-  if (cue && cue.index === nextIndex && cue.index !== currentQueueIndex) {
-    return true;
-  }
   return (
     isQueueItemAutoAdvanceEnabled(currentQueueIndex) &&
     isQueueItemAutoAdvanceEnabled(nextIndex)
@@ -258,7 +253,15 @@ function shouldAutoTransitionToIndex(nextIndex) {
 }
 
 function shouldAdvanceAfterCurrentItemEnds() {
-  return shouldAutoTransitionToIndex(currentQueueIndex + 1);
+  return shouldAutoTransitionToIndex(nextQueueBoundaryIndex());
+}
+
+function nextQueueBoundaryIndex() {
+  const cue = currentPreviewCue();
+  if (cue && cue.index !== currentQueueIndex) return cue.index;
+  const nextIndex = currentQueueIndex + 1;
+  if (nextIndex >= 0 && nextIndex < mediaQueue.length) return nextIndex;
+  return mediaQueue.length > 0 ? 0 : -1;
 }
 
 function isPlayInterruptedError(error) {
@@ -3242,6 +3245,50 @@ async function stopQueuePresentationUserClosed() {
   syncPreviewMediaAfterPresentationStateChange();
 }
 
+async function pauseQueuePresentationAtBoundary(index) {
+  stopLiveAudioPresentation();
+  mediaPlaybackEndedPending = false;
+  pendingQueueSwitchIndex = null;
+  pendingQueueSwitchStartTime = 0;
+  isQueuePlaying = false;
+  isPlaying = false;
+  isActiveMediaWindowCache = false;
+  userStopPresentationPending = false;
+  audioOnlyFile = false;
+  playingMediaAudioOnly = false;
+  masterPauseState = false;
+  textNode.data = "";
+  removeFilenameFromTitlebar();
+
+  if (index >= 0 && index < mediaQueue.length) {
+    currentQueueIndex = index;
+    if (previewCueIndex === index) {
+      previewCueIndex = -1;
+      pendingCueVolume = null;
+      cueVolumeDirty = false;
+      stopPreviewAudioCue();
+      clearVideoPreviewCueOverlay();
+      syncGtkSliderToCueState();
+    }
+    const item = mediaQueue[index];
+    await loadQueueItemIntoControlWindow(item, {
+      preservePreviewSeek: false,
+      startTime:
+        Number.isFinite(item?.cueStartTime) && item.cueStartTime > 0
+          ? item.cueStartTime
+          : 0,
+    });
+  } else {
+    currentQueueIndex = -1;
+  }
+
+  renderQueue();
+  updateDynUI();
+  updatePlayButtonOnMediaWindow();
+  saveMediaFile();
+  syncPreviewMediaAfterPresentationStateChange();
+}
+
 function updateQueueFileLabel(name) {
   const fileNameSpan = document.querySelector(".file-input-label span");
   if (fileNameSpan) {
@@ -3474,6 +3521,10 @@ async function advanceQueueAfterMediaWindowClosed() {
 
     const cue = currentPreviewCue();
     if (cue) {
+      if (!shouldAutoTransitionToIndex(cue.index)) {
+        await pauseQueuePresentationAtBoundary(cue.index);
+        return;
+      }
       currentQueueIndex = cue.index;
       renderQueue();
       await new Promise((r) => setTimeout(r, 100));
@@ -3502,6 +3553,10 @@ async function advanceQueueAfterMediaWindowClosed() {
             ? item.cueStartTime
             : 0,
       });
+      return;
+    }
+    if (nextIndex < mediaQueue.length) {
+      await pauseQueuePresentationAtBoundary(nextIndex);
       return;
     }
 
@@ -5986,21 +6041,7 @@ async function handleMediaWindowClosed(event, id) {
       if (shouldAdvanceAfterCurrentItemEnds()) {
         await advanceQueueAfterMediaWindowClosed();
       } else {
-        // Auto-advance is off but the item ended naturally. Advance the index
-        // so the next Present press starts from the next item rather than
-        // replaying the one that just finished. If already at the end of the
-        // queue, wrap back to the first item so the queue is ready to replay
-        // from the top — consistent with what advanceQueueAfterMediaWindowClosed
-        // does when it exhausts the queue.
-        if (
-          currentQueueIndex >= 0 &&
-          currentQueueIndex + 1 < mediaQueue.length
-        ) {
-          currentQueueIndex++;
-        } else if (mediaQueue.length > 0) {
-          currentQueueIndex = 0;
-        }
-        await stopQueuePresentationUserClosed();
+        await pauseQueuePresentationAtBoundary(nextQueueBoundaryIndex());
       }
     } else {
       await stopQueuePresentationUserClosed();
@@ -8203,15 +8244,7 @@ function endLocalMedia() {
         console.error("Queue advance after audio-only end failed:", err),
       );
     } else {
-      if (
-        currentQueueIndex >= 0 &&
-        currentQueueIndex + 1 < mediaQueue.length
-      ) {
-        currentQueueIndex++;
-      } else if (mediaQueue.length > 0) {
-        currentQueueIndex = 0;
-      }
-      void stopQueuePresentationUserClosed().catch((err) =>
+      void pauseQueuePresentationAtBoundary(nextQueueBoundaryIndex()).catch((err) =>
         console.error("Queue stop after audio-only end failed:", err),
       );
     }
@@ -8611,15 +8644,7 @@ async function endLiveAudioPresentation() {
         await advanceQueueAfterMediaWindowClosed();
         return;
       }
-      if (
-        currentQueueIndex >= 0 &&
-        currentQueueIndex + 1 < mediaQueue.length
-      ) {
-        currentQueueIndex++;
-      } else if (mediaQueue.length > 0) {
-        currentQueueIndex = 0;
-      }
-      await stopQueuePresentationUserClosed();
+      await pauseQueuePresentationAtBoundary(nextQueueBoundaryIndex());
       return;
     }
   } catch (err) {
