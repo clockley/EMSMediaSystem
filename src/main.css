@@ -1487,7 +1487,7 @@ ul {
     justify-content: center;
     padding: 24px;
     pointer-events: none;
-    z-index: 3;
+    z-index: 6;
 }
 
 .preview-empty-state[hidden] {

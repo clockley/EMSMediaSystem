@@ -941,6 +941,57 @@ function restoreNonPptxPreviewSurface(options = {}) {
   }
 }
 
+function resetPreviewSurfaceToEmptyState() {
+  stopLiveAudioPresentation();
+  stopPreviewAudioCue();
+  clearVideoPreviewCueOverlay();
+  hidePptxPreview({ restoreVideoPreview: true });
+  resetPreviewWarningState();
+
+  const previewImg = document.querySelector(".video-wrapper img#preview");
+  if (previewImg) {
+    previewImg.remove();
+    previewImg.src = "";
+  }
+
+  const previewVideo = document.querySelector(".video-wrapper video#preview");
+  if (previewVideo) {
+    video = previewVideo;
+    try {
+      previewVideo.pause();
+      previewVideo.removeAttribute("src");
+      previewVideo.removeAttribute("poster");
+      previewVideo.src = "";
+      previewVideo.load();
+    } catch (err) {
+      console.error("Failed to reset preview surface:", err);
+    }
+    previewVideo.hidden = false;
+    previewVideo.style.display = "";
+    previewVideo.style.visibility = "";
+  }
+
+  mediaFile = "";
+  prePathname = "";
+  startTime = 0;
+  targetTime = 0;
+  audioOnlyFile = false;
+  playingMediaAudioOnly = false;
+  localTimeStampUpdateIsRunning = false;
+  mediaPlayerInputState.clear();
+  textNode.data = "";
+  pendingCueVolume = null;
+  cueVolumeDirty = false;
+  setMediaCountdownOverlayVisible(false);
+  document
+    .getElementById("customControls")
+    ?.style.setProperty("visibility", "hidden");
+  removeFilenameFromTitlebar();
+  syncGtkSliderToCueState();
+  updatePreviewCueUI();
+  updatePreviewEmptyState();
+}
+
 function currentPptxPreviewFilePath() {
   if (mediaFile && pptxRegex.test(mediaFile)) return mediaFile;
   const liveItem = currentLiveQueueItem();
@@ -1129,6 +1180,8 @@ function createQueueEntry(filePath) {
     name: queueBasename(filePath),
     type,
     missing: false,
+    originalPath: filePath,
+    originalName: queueBasename(filePath),
     autoAdvance: true,
     cueStartTime: 0,
     pptxSlideIndex: type === "pptx" ? -1 : undefined,
@@ -1703,9 +1756,16 @@ function updatePreviewEmptyState() {
     return;
   }
   const previewEl = document.getElementById("preview");
-  const hasPreviewSrc = !!(previewEl && previewEl.src && previewEl.src !== "");
-  const hasImage = !!document.querySelector(".video-wrapper img");
-  const empty = mediaQueue.length === 0 && !hasPreviewSrc && !hasImage;
+  const hasPreviewSrc = Boolean(
+    previewEl?.matches?.("video") &&
+      (
+        (previewEl.getAttribute("src") || "").length > 0 ||
+        (previewEl.getAttribute("poster") || "").length > 0
+      ),
+  );
+  const hasImage = !!document.querySelector(".video-wrapper img#preview");
+  const pptxVisible = isPptxPreviewVisible();
+  const empty = mediaQueue.length === 0 && !hasPreviewSrc && !hasImage && !pptxVisible;
   overlay.hidden = !empty;
 }
 
@@ -1837,6 +1897,16 @@ function buildProjectStateSnapshot() {
       name: item.name,
       type: item.type,
       missing: item.missing === true,
+      originalPath:
+        typeof item.originalPath === "string" && item.originalPath.length > 0
+          ? item.originalPath
+          : item.path,
+      originalName:
+        typeof item.originalName === "string" && item.originalName.length > 0
+          ? item.originalName
+          : queueBasename(item.path),
+      sha256: typeof item.sha256 === "string" ? item.sha256 : undefined,
+      sizeBytes: Number.isFinite(item.sizeBytes) ? item.sizeBytes : undefined,
       autoAdvance: item.autoAdvance !== false,
       cueStartTime: Number.isFinite(item.cueStartTime) ? item.cueStartTime : 0,
       cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
@@ -1860,6 +1930,16 @@ function applyProjectStateSnapshot(state) {
           : queueBasename(x.path),
       type: classifyQueueMediaType(x.path),
       missing: x.missing === true,
+      originalPath:
+        typeof x.originalPath === "string" && x.originalPath.length > 0
+          ? x.originalPath
+          : x.path,
+      originalName:
+        typeof x.originalName === "string" && x.originalName.length > 0
+          ? x.originalName
+          : queueBasename(x.originalPath || x.path),
+      sha256: typeof x.sha256 === "string" ? x.sha256 : undefined,
+      sizeBytes: Number.isFinite(x.sizeBytes) ? x.sizeBytes : undefined,
       autoAdvance: x.autoAdvance !== false,
       cueStartTime: Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
       cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
@@ -1911,7 +1991,8 @@ function scheduleAutosaveProjectState() {
   }, AUTOSAVE_WRITE_DEBOUNCE_MS);
 }
 
-async function refreshMissingFlagsAndWarn() {
+async function refreshMissingFlagsAndWarn(opts = {}) {
+  const warn = opts?.warn !== false;
   if (!Array.isArray(mediaQueue) || mediaQueue.length === 0) return;
   const paths = mediaQueue.map((item) => item.path);
   let probe = [];
@@ -1930,10 +2011,78 @@ async function refreshMissingFlagsAndWarn() {
     }
   }
   renderQueue();
-  if (missingFiles.length > 0) {
+  if (warn && missingFiles.length > 0) {
     void invoke("show-missing-project-files-dialog", { missingFiles }).catch(
       (err) => console.error("Failed to show missing-files dialog:", err),
     );
+  }
+}
+
+async function relinkMissingFilesDialog() {
+  const missingItems = mediaQueue
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item?.missing === true);
+  if (missingItems.length === 0) {
+    showGnomeToast("No missing files to relink");
+    return false;
+  }
+
+  try {
+    const folder = await invoke("show-relink-folder-dialog");
+    if (!folder || folder.canceled || !folder.filePath) return false;
+    const result = await invoke("relink-missing-media", {
+      searchRoot: folder.filePath,
+      missingItems: missingItems.map(({ item, index }) => ({
+        index,
+        path: item.path,
+        name: item.name,
+        originalPath: item.originalPath || item.path,
+        originalName: item.originalName || queueBasename(item.originalPath || item.path),
+        sha256: item.sha256,
+        sizeBytes: item.sizeBytes,
+      })),
+    });
+
+    const matches = Array.isArray(result?.matches) ? result.matches : [];
+    for (const match of matches) {
+      if (!Number.isInteger(match.index) || match.index < 0 || match.index >= mediaQueue.length) {
+        continue;
+      }
+      const item = mediaQueue[match.index];
+      if (!item) continue;
+      item.path = match.path;
+      item.type = classifyQueueMediaType(match.path);
+      item.missing = false;
+      item.originalPath = item.originalPath || match.originalPath || match.path;
+      item.originalName = item.originalName || queueBasename(item.originalPath || match.path);
+      if (Number.isFinite(match.sizeBytes)) item.sizeBytes = match.sizeBytes;
+      if (typeof match.sha256 === "string") item.sha256 = match.sha256;
+      if (!item.name || item.name === queueBasename(item.originalPath || "")) {
+        item.name = queueBasename(match.path);
+      }
+    }
+
+    if (matches.length > 0) {
+      renderQueue();
+      await refreshMissingFlagsAndWarn({ warn: false });
+      scheduleAutosaveProjectState();
+    }
+    await invoke("show-relink-summary-dialog", {
+      searchedFolder: folder.filePath,
+      matchedCount: matches.length,
+      totalCount: missingItems.length,
+      unresolved: Array.isArray(result?.unresolved) ? result.unresolved : [],
+    });
+    showGnomeToast(
+      matches.length === missingItems.length
+        ? "Missing files relinked"
+        : `Relinked ${matches.length} of ${missingItems.length} missing files`,
+    );
+    return matches.length > 0;
+  } catch (err) {
+    console.error("Failed to relink missing files:", err);
+    showGnomeToast("Failed to relink files");
+    return false;
   }
 }
 
@@ -2098,6 +2247,7 @@ function clearMediaQueue() {
   // that previously hosted an image cue would leave the overlay hidden
   // even after the operator dragged in a new audio/video clip.
   restoreCountdownForLiveMedia();
+  resetPreviewSurfaceToEmptyState();
   renderQueue();
 }
 
@@ -2323,14 +2473,23 @@ async function onClearMediaQueueClick() {
 
 function removeFromQueue(index) {
   if (index < 0 || index >= mediaQueue.length) return;
-  if (isQueuePlaying && index === currentQueueIndex) {
+  const removedCurrentItem = index === currentQueueIndex;
+  if (removedCurrentItem && isQueuePresentationActive()) {
     showGnomeToast("Stop the presentation to remove the current item");
     return;
   }
   invalidateQueueUndoToastAfterMutation();
   mediaQueue.splice(index, 1);
   if (currentQueueIndex > index) currentQueueIndex--;
-  else if (currentQueueIndex >= mediaQueue.length) currentQueueIndex = -1;
+  else if (removedCurrentItem) {
+    if (mediaQueue.length === 0) {
+      currentQueueIndex = -1;
+    } else if (index >= mediaQueue.length) {
+      currentQueueIndex = mediaQueue.length - 1;
+    } else {
+      currentQueueIndex = index;
+    }
+  } else if (currentQueueIndex >= mediaQueue.length) currentQueueIndex = -1;
   if (previewCueIndex === index) {
     previewCueIndex = -1;
     stopPreviewAudioCue();
@@ -2347,12 +2506,25 @@ function removeFromQueue(index) {
     // the still-active cue after the surrounding queue shrinks.
     if (previewCueVideoIndex > index) previewCueVideoIndex--;
   } else if (previewCueIndex >= mediaQueue.length) previewCueIndex = -1;
+  if (mediaQueue.length === 0) {
+    resetPreviewSurfaceToEmptyState();
+  }
   renderQueue();
-  if (currentMode === MEDIAPLAYER && mediaQueue.length > 0 && !isPlaying) {
-    void loadQueueItemIntoControlWindow(mediaQueue[0]).catch((err) =>
-      console.error(err),
+  if (
+    removedCurrentItem &&
+    currentMode === MEDIAPLAYER &&
+    mediaQueue.length > 0 &&
+    !isQueuePresentationActive()
+  ) {
+    const previewIndex =
+      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+        ? currentQueueIndex
+        : 0;
+    void loadQueueItemIntoControlWindow(mediaQueue[previewIndex]).catch(
+      (err) => console.error(err),
     );
   }
+  saveMediaFile();
 }
 
 function toggleQueueItemAutoAdvance(index) {
@@ -8257,6 +8429,9 @@ async function loadOpMode(mode) {
       document
         .getElementById("menuExportProject")
         ?.addEventListener("click", () => void exportPortableProjectDialog());
+      document
+        .getElementById("menuRelinkMissingFiles")
+        ?.addEventListener("click", () => void relinkMissingFilesDialog());
 
       // Window control functionality
       const minimizeButton = document.querySelector(".window-control.minimize");

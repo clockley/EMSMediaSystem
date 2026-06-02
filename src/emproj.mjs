@@ -28,6 +28,11 @@ function normalizeArchivePath(p) {
   return String(p || "").replace(/\\/g, "/");
 }
 
+function basenameAny(p) {
+  const parts = String(p || "").split(/[/\\]/);
+  return parts[parts.length - 1] || String(p || "");
+}
+
 function assertSafeArchivePath(p) {
   const normalized = normalizeArchivePath(p);
   if (
@@ -108,13 +113,29 @@ function makeId(prefix, n) {
   return `${prefix}_${String(n).padStart(4, "0")}`;
 }
 
-function queueItemFromSequenceItem(item, resolvedPath) {
+function queueItemFromSequenceItem(item, resolvedPath, asset = null) {
   const kind = classifyKindFromPath(resolvedPath);
+  const originalPath =
+    typeof asset?.originalPath === "string" && asset.originalPath.length > 0
+      ? asset.originalPath
+      : typeof item?.source?.path === "string"
+        ? item.source.path
+        : undefined;
+  const originalName =
+    typeof asset?.originalName === "string" && asset.originalName.length > 0
+      ? asset.originalName
+      : originalPath
+        ? basenameAny(originalPath)
+        : basenameAny(resolvedPath);
   return {
     path: resolvedPath,
-    name: item?.label || path.basename(resolvedPath),
+    name: item?.label || basenameAny(resolvedPath),
     type: kind === "presentation" ? "pptx" : kind,
     missing: item?.source?.kind === "missing",
+    originalPath,
+    originalName,
+    sha256: typeof asset?.sha256 === "string" ? asset.sha256 : undefined,
+    sizeBytes: Number.isFinite(asset?.sizeBytes) ? asset.sizeBytes : undefined,
     autoAdvance: item?.playback?.autoAdvance !== false,
     cueStartTime: Number.isFinite(item?.playback?.startTime) ? item.playback.startTime : 0,
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
@@ -172,6 +193,23 @@ export async function loadEmprojSnapshot(projectPath) {
   if (!queueJsonRaw) throw new Error("Project missing queue.json");
   const queueJson = JSON.parse(queueJsonRaw.toString("utf8"));
   const sequence = Array.isArray(queueJson.sequence) ? queueJson.sequence : [];
+  let assetsJson = { assets: [] };
+  const assetsJsonRaw = rootFiles.get("assets.json");
+  if (assetsJsonRaw) {
+    try {
+      assetsJson = JSON.parse(assetsJsonRaw.toString("utf8"));
+    } catch {
+      assetsJson = { assets: [] };
+    }
+  }
+  const assets = Array.isArray(assetsJson.assets) ? assetsJson.assets : [];
+  const assetById = new Map();
+  const assetByPath = new Map();
+  for (const asset of assets) {
+    if (!asset || typeof asset !== "object") continue;
+    if (typeof asset.id === "string") assetById.set(asset.id, asset);
+    if (typeof asset.path === "string") assetByPath.set(asset.path, asset);
+  }
 
   const mediaQueue = (
     await Promise.all(sequence.map(async (item) => {
@@ -183,7 +221,11 @@ export async function loadEmprojSnapshot(projectPath) {
       if (!relPath) return null;
       const extractedPath = extractedMediaPaths.get(relPath);
       const resolvedPath = extractedPath || relPath;
-      const queueItem = queueItemFromSequenceItem(item, resolvedPath);
+      const asset =
+        (typeof item.assetId === "string" && assetById.get(item.assetId)) ||
+        assetByPath.get(relPath) ||
+        null;
+      const queueItem = queueItemFromSequenceItem(item, resolvedPath, asset);
       if (!extractedPath && item?.source?.kind !== "bundled") {
         try {
           const fsPath = /^file:\/\//i.test(resolvedPath)
@@ -253,46 +295,85 @@ export async function saveEmprojSnapshot(
     let sourceKind = "external";
     let bundledPath = normalizedPath;
     let assetId = "";
-    if (packMedia && !isExternalUrl) {
+    let assetSize = Number.isFinite(item.sizeBytes) ? item.sizeBytes : undefined;
+    let assetSha = typeof item.sha256 === "string" ? item.sha256 : undefined;
+    let assetMissing = item.missing === true;
+    let assetRegistered = false;
+    if (!isExternalUrl) {
       try {
         const info = await stat(normalizedPath);
         if (info.isFile()) {
-          sourceKind = "bundled";
-          const ext = path.extname(normalizedPath).toLowerCase();
+          assetSize = info.size;
+          assetMissing = false;
+          if (packMedia) sourceKind = "bundled";
           const kind = classifyKindFromPath(normalizedPath);
-          const folder = contentLocationForKind(kind);
           const existing = fileIndex.get(normalizedPath);
           if (existing) {
             bundledPath = existing.bundledPath;
             assetId = existing.assetId;
+            assetRegistered = true;
           } else {
+            const ext = path.extname(normalizedPath).toLowerCase();
+            const folder = contentLocationForKind(kind);
             const safeBase = path.basename(normalizedPath).replace(/[^A-Za-z0-9._-]/g, "_");
-            const bundledName = `${String(fileIndex.size + 1).padStart(4, "0")}_${safeBase}`;
-            bundledPath = `${folder}/${bundledName}`;
             assetId = makeId("asset", fileIndex.size + 1);
+            if (packMedia) {
+              const bundledName = `${String(fileIndex.size + 1).padStart(4, "0")}_${safeBase}`;
+              bundledPath = `${folder}/${bundledName}`;
+              fileEntries.push({ realPath: normalizedPath, path: bundledPath, compress: false });
+              assetSha = await sha256File(normalizedPath);
+            }
             fileIndex.set(normalizedPath, { bundledPath, assetId });
-            fileEntries.push({ realPath: normalizedPath, path: bundledPath, compress: false });
-            const sha = await sha256File(normalizedPath);
             assets.push({
               id: assetId,
               kind,
-              path: bundledPath,
-              originalPath: normalizedPath,
-              originalName: path.basename(normalizedPath),
+              path: packMedia ? bundledPath : normalizedPath,
+              originalPath: item.originalPath || normalizedPath,
+              originalName: item.originalName || basenameAny(normalizedPath),
               mimeType: kind === "presentation"
                 ? (ext === ".pptx"
                     ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     : "application/pdf")
                 : undefined,
-              sha256: sha,
-              sizeBytes: info.size,
+              sha256: assetSha,
+              sizeBytes: assetSize,
               missingBehavior: "showPlaceholder",
               compatibilityWarnings: [],
             });
+            assetRegistered = true;
           }
         }
       } catch {
         sourceKind = "missing";
+        assetMissing = true;
+      }
+      if (!assetRegistered) {
+        const kind = classifyKindFromPath(normalizedPath);
+        const ext = path.extname(normalizedPath).toLowerCase();
+        const existing = fileIndex.get(normalizedPath);
+        if (existing) {
+          assetId = existing.assetId;
+          bundledPath = existing.bundledPath;
+        } else {
+            assetId = makeId("asset", fileIndex.size + 1);
+            fileIndex.set(normalizedPath, { bundledPath, assetId });
+            assets.push({
+              id: assetId,
+              kind,
+              path: normalizedPath,
+              originalPath: item.originalPath || normalizedPath,
+              originalName: item.originalName || basenameAny(normalizedPath),
+              mimeType: kind === "presentation"
+                ? (ext === ".pptx"
+                    ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    : "application/pdf")
+                : undefined,
+              sha256: assetSha,
+              sizeBytes: assetSize,
+              missingBehavior: "showPlaceholder",
+              compatibilityWarnings: assetMissing ? ["missing"] : [],
+            });
+          }
       }
     }
     itemCounter += 1;
@@ -300,7 +381,7 @@ export async function saveEmprojSnapshot(
     const isPresentation = kind === "presentation";
     queueSequence.push({
       id: makeId("item", itemCounter),
-      label: item.name || path.basename(sourcePath),
+      label: item.name || basenameAny(sourcePath),
       type: isPresentation ? "presentation" : "media",
       assetId: assetId || undefined,
       source: {
