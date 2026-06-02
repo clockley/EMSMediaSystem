@@ -3727,6 +3727,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
 async function trySlipstreamNextQueueItem() {
   const cue = currentPreviewCue();
   if (cue) {
+    if (!shouldAutoTransitionToIndex(cue.index)) {
+      return false;
+    }
     return slipstreamQueueItemAtIndex(cue.index, {
       startTime: cue.startTime,
       clearCue: true,
