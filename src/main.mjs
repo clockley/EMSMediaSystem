@@ -27,6 +27,8 @@ import {
   session,
   shell,
 } from "electron/main";
+import { createHash } from "crypto";
+import { createReadStream } from "fs";
 import { readdir, readFile, stat } from "fs/promises";
 import path from "path";
 import settings from "./settings.min.mjs";
@@ -1572,6 +1574,226 @@ async function handleShowMissingProjectFilesDialog(event, opts = {}) {
   return true;
 }
 
+async function handleShowRelinkFolderDialog(event) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, filePath: "" };
+  }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Relink Missing Files",
+    defaultPath: await getInitialMediaFolder(),
+    properties: ["openDirectory"],
+  });
+  if (result.canceled || !result.filePaths?.length) {
+    return { canceled: true, filePath: "" };
+  }
+  await rememberMediaFolder(result.filePaths[0]);
+  return { canceled: false, filePath: result.filePaths[0] };
+}
+
+function relinkOriginalName(item) {
+  const candidates = [
+    item?.originalName,
+    item?.originalPath,
+    item?.path,
+    item?.name,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || candidate.length === 0) continue;
+    const parts = candidate.split(/[/\\]/);
+    return parts[parts.length - 1] || candidate;
+  }
+  return "";
+}
+
+async function sha256FileForRelink(filePath) {
+  const hash = createHash("sha256");
+  const input = createReadStream(filePath);
+  input.on("data", (chunk) => hash.update(chunk));
+  await new Promise((resolve, reject) => {
+    input.on("end", resolve);
+    input.on("error", reject);
+  });
+  return hash.digest("hex");
+}
+
+async function findRelinkCandidateFiles(searchRoot, wantedNames) {
+  const candidatesByName = new Map();
+  const stack = [searchRoot];
+  let scannedFiles = 0;
+  const skipDirs = new Set([
+    ".git",
+    "node_modules",
+    "derived",
+    "dist",
+    "build",
+    ".cache",
+    ".config",
+  ]);
+
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries = [];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!skipDirs.has(entry.name)) stack.push(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      scannedFiles += 1;
+      const lowerName = entry.name.toLowerCase();
+      if (!wantedNames.has(lowerName)) continue;
+      const list = candidatesByName.get(lowerName) || [];
+      list.push(fullPath);
+      candidatesByName.set(lowerName, list);
+    }
+  }
+
+  return { candidatesByName, scannedFiles };
+}
+
+async function scoreRelinkCandidate(item, candidatePath, expectedName) {
+  let info;
+  try {
+    info = await stat(candidatePath);
+    if (!info.isFile()) return null;
+  } catch {
+    return null;
+  }
+
+  const expectedSize = Number.isFinite(item?.sizeBytes) ? item.sizeBytes : null;
+  if (expectedSize !== null && info.size !== expectedSize) {
+    return null;
+  }
+
+  let score = 100;
+  if (path.basename(candidatePath) === expectedName) score += 20;
+  if (expectedSize !== null) score += 80;
+
+  const expectedSha =
+    typeof item?.sha256 === "string" && /^[a-f0-9]{64}$/i.test(item.sha256)
+      ? item.sha256.toLowerCase()
+      : "";
+  let sha256 = "";
+  if (expectedSha) {
+    try {
+      sha256 = await sha256FileForRelink(candidatePath);
+    } catch {
+      return null;
+    }
+    if (sha256 !== expectedSha) return null;
+    score += 500;
+  }
+
+  return {
+    path: candidatePath,
+    score,
+    sizeBytes: info.size,
+    sha256: sha256 || undefined,
+  };
+}
+
+async function handleRelinkMissingMedia(_, payload = {}) {
+  const searchRoot = typeof payload?.searchRoot === "string" ? payload.searchRoot : "";
+  const missingItems = Array.isArray(payload?.missingItems) ? payload.missingItems : [];
+  if (!searchRoot || missingItems.length === 0) {
+    return { matches: [], unresolved: [] };
+  }
+
+  const wantedNames = new Set();
+  const itemNames = new Map();
+  for (const item of missingItems) {
+    const originalName = relinkOriginalName(item);
+    if (!originalName) continue;
+    const lowerName = originalName.toLowerCase();
+    wantedNames.add(lowerName);
+    itemNames.set(item.index, originalName);
+  }
+
+  const { candidatesByName } = await findRelinkCandidateFiles(searchRoot, wantedNames);
+  const matches = [];
+  const unresolved = [];
+
+  for (const item of missingItems) {
+    const originalName = itemNames.get(item.index) || relinkOriginalName(item);
+    const candidatePaths = candidatesByName.get(originalName.toLowerCase()) || [];
+    if (candidatePaths.length === 0) {
+      unresolved.push({
+        index: item.index,
+        name: originalName || item.name || item.path || "Unknown file",
+        reason: "not-found",
+      });
+      continue;
+    }
+
+    const scored = [];
+    for (const candidatePath of candidatePaths) {
+      const score = await scoreRelinkCandidate(item, candidatePath, originalName);
+      if (score) scored.push(score);
+    }
+    scored.sort((a, b) => b.score - a.score);
+
+    if (scored.length === 0) {
+      unresolved.push({
+        index: item.index,
+        name: originalName,
+        reason: "metadata-mismatch",
+      });
+      continue;
+    }
+    if (scored.length > 1 && scored[0].score === scored[1].score) {
+      unresolved.push({
+        index: item.index,
+        name: originalName,
+        reason: "ambiguous",
+        candidateCount: scored.length,
+      });
+      continue;
+    }
+
+    matches.push({
+      index: item.index,
+      path: scored[0].path,
+      originalPath: item.originalPath,
+      sizeBytes: scored[0].sizeBytes,
+      sha256: scored[0].sha256 || item.sha256,
+    });
+  }
+
+  return { matches, unresolved };
+}
+
+async function handleShowRelinkSummaryDialog(event, opts = {}) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const matchedCount = Number.isFinite(opts?.matchedCount) ? opts.matchedCount : 0;
+  const totalCount = Number.isFinite(opts?.totalCount) ? opts.totalCount : matchedCount;
+  const unresolved = Array.isArray(opts?.unresolved) ? opts.unresolved : [];
+  const unresolvedLines = unresolved
+    .slice(0, 10)
+    .map((item) => `• ${item.name || "Unknown file"} (${item.reason || "unresolved"})`);
+  const extra = unresolved.length > 10 ? `\n… and ${unresolved.length - 10} more` : "";
+  const detail =
+    unresolved.length > 0
+      ? `EMS searched:\n${opts?.searchedFolder || ""}\n\nStill missing:\n${unresolvedLines.join("\n")}${extra}`
+      : `EMS searched:\n${opts?.searchedFolder || ""}`;
+  await dialog.showMessageBox(mainWindow, {
+    type: unresolved.length > 0 ? "warning" : "info",
+    title: "Relink Missing Files",
+    message: `Relinked ${matchedCount} of ${totalCount} missing file(s)`,
+    detail,
+    buttons: ["OK"],
+    defaultId: 0,
+  });
+  return true;
+}
+
 async function handleReadProjectFile(_, filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) {
     throw new Error("Invalid project path");
@@ -1652,12 +1874,13 @@ async function handleCheckMediaPathsExist(_, paths) {
       out.push({ path: p, exists: false });
       continue;
     }
-    if (/^(https?|m3u8|mpd|blob|file):/i.test(p)) {
+    if (/^(https?|m3u8|mpd|blob):/i.test(p)) {
       out.push({ path: p, exists: true });
       continue;
     }
+    const fsPath = /^file:\/\//i.test(p) ? new URL(p).pathname : p;
     try {
-      const info = await stat(p);
+      const info = await stat(fsPath);
       out.push({ path: p, exists: info.isFile() });
     } catch {
       out.push({ path: p, exists: false });
@@ -1678,6 +1901,9 @@ function setIPC() {
   ipcMain.handle("show-save-project-dialog", handleShowSaveProjectDialog);
   ipcMain.handle("show-export-project-dialog", handleShowExportProjectDialog);
   ipcMain.handle("show-missing-project-files-dialog", handleShowMissingProjectFilesDialog);
+  ipcMain.handle("show-relink-folder-dialog", handleShowRelinkFolderDialog);
+  ipcMain.handle("relink-missing-media", handleRelinkMissingMedia);
+  ipcMain.handle("show-relink-summary-dialog", handleShowRelinkSummaryDialog);
   ipcMain.handle("read-project-file", handleReadProjectFile);
   ipcMain.handle("write-project-file", handleWriteProjectFile);
   ipcMain.handle("save-autosave-project-state", handleSaveAutosaveProjectState);
