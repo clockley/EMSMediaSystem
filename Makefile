@@ -195,7 +195,7 @@ js-minify: $(MINIFIED_JS_FILES)
 	@echo "$(COLOR_GREEN)$(TICK) Minified all JS/MJS files$(COLOR_RESET)"
 
 # Pattern rule to minify .js files
-$(APP_BUNDLE_OUT): $(APP_BUNDLE_SRC) src/app-media-utils.mjs src/app-bible-reference-utils.mjs src/app-pptx-utils.mjs | $(DERIVED_DIR)
+$(APP_BUNDLE_OUT): $(APP_BUNDLE_SRC) src/app-media-utils.mjs src/app-bible-reference-utils.mjs src/app-pptx-utils.mjs src/app-controls-utils.mjs src/app-media-loading-utils.mjs | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 else

@@ -39,10 +39,19 @@ import {
   queueBasename,
 } from "./app-media-utils.mjs";
 import {
+  waitForLoadedMetadata,
+  waitForMetadata as waitForMediaMetadata,
+} from "./app-media-loading-utils.mjs";
+import {
   normalizeBibleReferenceInput as normalizeBibleReferenceInputWithCache,
   normalizeScriptureReference,
   parseScriptureReference,
 } from "./app-bible-reference-utils.mjs";
+import {
+  formatTime,
+  getHostnameOrBasename,
+  PIDController,
+} from "./app-controls-utils.mjs";
 import {
   clampPptxSlideIndex as clampPptxSlideIndexValue,
   enforcePptxCoverFit,
@@ -272,6 +281,11 @@ let pptxThumbnailObserver = null;
 let pptxSlideCount = 0;
 let pptxCurrentSlide = 0;
 let pptxFilePath = null;
+let pptxLayoutRefreshRaf = 0;
+const PPTX_SIDEBAR_STORAGE_KEY = "ems.pptxSidebarWidth";
+const PPTX_SIDEBAR_DEFAULT_WIDTH = 168;
+const PPTX_SIDEBAR_MIN_WIDTH = 128;
+const PPTX_SIDEBAR_MAX_WIDTH = 360;
 /** True after natural playback end (signaled before media window closes). */
 let mediaPlaybackEndedPending = false;
 /** True when the operator pressed Stop, so the close must not advance the queue. */
@@ -315,6 +329,192 @@ function normalizeBibleReferenceInput(rawReference) {
 
 function clampPptxSlideIndex(index, count = pptxSlideCount) {
   return clampPptxSlideIndexValue(index, count);
+}
+
+function clampPptxSidebarWidth(width) {
+  if (!Number.isFinite(width)) return PPTX_SIDEBAR_DEFAULT_WIDTH;
+  return Math.min(PPTX_SIDEBAR_MAX_WIDTH, Math.max(PPTX_SIDEBAR_MIN_WIDTH, Math.round(width)));
+}
+
+function currentPptxSidebarWidth() {
+  const container = document.getElementById("pptxPreviewContainer");
+  const raw = container?.style?.getPropertyValue("--pptx-sidebar-width") || "";
+  const parsed = Number.parseFloat(raw);
+  return clampPptxSidebarWidth(parsed || PPTX_SIDEBAR_DEFAULT_WIDTH);
+}
+
+function syncPptxResizeHandleAria(width = currentPptxSidebarWidth()) {
+  const handle = document.getElementById("pptxSidebarResizeHandle");
+  if (!handle) return;
+  const safeWidth = clampPptxSidebarWidth(width);
+  handle.setAttribute("aria-valuemin", String(PPTX_SIDEBAR_MIN_WIDTH));
+  handle.setAttribute("aria-valuemax", String(PPTX_SIDEBAR_MAX_WIDTH));
+  handle.setAttribute("aria-valuenow", String(safeWidth));
+  handle.setAttribute("aria-valuetext", `Slides pane width ${safeWidth} pixels`);
+}
+
+function applyPptxSidebarWidth(width, opts = {}) {
+  const container = document.getElementById("pptxPreviewContainer");
+  if (!container) return;
+  const safeWidth = clampPptxSidebarWidth(width);
+  container.style.setProperty("--pptx-sidebar-width", `${safeWidth}px`);
+  syncPptxResizeHandleAria(safeWidth);
+  if (opts.persist !== false) {
+    try {
+      window.localStorage.setItem(PPTX_SIDEBAR_STORAGE_KEY, String(safeWidth));
+    } catch {}
+  }
+}
+
+function restorePptxSidebarWidth(container) {
+  if (!container) return;
+  let savedWidth = PPTX_SIDEBAR_DEFAULT_WIDTH;
+  try {
+    const raw = window.localStorage.getItem(PPTX_SIDEBAR_STORAGE_KEY);
+    const parsed = Number.parseFloat(raw || "");
+    if (Number.isFinite(parsed)) savedWidth = parsed;
+  } catch {}
+  container.style.setProperty(
+    "--pptx-sidebar-width",
+    `${clampPptxSidebarWidth(savedWidth)}px`,
+  );
+}
+
+function schedulePptxLayoutRefresh() {
+  requestAnimationFrame(() => {
+    if (!pptxViewer) return;
+    void showPptxSlide(pptxCurrentSlide);
+    buildPptxNavigator();
+  });
+}
+
+function layoutPptxSlideStage(stage, slideEl, containerEl, fallbackSize = {}) {
+  if (!stage || !containerEl) return;
+  const { width, height } = getPptxNaturalSlideSize(slideEl, fallbackSize);
+  const { width: cw, height: ch } = getElementContentSize(containerEl);
+  const scale = cw && ch ? Math.min(cw / width, ch / height) : 1;
+  stage.style.width = `${width * scale}px`;
+  stage.style.height = `${height * scale}px`;
+  if (slideEl) {
+    slideEl.style.width = `${width}px`;
+    slideEl.style.height = `${height}px`;
+    slideEl.style.maxWidth = "none";
+    slideEl.style.maxHeight = "none";
+    slideEl.style.transform = `scale(${scale})`;
+    slideEl.style.transformOrigin = "top left";
+  }
+  enforcePptxCoverFit(stage);
+}
+
+function relayoutVisiblePptxThumbnails() {
+  const thumbnailList = document.getElementById("pptxThumbnailList");
+  if (!thumbnailList) return;
+  thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
+    const viewport = button.querySelector(".pptx-thumbnail-viewport");
+    const stage = viewport?.querySelector(".pptx-thumbnail-stage");
+    if (!viewport || !stage) return;
+    const index = Number(button.dataset.slideIndex);
+    const slideEl = getPptxSlideElementFromHandle(
+      pptxThumbnailHandles.get(index),
+      stage,
+    );
+    layoutPptxSlideStage(stage, slideEl, viewport, {
+      slideWidth: pptxViewer?.slideWidth,
+      slideHeight: pptxViewer?.slideHeight,
+    });
+  });
+}
+
+function relayoutCurrentPptxSlide() {
+  const mainPane = document.getElementById("pptxMainSlidePane");
+  const stage = mainPane?.querySelector(".pptx-preview-stage");
+  if (!mainPane || !stage) return;
+  const slideEl = getPptxRenderedSlideElement(pptxPreviewSlideHandle, stage);
+  layoutPptxSlideStage(stage, slideEl, mainPane, {
+    slideWidth: pptxViewer?.slideWidth,
+    slideHeight: pptxViewer?.slideHeight,
+  });
+  stage.style.visibility = "";
+}
+
+function schedulePptxLiveRelayout() {
+  if (pptxLayoutRefreshRaf) return;
+  pptxLayoutRefreshRaf = requestAnimationFrame(() => {
+    pptxLayoutRefreshRaf = 0;
+    if (!pptxViewer) return;
+    relayoutCurrentPptxSlide();
+    relayoutVisiblePptxThumbnails();
+  });
+}
+
+function bindPptxSidebarResize(container) {
+  const handle = document.getElementById("pptxSidebarResizeHandle");
+  if (!container || !handle || handle.dataset.resizeBound === "1") return;
+  handle.dataset.resizeBound = "1";
+  syncPptxResizeHandleAria();
+
+  const finishResize = () => {
+    document.body.classList.remove("is-pptx-sidebar-resizing");
+    schedulePptxLayoutRefresh();
+  };
+
+  handle.addEventListener("dblclick", () => {
+    applyPptxSidebarWidth(PPTX_SIDEBAR_DEFAULT_WIDTH);
+    finishResize();
+  });
+
+  handle.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 32 : 16;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      applyPptxSidebarWidth(currentPptxSidebarWidth() - step);
+      finishResize();
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      applyPptxSidebarWidth(currentPptxSidebarWidth() + step);
+      finishResize();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      applyPptxSidebarWidth(PPTX_SIDEBAR_MIN_WIDTH);
+      finishResize();
+    } else if (event.key === "End") {
+      event.preventDefault();
+      applyPptxSidebarWidth(PPTX_SIDEBAR_MAX_WIDTH);
+      finishResize();
+    }
+  });
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    const containerRect = container.getBoundingClientRect();
+    document.body.classList.add("is-pptx-sidebar-resizing");
+    handle.setPointerCapture(pointerId);
+
+    const onPointerMove = (moveEvent) => {
+      const nextWidth = clampPptxSidebarWidth(
+        moveEvent.clientX - containerRect.left,
+      );
+      applyPptxSidebarWidth(nextWidth, { persist: false });
+      schedulePptxLiveRelayout();
+    };
+
+    const onPointerUp = () => {
+      handle.removeEventListener("pointermove", onPointerMove);
+      handle.removeEventListener("pointerup", onPointerUp);
+      handle.removeEventListener("pointercancel", onPointerUp);
+      try {
+        handle.releasePointerCapture(pointerId);
+      } catch {}
+      applyPptxSidebarWidth(currentPptxSidebarWidth());
+      finishResize();
+    };
+
+    handle.addEventListener("pointermove", onPointerMove);
+    handle.addEventListener("pointerup", onPointerUp);
+    handle.addEventListener("pointercancel", onPointerUp);
+  });
 }
 
 function isQueueItemAutoAdvanceEnabled(index) {
@@ -605,6 +805,7 @@ function ensurePptxPreviewShell(container) {
   if (mainPane && thumbnailList) return { mainPane, thumbnailList };
 
   container.innerHTML = "";
+  restorePptxSidebarWidth(container);
   const sidebar = document.createElement("aside");
   sidebar.id = "pptxSlideNavigator";
   sidebar.setAttribute("aria-label", "PowerPoint slide navigator");
@@ -623,10 +824,20 @@ function ensurePptxPreviewShell(container) {
   mainPane.id = "pptxMainSlidePane";
   mainPane.setAttribute("aria-label", "Selected PowerPoint slide");
 
+  const resizeHandle = document.createElement("div");
+  resizeHandle.id = "pptxSidebarResizeHandle";
+  resizeHandle.className = "pptx-sidebar-resize-handle";
+  resizeHandle.setAttribute("role", "separator");
+  resizeHandle.setAttribute("aria-label", "Resize slides pane");
+  resizeHandle.setAttribute("aria-orientation", "vertical");
+  resizeHandle.tabIndex = 0;
+
   sidebar.appendChild(heading);
   sidebar.appendChild(thumbnailList);
   container.appendChild(sidebar);
+  container.appendChild(resizeHandle);
   container.appendChild(mainPane);
+  bindPptxSidebarResize(container);
   return { mainPane, thumbnailList };
 }
 
@@ -674,24 +885,10 @@ async function renderPptxThumbnail(index, button, opts = {}) {
   await waitForNextFrame();
 
   const slideEl = getPptxSlideElementFromHandle(handle, stage);
-  const { width, height } = getPptxNaturalSlideSize(slideEl, {
+  layoutPptxSlideStage(stage, slideEl, viewport, {
     slideWidth: pptxViewer?.slideWidth,
     slideHeight: pptxViewer?.slideHeight,
   });
-  const vw = viewport.clientWidth;
-  const vh = viewport.clientHeight;
-  const scale = vw && vh ? Math.min(vw / width, vh / height) : 1;
-  stage.style.width = `${width * scale}px`;
-  stage.style.height = `${height * scale}px`;
-  if (slideEl) {
-    slideEl.style.width = `${width}px`;
-    slideEl.style.height = `${height}px`;
-    slideEl.style.maxWidth = "none";
-    slideEl.style.maxHeight = "none";
-    slideEl.style.transform = `scale(${scale})`;
-    slideEl.style.transformOrigin = "top left";
-  }
-  enforcePptxCoverFit(stage);
   stage.style.visibility = "";
 }
 
@@ -825,23 +1022,10 @@ async function showPptxSlide(index) {
   } catch {}
   await waitForNextFrame();
   const slideEl = getPptxRenderedSlideElement(pptxPreviewSlideHandle, stage);
-  const { width, height } = getPptxNaturalSlideSize(slideEl, {
+  layoutPptxSlideStage(stage, slideEl, mainPane, {
     slideWidth: pptxViewer?.slideWidth,
     slideHeight: pptxViewer?.slideHeight,
   });
-  const { width: cw, height: ch } = getElementContentSize(mainPane);
-  const scale = cw && ch ? Math.min(cw / width, ch / height) : 1;
-  stage.style.width = `${width * scale}px`;
-  stage.style.height = `${height * scale}px`;
-  if (slideEl) {
-    slideEl.style.width = `${width}px`;
-    slideEl.style.height = `${height}px`;
-    slideEl.style.maxWidth = "none";
-    slideEl.style.maxHeight = "none";
-    slideEl.style.transform = `scale(${scale})`;
-    slideEl.style.transformOrigin = "top left";
-  }
-  enforcePptxCoverFit(stage);
   stage.style.visibility = "";
   pptxCurrentSlide = slideIndex;
   updatePptxNavButtons();
@@ -4408,13 +4592,10 @@ async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
     const liveLabel = liveItem ? liveItem.name : "the current presentation";
     const cueLabel = item?.name || "the selected item";
     const message = `Switch the live presentation from "${liveLabel}" to "${cueLabel}"?`;
-    let accepted = false;
-    try {
-      accepted = await invoke("show_queue_switch_dialog", { message });
-    } catch (err) {
-      console.error("Failed to show queue switch dialog:", err);
-      accepted = false;
-    }
+    // Temporary ship-safe fallback: the custom modal has intermittent mouse
+    // hit-testing issues in production, so use the platform-native confirm
+    // dialog until that path is fully debugged and restored.
+    const accepted = window.confirm(message);
     if (!accepted) return;
   }
 
@@ -5027,456 +5208,11 @@ async function trySlipstreamNextQueueItem() {
   });
 }
 
-class PIDController {
-  constructor(video) {
-    this.video = video;
-
-    this.adaptiveCoefficients = {
-      kP: {
-        value: 0.5,
-        minValue: 0.2,
-        maxValue: 0.8,
-        adjustmentRate: 0.005,
-      },
-      kI: {
-        value: 0.05,
-        minValue: 0.01,
-        maxValue: 0.15,
-        adjustmentRate: 0.0025,
-      },
-      kD: {
-        value: 0.15,
-        minValue: 0.08,
-        maxValue: 0.25,
-        adjustmentRate: 0.005,
-      },
-    };
-
-    this.patterns = {
-      STABLE: "stable",
-      OSCILLATING: "oscillating",
-      LAGGING: "lagging",
-      SYSTEM_STRESS: "systemStress",
-    };
-
-    this.performancePatterns = {
-      [this.patterns.STABLE]: {
-        maxRate: 1.1,
-        threshold: 0.033,
-      },
-      [this.patterns.OSCILLATING]: {
-        maxRate: 1.05,
-        threshold: 0.05,
-      },
-      [this.patterns.LAGGING]: {
-        maxRate: 1.2,
-        threshold: 0.066,
-      },
-      [this.patterns.SYSTEM_STRESS]: {
-        maxRate: 1.05,
-        threshold: 0.1,
-      },
-    };
-
-    this.systemLag = 0;
-    this.overshoots = 0;
-    this.avgResponseTime = 0;
-    this.currentPattern = this.patterns.STABLE;
-
-    this.lastWallTime = null;
-    this.maxTimeGap = 1000;
-
-    this.synchronizationThreshold = 0.005;
-    this.maxIntegralError = 0.5;
-    this.fastSyncThreshold = 1;
-    this.maxFastSyncRate = 2;
-
-    this.maxHistoryLength = 32;
-    this.isFirstAdjustment = true;
-
-    // Pre-allocate arrays for history
-    this.timeArray = new Float64Array(this.maxHistoryLength);
-    this.diffArray = new Float64Array(this.maxHistoryLength);
-    this.responseArray = new Float64Array(this.maxHistoryLength);
-    this.historyIndex = 0;
-    this.historySize = 0;
-    this.MASK = 31;
-    this.TREND_MASK = 15;
-    this._trendBuffer = new Float64Array(16);
-    this._trendPos = 0;
-
-    this._rollingSum = 0;
-    this._rollingSquareSum = 0;
-    this._rollingTrend = 0;
-  }
-
-  updateSystemMetrics(timeDifference, timestamp) {
-    const oldDiff = this.diffArray[this.historyIndex] || 0;
-
-    this.timeArray[this.historyIndex] = timestamp;
-    this.diffArray[this.historyIndex] = timeDifference;
-    this.responseArray[this.historyIndex] =
-      this.historySize > 0
-        ? timestamp - this.timeArray[(this.historyIndex - 1) & this.MASK]
-        : 0;
-
-    this.historyIndex = (this.historyIndex + 1) & this.MASK;
-    if (this.historySize < this.maxHistoryLength) this.historySize++;
-
-    // Rolling updates
-    if (this.historySize >= 10) {
-      const pos = this._trendPos;
-      const prevIndex = (pos - 1 + 16) & this.TREND_MASK;
-      const prev = this._trendBuffer[prevIndex] || 0;
-      const replaced = this._trendBuffer[pos];
-      this._trendBuffer[pos] = timeDifference;
-      this._trendPos = (pos + 1) & this.TREND_MASK;
-
-      // Update rolling sums
-      this._rollingSum += timeDifference - oldDiff;
-      this._rollingSquareSum +=
-        timeDifference * timeDifference - oldDiff * oldDiff;
-      this._rollingTrend += timeDifference - prev - (replaced - prev);
-
-      const mean = this._rollingSum / 10;
-      const variance = this._rollingSquareSum / 10 - mean * mean;
-      const trend = this._rollingTrend / 9;
-
-      this.currentPattern =
-        variance > 0.1 && this.overshoots > 3
-          ? this.patterns.OSCILLATING
-          : trend > 0.05 || this.avgResponseTime > 0.15
-            ? this.patterns.LAGGING
-            : this.systemLag > 100 || this.avgResponseTime > 0.2
-              ? this.patterns.SYSTEM_STRESS
-              : this.patterns.STABLE;
-    }
-  }
-
-  detectPattern() {
-    if (this.historySize < 10) return;
-
-    let variance = 0;
-    let trend = 0;
-    let sumOfDifferences = 0;
-
-    const startIdx =
-      (this.historyIndex - 10 + this.maxHistoryLength) % this.maxHistoryLength;
-    let previousTimeDiff =
-      startIdx > 0
-        ? this.diffArray[
-            (startIdx - 1 + this.maxHistoryLength) % this.maxHistoryLength
-          ]
-        : 0;
-
-    for (let i = 0; i < 10; i++) {
-      const currentTimeDiff =
-        this.diffArray[(startIdx + i) % this.maxHistoryLength];
-      sumOfDifferences += currentTimeDiff;
-      variance += currentTimeDiff * currentTimeDiff;
-
-      if (i > 0) {
-        trend += currentTimeDiff - previousTimeDiff;
-      }
-      previousTimeDiff = currentTimeDiff;
-    }
-
-    const mean = sumOfDifferences / 10;
-    variance = variance / 10 - mean * mean;
-    trend = trend / 9;
-
-    if (variance > 0.1 && this.overshoots > 3) {
-      this.currentPattern = this.patterns.OSCILLATING;
-    } else if (trend > 0.05 || this.avgResponseTime > 0.15) {
-      this.currentPattern = this.patterns.LAGGING;
-    } else if (this.systemLag > 100 || this.avgResponseTime > 0.2) {
-      this.currentPattern = this.patterns.SYSTEM_STRESS;
-    } else {
-      this.currentPattern = this.patterns.STABLE;
-    }
-  }
-
-  adjustPIDCoefficients() {
-    const { STABLE, OSCILLATING, LAGGING, SYSTEM_STRESS } = this.patterns;
-
-    switch (this.currentPattern) {
-      case STABLE:
-        this.adaptiveCoefficients.kP.value =
-          this.adaptiveCoefficients.kP.value +
-            this.adaptiveCoefficients.kP.adjustmentRate >
-          this.adaptiveCoefficients.kP.maxValue
-            ? this.adaptiveCoefficients.kP.maxValue
-            : this.adaptiveCoefficients.kP.value +
-              this.adaptiveCoefficients.kP.adjustmentRate;
-        this.adaptiveCoefficients.kI.value =
-          this.adaptiveCoefficients.kI.value +
-            this.adaptiveCoefficients.kI.adjustmentRate >
-          this.adaptiveCoefficients.kI.maxValue
-            ? this.adaptiveCoefficients.kI.maxValue
-            : this.adaptiveCoefficients.kI.value +
-              this.adaptiveCoefficients.kI.adjustmentRate;
-        this.adaptiveCoefficients.kD.value =
-          this.adaptiveCoefficients.kD.value +
-            this.adaptiveCoefficients.kD.adjustmentRate >
-          this.adaptiveCoefficients.kD.maxValue
-            ? this.adaptiveCoefficients.kD.maxValue
-            : this.adaptiveCoefficients.kD.value +
-              this.adaptiveCoefficients.kD.adjustmentRate;
-        break;
-      case OSCILLATING:
-        this.adaptiveCoefficients.kP.value =
-          this.adaptiveCoefficients.kP.value -
-            this.adaptiveCoefficients.kP.adjustmentRate <
-          this.adaptiveCoefficients.kP.minValue
-            ? this.adaptiveCoefficients.kP.minValue
-            : this.adaptiveCoefficients.kP.value -
-              this.adaptiveCoefficients.kP.adjustmentRate;
-        this.adaptiveCoefficients.kI.value =
-          this.adaptiveCoefficients.kI.value -
-            this.adaptiveCoefficients.kI.adjustmentRate <
-          this.adaptiveCoefficients.kI.minValue
-            ? this.adaptiveCoefficients.kI.minValue
-            : this.adaptiveCoefficients.kI.value -
-              this.adaptiveCoefficients.kI.adjustmentRate;
-        this.adaptiveCoefficients.kD.value =
-          this.adaptiveCoefficients.kD.value +
-            this.adaptiveCoefficients.kD.adjustmentRate >
-          this.adaptiveCoefficients.kD.maxValue
-            ? this.adaptiveCoefficients.kD.maxValue
-            : this.adaptiveCoefficients.kD.value +
-              this.adaptiveCoefficients.kD.adjustmentRate;
-        break;
-      case LAGGING:
-        this.adaptiveCoefficients.kP.value =
-          this.adaptiveCoefficients.kP.value +
-            this.adaptiveCoefficients.kP.adjustmentRate >
-          this.adaptiveCoefficients.kP.maxValue
-            ? this.adaptiveCoefficients.kP.maxValue
-            : this.adaptiveCoefficients.kP.value +
-              this.adaptiveCoefficients.kP.adjustmentRate;
-        this.adaptiveCoefficients.kI.value =
-          this.adaptiveCoefficients.kI.value +
-            this.adaptiveCoefficients.kI.adjustmentRate >
-          this.adaptiveCoefficients.kI.maxValue
-            ? this.adaptiveCoefficients.kI.maxValue
-            : this.adaptiveCoefficients.kI.value +
-              this.adaptiveCoefficients.kI.adjustmentRate;
-        this.adaptiveCoefficients.kD.value =
-          this.adaptiveCoefficients.kD.value -
-            this.adaptiveCoefficients.kD.adjustmentRate <
-          this.adaptiveCoefficients.kD.minValue
-            ? this.adaptiveCoefficients.kD.minValue
-            : this.adaptiveCoefficients.kD.value -
-              this.adaptiveCoefficients.kD.adjustmentRate;
-        break;
-      case SYSTEM_STRESS:
-        this.adaptiveCoefficients.kP.value =
-          this.adaptiveCoefficients.kP.value -
-            this.adaptiveCoefficients.kP.adjustmentRate <
-          this.adaptiveCoefficients.kP.minValue
-            ? this.adaptiveCoefficients.kP.minValue
-            : this.adaptiveCoefficients.kP.value -
-              this.adaptiveCoefficients.kP.adjustmentRate;
-        this.adaptiveCoefficients.kI.value =
-          this.adaptiveCoefficients.kI.value -
-            this.adaptiveCoefficients.kI.adjustmentRate <
-          this.adaptiveCoefficients.kI.minValue
-            ? this.adaptiveCoefficients.kI.minValue
-            : this.adaptiveCoefficients.kI.value -
-              this.adaptiveCoefficients.kI.adjustmentRate;
-        this.adaptiveCoefficients.kD.value =
-          this.adaptiveCoefficients.kD.value -
-            this.adaptiveCoefficients.kD.adjustmentRate <
-          this.adaptiveCoefficients.kD.minValue
-            ? this.adaptiveCoefficients.kD.minValue
-            : this.adaptiveCoefficients.kD.value -
-              this.adaptiveCoefficients.kD.adjustmentRate;
-        break;
-    }
-  }
-
-  calculateHistoricalAdjustment(timeDifference, deltaTime) {
-    if (
-      timeDifference !== timeDifference ||
-      deltaTime !== deltaTime ||
-      deltaTime <= 0
-    ) {
-      return 0;
-    }
-    this.integral += timeDifference * deltaTime;
-    this.integral =
-      this.integral < -this.maxIntegralError
-        ? -this.maxIntegralError
-        : this.integral > this.maxIntegralError
-          ? this.maxIntegralError
-          : this.integral;
-
-    const derivative = (timeDifference - this.lastTimeDifference) / deltaTime;
-    this.lastTimeDifference = timeDifference;
-
-    return (
-      this.adaptiveCoefficients.kP.value * timeDifference +
-      this.adaptiveCoefficients.kI.value * this.integral +
-      this.adaptiveCoefficients.kD.value * derivative
-    );
-  }
-
-  adjustPlaybackRate(targetTime) {
-    const now = performance.now();
-    const wallNow = Date.now();
-    if (!this.video || this.video.paused || this.video.seeking) {
-      return;
-    }
-
-    if (this.isFirstAdjustment || this.lastWallTime === null) {
-      this.lastWallTime = wallNow;
-      this.lastUpdateTime = now;
-      this.isFirstAdjustment = false;
-      const timeDifference = targetTime - this.video.currentTime;
-      this.updateSystemMetrics(timeDifference, wallNow);
-      return timeDifference;
-    }
-
-    const wallTimeDelta = wallNow - this.lastWallTime;
-
-    if (wallTimeDelta > this.maxTimeGap) {
-      beginPidSeekSuppression();
-      this.video.currentTime = targetTime;
-      this.lastWallTime = wallNow;
-      this.isFirstAdjustment = false;
-      const timeDifference = targetTime - this.video.currentTime;
-      this.updateSystemMetrics(timeDifference, wallNow);
-      return timeDifference;
-    }
-
-    const deltaTime = (now - this.lastUpdateTime) / 1000;
-    this.lastUpdateTime = now;
-    this.lastWallTime = wallNow;
-
-    const timeDifference = targetTime - this.video.currentTime;
-    const timeDifferenceAbs =
-      timeDifference < 0 ? -timeDifference : timeDifference;
-
-    this.updateSystemMetrics(timeDifference, wallNow);
-
-    const finalAdjustment = this.calculateHistoricalAdjustment(
-      timeDifference,
-      deltaTime,
-    );
-
-    if (timeDifferenceAbs > this.fastSyncThreshold) {
-      let playbackRate;
-      if (timeDifference > 0) {
-        const calcRate = 1 + timeDifferenceAbs / deltaTime;
-        playbackRate =
-          calcRate > this.maxFastSyncRate ? this.maxFastSyncRate : calcRate;
-      } else {
-        const calcRate = 1 - timeDifferenceAbs / deltaTime;
-        const minRate = 1 / this.maxFastSyncRate;
-        playbackRate = calcRate < minRate ? minRate : calcRate;
-      }
-      this.video.playbackRate = playbackRate;
-      return timeDifference;
-    }
-
-    const maxRate = this.performancePatterns[this.currentPattern].maxRate;
-    const minRate = 2 - maxRate;
-    let playbackRate = 1.0 + finalAdjustment;
-
-    playbackRate =
-      playbackRate < minRate
-        ? minRate
-        : playbackRate > maxRate
-          ? maxRate
-          : playbackRate;
-
-    if (timeDifferenceAbs <= this.synchronizationThreshold) {
-      playbackRate = 1.0;
-      this.integral = 0;
-    }
-
-    if (playbackRate >= 0 || playbackRate <= 0) {
-      this.video.playbackRate = playbackRate;
-    }
-
-    return timeDifference;
-  }
-
-  reset() {
-    if (!isActiveMediaWindow()) {
-      return;
-    }
-    this.lastError = 0;
-    this.integral = 0;
-    this.lastTimeDifference = 0;
-    this.lastUpdateTime = performance.now();
-    this.isFirstAdjustment = true;
-    this.lastWallTime = null;
-
-    this.historyIndex = 0;
-    this.historySize = 0;
-
-    this.systemLag = 0;
-    this.overshoots = 0;
-    this.avgResponseTime = 0;
-    this.currentPattern = this.patterns.STABLE;
-
-    this.adaptiveCoefficients = {
-      kP: {
-        value: 0.6,
-        minValue: 0.3,
-        maxValue: 0.9,
-        adjustmentRate: 0.01,
-      },
-      kI: {
-        value: 0.08,
-        minValue: 0.02,
-        maxValue: 0.2,
-        adjustmentRate: 0.005,
-      },
-      kD: {
-        value: 0.12,
-        minValue: 0.05,
-        maxValue: 0.2,
-        adjustmentRate: 0.01,
-      },
-    };
-  }
-}
 let pidController;
 
 const NUM_BUFFER = new Int32Array(4);
 const REM_BUFFER = new Int32Array(1);
 let usePad0, usePad1, usePad2, mask0, mask1, mask2, idx0, idx1, idx2;
-
-function getHostnameOrBasename(input) {
-  // Check if input contains a protocol-like prefix (http://, https://, ftp://, etc.)
-  const protocolMatch = input.match(/^(\w+):\/\//);
-
-  if (protocolMatch) {
-    // If protocol exists, extract hostname
-    const protocolEnd = protocolMatch[0].length;
-    const remainingPart = input.slice(protocolEnd);
-    const firstSlashIndex = remainingPart.indexOf("/");
-
-    // Return full domain or first part before path
-    return firstSlashIndex === -1
-      ? remainingPart
-      : remainingPart.slice(0, firstSlashIndex);
-  } else {
-    // If not a URL, extract basename
-    // Handle both forward and backslashes
-    const lastForwardSlash = input.lastIndexOf("/");
-    const lastBackSlash = input.lastIndexOf("\\");
-
-    // Choose the last separator
-    const lastSeparator = Math.max(lastForwardSlash, lastBackSlash);
-
-    // If no separator found, return the entire input
-    // Otherwise, return the part after the last separator
-    return lastSeparator === -1 ? input : input.slice(lastSeparator + 1);
-  }
-}
 
 function isActiveMediaWindow() {
   return isActiveMediaWindowCache;
@@ -5619,15 +5355,6 @@ async function closeActiveMediaWindowNow() {
     send("close-media-window", 0);
     return false;
   }
-}
-
-function formatTime(seconds) {
-  if (isNaN(seconds) || seconds < 0) {
-    return "0:00";
-  }
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
 function timelineSync() {
@@ -7625,64 +7352,6 @@ function handleCanPlayThrough(e, resolve, mediaEl = video) {
   resolve(mediaEl);
 }
 
-function handleError(e, reject) {
-  reject(e);
-}
-
-/** HTMLMediaElement.readyState constants — readability over magic numbers. */
-const HAVE_NOTHING = 0;
-const HAVE_METADATA = 1;
-/**
- * Hard cap so a stalled media pipeline can never freeze a downstream
- * `await waitForMetadata()` (e.g. the queue-switch confirm flow). Long
- * enough that a healthy local-file load always wins under it; short enough
- * that the UI doesn't appear hung if the pipeline is sick.
- */
-const WAIT_FOR_METADATA_TIMEOUT_MS = 4000;
-
-function waitForLoadedMetadata(mediaEl) {
-  if (!mediaEl || !mediaEl.src || mediaEl.src === "") {
-    return Promise.reject(new Error("Invalid media element source."));
-  }
-  if (mediaEl.readyState >= HAVE_METADATA) {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let timer = null;
-
-    const cleanup = () => {
-      mediaEl.removeEventListener("loadedmetadata", onLoaded);
-      mediaEl.removeEventListener("error", onError);
-      if (timer !== null) {
-        window.clearTimeout(timer);
-        timer = null;
-      }
-    };
-    const finishOk = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve();
-    };
-    const onLoaded = () => finishOk();
-    const onError = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(mediaEl.error ?? new Error("Failed to load media metadata"));
-    };
-
-    mediaEl.addEventListener("loadedmetadata", onLoaded, { once: true });
-    mediaEl.addEventListener("error", onError, { once: true });
-    if (mediaEl.readyState === HAVE_NOTHING) {
-      mediaEl.load();
-    }
-    timer = window.setTimeout(finishOk, WAIT_FOR_METADATA_TIMEOUT_MS);
-  });
-}
-
 /**
  * Resolve when the current preview video has enough metadata to inspect
  * `videoTracks` / `audioTracks` and decide whether the file is audio-only.
@@ -7714,65 +7383,16 @@ function waitForLoadedMetadata(mediaEl) {
  * `.catch()` paths (e.g. `saveMediaFile`) keep working.
  */
 function waitForMetadata(mediaEl = video) {
-  if (
-    !mediaEl ||
-    !mediaEl.src ||
-    mediaEl.src === "" ||
-    isLiveStream(mediaEl.src) ||
-    isImg(mediaEl.src)
-  ) {
-    playingMediaAudioOnly = false;
-    audioOnlyFile = false;
-    return Promise.reject("Invalid source or live stream.");
-  }
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let timer = null;
-
-    const cleanup = () => {
-      mediaEl.removeEventListener("loadedmetadata", onMetadata);
-      mediaEl.removeEventListener("canplaythrough", onCanPlayThrough);
-      mediaEl.removeEventListener("error", onError);
-      if (timer !== null) {
-        window.clearTimeout(timer);
-        timer = null;
-      }
-    };
-    const finishOk = (e) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      handleCanPlayThrough(e || {}, resolve, mediaEl);
-    };
-    const onMetadata = () => finishOk();
-    const onCanPlayThrough = (e) => finishOk(e);
-    const onError = (e) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      handleError(e, reject);
-    };
-
-    // Fast path: the <video> already advanced past HAVE_METADATA (very
-    // common with the persistent preview element after a queue switch to
-    // the same file or after `loadedmetadata` fired before this listener
-    // attached). Resolve synchronously instead of waiting for an event
-    // that will never come.
-    if (mediaEl.readyState >= HAVE_METADATA) {
-      finishOk();
-      return;
-    }
-
-    mediaEl.addEventListener("loadedmetadata", onMetadata, { once: true });
-    mediaEl.addEventListener("canplaythrough", onCanPlayThrough, { once: true });
-    mediaEl.addEventListener("error", onError, { once: true });
-
-    if (mediaEl.readyState === HAVE_NOTHING) {
-      mediaEl.load();
-    }
-
-    timer = window.setTimeout(() => finishOk(), WAIT_FOR_METADATA_TIMEOUT_MS);
+  return waitForMediaMetadata(mediaEl, {
+    isLiveStream,
+    isImg,
+    onResolved: (event, resolve, targetMediaEl) => {
+      handleCanPlayThrough(event || {}, resolve, targetMediaEl);
+    },
+    onRejected: () => {
+      playingMediaAudioOnly = false;
+      audioOnlyFile = false;
+    },
   });
 }
 
@@ -9517,7 +9137,10 @@ function installPreviewEventHandlers() {
   video.addEventListener("play", playLocalMedia);
   video.addEventListener("volumechange", handleVolumeChange);
   video.dataset.previewHandlersInstalled = "1";
-  pidController = new PIDController(video);
+  pidController = new PIDController(video, {
+    isActiveMediaWindow,
+    beginPidSeekSuppression,
+  });
 }
 
 async function loadOpMode(mode) {

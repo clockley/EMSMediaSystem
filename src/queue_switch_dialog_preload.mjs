@@ -31,24 +31,15 @@ function wireDialogButtons() {
   queueSwitchDialogButtonsWired = true;
 
   const addResponseHandlers = (element, accepted) => {
-    let responded = false;
     const handleResponse = (event) => {
-      if (
-        responded ||
-        (typeof event.button === "number" && event.button !== 0)
-      ) {
+      if (typeof event.button === "number" && event.button !== 0) {
         return;
       }
-      responded = true;
       event.preventDefault();
       event.stopPropagation();
       respond(accepted);
     };
-    element.addEventListener("pointerdown", handleResponse, { capture: true });
-    element.addEventListener("mousedown", handleResponse, { capture: true });
-    element.addEventListener("pointerup", handleResponse, { capture: true });
-    element.addEventListener("mouseup", handleResponse, { capture: true });
-    element.addEventListener("click", handleResponse, { capture: true });
+    element.addEventListener("click", handleResponse);
   };
 
   addResponseHandlers(cancel, false);
