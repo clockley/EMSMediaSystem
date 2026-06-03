@@ -44,6 +44,8 @@ function wireDialogButtons() {
       event.stopPropagation();
       respond(accepted);
     };
+    element.addEventListener("pointerdown", handleResponse, { capture: true });
+    element.addEventListener("mousedown", handleResponse, { capture: true });
     element.addEventListener("pointerup", handleResponse, { capture: true });
     element.addEventListener("mouseup", handleResponse, { capture: true });
     element.addEventListener("click", handleResponse, { capture: true });

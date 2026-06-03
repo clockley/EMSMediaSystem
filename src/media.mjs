@@ -590,7 +590,44 @@ const DEFAULT_TEXT_PRESENTATION = Object.freeze({
 
 const textPresentationState = {
   backgroundVideo: "",
+  signature: "",
 };
+
+function textPresentationSignature(message, bodyText, referenceText) {
+  const position =
+    message && typeof message.position === "object"
+      ? message.position
+      : DEFAULT_TEXT_PRESENTATION.position;
+  return JSON.stringify({
+    text: message.text || "",
+    bodyText,
+    referenceText,
+    reference: message.reference || "",
+    version: message.version || "",
+    book: message.book || "",
+    chapter: Number.isFinite(message.chapter) ? message.chapter : 0,
+    verse: Number.isFinite(message.verse) ? message.verse : 0,
+    verseEnd: Number.isFinite(message.verseEnd) ? message.verseEnd : 0,
+    color: message.color || "",
+    fontSize: Number.isFinite(message.fontSize) ? message.fontSize : DEFAULT_TEXT_PRESENTATION.fontSize,
+    fontFamily: message.fontFamily || "",
+    fontWeight: Number.isFinite(message.fontWeight)
+      ? message.fontWeight
+      : DEFAULT_TEXT_PRESENTATION.fontWeight,
+    lineHeight: Number.isFinite(message.lineHeight)
+      ? message.lineHeight
+      : DEFAULT_TEXT_PRESENTATION.lineHeight,
+    referenceFontSize: Number.isFinite(message.referenceFontSize)
+      ? message.referenceFontSize
+      : DEFAULT_TEXT_PRESENTATION.referenceFontSize,
+    backgroundColor: message.backgroundColor || "",
+    backgroundImage: message.backgroundImage || "",
+    backgroundVideo: message.backgroundVideo || "",
+    backgroundPath: message.backgroundPath || "",
+    vertical: position.vertical || "",
+    horizontal: position.horizontal || "",
+  });
+}
 
 function seekTextBackgroundVideoToPreview(backgroundVideo, sync) {
   if (
@@ -642,6 +679,11 @@ function applyTextMessage(message) {
 
   const bodyText = safeMessage.bodyText || safeMessage.text || "";
   const referenceText = safeMessage.referenceText || "";
+  const signature = textPresentationSignature(safeMessage, bodyText, referenceText);
+  if (signature === textPresentationState.signature) {
+    return;
+  }
+  textPresentationState.signature = signature;
   const bodyFontSize = Number.isFinite(safeMessage.fontSize)
     ? safeMessage.fontSize
     : DEFAULT_TEXT_PRESENTATION.fontSize;

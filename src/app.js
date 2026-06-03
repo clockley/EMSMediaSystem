@@ -222,7 +222,18 @@ const bibleStyleDirtyState = {
   backgroundColor: false,
   backgroundPath: false,
 };
+const bibleVerseSelection = {
+  verses: new Set(),
+  anchor: 0,
+};
 let bibleBooksCache = [];
+const EMS_BIBLE_ALIAS_OVERRIDES = {
+  jn: "John",
+  jhn: "John",
+  mt: "Matthew",
+  psa: "Psalms",
+  psalm: "Psalms",
+};
 
 /** @type {{ path: string, name: string, type: string, cueStartTime?: number, cueVolume?: number, pptxSlideIndex?: number }[]} */
 let mediaQueue = [];
@@ -530,7 +541,8 @@ async function loadPptxPreview(filePath, opts = {}) {
   const startSlide = resolvePptxPreviewStartSlide(filePath, opts);
   const preserveLiveAudio = opts?.preserveLiveAudio === true;
   const preserveLiveVideo = opts?.preserveLiveVideo === true;
-  const preserveLiveMedia = preserveLiveAudio || preserveLiveVideo;
+  const preserveLiveBible = opts?.preserveLiveBible === true;
+  const preserveLiveMedia = preserveLiveAudio || preserveLiveVideo || preserveLiveBible;
   // Some third-party ESM bundles expect a Node-like `process` object.
   // Electron renderer (browser context) does not provide it by default.
   if (!globalThis.process) {
@@ -543,7 +555,7 @@ async function loadPptxPreview(filePath, opts = {}) {
   );
   const container = document.getElementById("pptxPreviewContainer");
   if (!container) return;
-  if (!preserveLiveAudio) stopLiveAudioPresentation();
+  if (!preserveLiveAudio && !preserveLiveBible) stopLiveAudioPresentation();
   stopPreviewAudioCue();
   clearVideoPreviewCueOverlay();
   if (video && !preserveLiveMedia) {
@@ -553,11 +565,13 @@ async function loadPptxPreview(filePath, opts = {}) {
       video.load();
     } catch {}
   }
-  document
-    .getElementById("customControls")
-    ?.style.setProperty("visibility", "hidden");
-  const videoPreview = document.getElementById("preview");
-  if (videoPreview) videoPreview.style.display = "none";
+  if (!preserveLiveBible) {
+    document
+      .getElementById("customControls")
+      ?.style.setProperty("visibility", "hidden");
+    const videoPreview = document.getElementById("preview");
+    if (videoPreview) videoPreview.style.display = "none";
+  }
   disposePptxThumbnails();
   if (pptxViewer) {
     try {
@@ -978,7 +992,9 @@ async function jumpToPptxSlide(index) {
   if (pptxFilePath && rememberPptxSlide(pptxFilePath, pptxCurrentSlide)) {
     scheduleAutosaveProjectState();
   }
-  if (isActiveMediaWindow()) sendPptxSlideToMediaWindow(pptxCurrentSlide);
+  if (isActiveMediaWindow() && activeMediaWindowContentType === "pptx") {
+    sendPptxSlideToMediaWindow(pptxCurrentSlide);
+  }
 }
 
 function pptxPrevSlide() {
@@ -1485,13 +1501,19 @@ function isQueuePresentationActive() {
   );
 }
 
+function isBiblePresentationActive() {
+  return isActiveMediaWindow() && activeMediaWindowContentType === "bible";
+}
+
 function isPreparingSeparateCue() {
+  const presentationActive =
+    isQueuePresentationActive() || isActiveMediaWindow() || isLocalAppWindowPresentationActive();
   return Boolean(
     currentMode === MEDIAPLAYER &&
-      isQueuePresentationActive() &&
+      presentationActive &&
       previewCueIndex >= 0 &&
       previewCueIndex < mediaQueue.length &&
-      previewCueIndex !== currentQueueIndex,
+      (currentQueueIndex < 0 || previewCueIndex !== currentQueueIndex),
   );
 }
 
@@ -1656,6 +1678,7 @@ function clearPreviewCue() {
   pendingCueVolume = null;
   cueVolumeDirty = false;
   syncGtkSliderToCueState();
+  if (isBiblePresentationActive()) showBibleWorkspace();
   restoreCountdownForLiveMedia();
   updatePreviewCueUI();
   renderQueue();
@@ -1669,6 +1692,7 @@ function clearCueAfterTake(index) {
     pendingCueVolume = null;
     cueVolumeDirty = false;
     syncGtkSliderToCueState();
+    if (isBiblePresentationActive()) showBibleWorkspace();
     restoreCountdownForLiveMedia();
   }
   updatePreviewCueUI();
@@ -2010,14 +2034,17 @@ function enqueuePathsFromFilePicker(paths) {
   if (currentMode !== MEDIAPLAYER || !paths.length) return;
   invalidateQueueUndoToastAfterMutation();
   const firstNewIndex = mediaQueue.length;
+  const biblePresentationLive =
+    isActiveMediaWindow() && activeMediaWindowContentType === "bible";
   for (const p of paths) {
     mediaQueue.push(createQueueEntry(p));
   }
   renderQueue();
   if (
-    !isActiveMediaWindow() &&
-    !isLocalAppWindowPresentationActive() &&
-    currentQueueIndex < 0 &&
+    ((!isActiveMediaWindow() &&
+      !isLocalAppWindowPresentationActive() &&
+      currentQueueIndex < 0) ||
+      biblePresentationLive) &&
     mediaQueue[firstNewIndex]
   ) {
     void onQueueItemActivate(firstNewIndex).catch((err) => console.error(err));
@@ -2095,16 +2122,134 @@ function resolveBibleBookName(rawBook) {
   return null;
 }
 
+function normalizeBibleAlias(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function addBibleAliasCandidate(candidates, alias, bookName) {
+  const normalized = normalizeBibleAlias(alias);
+  if (!normalized) return;
+  if (!candidates.has(normalized)) candidates.set(normalized, new Set());
+  candidates.get(normalized).add(bookName);
+}
+
+function buildBibleAliasMap() {
+  const candidates = new Map();
+  bibleBooksCache.forEach((book) => {
+    const bookName = book?.name || "";
+    const normalizedName = normalizeBibleAlias(bookName);
+    if (!normalizedName) return;
+
+    addBibleAliasCandidate(candidates, normalizedName, bookName);
+    addBibleAliasCandidate(candidates, normalizedName.replace(/\s+/g, ""), bookName);
+
+    const tokens = normalizedName.split(" ");
+    const numberPrefix = /^\d+$/.test(tokens[0]) ? tokens[0] : "";
+    const bookTokens = numberPrefix ? tokens.slice(1) : tokens;
+    const mainWord = bookTokens.find((token) => token !== "of" && token !== "the") || bookTokens[0];
+    const acronym = bookTokens.map((token) => token[0]).join("");
+
+    if (mainWord) {
+      const maxPrefixLength = Math.min(4, mainWord.length);
+      for (let length = 2; length <= maxPrefixLength; length += 1) {
+        const prefix = mainWord.slice(0, length);
+        if (numberPrefix) {
+          addBibleAliasCandidate(candidates, `${numberPrefix} ${prefix}`, bookName);
+          addBibleAliasCandidate(candidates, `${numberPrefix}${prefix}`, bookName);
+        } else {
+          addBibleAliasCandidate(candidates, prefix, bookName);
+        }
+      }
+    }
+
+    if (acronym.length > 1) {
+      const alias = numberPrefix ? `${numberPrefix} ${acronym}` : acronym;
+      addBibleAliasCandidate(candidates, alias, bookName);
+      addBibleAliasCandidate(candidates, alias.replace(/\s+/g, ""), bookName);
+    }
+  });
+
+  const aliasMap = new Map();
+  candidates.forEach((matches, alias) => {
+    if (matches.size === 1) aliasMap.set(alias, [...matches][0]);
+  });
+  Object.entries(EMS_BIBLE_ALIAS_OVERRIDES).forEach(([alias, bookName]) => {
+    aliasMap.set(normalizeBibleAlias(alias), bookName);
+    bibleBooksCache.forEach((book) => {
+      const match = normalizeBibleAlias(book?.name || "").match(/^(\d+)\s+(.+)$/);
+      if (match && normalizeBibleAlias(match[2]) === normalizeBibleAlias(bookName)) {
+        aliasMap.set(normalizeBibleAlias(`${match[1]} ${alias}`), book.name);
+        aliasMap.set(normalizeBibleAlias(`${match[1]}${alias}`), book.name);
+      }
+    });
+  });
+  return aliasMap;
+}
+
+function matchBibleReferenceAlias(cleanInput) {
+  const aliasMap = buildBibleAliasMap();
+  const aliases = [...aliasMap.keys()].sort((a, b) => {
+    const tokenDifference = b.split(" ").length - a.split(" ").length;
+    return tokenDifference || b.length - a.length;
+  });
+  for (const alias of aliases) {
+    if (cleanInput === alias) return { book: aliasMap.get(alias), numericTokens: [] };
+    if (cleanInput.startsWith(`${alias} `)) {
+      return {
+        book: aliasMap.get(alias),
+        numericTokens: cleanInput.slice(alias.length).trim().split(" ").filter(Boolean),
+      };
+    }
+  }
+  return null;
+}
+
 function normalizeBibleReferenceInput(rawReference) {
-  const parsed = parseScriptureReference(normalizeScriptureReference(rawReference));
-  const resolvedBook = resolveBibleBookName(parsed.book);
-  if (!resolvedBook) return null;
-  const chapter = Number.isFinite(parsed.chapter) && parsed.chapter > 0 ? parsed.chapter : 1;
-  const verse = Number.isFinite(parsed.verse) && parsed.verse > 0 ? parsed.verse : 0;
-  const verseEnd =
-    verse > 0 && Number.isFinite(parsed.verseEnd) && parsed.verseEnd > verse
-      ? parsed.verseEnd
-      : 0;
+  const cleanInput = String(rawReference || "")
+    .toLowerCase()
+    .replace(/[:\-.,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleanInput) return null;
+
+  const aliasMatch = matchBibleReferenceAlias(cleanInput);
+  let resolvedBook = aliasMatch?.book || "";
+  let numericTokens = aliasMatch?.numericTokens || [];
+
+  if (!resolvedBook) {
+    const parsed = parseScriptureReference(normalizeScriptureReference(rawReference));
+    resolvedBook = resolveBibleBookName(parsed.book);
+    if (!resolvedBook) return null;
+    numericTokens = [
+      parsed.chapter,
+      parsed.verse,
+      parsed.verseEnd,
+    ].filter((number) => Number.isFinite(number) && number > 0);
+  }
+
+  if (!numericTokens.length) {
+    numericTokens = [1, 1];
+  }
+
+  if (!numericTokens.every((token) => /^\d+$/.test(String(token)))) {
+    return null;
+  }
+
+  const [chapter, startVerse, rawEndVerse] = numericTokens.map((token) =>
+    Number.parseInt(token, 10),
+  );
+  if (!Number.isFinite(chapter) || chapter < 1) return null;
+  let verse = Number.isFinite(startVerse) && startVerse > 0 ? startVerse : 0;
+  let verseEnd = Number.isFinite(rawEndVerse) && rawEndVerse > 0 ? rawEndVerse : 0;
+  if (verse > 0 && verseEnd > 0 && verseEnd < verse) {
+    [verse, verseEnd] = [verseEnd, verse];
+  }
+  if (verseEnd === verse) verseEnd = 0;
+
   return {
     book: resolvedBook,
     chapter,
@@ -2256,6 +2401,10 @@ function buildBibleTextMessage(entry = bibleDesignerState) {
     text: `${entry.text || ""}\n\n${entry.reference || ""} ${entry.version || ""}`.trim(),
     reference: entry.reference || "",
     version: entry.version || "KJV",
+    book: entry.book || "",
+    chapter: Number.isFinite(entry.chapter) ? entry.chapter : 0,
+    verse: Number.isFinite(entry.verse) ? entry.verse : 0,
+    verseEnd: Number.isFinite(entry.verseEnd) ? entry.verseEnd : 0,
     ...style,
     backgroundImage: imageRegex.test(style.backgroundPath) ? backgroundUrl : "",
     backgroundVideo,
@@ -2444,6 +2593,85 @@ function setBiblePreviewText(reference, text, opts = {}) {
   return Boolean(bibleDesignerState.text);
 }
 
+function selectedBibleVerseNumbers() {
+  return [...bibleVerseSelection.verses].sort((a, b) => a - b);
+}
+
+function referenceForSelectedBibleVerses(selectedVerses) {
+  if (!Array.isArray(selectedVerses) || selectedVerses.length === 0) {
+    return bibleDesignerState.reference;
+  }
+  const ranges = [];
+  let start = selectedVerses[0];
+  let previous = selectedVerses[0];
+  for (let index = 1; index < selectedVerses.length; index += 1) {
+    const verse = selectedVerses[index];
+    if (verse === previous + 1) {
+      previous = verse;
+      continue;
+    }
+    ranges.push(start === previous ? `${start}` : `${start}-${previous}`);
+    start = verse;
+    previous = verse;
+  }
+  ranges.push(start === previous ? `${start}` : `${start}-${previous}`);
+  return `${bibleDesignerState.book} ${bibleDesignerState.chapter}:${ranges.join(",")}`;
+}
+
+function bibleEntryFromSelectedVerses() {
+  const selectedVerses = selectedBibleVerseNumbers();
+  if (selectedVerses.length === 0) return null;
+  let textData = null;
+  try {
+    textData = bibleAPI.getText(
+      bibleDesignerState.version,
+      bibleDesignerState.book,
+      String(bibleDesignerState.chapter),
+    );
+  } catch (err) {
+    console.error("Failed to load selected Bible verses:", err);
+    return null;
+  }
+  const verses = Array.isArray(textData?.verses) ? textData.verses : [];
+  const selectedVerseTexts = selectedVerses
+    .filter((verseNumber) => verseNumber >= 1 && verseNumber <= verses.length)
+    .map((verseNumber) => ({
+      verseNumber,
+      text: verses[verseNumber - 1],
+    }));
+  const selectedText =
+    selectedVerseTexts.length === 1
+      ? selectedVerseTexts[0].text
+      : selectedVerseTexts
+          .map(({ verseNumber, text }) => `${verseNumber}. ${text}`)
+          .join("\n");
+  if (!selectedText) return null;
+  const reference = referenceForSelectedBibleVerses(selectedVerses);
+  const verseStart = selectedVerses[0];
+  const verseEnd = selectedVerses[selectedVerses.length - 1];
+  return {
+    ...bibleDesignerState,
+    ...getBibleDesignerStyle(),
+    reference,
+    text: selectedText,
+    verse: verseStart,
+    verseEnd: verseEnd > verseStart ? verseEnd : 0,
+  };
+}
+
+function applySelectedBibleVersePreview() {
+  const selectedEntry = bibleEntryFromSelectedVerses();
+  if (!selectedEntry) return false;
+  Object.assign(bibleDesignerState, selectedEntry);
+  const referenceInput = document.getElementById("bibleReferenceInput");
+  if (referenceInput) referenceInput.value = selectedEntry.reference;
+  applyBiblePreview(bibleDesignerState);
+  void syncLiveBiblePresentation().catch((err) =>
+    console.error("Failed to update live Bible presentation:", err),
+  );
+  return true;
+}
+
 function refreshBibleLookupPreview() {
   syncBibleStateFromControls();
   const result = lookupBibleReference(bibleDesignerState.reference, bibleDesignerState.version);
@@ -2462,9 +2690,40 @@ function refreshBibleLookupPreview() {
 
 function currentBibleQueueEntry() {
   syncBibleStateFromControls();
+  const selectedEntry = bibleEntryFromSelectedVerses();
+  if (selectedEntry) {
+    Object.assign(bibleDesignerState, selectedEntry);
+    return {
+      path: bibleQueuePath(selectedEntry.reference, selectedEntry.version),
+      name: `${selectedEntry.reference} ${selectedEntry.version}`.trim(),
+      type: "bible",
+      autoAdvance: false,
+      cueStartTime: 0,
+      bible: { ...selectedEntry },
+    };
+  }
   const refreshed = refreshBibleLookupPreview();
   if (!bibleDesignerState.text && !refreshed) {
     return null;
+  }
+  return {
+    path: bibleQueuePath(bibleDesignerState.reference, bibleDesignerState.version),
+    name: `${bibleDesignerState.reference} ${bibleDesignerState.version}`.trim(),
+    type: "bible",
+    autoAdvance: false,
+    cueStartTime: 0,
+    bible: { ...bibleDesignerState },
+  };
+}
+
+function currentBibleTextOnlyEntry() {
+  syncBibleStateFromControls();
+  const selectedEntry = bibleEntryFromSelectedVerses();
+  if (selectedEntry) {
+    Object.assign(bibleDesignerState, selectedEntry);
+  } else {
+    const refreshed = refreshBibleLookupPreview();
+    if (!bibleDesignerState.text && !refreshed) return null;
   }
   return {
     path: bibleQueuePath(bibleDesignerState.reference, bibleDesignerState.version),
@@ -2701,19 +2960,35 @@ function bibleEntryWithProjectDefaults(entry) {
 }
 
 async function showBibleTextNow() {
-  const entry = currentBibleQueueEntry();
+  const entry = currentBibleTextOnlyEntry();
   if (!entry) {
     showGnomeToast("Choose Bible text to show");
     return false;
   }
   const transientEntry = bibleEntryWithProjectDefaults(entry);
   try {
+    mediaPlaybackEndedPending = false;
+    pendingQueueSwitchIndex = null;
+    pendingQueueSwitchStartTime = 0;
+    userStopPresentationPending = false;
+    currentQueueIndex = -1;
     if (isActiveMediaWindow()) {
       const didSlipstream = await slipstreamBiblePresentation(transientEntry.bible);
-      if (didSlipstream) return true;
+      if (didSlipstream) {
+        isPlaying = true;
+        isQueuePlaying = false;
+        updateDynUI();
+        renderQueue();
+        return true;
+      }
     }
     await createMediaWindow({ textItem: transientEntry, transientText: true });
     activeMediaWindowContentType = "bible";
+    isPlaying = true;
+    isQueuePlaying = false;
+    isActiveMediaWindowCache = true;
+    updateDynUI();
+    renderQueue();
     return true;
   } catch (err) {
     console.error("Failed to show Bible text:", err);
@@ -2814,6 +3089,7 @@ function renderBibleVerseList() {
   const list = document.getElementById("bibleVerseList");
   if (!list) return;
   list.innerHTML = "";
+  list.setAttribute("aria-multiselectable", "true");
   let textData = null;
   try {
     textData = bibleAPI.getText(
@@ -2832,6 +3108,8 @@ function renderBibleVerseList() {
   }
   verses.forEach((verseText, index) => {
     const verseNumber = index + 1;
+    const hasMultiSelection = bibleVerseSelection.verses.size > 0;
+    const multiSelected = bibleVerseSelection.verses.has(verseNumber);
     const selectedStart =
       Number.isFinite(bibleDesignerState.verse) && bibleDesignerState.verse > 0
         ? bibleDesignerState.verse
@@ -2840,27 +3118,55 @@ function renderBibleVerseList() {
       Number.isFinite(bibleDesignerState.verseEnd) && bibleDesignerState.verseEnd > selectedStart
         ? bibleDesignerState.verseEnd
         : selectedStart;
+    const isSelected =
+      hasMultiSelection
+        ? multiSelected
+        : verseNumber >= selectedStart && verseNumber <= selectedEnd;
     const button = document.createElement("button");
     button.type = "button";
-    button.className =
-      verseNumber >= selectedStart && verseNumber <= selectedEnd
-        ? "bible-verse-row is-selected"
-        : "bible-verse-row";
+    button.className = isSelected ? "bible-verse-row is-selected" : "bible-verse-row";
     button.dataset.verse = String(verseNumber);
     button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", isSelected ? "true" : "false");
     button.innerHTML = `<span class="bible-verse-number">${verseNumber}</span><span class="bible-verse-row-text">${escapeHtml(verseText)}</span>`;
-    button.addEventListener("click", () => {
-      bibleDesignerState.verse = verseNumber;
-      bibleDesignerState.verseEnd = 0;
-      list.querySelectorAll(".bible-verse-row.is-selected").forEach((row) => {
-        row.classList.remove("is-selected");
-      });
-      button.classList.add("is-selected");
+    button.addEventListener("click", (event) => {
+      const toggleSelection = event.ctrlKey || event.metaKey;
+      const extendSelection = event.shiftKey && bibleVerseSelection.anchor > 0;
+      if (extendSelection) {
+        const rangeStart = Math.min(bibleVerseSelection.anchor, verseNumber);
+        const rangeEnd = Math.max(bibleVerseSelection.anchor, verseNumber);
+        if (!toggleSelection) bibleVerseSelection.verses.clear();
+        for (let v = rangeStart; v <= rangeEnd; v += 1) {
+          bibleVerseSelection.verses.add(v);
+        }
+      } else if (toggleSelection) {
+        if (bibleVerseSelection.verses.has(verseNumber)) {
+          bibleVerseSelection.verses.delete(verseNumber);
+        } else {
+          bibleVerseSelection.verses.add(verseNumber);
+        }
+        bibleVerseSelection.anchor = verseNumber;
+      } else {
+        bibleVerseSelection.verses.clear();
+        bibleVerseSelection.verses.add(verseNumber);
+        bibleVerseSelection.anchor = verseNumber;
+      }
+
+      const selectedVerses = selectedBibleVerseNumbers();
+      bibleDesignerState.verse = selectedVerses[0] || verseNumber;
+      bibleDesignerState.verseEnd =
+        selectedVerses.length > 1 ? selectedVerses[selectedVerses.length - 1] : 0;
+      renderBibleVerseList();
+      applySelectedBibleVersePreview();
     });
     button.addEventListener("dblclick", () => {
+      bibleVerseSelection.verses.clear();
+      bibleVerseSelection.verses.add(verseNumber);
+      bibleVerseSelection.anchor = verseNumber;
       const reference = `${bibleDesignerState.book} ${bibleDesignerState.chapter}:${verseNumber}`;
       document.getElementById("bibleReferenceInput").value = reference;
       setBiblePreviewText(reference, verseText, { verse: verseNumber, verseEnd: 0 });
+      renderBibleVerseList();
     });
     list.appendChild(button);
   });
@@ -2884,6 +3190,9 @@ function jumpBibleReferenceToBrowser() {
   bibleDesignerState.verse = resolvedReference.verse;
   bibleDesignerState.verseEnd = resolvedReference.verseEnd;
   bibleDesignerState.reference = resolvedReference.reference;
+  if (referenceInput) referenceInput.value = resolvedReference.reference;
+  bibleVerseSelection.verses.clear();
+  bibleVerseSelection.anchor = 0;
   refreshBibleBrowser();
   if (bibleDesignerState.verse > 0) {
     const row = document.querySelector(
@@ -2920,6 +3229,8 @@ function installBibleMediaControls() {
   });
   versionSelect.addEventListener("change", () => {
     bibleDesignerState.version = versionSelect.value;
+    bibleVerseSelection.verses.clear();
+    bibleVerseSelection.anchor = 0;
     refreshBibleBrowser();
     applyBiblePreview(bibleDesignerState);
   });
@@ -4126,10 +4437,16 @@ async function restorePreviewCueAfterPresentationStopped() {
 }
 
 async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
-  restoreNonPptxPreviewSurface();
+  if (!isBiblePresentationActive()) {
+    restoreNonPptxPreviewSurface();
+  }
   const token = nextPreviewLoadToken();
   const audio = ensurePreviewAudioElement();
   previewAudioCueIndex = index;
+
+  if (!isBiblePresentationActive()) {
+    stopLiveAudioPresentation();
+  }
 
   audio.pause();
   audio.removeAttribute("src");
@@ -4216,6 +4533,10 @@ async function loadQueueItemIntoPreviewCue(index) {
       ? item.cueStartTime
       : 0;
 
+  if (isBiblePresentationActive() && !isQueueItemBible(item)) {
+    hideBibleWorkspace();
+  }
+
   if (isLocalAppWindowPresentationActive() && isQueueItemAudio(item)) {
     restoreNonPptxPreviewSurface();
     setCueStartTime(index, cueStart);
@@ -4230,6 +4551,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     await loadPptxPreview(item.path, {
       preserveLiveAudio: isLocalAppWindowPresentationActive(),
       preserveLiveVideo: isQueuePresentationActive() && isQueueItemVideo(currentLiveQueueItem()),
+      preserveLiveBible: isBiblePresentationActive(),
     });
     updatePreviewCueUI();
     renderQueue();
@@ -4237,6 +4559,7 @@ async function loadQueueItemIntoPreviewCue(index) {
   }
 
   if (isQueueItemBible(item)) {
+    hidePptxPreviewIfNeeded();
     stopPreviewAudioCue();
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
@@ -4244,7 +4567,9 @@ async function loadQueueItemIntoPreviewCue(index) {
     applyBiblePreview(item.bible || bibleDesignerState);
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemImage(item)) {
-    restoreNonPptxPreviewSurface({ isImage: true });
+    if (!isBiblePresentationActive()) {
+      restoreNonPptxPreviewSurface({ isImage: true });
+    }
     clearVideoPreviewCueOverlay();
     stopPreviewAudioCue();
     // Show the image in the cue overlay so the operator sees what's staged.
@@ -4266,7 +4591,9 @@ async function loadQueueItemIntoPreviewCue(index) {
     // clearVideoPreviewCueOverlay restores visibility when the cue clears.
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemAudio(item)) {
-    restoreNonPptxPreviewSurface();
+    if (!isBiblePresentationActive()) {
+      restoreNonPptxPreviewSurface();
+    }
     // Tear down a stale video cue overlay before loading the audio cue
     // so the operator never sees an old video frame lingering over the
     // live mirror after switching to audio.
@@ -4282,7 +4609,9 @@ async function loadQueueItemIntoPreviewCue(index) {
     textNode.data = "";
     await loadAudioQueueItemIntoPreviewCue(index, item, cueStart);
   } else {
-    restoreNonPptxPreviewSurface();
+    if (!isBiblePresentationActive()) {
+      restoreNonPptxPreviewSurface();
+    }
     // Video cues used to re-load the main #preview element with the cued
     // source, which forcibly paused the live mirror. That confused
     // operators who expected the live preview to keep running while they
@@ -7068,8 +7397,23 @@ function paintCountdownFor(mediaEl) {
  * image or empty live source.
  */
 function restoreCountdownForLiveMedia() {
+  const overlay = document.getElementById("customControls");
+  const liveItem = currentLiveQueueItem();
+  const liveIsBible = isActiveMediaWindow() && activeMediaWindowContentType === "bible";
+  const liveIsPptx = isActiveMediaWindow() && activeMediaWindowContentType === "pptx";
   const hasLiveSource = Boolean(mediaFile);
-  const liveIsImage = hasLiveSource && isImg(mediaFile);
+  const liveIsImage = (hasLiveSource && isImg(mediaFile)) || isQueueItemImage(liveItem);
+  const showTransportControls =
+    !liveIsBible &&
+    !liveIsPptx &&
+    !liveIsImage &&
+    (hasLiveSource || Boolean(liveAudio?.src));
+
+  if (overlay) {
+    overlay.style.display = "";
+    overlay.style.visibility = showTransportControls ? "" : "hidden";
+  }
+
   const showCountdown = hasLiveSource && !liveIsImage;
   setMediaCountdownOverlayVisible(showCountdown);
   if (!showCountdown) {
