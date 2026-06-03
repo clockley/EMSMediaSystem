@@ -2145,12 +2145,13 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .bible-workspace {
     position: absolute;
     inset: 0;
-    z-index: 5;
+    z-index: 8;
     display: grid;
     grid-template-columns: clamp(180px, 28%, 360px) minmax(0, 1fr);
     background: #000;
     color: #ffffff;
     overflow: hidden;
+    pointer-events: auto;
 }
 
 .bible-workspace[hidden] {
@@ -2159,6 +2160,13 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 
 #bibleWorkspace:not([hidden]) ~ #pptxNavBar {
     display: none !important;
+}
+
+#bibleWorkspace:not([hidden]) ~ #audioCuePanel,
+#bibleWorkspace:not([hidden]) ~ .controls-overlay {
+    opacity: 0 !important;
+    transform: translateY(100%) !important;
+    pointer-events: none !important;
 }
 
 .bible-workspace__navigator {
@@ -2245,6 +2253,10 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .bible-workspace__toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -2258,6 +2270,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     position: relative;
     container-type: size;
     min-height: 0;
+    block-size: 100%;
     display: block;
     padding: 0;
     box-sizing: border-box;
@@ -2331,6 +2344,9 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .bible-editor-drawer {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
     display: flex;
     padding: 12px 16px;
     border-top: 1px solid color-mix(in srgb, white 16%, transparent);

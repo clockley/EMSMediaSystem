@@ -60,6 +60,41 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
   };
 }
 
+function projectScriptureTextFromOverrides(overrides = {}) {
+  const normalized = normalizeProjectScriptureOverrides(overrides);
+  if (
+    !normalized.fontFamily &&
+    !Number.isFinite(normalized.fontSize) &&
+    !normalized.color &&
+    !normalized.backgroundColor &&
+    !normalized.backgroundPath
+  ) {
+    return undefined;
+  }
+  return {
+    appliesTo: "scripture",
+    themeOverrides: {
+      textContainer: {
+        typography: {
+          fontFamily: normalized.fontFamily || undefined,
+          fontSize: Number.isFinite(normalized.fontSize) ? normalized.fontSize : undefined,
+          fontColor: normalized.color || undefined,
+        },
+      },
+      background: {
+        color: normalized.backgroundColor || undefined,
+      },
+    },
+    presentation: {
+      fontFamily: normalized.fontFamily || undefined,
+      fontSize: Number.isFinite(normalized.fontSize) ? normalized.fontSize : undefined,
+      textColor: normalized.color || undefined,
+      backgroundColor: normalized.backgroundColor || undefined,
+      backgroundPath: normalized.backgroundPath || "",
+    },
+  };
+}
+
 function fileUrlToPath(p) {
   return fileURLToPath(p);
 }
@@ -404,7 +439,7 @@ export async function loadEmprojSnapshot(projectPath) {
     currentQueueIndex: -1,
     previewCueIndex: -1,
     projectStorageMode: manifestJson?.storage?.mode === "packed" ? "packed" : "working",
-    projectScriptureOverrides,
+    projectScriptureText: projectScriptureTextFromOverrides(projectScriptureOverrides),
     mediaQueue,
   };
 }
@@ -438,7 +473,15 @@ export async function saveEmprojSnapshot(
   const packMedia = opts?.packMedia === true;
   const queue = Array.isArray(snapshot?.mediaQueue) ? snapshot.mediaQueue : [];
   const projectScriptureOverrides = normalizeProjectScriptureOverrides(
-    snapshot?.projectScriptureOverrides,
+    snapshot?.projectScriptureText?.presentation && typeof snapshot.projectScriptureText.presentation === "object"
+      ? {
+          fontFamily: snapshot.projectScriptureText.presentation.fontFamily,
+          fontSize: snapshot.projectScriptureText.presentation.fontSize,
+          color: snapshot.projectScriptureText.presentation.textColor,
+          backgroundColor: snapshot.projectScriptureText.presentation.backgroundColor,
+          backgroundPath: snapshot.projectScriptureText.presentation.backgroundPath,
+        }
+      : {},
   );
   const nowIso = new Date().toISOString();
   const fileIndex = new Map();
@@ -732,41 +775,17 @@ export async function saveEmprojSnapshot(
     loopQueue: false,
     created: nowIso,
     modified: nowIso,
-    projectScriptureText:
-      projectScriptureOverrides.fontFamily ||
-      Number.isFinite(projectScriptureOverrides.fontSize) ||
-      projectScriptureOverrides.color ||
-      projectScriptureOverrides.backgroundColor ||
-      projectScriptureOverrides.backgroundPath
-        ? {
-            appliesTo: "scripture",
-            themeOverrides: {
-              textContainer: {
-                typography: {
-                  fontFamily: projectScriptureOverrides.fontFamily || undefined,
-                  fontSize: Number.isFinite(projectScriptureOverrides.fontSize)
-                    ? projectScriptureOverrides.fontSize
-                    : undefined,
-                  fontColor: projectScriptureOverrides.color || undefined,
-                },
-              },
-              background: {
-                color: projectScriptureOverrides.backgroundColor || undefined,
-                assetId: projectScriptureBackgroundAsset?.assetId,
-              },
-            },
-            presentation: {
-              fontFamily: projectScriptureOverrides.fontFamily || undefined,
-              fontSize: Number.isFinite(projectScriptureOverrides.fontSize)
-                ? projectScriptureOverrides.fontSize
-                : undefined,
-              textColor: projectScriptureOverrides.color || undefined,
-              backgroundColor: projectScriptureOverrides.backgroundColor || undefined,
-              backgroundAssetId: projectScriptureBackgroundAsset?.assetId,
-              backgroundPath: projectScriptureOverrides.backgroundPath || "",
-            },
-          }
-        : undefined,
+    projectScriptureText: (() => {
+      const scriptureText = projectScriptureTextFromOverrides(projectScriptureOverrides);
+      if (!scriptureText) return undefined;
+      if (scriptureText.themeOverrides?.background) {
+        scriptureText.themeOverrides.background.assetId = projectScriptureBackgroundAsset?.assetId;
+      }
+      if (scriptureText.presentation) {
+        scriptureText.presentation.backgroundAssetId = projectScriptureBackgroundAsset?.assetId;
+      }
+      return scriptureText;
+    })(),
     sequence: queueSequence,
   };
   const assetsJson = { assets };

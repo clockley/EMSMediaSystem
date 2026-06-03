@@ -2602,9 +2602,127 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
   };
 }
 
+function projectScriptureTextFromOverrides(overrides = projectScriptureOverrides) {
+  const normalized = normalizeProjectScriptureOverrides(overrides);
+  if (
+    !normalized.fontFamily &&
+    !Number.isFinite(normalized.fontSize) &&
+    !normalized.color &&
+    !normalized.backgroundColor &&
+    !normalized.backgroundPath
+  ) {
+    return undefined;
+  }
+  return {
+    appliesTo: "scripture",
+    themeOverrides: {
+      textContainer: {
+        typography: {
+          fontFamily: normalized.fontFamily || undefined,
+          fontSize: Number.isFinite(normalized.fontSize) ? normalized.fontSize : undefined,
+          fontColor: normalized.color || undefined,
+        },
+      },
+      background: {
+        color: normalized.backgroundColor || undefined,
+      },
+    },
+    presentation: {
+      fontFamily: normalized.fontFamily || undefined,
+      fontSize: Number.isFinite(normalized.fontSize) ? normalized.fontSize : undefined,
+      textColor: normalized.color || undefined,
+      backgroundColor: normalized.backgroundColor || undefined,
+      backgroundPath: normalized.backgroundPath || "",
+    },
+  };
+}
+
+function overridesFromProjectScriptureText(projectScriptureText = {}) {
+  const presentation =
+    projectScriptureText?.presentation && typeof projectScriptureText.presentation === "object"
+      ? projectScriptureText.presentation
+      : {};
+  const typography =
+    projectScriptureText?.themeOverrides?.textContainer?.typography &&
+    typeof projectScriptureText.themeOverrides.textContainer.typography === "object"
+      ? projectScriptureText.themeOverrides.textContainer.typography
+      : {};
+  const background =
+    projectScriptureText?.themeOverrides?.background &&
+    typeof projectScriptureText.themeOverrides.background === "object"
+      ? projectScriptureText.themeOverrides.background
+      : {};
+  return normalizeProjectScriptureOverrides({
+    fontFamily:
+      typeof presentation.fontFamily === "string"
+        ? presentation.fontFamily
+        : typeof typography.fontFamily === "string"
+          ? typography.fontFamily
+          : "",
+    fontSize:
+      Number.isFinite(presentation.fontSize)
+        ? presentation.fontSize
+        : Number.isFinite(typography.fontSize)
+          ? typography.fontSize
+          : undefined,
+    color:
+      typeof presentation.textColor === "string"
+        ? presentation.textColor
+        : typeof typography.fontColor === "string"
+          ? typography.fontColor
+          : "",
+    backgroundColor:
+      typeof presentation.backgroundColor === "string"
+        ? presentation.backgroundColor
+        : typeof background.color === "string"
+          ? background.color
+          : "",
+    backgroundPath:
+      typeof presentation.backgroundPath === "string"
+        ? presentation.backgroundPath
+        : "",
+  });
+}
+
 function bibleBackgroundDisplayName(filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) return "Choose Background…";
   return queueBasename(filePath) || "Selected Background";
+}
+
+function parseBibleQueuePath(filePath) {
+  if (!isBiblePath(filePath)) return null;
+  try {
+    const payload = decodeURIComponent(filePath.slice(bibleUriPrefix.length));
+    const separatorIndex = payload.indexOf(":");
+    if (separatorIndex < 0) {
+      return {
+        version: "KJV",
+        reference: payload,
+      };
+    }
+    return {
+      version: payload.slice(0, separatorIndex) || "KJV",
+      reference: payload.slice(separatorIndex + 1),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function resolveBibleQueueItemEntry(item) {
+  if (!isQueueItemBible(item)) return null;
+  const pathEntry = parseBibleQueuePath(item.path);
+  const baseEntry = {
+    ...(item?.bible && typeof item.bible === "object" ? item.bible : {}),
+    ...(pathEntry || {}),
+  };
+  const resolvedEntry = bibleEntryWithLookupText(baseEntry);
+  if (!resolvedEntry?.reference) return null;
+  return {
+    ...resolvedEntry,
+    version: resolvedEntry.version || pathEntry?.version || "KJV",
+    reference: resolvedEntry.reference || pathEntry?.reference || "",
+  };
 }
 
 function syncBibleBackgroundLabel(filePath = bibleDesignerState.backgroundPath) {
@@ -2614,17 +2732,46 @@ function syncBibleBackgroundLabel(filePath = bibleDesignerState.backgroundPath) 
   label.title = typeof filePath === "string" ? filePath : "";
 }
 
-function syncBibleDesignerStateToPreviewedQueueItem() {
-  const targetIndex =
+function loadBibleEntryIntoEditor(entry = bibleDesignerState) {
+  const resolvedEntry = bibleEntryWithLookupText(entry);
+  Object.assign(bibleDesignerState, resolvedEntry);
+  syncBibleSelectorsFromState();
+  syncBibleStyleControlsFromState();
+  syncBibleBackgroundLabel(bibleDesignerState.backgroundPath);
+  applyBiblePreview(bibleDesignerState);
+}
+
+function currentBibleEditorTargetIndex() {
+  if (
     previewCueIndex >= 0 &&
     previewCueIndex < mediaQueue.length &&
     isQueueItemBible(mediaQueue[previewCueIndex])
-      ? previewCueIndex
-      : currentQueueIndex >= 0 &&
-          currentQueueIndex < mediaQueue.length &&
-          isQueueItemBible(mediaQueue[currentQueueIndex])
-        ? currentQueueIndex
-        : -1;
+  ) {
+    return previewCueIndex;
+  }
+  if (
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length &&
+    isQueueItemBible(mediaQueue[currentQueueIndex])
+  ) {
+    return currentQueueIndex;
+  }
+  return -1;
+}
+
+function isBibleEditorTargetLiveItem() {
+  const targetIndex = currentBibleEditorTargetIndex();
+  return (
+    targetIndex >= 0 &&
+    targetIndex === currentQueueIndex &&
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length &&
+    isQueueItemBible(mediaQueue[currentQueueIndex])
+  );
+}
+
+function syncBibleDesignerStateToPreviewedQueueItem() {
+  const targetIndex = currentBibleEditorTargetIndex();
   if (targetIndex < 0) return false;
   const entry = currentBibleQueueEntry();
   if (!entry) return false;
@@ -2652,11 +2799,17 @@ function applyBibleBackgroundToAllProjectText() {
   let changedCount = 0;
   mediaQueue.forEach((item) => {
     if (!isQueueItemBible(item)) return;
+    const entry = resolveBibleQueueItemEntry(item);
     item.bible = {
-      ...(item.bible || {}),
+      ...(entry || item.bible || {}),
       backgroundColor: style.backgroundColor,
       backgroundPath: style.backgroundPath,
     };
+    if (entry?.reference) {
+      item.path = bibleQueuePath(entry.reference, entry.version);
+      item.name = `${entry.reference} ${entry.version}`.trim();
+      item.type = "bible";
+    }
     changedCount += 1;
   });
 
@@ -2683,10 +2836,16 @@ function applyBibleTextColorToAllProjectText() {
   let changedCount = 0;
   mediaQueue.forEach((item) => {
     if (!isQueueItemBible(item)) return;
+    const entry = resolveBibleQueueItemEntry(item);
     item.bible = {
-      ...(item.bible || {}),
+      ...(entry || item.bible || {}),
       color: style.color,
     };
+    if (entry?.reference) {
+      item.path = bibleQueuePath(entry.reference, entry.version);
+      item.name = `${entry.reference} ${entry.version}`.trim();
+      item.type = "bible";
+    }
     changedCount += 1;
   });
 
@@ -2713,10 +2872,16 @@ function applyBibleFontToAllProjectText() {
   let changedCount = 0;
   mediaQueue.forEach((item) => {
     if (!isQueueItemBible(item)) return;
+    const entry = resolveBibleQueueItemEntry(item);
     item.bible = {
-      ...(item.bible || {}),
+      ...(entry || item.bible || {}),
       fontFamily: style.fontFamily,
     };
+    if (entry?.reference) {
+      item.path = bibleQueuePath(entry.reference, entry.version);
+      item.name = `${entry.reference} ${entry.version}`.trim();
+      item.type = "bible";
+    }
     changedCount += 1;
   });
 
@@ -2743,10 +2908,16 @@ function applyBibleFontSizeToAllProjectText() {
   let changedCount = 0;
   mediaQueue.forEach((item) => {
     if (!isQueueItemBible(item)) return;
+    const entry = resolveBibleQueueItemEntry(item);
     item.bible = {
-      ...(item.bible || {}),
+      ...(entry || item.bible || {}),
       fontSize: style.fontSize,
     };
+    if (entry?.reference) {
+      item.path = bibleQueuePath(entry.reference, entry.version);
+      item.name = `${entry.reference} ${entry.version}`.trim();
+      item.type = "bible";
+    }
     changedCount += 1;
   });
 
@@ -2874,6 +3045,7 @@ async function slipstreamBiblePresentation(entry) {
 
 async function syncLiveBiblePresentation() {
   if (!isActiveMediaWindow() || activeMediaWindowContentType !== "bible") return false;
+  if (!isBibleEditorTargetLiveItem()) return false;
   const entry = currentBibleQueueEntry();
   if (!entry) return false;
   if (
@@ -3043,6 +3215,41 @@ function jumpBibleReferenceToBrowser() {
   return true;
 }
 
+async function openBibleWorkspaceFromButton() {
+  showBibleWorkspace();
+  await bibleAPI.waitForReady();
+
+  const firstBibleIndex = mediaQueue.findIndex((item) => isQueueItemBible(item));
+  if (firstBibleIndex >= 0) {
+    await loadQueueItemIntoPreviewCue(firstBibleIndex);
+    jumpBibleReferenceToBrowser();
+    return;
+  }
+
+  if (currentPreviewCue()) {
+    clearPreviewCue();
+  }
+
+  const hasLoadedBibleText = Boolean(
+    normalizeScriptureReference(bibleDesignerState.reference || "") || bibleDesignerState.text,
+  );
+  if (!hasLoadedBibleText) {
+    Object.assign(bibleDesignerState, {
+      ...bibleDesignerState,
+      version: bibleDesignerState.version || "KJV",
+      reference: "Genesis 1:1",
+      text: "",
+      book: "Genesis",
+      chapter: 1,
+      verse: 1,
+      verseEnd: 0,
+    });
+  }
+
+  syncBibleSelectorsFromState();
+  jumpBibleReferenceToBrowser();
+}
+
 function installBibleMediaControls() {
   const versionSelect = document.getElementById("bibleVersionSelect");
   const referenceSuggestions = document.getElementById("bibleReferenceSuggestions");
@@ -3057,14 +3264,7 @@ function installBibleMediaControls() {
   syncBibleBackgroundLabel();
 
   document.getElementById("openBibleWorkspaceBtn")?.addEventListener("click", () => {
-    showBibleWorkspace();
-    void bibleAPI
-      .waitForReady()
-      .then(() => {
-        refreshBibleBrowser();
-        applyBiblePreview(bibleDesignerState);
-      })
-      .catch(console.error);
+    void openBibleWorkspaceFromButton().catch(console.error);
   });
   versionSelect.addEventListener("change", () => {
     bibleDesignerState.version = versionSelect.value;
@@ -3089,6 +3289,8 @@ function installBibleMediaControls() {
       syncBibleStateFromControls();
       Object.assign(bibleDesignerState, getBibleDesignerStyle());
       applyBiblePreview(bibleDesignerState, { show: false });
+      syncBibleDesignerStateToPreviewedQueueItem();
+      void saveCurrentProjectInStorageMode({ quiet: true });
       void syncLiveBiblePresentation().catch((err) =>
         console.error("Failed to update live Bible presentation:", err),
       );
@@ -3172,7 +3374,7 @@ function buildProjectStateSnapshot() {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     projectPath: currentProjectPath || "",
     projectStorageMode: currentProjectStorageMode,
-    projectScriptureOverrides: { ...projectScriptureOverrides },
+    projectScriptureText: projectScriptureTextFromOverrides(projectScriptureOverrides),
     currentMode,
     currentQueueIndex,
     previewCueIndex,
@@ -3210,7 +3412,7 @@ function applyProjectStateSnapshot(state) {
   currentProjectStorageMode = state.projectStorageMode === "packed" ? "packed" : "working";
   Object.assign(
     projectScriptureOverrides,
-    normalizeProjectScriptureOverrides(state.projectScriptureOverrides),
+    overridesFromProjectScriptureText(state.projectScriptureText),
   );
   bibleStyleDirtyState.fontFamily = false;
   bibleStyleDirtyState.fontSize = false;
@@ -4240,7 +4442,7 @@ async function restorePreviewCueAfterPresentationStopped() {
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
     textNode.data = "";
-    applyBiblePreview(cue.item.bible || bibleDesignerState);
+    loadBibleEntryIntoEditor(cue.item.bible || bibleDesignerState);
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemAudio(cue.item)) {
     setMediaCountdownOverlayVisible(true);
@@ -4403,7 +4605,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
     textNode.data = "";
-    applyBiblePreview(item.bible || bibleDesignerState);
+    loadBibleEntryIntoEditor(item.bible || bibleDesignerState);
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemImage(item)) {
     if (!isBiblePresentationActive()) {
@@ -4569,6 +4771,7 @@ function shouldConfirmLiveSwitch(targetItem) {
 
 async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
+  if (index === currentQueueIndex) return;
   const item = mediaQueue[index];
 
   // If something is already presenting (either the dedicated media window or
@@ -5969,6 +6172,11 @@ function setupCustomMediaControls() {
     clickTarget.addEventListener(
       "click",
       (event) => {
+        const bibleWorkspace = document.getElementById("bibleWorkspace");
+        if (bibleWorkspace && !bibleWorkspace.hidden && bibleWorkspace.contains(event.target)) {
+          event.stopPropagation();
+          return;
+        }
         const mediaEl = currentControlMedia();
         if (!mediaEl || mediaEl.src === "") return;
         const isControl = event.target.closest("#customControls");
