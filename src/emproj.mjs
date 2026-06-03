@@ -20,6 +20,8 @@ const IMAGE_EXT = new Set([".bmp", ".gif", ".jpg", ".jpeg", ".png", ".webp", ".s
 const VIDEO_EXT = new Set([".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".wmv"]);
 const AUDIO_EXT = new Set([".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma"]);
 const PRESENTATION_EXT = new Set([".pptx"]);
+const SCRIPTURE_FONT_FAMILY = "'Nunito Sans', Arial, sans-serif";
+const SCRIPTURE_BODY_FONT_SIZE = 66;
 
 function canonicalJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -189,11 +191,12 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
       book: typeof scripture.book === "string" ? scripture.book : "",
       chapter: Number.isFinite(scripture.chapter) ? scripture.chapter : 1,
       verse: Number.isFinite(scripture.verse) ? scripture.verse : 0,
+      verseEnd: Number.isFinite(scripture.verseEnd) ? scripture.verseEnd : 0,
       fontFamily:
         typeof scripture.fontFamily === "string"
           ? scripture.fontFamily
-          : "Adwaita, Arial, sans-serif",
-      fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : 64,
+          : SCRIPTURE_FONT_FAMILY,
+      fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : SCRIPTURE_BODY_FONT_SIZE,
       color: typeof scripture.color === "string" ? scripture.color : "#ffffff",
       backgroundColor:
         typeof scripture.backgroundColor === "string"
@@ -460,8 +463,9 @@ export async function saveEmprojSnapshot(
           book: scripture.book || "",
           chapter: Number.isFinite(scripture.chapter) ? scripture.chapter : 1,
           verse: Number.isFinite(scripture.verse) ? scripture.verse : 0,
-          fontFamily: scripture.fontFamily || "Adwaita, Arial, sans-serif",
-          fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : 64,
+          verseEnd: Number.isFinite(scripture.verseEnd) ? scripture.verseEnd : 0,
+          fontFamily: scripture.fontFamily || SCRIPTURE_FONT_FAMILY,
+          fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : SCRIPTURE_BODY_FONT_SIZE,
           color: scripture.color || "#ffffff",
           backgroundColor: scripture.backgroundColor || "#000000",
           backgroundAssetId: backgroundAsset?.assetId,
