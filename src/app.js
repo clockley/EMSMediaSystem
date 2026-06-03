@@ -43,6 +43,17 @@ import {
   normalizeScriptureReference,
   parseScriptureReference,
 } from "./app-bible-reference-utils.mjs";
+import {
+  clampPptxSlideIndex as clampPptxSlideIndexValue,
+  enforcePptxCoverFit,
+  getElementContentSize,
+  getPptxListRenderOptions,
+  getPptxNaturalSlideSize,
+  getPptxRenderedSlideElement,
+  getPptxSlideElementFromHandle,
+  isSavedPptxSlideIndex,
+  waitForNextFrame,
+} from "./app-pptx-utils.mjs";
 
 let ipcRenderer;
 let bibleAPI;
@@ -192,8 +203,6 @@ const SCRIPTURE_LABEL_FONT_SIZE = 28;
 const SCRIPTURE_HEADING_FONT_SIZE = 52;
 const SCRIPTURE_FONT_WEIGHT = 600;
 const SCRIPTURE_LINE_HEIGHT = 1.45;
-const PPTX_SMALL_DECK_MAX_SLIDES = 30;
-const PPTX_LARGE_DECK_MIN_SLIDES = 151;
 let isActiveMediaWindowCache = false;
 const SECONDS = new Int32Array(1);
 const SECONDSFLOAT = new Float64Array(1);
@@ -302,6 +311,10 @@ function isNonVideoPresentationItem(filePath) {
 
 function normalizeBibleReferenceInput(rawReference) {
   return normalizeBibleReferenceInputWithCache(rawReference, bibleBooksCache);
+}
+
+function clampPptxSlideIndex(index, count = pptxSlideCount) {
+  return clampPptxSlideIndexValue(index, count);
 }
 
 function isQueueItemAutoAdvanceEnabled(index) {
@@ -439,16 +452,6 @@ function isQueueItemVideo(item) {
   );
 }
 
-function clampPptxSlideIndex(index, count = pptxSlideCount) {
-  const maxIndex = Math.max(0, (Number.isFinite(count) ? count : 1) - 1);
-  if (!Number.isFinite(index)) return 0;
-  return Math.min(Math.max(0, Math.floor(index)), maxIndex);
-}
-
-function isSavedPptxSlideIndex(index) {
-  return Number.isFinite(index) && index >= 0;
-}
-
 function resolvePptxPreviewStartSlide(filePath, opts) {
   if (Number.isFinite(opts?.startSlide)) {
     return Math.max(0, Math.floor(opts.startSlide));
@@ -476,31 +479,6 @@ function rememberPptxSlide(filePath, slideIndex) {
     }
   });
   return changed;
-}
-
-function getPptxListRenderOptions(slideCount) {
-  if (Number.isFinite(slideCount) && slideCount <= PPTX_SMALL_DECK_MAX_SLIDES) {
-    return {
-      batchSize: 12,
-      windowed: true,
-      initialSlides: 4,
-      overscanViewport: 1.5,
-    };
-  }
-  if (Number.isFinite(slideCount) && slideCount >= PPTX_LARGE_DECK_MIN_SLIDES) {
-    return {
-      batchSize: 4,
-      windowed: true,
-      initialSlides: 2,
-      overscanViewport: 2,
-    };
-  }
-  return {
-    batchSize: 8,
-    windowed: true,
-    initialSlides: 4,
-    overscanViewport: 1.5,
-  };
 }
 
 async function loadPptxPreview(filePath, opts = {}) {
@@ -589,17 +567,6 @@ async function loadPptxPreview(filePath, opts = {}) {
   }
 }
 
-function enforcePptxCoverFit(slideEl) {
-  if (!slideEl) return;
-  const svgs = slideEl.querySelectorAll("svg");
-  svgs.forEach((svg) => {
-    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    svg.style.width = "100%";
-    svg.style.height = "100%";
-    svg.style.display = "block";
-  });
-}
-
 function disposePptxThumbnails() {
   if (pptxThumbnailObserver) {
     try {
@@ -630,56 +597,6 @@ function disposePptxViewerHost() {
     pptxViewerHost.remove();
   } catch {}
   pptxViewerHost = null;
-}
-
-function waitForNextFrame() {
-  return new Promise((resolve) => requestAnimationFrame(resolve));
-}
-
-function getPptxRenderedSlideElement(stage) {
-  return pptxPreviewSlideHandle?.element || stage?.firstElementChild || null;
-}
-
-function getPptxSlideElementFromHandle(handle, stage) {
-  return handle?.element || stage?.firstElementChild || null;
-}
-
-function getPptxNaturalSlideSize(slideEl) {
-  const svg = slideEl?.querySelector?.("svg");
-  const viewBox = svg?.getAttribute?.("viewBox")?.split(/\s+/).map(Number);
-  const viewBoxWidth = viewBox?.length === 4 && Number.isFinite(viewBox[2]) ? viewBox[2] : 0;
-  const viewBoxHeight = viewBox?.length === 4 && Number.isFinite(viewBox[3]) ? viewBox[3] : 0;
-  const rect = slideEl?.getBoundingClientRect?.();
-  const width =
-    slideEl?.offsetWidth ||
-    slideEl?.scrollWidth ||
-    rect?.width ||
-    viewBoxWidth ||
-    pptxViewer?.slideWidth ||
-    16;
-  const height =
-    slideEl?.offsetHeight ||
-    slideEl?.scrollHeight ||
-    rect?.height ||
-    viewBoxHeight ||
-    pptxViewer?.slideHeight ||
-    9;
-  return { width, height };
-}
-
-function getElementContentSize(el) {
-  if (!el) return { width: 0, height: 0 };
-  const styles = window.getComputedStyle(el);
-  const horizontalPadding =
-    Number.parseFloat(styles.paddingLeft || "0") +
-    Number.parseFloat(styles.paddingRight || "0");
-  const verticalPadding =
-    Number.parseFloat(styles.paddingTop || "0") +
-    Number.parseFloat(styles.paddingBottom || "0");
-  return {
-    width: Math.max(0, el.clientWidth - horizontalPadding),
-    height: Math.max(0, el.clientHeight - verticalPadding),
-  };
 }
 
 function ensurePptxPreviewShell(container) {
@@ -757,7 +674,10 @@ async function renderPptxThumbnail(index, button, opts = {}) {
   await waitForNextFrame();
 
   const slideEl = getPptxSlideElementFromHandle(handle, stage);
-  const { width, height } = getPptxNaturalSlideSize(slideEl);
+  const { width, height } = getPptxNaturalSlideSize(slideEl, {
+    slideWidth: pptxViewer?.slideWidth,
+    slideHeight: pptxViewer?.slideHeight,
+  });
   const vw = viewport.clientWidth;
   const vh = viewport.clientHeight;
   const scale = vw && vh ? Math.min(vw / width, vh / height) : 1;
@@ -904,8 +824,11 @@ async function showPptxSlide(index) {
     pptxPreviewSlideHandle = pptxViewer?.renderSlideToContainer(slideIndex, stage, 1) || null;
   } catch {}
   await waitForNextFrame();
-  const slideEl = getPptxRenderedSlideElement(stage);
-  const { width, height } = getPptxNaturalSlideSize(slideEl);
+  const slideEl = getPptxRenderedSlideElement(pptxPreviewSlideHandle, stage);
+  const { width, height } = getPptxNaturalSlideSize(slideEl, {
+    slideWidth: pptxViewer?.slideWidth,
+    slideHeight: pptxViewer?.slideHeight,
+  });
   const { width: cw, height: ch } = getElementContentSize(mainPane);
   const scale = cw && ch ? Math.min(cw / width, ch / height) : 1;
   stage.style.width = `${width * scale}px`;
