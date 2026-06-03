@@ -1593,7 +1593,7 @@ ul {
     object-fit: contain;
     display: block;
     background: var(--view-bg-color, #1d1d20);
-    z-index: 2;
+    z-index: 6;
 }
 
 #previewCue[hidden] {
@@ -1608,7 +1608,7 @@ ul {
     display: none;
     overflow: hidden;
     background: #000;
-    z-index: 2;
+    z-index: 6;
     align-items: stretch;
     justify-content: stretch;
     gap: 0;
@@ -1808,7 +1808,7 @@ ul {
     bottom: 0;
     left: 0;
     right: 0;
-    z-index: 4;
+    z-index: 7;
     padding: 8px 16px;
     display: flex;
     align-items: center;
