@@ -90,6 +90,49 @@ function getPptxListRenderOptions(slideCount) {
   };
 }
 
+function waitForMediaMetadata(mediaEl) {
+  if (!mediaEl) {
+    return Promise.reject(new Error("Missing media element"));
+  }
+  if (mediaEl.readyState >= HTMLMediaElement.HAVE_METADATA) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      mediaEl.removeEventListener("loadedmetadata", onLoaded);
+      mediaEl.removeEventListener("error", onError);
+    };
+    const onLoaded = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(mediaEl.error ?? new Error("Failed to load media metadata"));
+    };
+    mediaEl.addEventListener("loadedmetadata", onLoaded, { once: true });
+    mediaEl.addEventListener("error", onError, { once: true });
+  });
+}
+
+async function applyVideoStartTime(mediaEl, requestedStartTime) {
+  if (!mediaEl || !Number.isFinite(requestedStartTime) || requestedStartTime <= 0) {
+    return;
+  }
+  await waitForMediaMetadata(mediaEl);
+  let safeTime = requestedStartTime;
+  if (Number.isFinite(mediaEl.duration) && mediaEl.duration > 0) {
+    safeTime = Math.min(requestedStartTime, Math.max(0, mediaEl.duration - 0.15));
+  }
+  if (safeTime < 0) safeTime = 0;
+  mediaEl.currentTime = safeTime;
+}
+
 /**
  * hls.js tuning for network streams (YouTube live HLS, generic m3u8) in the
  * projection window. Goal: maximum video quality on a presentation display.
@@ -230,10 +273,43 @@ function ensurePreferredDashAudioTrack(player, maxAttempts = 25) {
 }
 
 async function applySlipstream(data) {
-  mediaFile = data.mediaFile;
+  const newIsText = !!data.isText;
+  mediaFile = data.mediaFile ?? mediaFile;
   loopFile = !!data.loopFile;
   isImg = !!data.isImg;
   const newIsPptx = !!data.isPptx;
+
+  if (newIsText) {
+    isText = true;
+    const pptxCanvas = document.getElementById("pptxCanvas");
+    if (pptxCanvas) pptxCanvas.style.display = "none";
+    document.querySelector("video").style.display = "none";
+    try {
+      video.pause();
+    } catch {}
+    video.removeAttribute("src");
+    video.load();
+    if (img) img.style.display = "none";
+    const textCanvas = document.getElementById("textCanvas");
+    textCanvas.style.display = "flex";
+    if (data.textPayload) {
+      applyTextMessage(data.textPayload);
+    }
+    return;
+  }
+
+  if (isText && !newIsText) {
+    isText = false;
+    const textCanvas = document.getElementById("textCanvas");
+    if (textCanvas) {
+      textCanvas.style.display = "none";
+      textCanvas.style.backgroundImage = "";
+    }
+    const backgroundVideo = document.getElementById("textBackgroundVideo");
+    if (backgroundVideo) {
+      resetTextBackgroundVideo(backgroundVideo);
+    }
+  }
 
   if (newIsPptx) {
     isPptx = true;
@@ -324,8 +400,10 @@ async function applySlipstream(data) {
   // briefly puts the element in NETWORK_EMPTY and races the new src assignment.
   video.src = mediaFile;
   videoEl.style.display = "block";
-  if (data.startTime) {
-    video.currentTime = data.startTime;
+  if (Number.isFinite(data.startTime) && data.startTime > 0) {
+    try {
+      await applyVideoStartTime(video, data.startTime);
+    } catch {}
   }
   await video.play().catch(() => {});
 }
@@ -484,35 +562,103 @@ function playbackStateUpdate() {
   }
 }
 
+const DEFAULT_TEXT_PRESENTATION = Object.freeze({
+  text: "",
+  color: "#ffffff",
+  fontSize: 64,
+  fontFamily: "Arial, sans-serif",
+  backgroundColor: "#000000",
+  backgroundImage: "",
+  backgroundVideo: "",
+  position: {
+    vertical: "center",
+    horizontal: "center",
+  },
+});
+
+const textPresentationState = {
+  backgroundVideo: "",
+};
+
+function resetTextBackgroundVideo(backgroundVideo, { keepSource = false } = {}) {
+  if (!backgroundVideo) return;
+  backgroundVideo.pause();
+  if (!keepSource) {
+    backgroundVideo.removeAttribute("src");
+    backgroundVideo.load();
+    textPresentationState.backgroundVideo = "";
+  }
+  backgroundVideo.style.display = "none";
+}
+
+function applyTextMessage(message) {
+  const textCanvas = document.getElementById("textCanvas");
+  const textContent = document.getElementById("textContent");
+  const safeMessage =
+    message && typeof message === "object"
+      ? {
+          ...DEFAULT_TEXT_PRESENTATION,
+          ...message,
+          position: {
+            ...DEFAULT_TEXT_PRESENTATION.position,
+            ...(message.position || {}),
+          },
+        }
+      : DEFAULT_TEXT_PRESENTATION;
+
+  textContent.textContent = safeMessage.text;
+  textContent.style.color = safeMessage.color;
+  textContent.style.fontSize = `${Number.isFinite(safeMessage.fontSize) ? safeMessage.fontSize : DEFAULT_TEXT_PRESENTATION.fontSize}px`;
+  textContent.style.fontFamily = safeMessage.fontFamily;
+  textContent.style.backgroundColor = "";
+
+  textCanvas.style.alignItems = safeMessage.position.vertical;
+  textCanvas.style.justifyContent = safeMessage.position.horizontal;
+  textCanvas.style.backgroundColor = safeMessage.backgroundColor;
+  textCanvas.style.backgroundRepeat = "no-repeat";
+
+  if (safeMessage.backgroundImage) {
+    textCanvas.style.backgroundImage = `url('${safeMessage.backgroundImage}')`;
+    textCanvas.style.backgroundSize = "cover";
+    textCanvas.style.backgroundPosition = "center";
+  } else {
+    textCanvas.style.backgroundImage = "";
+    textCanvas.style.backgroundSize = "";
+    textCanvas.style.backgroundPosition = "";
+  }
+
+  let backgroundVideo = document.getElementById("textBackgroundVideo");
+  if (safeMessage.backgroundVideo) {
+    if (!backgroundVideo) {
+      backgroundVideo = document.createElement("video");
+      backgroundVideo.id = "textBackgroundVideo";
+      backgroundVideo.autoplay = true;
+      backgroundVideo.loop = true;
+      backgroundVideo.muted = true;
+      backgroundVideo.playsInline = true;
+      textCanvas.prepend(backgroundVideo);
+    }
+    const shouldReloadVideo = textPresentationState.backgroundVideo !== safeMessage.backgroundVideo;
+    if (shouldReloadVideo) {
+      backgroundVideo.src = safeMessage.backgroundVideo;
+      backgroundVideo.load();
+      textPresentationState.backgroundVideo = safeMessage.backgroundVideo;
+    }
+    backgroundVideo.style.display = "block";
+    backgroundVideo.muted = true;
+    backgroundVideo.defaultMuted = true;
+    backgroundVideo.loop = true;
+    if (shouldReloadVideo || backgroundVideo.paused) {
+      void backgroundVideo.play().catch(() => {});
+    }
+  } else if (backgroundVideo) {
+    resetTextBackgroundVideo(backgroundVideo);
+  }
+}
+
 function installTextHandlers() {
   ipcRenderer.on("update-text", (evt, message) => {
-    const textCanvas = document.getElementById("textCanvas");
-    const textContent = document.getElementById("textContent");
-
-    textContent.textContent = message.text;
-
-    if (message.color) {
-      textContent.style.color = message.color;
-    }
-
-    if (message.fontSize) {
-      textContent.style.fontSize = `${message.fontSize}px`;
-    }
-
-    if (message.position) {
-      textCanvas.style.alignItems = message.position.vertical || "center";
-      textCanvas.style.justifyContent = message.position.horizontal || "center";
-    }
-
-    if (message.backgroundColor) {
-      textContent.style.backgroundColor = message.backgroundColor;
-    }
-
-    if (message.backgroundImage) {
-      textCanvas.style.backgroundImage = `url('${message.backgroundImage}')`;
-      textCanvas.style.backgroundSize = "cover";
-      textCanvas.style.backgroundPosition = "center";
-    }
+    applyTextMessage(message);
   });
 }
 
@@ -521,6 +667,7 @@ async function loadMedia() {
   let dashPlayer = null;
 
   if (isText) {
+    installICPHandlers();
     document.querySelector("video").style.display = "none";
     textCanvas.style.display = "flex";
     installTextHandlers();
@@ -659,11 +806,9 @@ async function loadMedia() {
         : strtTm +
           (ts.systemTime - birth) +
           (Date.now() - ts.ipcTimestamp) * 0.001;
-      if (Number.isFinite(video.duration) && video.duration > 0) {
-        t = Math.min(t, Math.max(0, video.duration - 0.15));
-      }
-      if (t < 0) t = 0;
-      video.currentTime = t;
+      try {
+        await applyVideoStartTime(video, t);
+      } catch {}
     }
 
     video.addEventListener("play", playbackStateUpdate);

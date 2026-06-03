@@ -156,6 +156,54 @@ function queueItemFromSequenceItem(item, resolvedPath, asset = null) {
   };
 }
 
+function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPaths) {
+  const scripture = item?.scripture;
+  if (!scripture || typeof scripture !== "object") return null;
+  const backgroundAsset =
+    typeof scripture.backgroundAssetId === "string"
+      ? assetById.get(scripture.backgroundAssetId) || null
+      : null;
+  const backgroundPath =
+    typeof backgroundAsset?.path === "string"
+      ? extractedMediaPaths.get(backgroundAsset.path) || backgroundAsset.path
+      : "";
+  const reference = typeof scripture.reference === "string" ? scripture.reference : "";
+  const version = typeof scripture.version === "string" ? scripture.version : "KJV";
+  return {
+    path:
+      typeof item?.source?.path === "string" && item.source.path.length > 0
+        ? item.source.path
+        : `bible://${encodeURIComponent(`${version}:${reference}`)}`,
+    name: item?.label || `${reference} ${version}`.trim(),
+    type: "bible",
+    missing: false,
+    originalPath: undefined,
+    originalName: undefined,
+    autoAdvance: item?.playback?.autoAdvance !== false,
+    cueStartTime: Number.isFinite(item?.playback?.startTime) ? item.playback.startTime : 0,
+    cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
+    bible: {
+      version,
+      reference,
+      text: typeof scripture.text === "string" ? scripture.text : "",
+      book: typeof scripture.book === "string" ? scripture.book : "",
+      chapter: Number.isFinite(scripture.chapter) ? scripture.chapter : 1,
+      verse: Number.isFinite(scripture.verse) ? scripture.verse : 0,
+      fontFamily:
+        typeof scripture.fontFamily === "string"
+          ? scripture.fontFamily
+          : "Adwaita, Arial, sans-serif",
+      fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : 64,
+      color: typeof scripture.color === "string" ? scripture.color : "#ffffff",
+      backgroundColor:
+        typeof scripture.backgroundColor === "string"
+          ? scripture.backgroundColor
+          : "#000000",
+      backgroundPath,
+    },
+  };
+}
+
 export async function loadEmprojSnapshot(projectPath) {
   const zipfile = await openZip(projectPath);
   const extractRoot = await mkdtemp(path.join(os.tmpdir(), "ems-emproj-"));
@@ -227,6 +275,9 @@ export async function loadEmprojSnapshot(projectPath) {
   const mediaQueue = (
     await Promise.all(sequence.map(async (item) => {
       if (!item || typeof item !== "object") return null;
+      if (item.type === "scripture" || item.scripture) {
+        return buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPaths);
+      }
       let relPath = "";
       if (typeof item?.source?.path === "string") relPath = item.source.path;
       else if (typeof item?.presentationPath === "string") relPath = item.presentationPath;
@@ -299,8 +350,138 @@ export async function saveEmprojSnapshot(
   const fileEntries = [];
   let itemCounter = 0;
 
+  async function registerAssetForPath(filePath, fallback = {}) {
+    if (typeof filePath !== "string" || filePath.length === 0) return null;
+    const isFileUrl = /^file:\/\//i.test(filePath);
+    const normalizedPath = isFileUrl ? fileUrlToPath(filePath) : filePath;
+    const isExternalUrl = /^(https?|m3u8|mpd):/i.test(filePath);
+    if (isExternalUrl) return null;
+
+    let assetSize = Number.isFinite(fallback.sizeBytes) ? fallback.sizeBytes : undefined;
+    let assetSha = typeof fallback.sha256 === "string" ? fallback.sha256 : undefined;
+    let assetModifiedTime =
+      typeof fallback.modifiedTime === "string" ? fallback.modifiedTime : undefined;
+    let assetMissing = fallback.missing === true;
+
+    try {
+      const info = await stat(normalizedPath);
+      if (!info.isFile()) return null;
+      const previousSize = assetSize;
+      const previousModifiedTime = assetModifiedTime;
+      assetSize = info.size;
+      assetModifiedTime = statModifiedTime(info);
+      assetMissing = false;
+      const kind = classifyKindFromPath(normalizedPath);
+      const existing = fileIndex.get(normalizedPath);
+      if (existing) {
+        return {
+          assetId: existing.assetId,
+          bundledPath: existing.bundledPath,
+          normalizedPath,
+          kind,
+          assetSha,
+          assetSize,
+          assetModifiedTime,
+          assetMissing,
+        };
+      }
+      const ext = path.extname(normalizedPath).toLowerCase();
+      const folder = contentLocationForKind(kind);
+      const safeBase = path.basename(normalizedPath).replace(/[^A-Za-z0-9._-]/g, "_");
+      const assetId = makeId("asset", fileIndex.size + 1);
+      let bundledPath = normalizedPath;
+      if (packMedia) {
+        const bundledName = `${String(fileIndex.size + 1).padStart(4, "0")}_${safeBase}`;
+        bundledPath = `${folder}/${bundledName}`;
+        fileEntries.push({ realPath: normalizedPath, path: bundledPath, compress: false });
+      }
+      if (
+        packMedia ||
+        !assetSha ||
+        previousSize !== assetSize ||
+        previousModifiedTime !== assetModifiedTime
+      ) {
+        assetSha = await sha256File(normalizedPath);
+      }
+      fileIndex.set(normalizedPath, { bundledPath, assetId });
+      assets.push({
+        id: assetId,
+        kind,
+        path: packMedia ? bundledPath : normalizedPath,
+        originalPath: fallback.originalPath || normalizedPath,
+        originalName: fallback.originalName || basenameAny(normalizedPath),
+        mimeType: kind === "presentation"
+          ? (ext === ".pptx"
+              ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+              : "application/pdf")
+          : undefined,
+        sha256: assetSha,
+        sizeBytes: assetSize,
+        modifiedTime: assetModifiedTime,
+        missingBehavior: "showPlaceholder",
+        compatibilityWarnings: [],
+      });
+      return {
+        assetId,
+        bundledPath,
+        normalizedPath,
+        kind,
+        assetSha,
+        assetSize,
+        assetModifiedTime,
+        assetMissing,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   for (const item of queue) {
     if (!item || typeof item.path !== "string" || item.path.length === 0) continue;
+    if (item.type === "bible" && item.bible && typeof item.bible === "object") {
+      itemCounter += 1;
+      const scripture = item.bible;
+      const backgroundAsset = await registerAssetForPath(scripture.backgroundPath, {
+        originalPath: scripture.backgroundPath,
+        originalName: basenameAny(scripture.backgroundPath || ""),
+      });
+      queueSequence.push({
+        id: makeId("item", itemCounter),
+        label: item.name || `${scripture.reference || ""} ${scripture.version || "KJV"}`.trim(),
+        type: "scripture",
+        source: {
+          kind: "generated",
+          path: item.path,
+        },
+        scripture: {
+          version: scripture.version || "KJV",
+          reference: scripture.reference || "",
+          text: scripture.text || "",
+          book: scripture.book || "",
+          chapter: Number.isFinite(scripture.chapter) ? scripture.chapter : 1,
+          verse: Number.isFinite(scripture.verse) ? scripture.verse : 0,
+          fontFamily: scripture.fontFamily || "Adwaita, Arial, sans-serif",
+          fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : 64,
+          color: scripture.color || "#ffffff",
+          backgroundColor: scripture.backgroundColor || "#000000",
+          backgroundAssetId: backgroundAsset?.assetId,
+        },
+        playback: {
+          startTime: Number.isFinite(item.cueStartTime) ? item.cueStartTime : 0,
+          volume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
+          loop: false,
+          autoAdvance: item.autoAdvance !== false,
+        },
+        routing: {
+          main: true,
+          stage: false,
+          stream: true,
+          ndi: false,
+          alpha: "none",
+        },
+      });
+      continue;
+    }
     const sourcePath = item.path;
     const isFileUrl = /^file:\/\//i.test(sourcePath);
     const normalizedPath = isFileUrl ? fileUrlToPath(sourcePath) : sourcePath;
@@ -492,7 +673,7 @@ export async function saveEmprojSnapshot(
       media: true,
       presentations: true,
       themes: false,
-      scriptures: false,
+      scriptures: true,
       ccli: false,
     },
     integrity: {
