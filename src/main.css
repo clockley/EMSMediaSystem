@@ -1601,6 +1601,8 @@ ul {
 }
 
 #pptxPreviewContainer {
+    --pptx-sidebar-width: 168px;
+    --pptx-sidebar-scale: clamp(0.82, calc(var(--pptx-sidebar-width) / 168px), 2.1);
     position: absolute;
     inset: 0;
     width: 100%;
@@ -1626,20 +1628,54 @@ ul {
 }
 
 #pptxSlideNavigator {
-    width: clamp(132px, 18vw, 184px);
-    flex: 0 0 clamp(132px, 18vw, 184px);
+    width: var(--pptx-sidebar-width);
+    flex: 0 0 var(--pptx-sidebar-width);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: clamp(8px, calc(10px * var(--pptx-sidebar-scale)), 18px);
     box-sizing: border-box;
-    padding: 14px 10px;
+    padding: clamp(10px, calc(14px * var(--pptx-sidebar-scale)), 22px)
+        clamp(8px, calc(10px * var(--pptx-sidebar-scale)), 16px);
     border-right: 1px solid color-mix(in srgb, #fff 12%, transparent);
     background: color-mix(in srgb, #1b1b20 92%, #000);
 }
 
+.pptx-sidebar-resize-handle {
+    position: relative;
+    flex: 0 0 14px;
+    align-self: stretch;
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+    background: transparent;
+}
+
+.pptx-sidebar-resize-handle::before {
+    content: "";
+    position: absolute;
+    top: 16px;
+    bottom: 16px;
+    left: 6px;
+    width: 2px;
+    border-radius: 999px;
+    background: color-mix(in srgb, #fff 18%, transparent);
+    transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.pptx-sidebar-resize-handle:hover::before,
+.pptx-sidebar-resize-handle:focus-visible::before,
+body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
+    background: var(--accent-bg-color, #3584e4);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-bg-color, #3584e4) 22%, transparent);
+}
+
+.pptx-sidebar-resize-handle:focus-visible {
+    outline: none;
+}
+
 .pptx-slide-navigator__heading {
     color: color-mix(in srgb, #fff 82%, transparent);
-    font-size: 12px;
+    font-size: clamp(11px, calc(12px * var(--pptx-sidebar-scale)), 15px);
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -1650,22 +1686,22 @@ ul {
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
-    gap: 10px;
+    gap: clamp(8px, calc(10px * var(--pptx-sidebar-scale)), 18px);
     overflow-y: auto;
-    padding: 2px 2px 12px;
+    padding: 2px 2px clamp(10px, calc(12px * var(--pptx-sidebar-scale)), 18px);
     scrollbar-width: thin;
 }
 
 .pptx-thumbnail-button {
     display: grid;
-    grid-template-columns: 22px minmax(0, 1fr);
-    gap: 8px;
+    grid-template-columns: clamp(18px, calc(22px * var(--pptx-sidebar-scale)), 34px) minmax(0, 1fr);
+    gap: clamp(6px, calc(8px * var(--pptx-sidebar-scale)), 14px);
     align-items: center;
     width: 100%;
-    min-height: 68px;
-    padding: 6px;
+    min-height: clamp(60px, calc(68px * var(--pptx-sidebar-scale)), 136px);
+    padding: clamp(5px, calc(6px * var(--pptx-sidebar-scale)), 12px);
     border: 2px solid transparent;
-    border-radius: 10px;
+    border-radius: clamp(8px, calc(10px * var(--pptx-sidebar-scale)), 16px);
     color: color-mix(in srgb, #fff 78%, transparent);
     background: color-mix(in srgb, #fff 7%, transparent);
     cursor: pointer;
@@ -1687,7 +1723,7 @@ ul {
 }
 
 .pptx-thumbnail-number {
-    font-size: 12px;
+    font-size: clamp(11px, calc(12px * var(--pptx-sidebar-scale)), 16px);
     font-weight: 700;
     text-align: right;
     font-variant-numeric: tabular-nums;
@@ -1700,7 +1736,7 @@ ul {
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    border-radius: 5px;
+    border-radius: clamp(5px, calc(5px * var(--pptx-sidebar-scale)), 10px);
     background: #050505;
     box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 12%, transparent);
 }
@@ -1745,7 +1781,7 @@ ul {
 
 #pptxNavBar {
     position: absolute;
-    left: calc(clamp(132px, 18vw, 184px) + ((100% - clamp(132px, 18vw, 184px)) / 2));
+    left: calc((var(--pptx-sidebar-width) + 14px) + ((100% - (var(--pptx-sidebar-width) + 14px)) / 2));
     bottom: 56px;
     transform: translateX(-50%);
     display: none;
@@ -1765,6 +1801,10 @@ ul {
         padding: 10px 6px;
     }
 
+    .pptx-sidebar-resize-handle {
+        flex-basis: 10px;
+    }
+
     .pptx-thumbnail-button {
         grid-template-columns: 1fr;
         gap: 4px;
@@ -1780,7 +1820,7 @@ ul {
     }
 
     #pptxNavBar {
-        left: calc(112px + ((100% - 112px) / 2));
+        left: calc((112px + 10px) + ((100% - (112px + 10px)) / 2));
     }
 }
 
