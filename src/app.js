@@ -192,6 +192,7 @@ const PROJECT_SCHEMA_VERSION = 1;
 const AUTOSAVE_WRITE_DEBOUNCE_MS = 300;
 let autosaveWriteTimer = null;
 let currentProjectPath = "";
+let currentProjectStorageMode = "working";
 let activeMediaWindowContentType = null;
 const bibleDesignerState = {
   version: "KJV",
@@ -206,6 +207,20 @@ const bibleDesignerState = {
   color: "#ffffff",
   backgroundColor: "#000000",
   backgroundPath: "",
+};
+const projectScriptureOverrides = {
+  fontFamily: "",
+  fontSize: undefined,
+  color: "",
+  backgroundColor: "",
+  backgroundPath: "",
+};
+const bibleStyleDirtyState = {
+  fontFamily: false,
+  fontSize: false,
+  color: false,
+  backgroundColor: false,
+  backgroundPath: false,
 };
 let bibleBooksCache = [];
 
@@ -2171,8 +2186,8 @@ function fitBiblePreviewText(panel, text, reference, message) {
     (message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE) /
     SCRIPTURE_BODY_FONT_SIZE;
   const applyBodySize = (bodySize) => {
-    text.style.fontSize = `${Math.max(7, Math.floor(bodySize))}px`;
-    reference.style.fontSize = `${Math.max(6, Math.floor(bodySize * referenceRatio))}px`;
+    text.style.fontSize = `${Math.max(4, Math.floor(bodySize))}px`;
+    reference.style.fontSize = `${Math.max(4, Math.floor(bodySize * referenceRatio))}px`;
   };
   const panelRect = panel.getBoundingClientRect();
   const parentRect = (panel.parentElement || panel).getBoundingClientRect();
@@ -2192,18 +2207,20 @@ function fitBiblePreviewText(panel, text, reference, message) {
       1,
       copyRect.height,
     );
+    const visibleWidth = Math.max(1, copyRect.width);
     const maxBodySize = Math.max(
-      7,
+      4,
       Math.min(36, Math.round((message.fontSize || SCRIPTURE_BODY_FONT_SIZE) / 2)),
     );
-    let low = 7;
+    let low = 4;
     let high = maxBodySize;
     let best = low;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
       const mid = (low + high) / 2;
       applyBodySize(mid * bodyRatio);
       const fits =
-        copy.scrollHeight <= visibleHeight + 1;
+        copy.scrollHeight <= visibleHeight + 1 &&
+        copy.scrollWidth <= visibleWidth + 1;
       if (fits) {
         best = mid;
         low = mid + 0.5;
@@ -2300,6 +2317,7 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
   text.style.color = message.color;
   reference.style.fontFamily = message.fontFamily;
   reference.style.fontWeight = `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`;
+  syncBibleBackgroundLabel(message.backgroundPath);
   ensureBiblePreviewResizeFit(panel, text, reference);
   fitBiblePreviewText(panel, text, reference, message);
 }
@@ -2311,6 +2329,8 @@ function showBibleWorkspace() {
   workspace.hidden = false;
   button?.setAttribute("data-active", "true");
   document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
+  const navBar = document.getElementById("pptxNavBar");
+  if (navBar) navBar.style.display = "none";
   document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
 }
 
@@ -2460,6 +2480,271 @@ function sendBibleTextToOutput(entry = bibleDesignerState) {
   send("update-text", buildBibleTextMessage(bibleEntryWithLookupText(entry)));
 }
 
+function normalizeProjectScriptureOverrides(overrides = {}) {
+  if (!overrides || typeof overrides !== "object") {
+    return {
+      fontFamily: "",
+      fontSize: undefined,
+      color: "",
+      backgroundColor: "",
+      backgroundPath: "",
+    };
+  }
+  return {
+    fontFamily:
+      typeof overrides.fontFamily === "string" ? overrides.fontFamily : "",
+    fontSize:
+      Number.isFinite(overrides.fontSize) ? overrides.fontSize : undefined,
+    color:
+      typeof overrides.color === "string" ? overrides.color : "",
+    backgroundColor:
+      typeof overrides.backgroundColor === "string" ? overrides.backgroundColor : "",
+    backgroundPath:
+      typeof overrides.backgroundPath === "string" ? overrides.backgroundPath : "",
+  };
+}
+
+function bibleBackgroundDisplayName(filePath) {
+  if (typeof filePath !== "string" || filePath.length === 0) return "Choose Background…";
+  return queueBasename(filePath) || "Selected Background";
+}
+
+function syncBibleBackgroundLabel(filePath = bibleDesignerState.backgroundPath) {
+  const label = document.getElementById("bibleBackgroundLabel");
+  if (!label) return;
+  label.textContent = bibleBackgroundDisplayName(filePath);
+  label.title = typeof filePath === "string" ? filePath : "";
+}
+
+function syncBibleDesignerStateToPreviewedQueueItem() {
+  const targetIndex =
+    previewCueIndex >= 0 &&
+    previewCueIndex < mediaQueue.length &&
+    isQueueItemBible(mediaQueue[previewCueIndex])
+      ? previewCueIndex
+      : currentQueueIndex >= 0 &&
+          currentQueueIndex < mediaQueue.length &&
+          isQueueItemBible(mediaQueue[currentQueueIndex])
+        ? currentQueueIndex
+        : -1;
+  if (targetIndex < 0) return false;
+  const entry = currentBibleQueueEntry();
+  if (!entry) return false;
+  mediaQueue[targetIndex] = {
+    ...mediaQueue[targetIndex],
+    path: entry.path,
+    name: entry.name,
+    type: "bible",
+    bible: { ...entry.bible },
+  };
+  renderQueue();
+  return true;
+}
+
+function applyBibleBackgroundToAllProjectText() {
+  syncBibleStateFromControls();
+  const style = getBibleDesignerStyle();
+  projectScriptureOverrides.backgroundColor = style.backgroundColor;
+  projectScriptureOverrides.backgroundPath = style.backgroundPath;
+  bibleDesignerState.backgroundColor = style.backgroundColor;
+  bibleDesignerState.backgroundPath = style.backgroundPath;
+  bibleStyleDirtyState.backgroundColor = false;
+  bibleStyleDirtyState.backgroundPath = false;
+
+  let changedCount = 0;
+  mediaQueue.forEach((item) => {
+    if (!isQueueItemBible(item)) return;
+    item.bible = {
+      ...(item.bible || {}),
+      backgroundColor: style.backgroundColor,
+      backgroundPath: style.backgroundPath,
+    };
+    changedCount += 1;
+  });
+
+  renderQueue();
+  applyBiblePreview(bibleDesignerState, { show: false });
+  void saveCurrentProjectInStorageMode({ quiet: true });
+  void syncLiveBiblePresentation().catch((err) =>
+    console.error("Failed to update live Bible presentation:", err),
+  );
+  showGnomeToast(
+    changedCount > 0
+      ? `Applied background to ${changedCount} Bible text item${changedCount === 1 ? "" : "s"}`
+      : "Background will apply to new Bible text",
+  );
+}
+
+function applyBibleTextColorToAllProjectText() {
+  syncBibleStateFromControls();
+  const style = getBibleDesignerStyle();
+  projectScriptureOverrides.color = style.color;
+  bibleDesignerState.color = style.color;
+  bibleStyleDirtyState.color = false;
+
+  let changedCount = 0;
+  mediaQueue.forEach((item) => {
+    if (!isQueueItemBible(item)) return;
+    item.bible = {
+      ...(item.bible || {}),
+      color: style.color,
+    };
+    changedCount += 1;
+  });
+
+  renderQueue();
+  applyBiblePreview(bibleDesignerState, { show: false });
+  void saveCurrentProjectInStorageMode({ quiet: true });
+  void syncLiveBiblePresentation().catch((err) =>
+    console.error("Failed to update live Bible presentation:", err),
+  );
+  showGnomeToast(
+    changedCount > 0
+      ? `Applied text color to ${changedCount} Bible text item${changedCount === 1 ? "" : "s"}`
+      : "Text color will apply to new Bible text",
+  );
+}
+
+function applyBibleFontToAllProjectText() {
+  syncBibleStateFromControls();
+  const style = getBibleDesignerStyle();
+  projectScriptureOverrides.fontFamily = style.fontFamily;
+  bibleDesignerState.fontFamily = style.fontFamily;
+  bibleStyleDirtyState.fontFamily = false;
+
+  let changedCount = 0;
+  mediaQueue.forEach((item) => {
+    if (!isQueueItemBible(item)) return;
+    item.bible = {
+      ...(item.bible || {}),
+      fontFamily: style.fontFamily,
+    };
+    changedCount += 1;
+  });
+
+  renderQueue();
+  applyBiblePreview(bibleDesignerState, { show: false });
+  void saveCurrentProjectInStorageMode({ quiet: true });
+  void syncLiveBiblePresentation().catch((err) =>
+    console.error("Failed to update live Bible presentation:", err),
+  );
+  showGnomeToast(
+    changedCount > 0
+      ? `Applied font to ${changedCount} Bible text item${changedCount === 1 ? "" : "s"}`
+      : "Font will apply to new Bible text",
+  );
+}
+
+function applyBibleFontSizeToAllProjectText() {
+  syncBibleStateFromControls();
+  const style = getBibleDesignerStyle();
+  projectScriptureOverrides.fontSize = style.fontSize;
+  bibleDesignerState.fontSize = style.fontSize;
+  bibleStyleDirtyState.fontSize = false;
+
+  let changedCount = 0;
+  mediaQueue.forEach((item) => {
+    if (!isQueueItemBible(item)) return;
+    item.bible = {
+      ...(item.bible || {}),
+      fontSize: style.fontSize,
+    };
+    changedCount += 1;
+  });
+
+  renderQueue();
+  applyBiblePreview(bibleDesignerState, { show: false });
+  void saveCurrentProjectInStorageMode({ quiet: true });
+  void syncLiveBiblePresentation().catch((err) =>
+    console.error("Failed to update live Bible presentation:", err),
+  );
+  showGnomeToast(
+    changedCount > 0
+      ? `Applied font size to ${changedCount} Bible text item${changedCount === 1 ? "" : "s"}`
+      : "Font size will apply to new Bible text",
+  );
+}
+
+function bibleEntryWithProjectDefaults(entry) {
+  const bible = { ...(entry?.bible || {}) };
+  if (
+    projectScriptureOverrides.fontFamily &&
+    !bibleStyleDirtyState.fontFamily
+  ) {
+    bible.fontFamily = projectScriptureOverrides.fontFamily;
+  }
+  if (
+    Number.isFinite(projectScriptureOverrides.fontSize) &&
+    !bibleStyleDirtyState.fontSize
+  ) {
+    bible.fontSize = projectScriptureOverrides.fontSize;
+  }
+  if (
+    projectScriptureOverrides.color &&
+    !bibleStyleDirtyState.color
+  ) {
+    bible.color = projectScriptureOverrides.color;
+  }
+  if (
+    projectScriptureOverrides.backgroundColor &&
+    !bibleStyleDirtyState.backgroundColor
+  ) {
+    bible.backgroundColor = projectScriptureOverrides.backgroundColor;
+  }
+  if (projectScriptureOverrides.backgroundPath && !bibleStyleDirtyState.backgroundPath) {
+    bible.backgroundPath = projectScriptureOverrides.backgroundPath;
+  }
+  return {
+    ...entry,
+    bible,
+  };
+}
+
+async function showBibleTextNow() {
+  const entry = currentBibleQueueEntry();
+  if (!entry) {
+    showGnomeToast("Choose Bible text to show");
+    return false;
+  }
+  const transientEntry = bibleEntryWithProjectDefaults(entry);
+  try {
+    if (isActiveMediaWindow()) {
+      const didSlipstream = await slipstreamBiblePresentation(transientEntry.bible);
+      if (didSlipstream) return true;
+    }
+    await createMediaWindow({ textItem: transientEntry, transientText: true });
+    activeMediaWindowContentType = "bible";
+    return true;
+  } catch (err) {
+    console.error("Failed to show Bible text:", err);
+    showGnomeToast("Failed to show Bible text");
+    return false;
+  }
+}
+
+async function saveCurrentProjectInStorageMode({ quiet = false } = {}) {
+  if (!currentProjectPath) {
+    scheduleAutosaveProjectState();
+    return false;
+  }
+  try {
+    await syncCurrentPptxSlideForProjectSnapshot();
+    const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
+    await invoke("write-project-file", {
+      filePath: currentProjectPath,
+      data,
+      mode: currentProjectStorageMode === "packed" ? "packed" : "working",
+    });
+    scheduleAutosaveProjectState();
+    if (!quiet) showGnomeToast("Project saved");
+    return true;
+  } catch (err) {
+    console.error("Failed to save project:", err);
+    if (!quiet) showGnomeToast("Failed to save project");
+    return false;
+  }
+}
+
 async function slipstreamBiblePresentation(entry) {
   const textPayload = buildBibleTextMessage(entry);
   const slipstreamSuccess = await invoke("slipstream-media-window", {
@@ -2512,6 +2797,17 @@ function syncBibleSelectorsFromState() {
   const referenceInput = document.getElementById("bibleReferenceInput");
   if (versionSelect) versionSelect.value = bibleDesignerState.version;
   if (referenceInput) referenceInput.value = bibleDesignerState.reference;
+}
+
+function syncBibleStyleControlsFromState() {
+  const fontInput = document.getElementById("bibleFontInput");
+  const fontSizeInput = document.getElementById("bibleFontSizeInput");
+  const textColorInput = document.getElementById("bibleTextColorInput");
+  const backgroundColorInput = document.getElementById("bibleBackgroundColorInput");
+  if (fontInput) fontInput.value = bibleDesignerState.fontFamily;
+  if (fontSizeInput) fontSizeInput.value = bibleDesignerState.fontSize;
+  if (textColorInput) textColorInput.value = bibleDesignerState.color;
+  if (backgroundColorInput) backgroundColorInput.value = bibleDesignerState.backgroundColor;
 }
 
 function renderBibleVerseList() {
@@ -2609,16 +2905,8 @@ function installBibleMediaControls() {
   versionSelect.innerHTML = '<option value="KJV">KJV</option>';
   versionSelect.value = bibleDesignerState.version;
   referenceInput.value = bibleDesignerState.reference;
-  document.getElementById("bibleFontInput").value = bibleDesignerState.fontFamily;
-  document.getElementById("bibleFontSizeInput").value = bibleDesignerState.fontSize;
-  document.getElementById("bibleTextColorInput").value = bibleDesignerState.color;
-  document.getElementById("bibleBackgroundColorInput").value = bibleDesignerState.backgroundColor;
-  const backgroundLabel = document.getElementById("bibleBackgroundLabel");
-  if (backgroundLabel) {
-    backgroundLabel.textContent = bibleDesignerState.backgroundPath
-      ? "Change Background…"
-      : "Choose Background…";
-  }
+  syncBibleStyleControlsFromState();
+  syncBibleBackgroundLabel();
 
   document.getElementById("openBibleWorkspaceBtn")?.addEventListener("click", () => {
     showBibleWorkspace();
@@ -2644,6 +2932,10 @@ function installBibleMediaControls() {
   });
   ["bibleFontInput", "bibleFontSizeInput", "bibleTextColorInput", "bibleBackgroundColorInput"].forEach((id) => {
     document.getElementById(id)?.addEventListener("input", () => {
+      if (id === "bibleFontInput") bibleStyleDirtyState.fontFamily = true;
+      if (id === "bibleFontSizeInput") bibleStyleDirtyState.fontSize = true;
+      if (id === "bibleTextColorInput") bibleStyleDirtyState.color = true;
+      if (id === "bibleBackgroundColorInput") bibleStyleDirtyState.backgroundColor = true;
       syncBibleStateFromControls();
       Object.assign(bibleDesignerState, getBibleDesignerStyle());
       applyBiblePreview(bibleDesignerState, { show: false });
@@ -2655,24 +2947,43 @@ function installBibleMediaControls() {
   document.getElementById("bibleBackgroundInput")?.addEventListener("change", (event) => {
     const file = event.target.files?.[0];
     bibleDesignerState.backgroundPath = file ? getPathForFile(file) : "";
-    const label = document.getElementById("bibleBackgroundLabel");
-    if (label) label.textContent = bibleDesignerState.backgroundPath ? "Change Background…" : "Choose Background…";
+    bibleStyleDirtyState.backgroundPath = true;
+    syncBibleBackgroundLabel();
     applyBiblePreview(bibleDesignerState);
+    syncBibleDesignerStateToPreviewedQueueItem();
+    void saveCurrentProjectInStorageMode({ quiet: true });
     void syncLiveBiblePresentation().catch((err) =>
       console.error("Failed to update live Bible presentation:", err),
     );
   });
+  document
+    .getElementById("bibleApplyFontAllBtn")
+    ?.addEventListener("click", applyBibleFontToAllProjectText);
+  document
+    .getElementById("bibleApplyFontSizeAllBtn")
+    ?.addEventListener("click", applyBibleFontSizeToAllProjectText);
+  document
+    .getElementById("bibleApplyTextColorAllBtn")
+    ?.addEventListener("click", applyBibleTextColorToAllProjectText);
+  document
+    .getElementById("bibleApplyBackgroundAllBtn")
+    ?.addEventListener("click", applyBibleBackgroundToAllProjectText);
   document.getElementById("bibleClearBackgroundBtn")?.addEventListener("click", () => {
     bibleDesignerState.backgroundPath = "";
+    bibleStyleDirtyState.backgroundPath = true;
     const backgroundInput = document.getElementById("bibleBackgroundInput");
-    const label = document.getElementById("bibleBackgroundLabel");
     if (backgroundInput) backgroundInput.value = "";
-    if (label) label.textContent = "Choose Background…";
+    syncBibleBackgroundLabel("");
     applyBiblePreview(bibleDesignerState);
+    syncBibleDesignerStateToPreviewedQueueItem();
+    void saveCurrentProjectInStorageMode({ quiet: true });
     void syncLiveBiblePresentation().catch((err) =>
       console.error("Failed to update live Bible presentation:", err),
     );
   });
+  document
+    .getElementById("bibleShowNowBtn")
+    ?.addEventListener("click", () => void showBibleTextNow());
   document.getElementById("bibleInsertQueueBtn")?.addEventListener("click", insertBibleInSchedule);
   bibleAPI
     .waitForReady()
@@ -2710,6 +3021,8 @@ function buildProjectStateSnapshot() {
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     projectPath: currentProjectPath || "",
+    projectStorageMode: currentProjectStorageMode,
+    projectScriptureOverrides: { ...projectScriptureOverrides },
     currentMode,
     currentQueueIndex,
     previewCueIndex,
@@ -2744,6 +3057,16 @@ function buildProjectStateSnapshot() {
 function applyProjectStateSnapshot(state) {
   if (!state || typeof state !== "object") return false;
   if (!Array.isArray(state.mediaQueue)) return false;
+  currentProjectStorageMode = state.projectStorageMode === "packed" ? "packed" : "working";
+  Object.assign(
+    projectScriptureOverrides,
+    normalizeProjectScriptureOverrides(state.projectScriptureOverrides),
+  );
+  bibleStyleDirtyState.fontFamily = false;
+  bibleStyleDirtyState.fontSize = false;
+  bibleStyleDirtyState.color = false;
+  bibleStyleDirtyState.backgroundColor = false;
+  bibleStyleDirtyState.backgroundPath = false;
   mediaQueue = state.mediaQueue
     .filter((x) => x && typeof x.path === "string" && x.path.length > 0)
     .map((x) => ({
@@ -2772,6 +3095,56 @@ function applyProjectStateSnapshot(state) {
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : -1,
       bible: x.bible && typeof x.bible === "object" ? { ...x.bible } : undefined,
     }));
+  if (
+    projectScriptureOverrides.fontFamily ||
+    Number.isFinite(projectScriptureOverrides.fontSize) ||
+    projectScriptureOverrides.color ||
+    projectScriptureOverrides.backgroundColor ||
+    projectScriptureOverrides.backgroundPath
+  ) {
+    mediaQueue.forEach((item) => {
+      if (!isQueueItemBible(item)) return;
+      const bible = item.bible || {};
+      item.bible = {
+        ...bible,
+        ...(projectScriptureOverrides.fontFamily &&
+        (!bible.fontFamily || bible.fontFamily === SCRIPTURE_FONT_FAMILY)
+          ? { fontFamily: projectScriptureOverrides.fontFamily }
+          : {}),
+        ...(Number.isFinite(projectScriptureOverrides.fontSize) &&
+        (!Number.isFinite(bible.fontSize) || bible.fontSize === SCRIPTURE_BODY_FONT_SIZE)
+          ? { fontSize: projectScriptureOverrides.fontSize }
+          : {}),
+        ...(projectScriptureOverrides.color && (!bible.color || bible.color === "#ffffff")
+          ? { color: projectScriptureOverrides.color }
+          : {}),
+        ...(projectScriptureOverrides.backgroundColor &&
+        (!bible.backgroundColor || bible.backgroundColor === "#000000")
+          ? { backgroundColor: projectScriptureOverrides.backgroundColor }
+          : {}),
+        ...(projectScriptureOverrides.backgroundPath && !bible.backgroundPath
+          ? { backgroundPath: projectScriptureOverrides.backgroundPath }
+          : {}),
+      };
+    });
+    Object.assign(bibleDesignerState, {
+      ...(projectScriptureOverrides.fontFamily
+        ? { fontFamily: projectScriptureOverrides.fontFamily }
+        : {}),
+      ...(Number.isFinite(projectScriptureOverrides.fontSize)
+        ? { fontSize: projectScriptureOverrides.fontSize }
+        : {}),
+      ...(projectScriptureOverrides.color
+        ? { color: projectScriptureOverrides.color }
+        : {}),
+      ...(projectScriptureOverrides.backgroundColor
+        ? { backgroundColor: projectScriptureOverrides.backgroundColor }
+        : {}),
+      ...(projectScriptureOverrides.backgroundPath
+        ? { backgroundPath: projectScriptureOverrides.backgroundPath }
+        : {}),
+    });
+  }
   currentQueueIndex =
     Number.isInteger(state.currentQueueIndex) &&
     state.currentQueueIndex >= 0 &&
@@ -2794,6 +3167,7 @@ function applyProjectStateSnapshot(state) {
   renderQueue();
   updatePreviewCueUI();
   updateDynUI();
+  syncBibleStyleControlsFromState();
   if (mediaQueue.length > 0 && currentMode === MEDIAPLAYER) {
     const previewIndex =
       currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
@@ -2940,6 +3314,7 @@ async function openProjectByPath(filePath) {
   }
   await refreshMissingFlagsAndWarn();
   currentProjectPath = filePath;
+  currentProjectStorageMode = parsed.projectStorageMode === "packed" ? "packed" : "working";
   scheduleAutosaveProjectState();
   showGnomeToast("Project opened");
   return true;
@@ -2951,6 +3326,7 @@ async function saveProjectAsDialog() {
     const res = await invoke("show-save-project-dialog", { defaultPath });
     if (!res || res.canceled || !res.filePath) return false;
     currentProjectPath = res.filePath;
+    currentProjectStorageMode = "working";
     await syncCurrentPptxSlideForProjectSnapshot();
     const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
     await invoke("write-project-file", {
@@ -2972,22 +3348,7 @@ async function saveProject() {
   if (!currentProjectPath) {
     return saveProjectAsDialog();
   }
-  try {
-    await syncCurrentPptxSlideForProjectSnapshot();
-    const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
-    await invoke("write-project-file", {
-      filePath: currentProjectPath,
-      data,
-      mode: "working",
-    });
-    scheduleAutosaveProjectState();
-    showGnomeToast("Project saved");
-    return true;
-  } catch (err) {
-    console.error("Failed to save project:", err);
-    showGnomeToast("Failed to save project");
-    return false;
-  }
+  return saveCurrentProjectInStorageMode();
 }
 
 async function exportPortableProjectDialog() {
@@ -3019,6 +3380,7 @@ async function restoreAutosavedProjectState() {
       await refreshMissingFlagsAndWarn();
       currentProjectPath =
         typeof state.projectPath === "string" ? state.projectPath : "";
+      currentProjectStorageMode = state.projectStorageMode === "packed" ? "packed" : "working";
     }
   } catch (err) {
     console.error("Failed to restore autosave:", err);
@@ -8097,6 +8459,7 @@ function generateMediaFormHTML(video = null) {
           <div class="bible-workspace__toolbar">
             <span id="bibleWorkspaceTitle" class="bible-workspace__title">Bible</span>
             <div class="bible-action-row">
+              <button type="button" id="bibleShowNowBtn" class="pill-button suggested-action">Show Now</button>
               <button type="button" id="bibleInsertQueueBtn" class="pill-button secondary">Add to Schedule</button>
             </div>
           </div>
@@ -8109,7 +8472,7 @@ function generateMediaFormHTML(video = null) {
           </div>
           <div class="bible-editor-drawer">
             <div class="bible-editor-controls">
-              <label class="bible-field">Font <input id="bibleFontInput" type="text" class="url-input" value="'Nunito Sans', Arial, sans-serif"></label>
+              <label class="bible-field bible-field--font">Font <input id="bibleFontInput" type="text" class="url-input" value="'Nunito Sans', Arial, sans-serif"></label>
               <label class="bible-field">Size <input id="bibleFontSizeInput" type="number" min="24" max="160" value="66" class="url-input"></label>
               <label class="bible-field">Text <input id="bibleTextColorInput" type="color" value="#ffffff"></label>
               <label class="bible-field">Backdrop <input id="bibleBackgroundColorInput" type="color" value="#000000"></label>
@@ -8117,6 +8480,10 @@ function generateMediaFormHTML(video = null) {
                 <input id="bibleBackgroundInput" type="file" accept="image/*,video/*" hidden>
                 <span id="bibleBackgroundLabel">Choose Background…</span>
               </label>
+              <button type="button" id="bibleApplyFontAllBtn" class="pill-button secondary">Apply Font to All</button>
+              <button type="button" id="bibleApplyFontSizeAllBtn" class="pill-button secondary">Apply Size to All</button>
+              <button type="button" id="bibleApplyTextColorAllBtn" class="pill-button secondary">Apply Text Color to All</button>
+              <button type="button" id="bibleApplyBackgroundAllBtn" class="pill-button secondary">Apply Bg to All Text</button>
               <button type="button" id="bibleClearBackgroundBtn" class="pill-button secondary">Remove Background</button>
             </div>
           </div>
@@ -9516,10 +9883,12 @@ async function playAudioOnlyLocally(startOverride = null) {
 async function createMediaWindow(options) {
   const seekOnly = options && options.seekOnly === true;
   const textItem = options?.textItem || null;
+  const transientText = options?.transientText === true;
   if (seekOnly) {
     itc = performance.now() * 0.001;
   }
   const isQueuePlaybackContext =
+    !transientText &&
     isQueuePlaying &&
     currentQueueIndex >= 0 &&
     currentQueueIndex < mediaQueue.length;
