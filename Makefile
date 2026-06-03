@@ -11,6 +11,7 @@
 TERSER = $(NODE) node_modules/terser/bin/terser
 HTML_MINIFIER = $(NODE) node_modules/html-minifier-terser/cli.js
 CSSO = npx csso
+ESBUILD = $(NODE) node_modules/esbuild/bin/esbuild
 NODE = node
 # ICON_SRC = src/icon.png # Covered by general image search
 
@@ -75,6 +76,9 @@ else
 endif
 
 JS_FILES := $(patsubst ./%,%,$(JS_FILES))
+JS_FILES := $(filter-out src/app.js,$(JS_FILES))
+APP_BUNDLE_SRC = src/app.js
+APP_BUNDLE_OUT = $(DERIVED_DIR)/src/app.min.js
 
 # Corresponding destination files in derived directory.
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
@@ -101,7 +105,7 @@ endif
 HTML_PROD_FILES := $(patsubst %.html,$(DERIVED_DIR)/%.prod.html,$(HTML_FILES))
 
 # Corresponding minified files in derived directory
-MINIFIED_JS_FILES := $(patsubst %.js,$(DERIVED_DIR)/%.min.js,$(patsubst %.mjs,$(DERIVED_DIR)/%.min.mjs,$(JS_FILES)))
+MINIFIED_JS_FILES := $(patsubst %.js,$(DERIVED_DIR)/%.min.js,$(patsubst %.mjs,$(DERIVED_DIR)/%.min.mjs,$(JS_FILES))) $(APP_BUNDLE_OUT)
 
 # Default target
 all: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES)
@@ -160,6 +164,7 @@ check-deps:
 	@echo "$(COLOR_BLUE)Checking dependencies...$(COLOR_RESET)"
 	@command -v node >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: node is required$(COLOR_RESET)" >&2; exit 1; }
 	@test -f node_modules/terser/bin/terser || { echo "$(COLOR_RED)Error: terser not found in node_modules. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
+	@test -f node_modules/esbuild/bin/esbuild || { echo "$(COLOR_RED)Error: esbuild not found in node_modules. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@test -f node_modules/html-minifier-terser/cli.js || { echo "$(COLOR_RED)Error: html-minifier-terser not found in node_modules. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@$(NODE) -e "require('csso')" 2>/dev/null || { echo "$(COLOR_RED)Error: csso module required. Run: npm install csso$(COLOR_RESET)" >&2; exit 1; }
 	@$(HTML_MINIFIER) --version >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: html-minifier-terser required. Run: npm install html-minifier-terser$(COLOR_RESET)" >&2; exit 1; }
@@ -190,6 +195,21 @@ js-minify: $(MINIFIED_JS_FILES)
 	@echo "$(COLOR_GREEN)$(TICK) Minified all JS/MJS files$(COLOR_RESET)"
 
 # Pattern rule to minify .js files
+$(APP_BUNDLE_OUT): $(APP_BUNDLE_SRC) src/app-media-utils.mjs src/app-bible-reference-utils.mjs | $(DERIVED_DIR)
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+else
+	@mkdir -p $(dir $@)
+endif
+	@echo "$(COLOR_YELLOW)Bundling $(APP_BUNDLE_SRC) → $@$(COLOR_RESET)"
+	@$(ESBUILD) "$(APP_BUNDLE_SRC)" \
+		--bundle \
+		--format=iife \
+		--platform=browser \
+		--target=chrome120 \
+		--minify \
+		--outfile="$@"
+
 $(DERIVED_DIR)/%.min.js: %.js | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1

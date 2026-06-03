@@ -19,6 +19,31 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 "use strict";
 
+import {
+  bibleQueuePath,
+  bibleUriPrefix,
+  bibleVersionValue,
+  clampMediaTime,
+  clampQueueStartTime,
+  classifyQueueMediaType,
+  createQueueEntry,
+  escapeHtml,
+  formatCueTime,
+  imageRegex,
+  isBiblePath,
+  isNonVideoPresentationPath,
+  isPlayInterruptedError,
+  normalizedBibleVersions,
+  pathToMediaUrl,
+  pptxRegex,
+  queueBasename,
+} from "./app-media-utils.mjs";
+import {
+  normalizeBibleReferenceInput as normalizeBibleReferenceInputWithCache,
+  normalizeScriptureReference,
+  parseScriptureReference,
+} from "./app-bible-reference-utils.mjs";
+
 let ipcRenderer;
 let bibleAPI;
 let webUtils;
@@ -160,9 +185,6 @@ const MEDIAPLAYER = 0,
   STREAMPLAYER = 1,
   BULKMEDIAPLAYER = 5,
   TEXTPLAYER = 6;
-const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
-const pptxRegex = /\.pptx$/i;
-const bibleUriPrefix = "bible://";
 const SCRIPTURE_FONT_FAMILY = "'Nunito Sans', Arial, sans-serif";
 const SCRIPTURE_BODY_FONT_SIZE = 66;
 const SCRIPTURE_REFERENCE_FONT_SIZE = 38;
@@ -227,14 +249,6 @@ const bibleVerseSelection = {
   anchor: 0,
 };
 let bibleBooksCache = [];
-const EMS_BIBLE_ALIAS_OVERRIDES = {
-  jn: "John",
-  jhn: "John",
-  mt: "Matthew",
-  psa: "Psalms",
-  psalm: "Psalms",
-};
-
 /** @type {{ path: string, name: string, type: string, cueStartTime?: number, cueVolume?: number, pptxSlideIndex?: number }[]} */
 let mediaQueue = [];
 let currentQueueIndex = -1;
@@ -282,12 +296,12 @@ const PREVIEW_STASH_ID = "previewStash";
 const TAB_PANEL_MEDIA_ID = "tab-panel-media";
 const TAB_PANEL_STREAMS_ID = "tab-panel-streams";
 
-function isBiblePath(filePath) {
-  return typeof filePath === "string" && filePath.startsWith(bibleUriPrefix);
+function isNonVideoPresentationItem(filePath) {
+  return isNonVideoPresentationPath(filePath, isImg);
 }
 
-function isNonVideoPresentationPath(filePath) {
-  return isBiblePath(filePath) || pptxRegex.test(filePath || "") || isImg(filePath);
+function normalizeBibleReferenceInput(rawReference) {
+  return normalizeBibleReferenceInputWithCache(rawReference, bibleBooksCache);
 }
 
 function isQueueItemAutoAdvanceEnabled(index) {
@@ -320,15 +334,6 @@ function nextQueueBoundaryIndex() {
   return mediaQueue.length > 0 ? 0 : -1;
 }
 
-function isPlayInterruptedError(error) {
-  if (!error) return false;
-  const msg = typeof error.message === "string" ? error.message : "";
-  return (
-    error.name === "AbortError" ||
-    msg.includes("interrupted by a call to pause()")
-  );
-}
-
 async function playVideoSafely(mediaEl, context = "") {
   if (!mediaEl || typeof mediaEl.play !== "function") return false;
   if (
@@ -348,36 +353,6 @@ async function playVideoSafely(mediaEl, context = "") {
     console.error(`Failed to start playback${suffix}:`, error);
     return false;
   }
-}
-
-function pathToMediaUrl(filePath) {
-  if (!filePath || typeof filePath !== "string") return "";
-  if (isBiblePath(filePath)) return "";
-  if (/^(file|https?|blob):/i.test(filePath)) return filePath;
-
-  const normalized = filePath.replace(/\\/g, "/");
-  if (normalized.startsWith("/")) {
-    return `file://${encodeURI(normalized)}`;
-  }
-  return `file:///${encodeURI(normalized)}`;
-}
-
-function clampMediaTime(time, duration) {
-  if (!Number.isFinite(time) || time < 0) return 0;
-  if (Number.isFinite(duration) && duration > 0) {
-    return Math.min(time, Math.max(0, duration - 0.05));
-  }
-  return time;
-}
-
-const QUEUE_START_END_GUARD_SECONDS = 0.25;
-
-function clampQueueStartTime(time, duration) {
-  if (!Number.isFinite(time) || time < 0) return 0;
-  if (Number.isFinite(duration) && duration > 0) {
-    return Math.min(time, Math.max(0, duration - QUEUE_START_END_GUARD_SECONDS));
-  }
-  return time;
 }
 
 function seekMedia(mediaEl, requestedTime) {
@@ -432,15 +407,6 @@ function isCurrentPreviewLoad(token) {
 function nextLiveStartToken() {
   liveStartToken += 1;
   return liveStartToken;
-}
-
-function classifyQueueMediaType(filePath) {
-  if (typeof filePath === "string" && filePath.startsWith(bibleUriPrefix)) return "bible";
-  if (imageRegex.test(filePath)) return "image";
-  if (pptxRegex.test(filePath)) return "pptx";
-  if (/\.(mp4|m4v|mov|mkv|webm|avi|wmv)$/i.test(filePath)) return "video";
-  if (/\.(mp3|m4a|aac|wav|flac|ogg|opus|wma)$/i.test(filePath)) return "audio";
-  return "file";
 }
 
 function isQueueItemBible(item) {
@@ -551,7 +517,7 @@ async function loadPptxPreview(filePath, opts = {}) {
     globalThis.process.env = {};
   }
   const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
-    "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
+    "../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
   );
   const container = document.getElementById("pptxPreviewContainer");
   if (!container) return;
@@ -1316,43 +1282,6 @@ function getPreviewControlMediaElement() {
   return video;
 }
 
-function queueBasename(filePath) {
-  const parts = filePath.split(/[/\\]/);
-  return parts[parts.length - 1] || filePath;
-}
-
-function createQueueEntry(filePath) {
-  const type = classifyQueueMediaType(filePath);
-  return {
-    path: filePath,
-    name: queueBasename(filePath),
-    type,
-    missing: false,
-    originalPath: filePath,
-    originalName: queueBasename(filePath),
-    autoAdvance: true,
-    cueStartTime: 0,
-    pptxSlideIndex: type === "pptx" ? -1 : undefined,
-  };
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function formatCueTime(seconds) {
-  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-  const totalSeconds = Math.floor(safe);
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  const millis = Math.floor((safe - totalSeconds) * 1000);
-  return `${mins}:${secs.toString().padStart(2, "0")}.${millis.toString().padStart(3, "0")}`;
-}
-
 function currentLiveQueueItem() {
   return currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
     ? mediaQueue[currentQueueIndex]
@@ -2087,209 +2016,12 @@ async function openMediaFilesDialog() {
   }
 }
 
-function bibleQueuePath(reference, version) {
-  return `${bibleUriPrefix}${encodeURIComponent(`${version || "KJV"}:${reference || ""}`)}`;
-}
-
 function classifyPresentationType(item, opts = {}) {
   if (opts?.textItem || isQueueItemBible(item)) return "bible";
   if (isQueueItemPptx(item)) return "pptx";
   if (isQueueItemImage(item)) return "image";
   if (isQueueItemAudio(item)) return "audio";
   return "video";
-}
-
-function normalizedBibleVersions(rawVersions) {
-  if (Array.isArray(rawVersions)) return rawVersions;
-  if (rawVersions && typeof rawVersions === "object") return Object.values(rawVersions);
-  return ["KJV"];
-}
-
-function bibleVersionValue(version) {
-  if (typeof version === "string") return version;
-  return version?.abbreviation || version?.name || version?.version || "KJV";
-}
-
-function resolveBibleBookName(rawBook) {
-  const normalized = String(rawBook || "").trim().toLowerCase();
-  if (!normalized) return null;
-  const exact = bibleBooksCache.find((book) => book.name.toLowerCase() === normalized);
-  if (exact) return exact.name;
-  const prefixMatches = bibleBooksCache.filter((book) =>
-    book.name.toLowerCase().startsWith(normalized),
-  );
-  if (prefixMatches.length === 1) return prefixMatches[0].name;
-  return null;
-}
-
-function normalizeBibleAlias(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function addBibleAliasCandidate(candidates, alias, bookName) {
-  const normalized = normalizeBibleAlias(alias);
-  if (!normalized) return;
-  if (!candidates.has(normalized)) candidates.set(normalized, new Set());
-  candidates.get(normalized).add(bookName);
-}
-
-function buildBibleAliasMap() {
-  const candidates = new Map();
-  bibleBooksCache.forEach((book) => {
-    const bookName = book?.name || "";
-    const normalizedName = normalizeBibleAlias(bookName);
-    if (!normalizedName) return;
-
-    addBibleAliasCandidate(candidates, normalizedName, bookName);
-    addBibleAliasCandidate(candidates, normalizedName.replace(/\s+/g, ""), bookName);
-
-    const tokens = normalizedName.split(" ");
-    const numberPrefix = /^\d+$/.test(tokens[0]) ? tokens[0] : "";
-    const bookTokens = numberPrefix ? tokens.slice(1) : tokens;
-    const mainWord = bookTokens.find((token) => token !== "of" && token !== "the") || bookTokens[0];
-    const acronym = bookTokens.map((token) => token[0]).join("");
-
-    if (mainWord) {
-      const maxPrefixLength = Math.min(4, mainWord.length);
-      for (let length = 2; length <= maxPrefixLength; length += 1) {
-        const prefix = mainWord.slice(0, length);
-        if (numberPrefix) {
-          addBibleAliasCandidate(candidates, `${numberPrefix} ${prefix}`, bookName);
-          addBibleAliasCandidate(candidates, `${numberPrefix}${prefix}`, bookName);
-        } else {
-          addBibleAliasCandidate(candidates, prefix, bookName);
-        }
-      }
-    }
-
-    if (acronym.length > 1) {
-      const alias = numberPrefix ? `${numberPrefix} ${acronym}` : acronym;
-      addBibleAliasCandidate(candidates, alias, bookName);
-      addBibleAliasCandidate(candidates, alias.replace(/\s+/g, ""), bookName);
-    }
-  });
-
-  const aliasMap = new Map();
-  candidates.forEach((matches, alias) => {
-    if (matches.size === 1) aliasMap.set(alias, [...matches][0]);
-  });
-  Object.entries(EMS_BIBLE_ALIAS_OVERRIDES).forEach(([alias, bookName]) => {
-    aliasMap.set(normalizeBibleAlias(alias), bookName);
-    bibleBooksCache.forEach((book) => {
-      const match = normalizeBibleAlias(book?.name || "").match(/^(\d+)\s+(.+)$/);
-      if (match && normalizeBibleAlias(match[2]) === normalizeBibleAlias(bookName)) {
-        aliasMap.set(normalizeBibleAlias(`${match[1]} ${alias}`), book.name);
-        aliasMap.set(normalizeBibleAlias(`${match[1]}${alias}`), book.name);
-      }
-    });
-  });
-  return aliasMap;
-}
-
-function matchBibleReferenceAlias(cleanInput) {
-  const aliasMap = buildBibleAliasMap();
-  const aliases = [...aliasMap.keys()].sort((a, b) => {
-    const tokenDifference = b.split(" ").length - a.split(" ").length;
-    return tokenDifference || b.length - a.length;
-  });
-  for (const alias of aliases) {
-    if (cleanInput === alias) return { book: aliasMap.get(alias), numericTokens: [] };
-    if (cleanInput.startsWith(`${alias} `)) {
-      return {
-        book: aliasMap.get(alias),
-        numericTokens: cleanInput.slice(alias.length).trim().split(" ").filter(Boolean),
-      };
-    }
-  }
-  return null;
-}
-
-function normalizeBibleReferenceInput(rawReference) {
-  const cleanInput = String(rawReference || "")
-    .toLowerCase()
-    .replace(/[:\-.,]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!cleanInput) return null;
-
-  const aliasMatch = matchBibleReferenceAlias(cleanInput);
-  let resolvedBook = aliasMatch?.book || "";
-  let numericTokens = aliasMatch?.numericTokens || [];
-
-  if (!resolvedBook) {
-    const parsed = parseScriptureReference(normalizeScriptureReference(rawReference));
-    resolvedBook = resolveBibleBookName(parsed.book);
-    if (!resolvedBook) return null;
-    numericTokens = [
-      parsed.chapter,
-      parsed.verse,
-      parsed.verseEnd,
-    ].filter((number) => Number.isFinite(number) && number > 0);
-  }
-
-  if (!numericTokens.length) {
-    numericTokens = [1, 1];
-  }
-
-  if (!numericTokens.every((token) => /^\d+$/.test(String(token)))) {
-    return null;
-  }
-
-  const [chapter, startVerse, rawEndVerse] = numericTokens.map((token) =>
-    Number.parseInt(token, 10),
-  );
-  if (!Number.isFinite(chapter) || chapter < 1) return null;
-  let verse = Number.isFinite(startVerse) && startVerse > 0 ? startVerse : 0;
-  let verseEnd = Number.isFinite(rawEndVerse) && rawEndVerse > 0 ? rawEndVerse : 0;
-  if (verse > 0 && verseEnd > 0 && verseEnd < verse) {
-    [verse, verseEnd] = [verseEnd, verse];
-  }
-  if (verseEnd === verse) verseEnd = 0;
-
-  return {
-    book: resolvedBook,
-    chapter,
-    verse,
-    verseEnd,
-    reference:
-      verse > 0
-        ? `${resolvedBook} ${chapter}:${verse}${verseEnd > verse ? `-${verseEnd}` : ""}`
-        : `${resolvedBook} ${chapter}`,
-  };
-}
-
-function parseScriptureReference(input) {
-  const tokens = String(input || "").trim().split(/\s+/).filter(Boolean);
-  let book = "";
-  let chapter;
-  let verse;
-  let verseEnd;
-  tokens.forEach((token, index) => {
-    if (token.includes(":")) {
-      const parts = token.split(":");
-      chapter = Number.parseInt(parts[0], 10);
-      const verseParts = String(parts[1] || "").split("-");
-      verse = Number.parseInt(verseParts[0], 10);
-      verseEnd = Number.parseInt(verseParts[1], 10);
-    } else if (!Number.isNaN(Number.parseInt(token, 10)) && index === tokens.length - 1) {
-      chapter = Number.parseInt(token, 10);
-    } else {
-      book = book ? `${book} ${token}` : token;
-    }
-  });
-  return { book, chapter, verse, verseEnd };
-}
-
-function normalizeScriptureReference(input) {
-  return String(input || "")
-    .trim()
-    .replace(/\s*:\s*/g, ":")
-    .replace(/\s*-\s*/g, "-")
-    .replace(/\s+/g, " ");
 }
 
 function getBibleDesignerStyle() {
@@ -4932,7 +4664,7 @@ function normalizeMediaPathForCompare(filePath) {
 /** True when the preview <video> is showing the same local file as `filePath`. */
 function previewShowsSameClipAsPath(filePath) {
   if (!video || !video.src) return false;
-  if (!filePath || isNonVideoPresentationPath(filePath) || isLiveStream(filePath)) return false;
+  if (!filePath || isNonVideoPresentationItem(filePath) || isLiveStream(filePath)) return false;
   if (isImg(video.src) || isLiveStream(video.src)) return false;
   return (
     normalizeMediaPathForCompare(video.src) ===
@@ -7817,7 +7549,7 @@ async function handleMediaWindowClosed(event, id) {
 }
 function handleMediaPlayback(isImgFile) {
   if (!video) return;
-  if (isNonVideoPresentationPath(mediaFile)) return;
+  if (isNonVideoPresentationItem(mediaFile)) return;
   if (!isImgFile) {
     video.src = mediaFile;
   }
