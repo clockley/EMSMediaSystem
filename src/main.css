@@ -459,6 +459,25 @@ footer {
     transition: all 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
+.display-select option {
+    background: var(--card-bg-color);
+    color: var(--window-fg-color);
+}
+
+@media (prefers-color-scheme: dark) {
+    .display-select {
+        background-color: #2f2f33;
+        color: #f4f4f6;
+        border-color: #5a5b60;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23f4f4f6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 6.5l4.5 4.5 4.5-4.5'/%3E%3C/svg%3E");
+    }
+
+    .display-select option {
+        background: #2f2f33;
+        color: #f4f4f6;
+    }
+}
+
 .display-select:hover {
     border-color: var(--border-color);
     background-color: color-mix(in srgb, var(--card-bg-color) 95%, var(--window-fg-color));
@@ -1986,6 +2005,251 @@ ul {
     pointer-events: none;
 }
 
+.pill-button.suggested-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    border: 1px solid var(--accent-bg-color-hover);
+    background: var(--accent-bg-color);
+    color: #ffffff;
+    cursor: default;
+    transition: background-color 75ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.pill-button.suggested-action:hover {
+    background: var(--accent-bg-color-hover);
+}
+
+.bible-action-row {
+    display: flex;
+    gap: 8px;
+}
+
+.bible-action-row > button {
+    flex: 1 1 0;
+}
+
+.bible-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: color-mix(in srgb, var(--window-fg-color) 72%, transparent);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.bible-field input[type="color"] {
+    width: 100%;
+    min-height: 34px;
+    padding: 2px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--card-bg-color);
+}
+
+.bible-background-picker {
+    width: auto;
+}
+
+.sidebar-bible-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 42px;
+    padding: 10px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--card-bg-color) 92%, var(--window-fg-color));
+    color: var(--window-fg-color);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.sidebar-bible-button:hover {
+    background: color-mix(in srgb, var(--card-bg-color) 84%, var(--window-fg-color));
+}
+
+.sidebar-bible-button[data-active="true"] {
+    background: var(--accent-bg-color);
+    border-color: var(--accent-bg-color-hover);
+    color: #ffffff;
+}
+
+.bible-workspace {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: grid;
+    grid-template-columns: minmax(220px, 28%) minmax(0, 1fr);
+    background: #000;
+    color: #ffffff;
+    overflow: hidden;
+}
+
+.bible-workspace[hidden] {
+    display: none;
+}
+
+.bible-workspace__navigator {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 16px;
+    border-right: 1px solid color-mix(in srgb, white 16%, transparent);
+    background: color-mix(in srgb, #1d1d20 94%, white);
+}
+
+.bible-workspace__heading,
+.bible-workspace__title {
+    font-weight: 700;
+    font-size: 15px;
+}
+
+.bible-workspace__selectors {
+    display: grid;
+    grid-template-columns: minmax(92px, 140px);
+    gap: 8px;
+}
+
+.bible-workspace .display-select,
+.bible-workspace .url-input {
+    background-color: #2f2f33;
+    color: #f4f4f6;
+    border-color: #5a5b60;
+}
+
+.bible-workspace .url-input::placeholder {
+    color: rgba(244, 244, 246, 0.62);
+}
+
+.bible-verse-list {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    border: 1px solid color-mix(in srgb, white 16%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, black 24%, transparent);
+}
+
+.bible-verse-row {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px 12px;
+    border: 0;
+    border-bottom: 1px solid color-mix(in srgb, white 10%, transparent);
+    background: transparent;
+    color: inherit;
+    text-align: left;
+}
+
+.bible-verse-row:hover {
+    background: color-mix(in srgb, white 8%, transparent);
+}
+
+.bible-verse-row.is-selected {
+    background: color-mix(in srgb, var(--accent-bg-color) 42%, transparent);
+}
+
+.bible-verse-number {
+    color: color-mix(in srgb, white 62%, transparent);
+    font-weight: 700;
+    text-align: right;
+}
+
+.bible-verse-row-text {
+    min-width: 0;
+    line-height: 1.35;
+}
+
+.bible-workspace__main {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    background: #000;
+}
+
+.bible-workspace__toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 16px;
+    border-bottom: 1px solid color-mix(in srgb, white 16%, transparent);
+    background: color-mix(in srgb, #1d1d20 92%, white);
+}
+
+.bible-preview-panel {
+    position: relative;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 8%;
+    box-sizing: border-box;
+    background-size: cover;
+    background-position: center;
+    text-align: center;
+    overflow: hidden;
+}
+
+.bible-preview-background-video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: 0;
+}
+
+.bible-preview-copy {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    max-width: 100%;
+}
+
+.bible-preview-reference {
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 18px;
+    font-weight: 700;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+}
+
+.bible-preview-text {
+    max-width: 90%;
+    line-height: 1.18;
+    white-space: pre-wrap;
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
+}
+
+.bible-editor-drawer {
+    display: flex;
+    padding: 12px 16px;
+    border-top: 1px solid color-mix(in srgb, white 16%, transparent);
+    background: color-mix(in srgb, #1d1d20 94%, white);
+}
+
+.bible-editor-controls {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(120px, 1.1fr) minmax(120px, 0.9fr) 72px 72px minmax(180px, 1.2fr) auto;
+    gap: 8px;
+    align-items: end;
+}
+
 /* Media queue list only (scrolls inside sidebar, not the whole sidebar) */
 .media-container .control-panel--media .boxed-list {
     background: var(--card-bg-color);
@@ -2044,10 +2308,6 @@ ul {
     background: var(--accent-bg-color-hover);
 }
 
-.queue-item.cued:not(.active) {
-    background: color-mix(in srgb, var(--accent-bg-color) 16%, transparent);
-}
-
 .queue-item-dragging {
     opacity: 0.5;
 }
@@ -2089,10 +2349,8 @@ ul {
 }
 
 /*
- * Secondary row beneath the filename: LIVE / CUED pills plus the cue start
- * time. Selection (the blue active row background) and presentation state
- * (LIVE / CUED) are different concepts; the pills name the state so the
- * operator does not have to infer it from the background color alone.
+ * Secondary row beneath the filename: the LIVE pill and any explicit
+ * start-offset label. Queue order carries the rest of the meaning.
  */
 .item-status-row {
     display: flex;
@@ -2119,18 +2377,6 @@ ul {
 .state-badge--live {
     background: var(--destructive-bg-color, #c01c28);
     color: var(--destructive-fg-color, #ffffff);
-}
-
-.state-badge--cued {
-    background: var(--accent-bg-color);
-    color: #ffffff;
-}
-
-/* On the active (blue) row, the CUED accent pill would disappear; outline it instead. */
-.queue-item.active .state-badge--cued {
-    background: transparent;
-    color: #ffffff;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
 }
 
 .item-cue-start {

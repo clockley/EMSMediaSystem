@@ -46,6 +46,7 @@ async function initialize() {
 }
 
 const bibleAPI = {
+  waitForReady: () => initialize(),
   getBooks: () => {
     if (!isInitialized) throw new Error("Bible API not initialized");
     return bibleInstance.getBooks();

@@ -1967,6 +1967,11 @@ function setIPC() {
   });
   ipcMain.on("timeRemaining-message", sendRemainingTime);
   ipcMain.on("vlcl", handleVlcl);
+  ipcMain.on("update-text", (_event, message) => {
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+      mediaWindow.webContents.send("update-text", message);
+    }
+  });
   ipcMain.handle("create-media-window", handleCreateMediaWindow);
   ipcMain.on("timeGoto-message", handleTimeGotoMessage);
   ipcMain.on("play-ctl", handlePlayCtl);
