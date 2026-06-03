@@ -34,6 +34,12 @@ var seekOnly = false;
 let pptxIpcHandlersInstalled = false;
 const PPTX_SMALL_DECK_MAX_SLIDES = 30;
 const PPTX_LARGE_DECK_MIN_SLIDES = 151;
+const SCRIPTURE_FONT_FAMILY = "'Nunito Sans', Arial, sans-serif";
+const SCRIPTURE_BODY_FONT_SIZE = 66;
+const SCRIPTURE_REFERENCE_FONT_SIZE = 38;
+const SCRIPTURE_FONT_WEIGHT = 600;
+const SCRIPTURE_LINE_HEIGHT = 1.45;
+const TEXT_BACKGROUND_VIDEO_LOAD_COMPENSATION_SEC = 0.15;
 /** Live edge: true HLS-style live (no sync/duration UI); false for YouTube VOD in stream mode. */
 var streamActsAsLiveEdge = false;
 let i = argv.length - 1;
@@ -565,11 +571,17 @@ function playbackStateUpdate() {
 const DEFAULT_TEXT_PRESENTATION = Object.freeze({
   text: "",
   color: "#ffffff",
-  fontSize: 64,
-  fontFamily: "Arial, sans-serif",
+  fontSize: SCRIPTURE_BODY_FONT_SIZE,
+  fontFamily: SCRIPTURE_FONT_FAMILY,
+  fontWeight: SCRIPTURE_FONT_WEIGHT,
+  lineHeight: SCRIPTURE_LINE_HEIGHT,
+  referenceFontSize: SCRIPTURE_REFERENCE_FONT_SIZE,
   backgroundColor: "#000000",
   backgroundImage: "",
   backgroundVideo: "",
+  backgroundVideoSync: null,
+  bodyText: "",
+  referenceText: "",
   position: {
     vertical: "center",
     horizontal: "center",
@@ -579,6 +591,28 @@ const DEFAULT_TEXT_PRESENTATION = Object.freeze({
 const textPresentationState = {
   backgroundVideo: "",
 };
+
+function seekTextBackgroundVideoToPreview(backgroundVideo, sync) {
+  if (
+    !backgroundVideo ||
+    !sync ||
+    !Number.isFinite(sync.currentTime) ||
+    !Number.isFinite(sync.capturedAt)
+  ) {
+    return;
+  }
+  const elapsed = Math.max(0, (Date.now() - sync.capturedAt) * 0.001);
+  let target = Math.max(
+    0,
+    sync.currentTime + elapsed + TEXT_BACKGROUND_VIDEO_LOAD_COMPENSATION_SEC,
+  );
+  if (Number.isFinite(backgroundVideo.duration) && backgroundVideo.duration > 0) {
+    target %= backgroundVideo.duration;
+  }
+  try {
+    backgroundVideo.currentTime = target;
+  } catch {}
+}
 
 function resetTextBackgroundVideo(backgroundVideo, { keepSource = false } = {}) {
   if (!backgroundVideo) return;
@@ -606,10 +640,37 @@ function applyTextMessage(message) {
         }
       : DEFAULT_TEXT_PRESENTATION;
 
-  textContent.textContent = safeMessage.text;
+  const bodyText = safeMessage.bodyText || safeMessage.text || "";
+  const referenceText = safeMessage.referenceText || "";
+  const bodyFontSize = Number.isFinite(safeMessage.fontSize)
+    ? safeMessage.fontSize
+    : DEFAULT_TEXT_PRESENTATION.fontSize;
+  const referenceFontSize = Number.isFinite(safeMessage.referenceFontSize)
+    ? safeMessage.referenceFontSize
+    : DEFAULT_TEXT_PRESENTATION.referenceFontSize;
+  const scalableBodyFontSize = `clamp(28px, 3.4vw, ${bodyFontSize}px)`;
+  const scalableReferenceFontSize = `clamp(18px, 2vw, ${referenceFontSize}px)`;
+  textContent.textContent = "";
+  if (referenceText) {
+    const bodyEl = document.createElement("div");
+    bodyEl.textContent = bodyText;
+    bodyEl.style.fontSize = scalableBodyFontSize;
+    bodyEl.style.lineHeight = `${Number.isFinite(safeMessage.lineHeight) ? safeMessage.lineHeight : DEFAULT_TEXT_PRESENTATION.lineHeight}`;
+    const referenceEl = document.createElement("div");
+    referenceEl.textContent = referenceText;
+    referenceEl.style.fontSize = scalableReferenceFontSize;
+    referenceEl.style.lineHeight = "1.2";
+    referenceEl.style.marginTop = "28px";
+    referenceEl.style.opacity = "0.78";
+    textContent.append(bodyEl, referenceEl);
+  } else {
+    textContent.textContent = bodyText;
+  }
   textContent.style.color = safeMessage.color;
-  textContent.style.fontSize = `${Number.isFinite(safeMessage.fontSize) ? safeMessage.fontSize : DEFAULT_TEXT_PRESENTATION.fontSize}px`;
+  textContent.style.fontSize = scalableBodyFontSize;
   textContent.style.fontFamily = safeMessage.fontFamily;
+  textContent.style.fontWeight = `${Number.isFinite(safeMessage.fontWeight) ? safeMessage.fontWeight : DEFAULT_TEXT_PRESENTATION.fontWeight}`;
+  textContent.style.lineHeight = `${Number.isFinite(safeMessage.lineHeight) ? safeMessage.lineHeight : DEFAULT_TEXT_PRESENTATION.lineHeight}`;
   textContent.style.backgroundColor = "";
 
   textCanvas.style.alignItems = safeMessage.position.vertical;
@@ -640,9 +701,16 @@ function applyTextMessage(message) {
     }
     const shouldReloadVideo = textPresentationState.backgroundVideo !== safeMessage.backgroundVideo;
     if (shouldReloadVideo) {
+      backgroundVideo.addEventListener(
+        "loadedmetadata",
+        () => seekTextBackgroundVideoToPreview(backgroundVideo, safeMessage.backgroundVideoSync),
+        { once: true },
+      );
       backgroundVideo.src = safeMessage.backgroundVideo;
       backgroundVideo.load();
       textPresentationState.backgroundVideo = safeMessage.backgroundVideo;
+    } else {
+      seekTextBackgroundVideoToPreview(backgroundVideo, safeMessage.backgroundVideoSync);
     }
     backgroundVideo.style.display = "block";
     backgroundVideo.muted = true;

@@ -5,6 +5,13 @@
     font-weight: 400;
 }
 
+@font-face {
+    font-family: 'Nunito Sans';
+    font-display: swap;
+    src: url('../../fonts/NunitoSans/NunitoSans-SemiBold.ttf') format('truetype');
+    font-weight: 600;
+}
+
 * {
     transition: none;
 }
@@ -2051,7 +2058,9 @@ ul {
 }
 
 .bible-background-picker {
-    width: auto;
+    width: 100%;
+    justify-content: center;
+    white-space: nowrap;
 }
 
 .sidebar-bible-button {
@@ -2084,7 +2093,7 @@ ul {
     inset: 0;
     z-index: 5;
     display: grid;
-    grid-template-columns: minmax(220px, 28%) minmax(0, 1fr);
+    grid-template-columns: clamp(180px, 28%, 360px) minmax(0, 1fr);
     background: #000;
     color: #ffffff;
     overflow: hidden;
@@ -2174,6 +2183,7 @@ ul {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
     background: #000;
+    overflow: hidden;
 }
 
 .bible-workspace__toolbar {
@@ -2188,13 +2198,10 @@ ul {
 
 .bible-preview-panel {
     position: relative;
+    container-type: size;
     min-height: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    padding: 8%;
+    display: block;
+    padding: 0;
     box-sizing: border-box;
     background-size: cover;
     background-position: center;
@@ -2212,26 +2219,56 @@ ul {
 }
 
 .bible-preview-copy {
-    position: relative;
+    position: absolute;
+    inset: 16px;
     z-index: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-    max-width: 100%;
+    display: grid;
+    grid-template-rows: minmax(0, auto) auto;
+    align-content: center;
+    justify-items: stretch;
+    row-gap: clamp(8px, 2cqh, 20px);
+    width: auto !important;
+    max-width: none !important;
+    min-width: 0;
+    max-inline-size: none;
+    box-sizing: border-box;
+    overflow: hidden;
+    text-align: center;
 }
 
 .bible-preview-reference {
+    display: block;
+    inline-size: 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    max-inline-size: 100%;
+    justify-self: stretch;
     color: rgba(255, 255, 255, 0.72);
-    font-size: 18px;
-    font-weight: 700;
+    font-size: clamp(10px, min(1.8cqw, 4cqh), var(--bible-preview-reference-size, 19px));
+    font-weight: 600;
     text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+    overflow-wrap: anywhere;
+    word-break: normal;
+    white-space: normal;
+    overflow: hidden;
 }
 
 .bible-preview-text {
-    max-width: 90%;
-    line-height: 1.18;
-    white-space: pre-wrap;
+    display: block;
+    inline-size: 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    max-inline-size: 100%;
+    justify-self: stretch;
+    font-size: clamp(12px, min(3.2cqw, 6.5cqh), var(--bible-preview-body-size, 33px));
+    line-height: 1.45;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    hyphens: auto;
+    overflow: hidden;
     text-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
 }
 
@@ -2245,9 +2282,44 @@ ul {
 .bible-editor-controls {
     display: grid;
     width: 100%;
-    grid-template-columns: minmax(120px, 1.1fr) minmax(120px, 0.9fr) 72px 72px minmax(180px, 1.2fr) auto;
+    grid-template-columns: minmax(140px, 1fr) 72px 56px 56px minmax(150px, 0.85fr) auto;
     gap: 8px;
     align-items: end;
+}
+
+@media (max-width: 900px) {
+    .bible-workspace {
+        grid-template-columns: clamp(172px, 34%, 240px) minmax(0, 1fr);
+    }
+
+    .bible-workspace__navigator {
+        padding: 12px;
+    }
+
+    .bible-editor-controls {
+        grid-template-columns: minmax(120px, 1fr) 64px 48px 48px;
+    }
+
+    .bible-background-picker,
+    #bibleClearBackgroundBtn {
+        grid-column: span 2;
+    }
+}
+
+@media (max-width: 680px) {
+    .bible-workspace {
+        grid-template-columns: minmax(150px, 38%) minmax(0, 1fr);
+    }
+
+    .bible-editor-controls {
+        grid-template-columns: minmax(0, 1fr) 60px;
+    }
+
+    .bible-field:nth-child(n + 3),
+    .bible-background-picker,
+    #bibleClearBackgroundBtn {
+        grid-column: span 2;
+    }
 }
 
 /* Media queue list only (scrolls inside sidebar, not the whole sidebar) */
