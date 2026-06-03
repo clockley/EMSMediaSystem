@@ -2048,6 +2048,10 @@ ul {
     font-weight: 700;
 }
 
+.bible-field--font {
+    max-width: 220px;
+}
+
 .bible-field input[type="color"] {
     width: 100%;
     min-height: 34px;
@@ -2061,6 +2065,16 @@ ul {
     width: 100%;
     justify-content: center;
     white-space: nowrap;
+    min-width: 0;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#bibleBackgroundLabel {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .sidebar-bible-button {
@@ -2101,6 +2115,10 @@ ul {
 
 .bible-workspace[hidden] {
     display: none;
+}
+
+#bibleWorkspace:not([hidden]) ~ #pptxNavBar {
+    display: none !important;
 }
 
 .bible-workspace__navigator {
@@ -2282,7 +2300,7 @@ ul {
 .bible-editor-controls {
     display: grid;
     width: 100%;
-    grid-template-columns: minmax(140px, 1fr) 72px 56px 56px minmax(150px, 0.85fr) auto;
+    grid-template-columns: minmax(110px, 180px) 64px 52px 52px minmax(120px, 180px) repeat(5, auto);
     gap: 8px;
     align-items: end;
 }
@@ -2301,6 +2319,10 @@ ul {
     }
 
     .bible-background-picker,
+    #bibleApplyFontAllBtn,
+    #bibleApplyFontSizeAllBtn,
+    #bibleApplyTextColorAllBtn,
+    #bibleApplyBackgroundAllBtn,
     #bibleClearBackgroundBtn {
         grid-column: span 2;
     }
@@ -2317,6 +2339,10 @@ ul {
 
     .bible-field:nth-child(n + 3),
     .bible-background-picker,
+    #bibleApplyFontAllBtn,
+    #bibleApplyFontSizeAllBtn,
+    #bibleApplyTextColorAllBtn,
+    #bibleApplyBackgroundAllBtn,
     #bibleClearBackgroundBtn {
         grid-column: span 2;
     }

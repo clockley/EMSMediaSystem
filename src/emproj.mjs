@@ -36,6 +36,30 @@ function basenameAny(p) {
   return parts[parts.length - 1] || String(p || "");
 }
 
+function normalizeProjectScriptureOverrides(overrides = {}) {
+  if (!overrides || typeof overrides !== "object") {
+    return {
+      fontFamily: "",
+      fontSize: undefined,
+      color: "",
+      backgroundColor: "",
+      backgroundPath: "",
+    };
+  }
+  return {
+    fontFamily:
+      typeof overrides.fontFamily === "string" ? overrides.fontFamily : "",
+    fontSize:
+      Number.isFinite(overrides.fontSize) ? overrides.fontSize : undefined,
+    color:
+      typeof overrides.color === "string" ? overrides.color : "",
+    backgroundColor:
+      typeof overrides.backgroundColor === "string" ? overrides.backgroundColor : "",
+    backgroundPath:
+      typeof overrides.backgroundPath === "string" ? overrides.backgroundPath : "",
+  };
+}
+
 function fileUrlToPath(p) {
   return fileURLToPath(p);
 }
@@ -168,7 +192,9 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
   const backgroundPath =
     typeof backgroundAsset?.path === "string"
       ? extractedMediaPaths.get(backgroundAsset.path) || backgroundAsset.path
-      : "";
+      : typeof scripture.backgroundPath === "string"
+        ? scripture.backgroundPath
+        : "";
   const reference = typeof scripture.reference === "string" ? scripture.reference : "";
   const version = typeof scripture.version === "string" ? scripture.version : "KJV";
   return {
@@ -253,6 +279,16 @@ export async function loadEmprojSnapshot(projectPath) {
     throw new Error("Invalid project mimetype");
   }
 
+  let manifestJson = {};
+  const manifestJsonRaw = rootFiles.get("manifest.json");
+  if (manifestJsonRaw) {
+    try {
+      manifestJson = JSON.parse(manifestJsonRaw.toString("utf8"));
+    } catch {
+      manifestJson = {};
+    }
+  }
+
   const queueJsonRaw = rootFiles.get("queue.json");
   if (!queueJsonRaw) throw new Error("Project missing queue.json");
   const queueJson = JSON.parse(queueJsonRaw.toString("utf8"));
@@ -274,6 +310,59 @@ export async function loadEmprojSnapshot(projectPath) {
     if (typeof asset.id === "string") assetById.set(asset.id, asset);
     if (typeof asset.path === "string") assetByPath.set(asset.path, asset);
   }
+
+  const projectScriptureText =
+    queueJson.projectScriptureText && typeof queueJson.projectScriptureText === "object"
+      ? queueJson.projectScriptureText
+      : {};
+  const projectScripturePresentation =
+    projectScriptureText.presentation && typeof projectScriptureText.presentation === "object"
+      ? projectScriptureText.presentation
+      : {};
+  const projectScriptureBackgroundAssetId =
+    typeof projectScripturePresentation.backgroundAssetId === "string"
+      ? projectScripturePresentation.backgroundAssetId
+      : typeof projectScriptureText.themeOverrides?.background?.assetId === "string"
+        ? projectScriptureText.themeOverrides.background.assetId
+        : "";
+  const projectScriptureBackgroundAsset = projectScriptureBackgroundAssetId
+    ? assetById.get(projectScriptureBackgroundAssetId) || null
+    : null;
+  const projectScriptureOverrides = normalizeProjectScriptureOverrides({
+    fontFamily:
+      typeof projectScripturePresentation.fontFamily === "string"
+        ? projectScripturePresentation.fontFamily
+        : typeof projectScriptureText.themeOverrides?.textContainer?.typography?.fontFamily ===
+            "string"
+          ? projectScriptureText.themeOverrides.textContainer.typography.fontFamily
+          : "",
+    fontSize:
+      Number.isFinite(projectScripturePresentation.fontSize)
+        ? projectScripturePresentation.fontSize
+        : Number.isFinite(projectScriptureText.themeOverrides?.textContainer?.typography?.fontSize)
+          ? projectScriptureText.themeOverrides.textContainer.typography.fontSize
+          : undefined,
+    color:
+      typeof projectScripturePresentation.textColor === "string"
+        ? projectScripturePresentation.textColor
+        : typeof projectScriptureText.themeOverrides?.textContainer?.typography?.fontColor ===
+            "string"
+          ? projectScriptureText.themeOverrides.textContainer.typography.fontColor
+          : "",
+    backgroundColor:
+      typeof projectScripturePresentation.backgroundColor === "string"
+        ? projectScripturePresentation.backgroundColor
+        : typeof projectScriptureText.themeOverrides?.background?.color === "string"
+          ? projectScriptureText.themeOverrides.background.color
+          : "",
+    backgroundPath:
+      typeof projectScriptureBackgroundAsset?.path === "string"
+        ? extractedMediaPaths.get(projectScriptureBackgroundAsset.path) ||
+          projectScriptureBackgroundAsset.path
+        : typeof projectScripturePresentation.backgroundPath === "string"
+          ? projectScripturePresentation.backgroundPath
+          : "",
+  });
 
   const mediaQueue = (
     await Promise.all(sequence.map(async (item) => {
@@ -314,6 +403,8 @@ export async function loadEmprojSnapshot(projectPath) {
     currentMode: 0,
     currentQueueIndex: -1,
     previewCueIndex: -1,
+    projectStorageMode: manifestJson?.storage?.mode === "packed" ? "packed" : "working",
+    projectScriptureOverrides,
     mediaQueue,
   };
 }
@@ -346,6 +437,9 @@ export async function saveEmprojSnapshot(
 ) {
   const packMedia = opts?.packMedia === true;
   const queue = Array.isArray(snapshot?.mediaQueue) ? snapshot.mediaQueue : [];
+  const projectScriptureOverrides = normalizeProjectScriptureOverrides(
+    snapshot?.projectScriptureOverrides,
+  );
   const nowIso = new Date().toISOString();
   const fileIndex = new Map();
   const queueSequence = [];
@@ -469,6 +563,7 @@ export async function saveEmprojSnapshot(
           color: scripture.color || "#ffffff",
           backgroundColor: scripture.backgroundColor || "#000000",
           backgroundAssetId: backgroundAsset?.assetId,
+          backgroundPath: scripture.backgroundPath || "",
         },
         playback: {
           startTime: Number.isFinite(item.cueStartTime) ? item.cueStartTime : 0,
@@ -623,12 +718,55 @@ export async function saveEmprojSnapshot(
     });
   }
 
+  const projectScriptureBackgroundAsset = await registerAssetForPath(
+    projectScriptureOverrides.backgroundPath,
+    {
+      originalPath: projectScriptureOverrides.backgroundPath,
+      originalName: basenameAny(projectScriptureOverrides.backgroundPath || ""),
+    },
+  );
+
   const queueJson = {
     id: "queue_main",
     name: "EMS Project",
     loopQueue: false,
     created: nowIso,
     modified: nowIso,
+    projectScriptureText:
+      projectScriptureOverrides.fontFamily ||
+      Number.isFinite(projectScriptureOverrides.fontSize) ||
+      projectScriptureOverrides.color ||
+      projectScriptureOverrides.backgroundColor ||
+      projectScriptureOverrides.backgroundPath
+        ? {
+            appliesTo: "scripture",
+            themeOverrides: {
+              textContainer: {
+                typography: {
+                  fontFamily: projectScriptureOverrides.fontFamily || undefined,
+                  fontSize: Number.isFinite(projectScriptureOverrides.fontSize)
+                    ? projectScriptureOverrides.fontSize
+                    : undefined,
+                  fontColor: projectScriptureOverrides.color || undefined,
+                },
+              },
+              background: {
+                color: projectScriptureOverrides.backgroundColor || undefined,
+                assetId: projectScriptureBackgroundAsset?.assetId,
+              },
+            },
+            presentation: {
+              fontFamily: projectScriptureOverrides.fontFamily || undefined,
+              fontSize: Number.isFinite(projectScriptureOverrides.fontSize)
+                ? projectScriptureOverrides.fontSize
+                : undefined,
+              textColor: projectScriptureOverrides.color || undefined,
+              backgroundColor: projectScriptureOverrides.backgroundColor || undefined,
+              backgroundAssetId: projectScriptureBackgroundAsset?.assetId,
+              backgroundPath: projectScriptureOverrides.backgroundPath || "",
+            },
+          }
+        : undefined,
     sequence: queueSequence,
   };
   const assetsJson = { assets };
