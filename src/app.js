@@ -2725,6 +2725,12 @@ function resolveBibleQueueItemEntry(item) {
   };
 }
 
+function resolvedBibleEntryForItem(item, fallback = bibleDesignerState) {
+  const resolvedEntry = resolveBibleQueueItemEntry(item);
+  if (resolvedEntry) return resolvedEntry;
+  return bibleEntryWithLookupText(fallback);
+}
+
 function syncBibleBackgroundLabel(filePath = bibleDesignerState.backgroundPath) {
   const label = document.getElementById("bibleBackgroundLabel");
   if (!label) return;
@@ -4389,6 +4395,27 @@ async function restorePreviewToLiveOutput(index) {
     renderQueue();
     syncPlayPauseIconToControlMedia();
     return;
+  } else if (isQueueItemBible(item)) {
+    const liveBibleEntry = resolvedBibleEntryForItem(item);
+    mediaFile = item.path;
+    mediaPlayerInputState.filePaths = [item.path];
+    updateQueueFileLabel(item.name);
+    commitActiveCueVolume();
+    previewCueIndex = -1;
+    pendingCueVolume = null;
+    cueVolumeDirty = false;
+    syncGtkSliderToCueState();
+    stopPreviewAudioCue();
+    clearVideoPreviewCueOverlay();
+    setMediaCountdownOverlayVisible(false);
+    textNode.data = "";
+    item.bible = { ...liveBibleEntry };
+    loadBibleEntryIntoEditor(liveBibleEntry);
+    document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+    updatePreviewCueUI();
+    renderQueue();
+    syncPlayPauseIconToControlMedia();
+    return;
   } else {
     restoreNonPptxPreviewSurface({ isImage: isQueueItemImage(item) });
   }
@@ -4442,7 +4469,9 @@ async function restorePreviewCueAfterPresentationStopped() {
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
     textNode.data = "";
-    loadBibleEntryIntoEditor(cue.item.bible || bibleDesignerState);
+    const cueBibleEntry = resolvedBibleEntryForItem(cue.item);
+    if (cue.item) cue.item.bible = { ...cueBibleEntry };
+    loadBibleEntryIntoEditor(cueBibleEntry);
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemAudio(cue.item)) {
     setMediaCountdownOverlayVisible(true);
@@ -4605,7 +4634,9 @@ async function loadQueueItemIntoPreviewCue(index) {
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
     textNode.data = "";
-    loadBibleEntryIntoEditor(item.bible || bibleDesignerState);
+    const cueBibleEntry = resolvedBibleEntryForItem(item);
+    item.bible = { ...cueBibleEntry };
+    loadBibleEntryIntoEditor(cueBibleEntry);
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemImage(item)) {
     if (!isBiblePresentationActive()) {
@@ -5056,8 +5087,8 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     }
     audioOnlyFile = false;
     playingMediaAudioOnly = false;
-    const bibleEntry = bibleEntryWithLookupText(item.bible || bibleDesignerState);
-    if (item.bible && bibleEntry !== item.bible) item.bible = { ...bibleEntry };
+    const bibleEntry = resolvedBibleEntryForItem(item);
+    item.bible = { ...bibleEntry };
     Object.assign(bibleDesignerState, bibleEntry);
     syncBibleSelectorsFromState();
     applyBiblePreview(bibleEntry);
@@ -5169,7 +5200,7 @@ async function playCurrentQueueItem(opts) {
 
   if (isQueueItemBible(item)) {
     await createMediaWindow({ textItem: item });
-    window.setTimeout(() => sendBibleTextToOutput(item.bible || bibleDesignerState), 150);
+    window.setTimeout(() => sendBibleTextToOutput(resolvedBibleEntryForItem(item)), 150);
     return;
   }
 
@@ -5330,7 +5361,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       ? {
           isText: true,
           mediaFile: nextItem.path,
-          textPayload: buildBibleTextMessage(nextItem.bible || bibleDesignerState),
+          textPayload: buildBibleTextMessage(resolvedBibleEntryForItem(nextItem)),
         }
       : {
           mediaFile: nextItem.path,
@@ -5349,9 +5380,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     // Window stays alive — advance queue state without the normal close/reopen cycle.
     mediaPlaybackEndedPending = false;
     currentQueueIndex = index;
-    if (!isQueuePlaying && isBibleItem) {
-      isPlaying = true;
-    }
+    isQueuePlaying = true;
     activeMediaWindowContentType = classifyPresentationType(nextItem);
     isActiveMediaWindowCache = true;
     isPlaying = true;
@@ -5367,7 +5396,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     updateDynUI();
     syncPreviewAudioTrackState();
     if (isBibleItem) {
-      sendBibleTextToOutput(nextItem.bible || bibleDesignerState);
+      sendBibleTextToOutput(resolvedBibleEntryForItem(nextItem));
     }
     renderQueue();
     if (opts.clearCue !== false) {
@@ -7320,7 +7349,10 @@ async function handleMediaWindowClosed(event, id) {
       }
     } else if (isQueueItemBible(mediaQueue[idx])) {
       await createMediaWindow({ textItem: mediaQueue[idx] });
-      window.setTimeout(() => sendBibleTextToOutput(mediaQueue[idx].bible || bibleDesignerState), 150);
+      window.setTimeout(
+        () => sendBibleTextToOutput(resolvedBibleEntryForItem(mediaQueue[idx])),
+        150,
+      );
     } else if (
       audioOnlyFile ||
       classifyQueueMediaType(mediaQueue[idx].path) === "audio"
@@ -9835,7 +9867,9 @@ async function createMediaWindow(options) {
         : "video";
   if (isTextItem) {
     window.setTimeout(() => {
-      const entry = textItem?.bible || mediaQueue[currentQueueIndex]?.bible || bibleDesignerState;
+      const entry = textItem
+        ? resolvedBibleEntryForItem(textItem)
+        : resolvedBibleEntryForItem(mediaQueue[currentQueueIndex]);
       sendBibleTextToOutput(entry);
     }, 150);
     return;
