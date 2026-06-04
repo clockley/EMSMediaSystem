@@ -257,7 +257,7 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
         typeof scripture.fontFamily === "string"
           ? scripture.fontFamily
           : SCRIPTURE_FONT_FAMILY,
-      fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : SCRIPTURE_BODY_FONT_SIZE,
+      fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : undefined,
       color: typeof scripture.color === "string" ? scripture.color : "#ffffff",
       backgroundColor:
         typeof scripture.backgroundColor === "string"
@@ -602,7 +602,7 @@ export async function saveEmprojSnapshot(
           verse: Number.isFinite(scripture.verse) ? scripture.verse : 0,
           verseEnd: Number.isFinite(scripture.verseEnd) ? scripture.verseEnd : 0,
           fontFamily: scripture.fontFamily || SCRIPTURE_FONT_FAMILY,
-          fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : SCRIPTURE_BODY_FONT_SIZE,
+          fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : undefined,
           color: scripture.color || "#ffffff",
           backgroundColor: scripture.backgroundColor || "#000000",
           backgroundAssetId: backgroundAsset?.assetId,
