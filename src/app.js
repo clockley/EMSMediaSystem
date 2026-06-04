@@ -1916,7 +1916,10 @@ function renderQueue() {
     // LIVE badge for the item currently on output, plus an optional per-item
     // start-offset label when that item begins somewhere other than 0:00.
     const presentationLive = isQueuePresentationActive();
-    const editableCueIndex = currentCueEditableQueueIndex();
+    const selectedQueueIndex =
+      previewCueIndex >= 0 && previewCueIndex < mediaQueue.length
+        ? previewCueIndex
+        : currentQueueIndex;
 
     listContainer.innerHTML = mediaQueue
       .map((item, index) => {
@@ -1924,11 +1927,12 @@ function renderQueue() {
           Number.isFinite(item.cueStartTime) && item.cueStartTime > 0;
 
         const isLive = presentationLive && index === currentQueueIndex;
+        const isSelected = index === selectedQueueIndex;
 
         const classes = [
           "queue-item",
-          index === currentQueueIndex ? " active" : "",
-          isLive ? " live" : "",
+          isSelected ? " is-selected" : "",
+          isLive ? " is-live" : "",
         ].join("");
         const cueStartMarkup = hasCueStart
           ? `<span class="item-cue-start">Start @ ${formatCueTime(item.cueStartTime)}</span>`
@@ -1943,7 +1947,7 @@ function renderQueue() {
             : "";
         const autoAdvanceEnabled = item.autoAdvance !== false;
         const autoAdvanceMarkup = `<button type="button" class="row-auto-advance-btn" data-queue-auto="${index}" aria-label="Toggle auto-advance for this item" title="Toggle auto-advance for this item">${autoAdvanceEnabled ? "Auto" : "Manual"}</button>`;
-        return `<div class="${classes}" role="listitem" data-queue-index="${index}" draggable="true">
+        return `<div class="${classes}" role="listitem" data-queue-index="${index}" draggable="true" ${isSelected ? 'data-selected="true"' : ""} ${isLive ? 'data-live="true"' : ""}>
       <span class="item-icon">${queueTypeIconMarkup(item)}</span>
       <span class="item-text">
         <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
