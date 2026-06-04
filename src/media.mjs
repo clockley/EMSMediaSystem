@@ -705,8 +705,11 @@ function applyTextMessage(message) {
     referenceEl.style.marginTop = "28px";
     referenceEl.style.opacity = "0.78";
     textContent.append(bodyEl, referenceEl);
+    const referenceOffset = Math.min(36, Math.max(0, referenceFontSize * 0.5 + 14));
+    textContent.style.transform = `translateY(${referenceOffset}px)`;
   } else {
     textContent.textContent = bodyText;
+    textContent.style.transform = "";
   }
   textContent.style.color = safeMessage.color;
   textContent.style.fontSize = scalableBodyFontSize;
