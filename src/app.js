@@ -283,6 +283,7 @@ let pptxSlideCount = 0;
 let pptxCurrentSlide = 0;
 let pptxFilePath = null;
 let pptxLayoutRefreshRaf = 0;
+let pptxPreviewRequestToken = 0;
 const PPTX_SIDEBAR_STORAGE_KEY = "ems.pptxSidebarWidth";
 const PPTX_SIDEBAR_DEFAULT_WIDTH = 168;
 const PPTX_SIDEBAR_MIN_WIDTH = 128;
@@ -362,6 +363,20 @@ function bibleReferenceAllBooks() {
     .filter(Boolean);
 }
 
+function positionBibleReferenceSuggestionsOverlay() {
+  const suggestionsEl = document.getElementById("bibleReferenceSuggestions");
+  const referenceInput = document.getElementById("bibleReferenceInput");
+  if (!suggestionsEl || !referenceInput || suggestionsEl.hidden) return;
+  const rect = referenceInput.getBoundingClientRect();
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const availableRight = Math.max(0, viewportWidth - rect.left - 12);
+  const desiredWidth = Math.max(rect.width, Math.min(320, availableRight));
+  suggestionsEl.style.position = "fixed";
+  suggestionsEl.style.top = `${Math.round(rect.bottom + 6)}px`;
+  suggestionsEl.style.left = `${Math.round(rect.left)}px`;
+  suggestionsEl.style.width = `${Math.round(Math.min(desiredWidth, availableRight || rect.width))}px`;
+}
+
 function hideBibleReferenceSuggestions() {
   const suggestionsEl = document.getElementById("bibleReferenceSuggestions");
   const referenceInput = document.getElementById("bibleReferenceInput");
@@ -369,6 +384,9 @@ function hideBibleReferenceSuggestions() {
   if (suggestionsEl) {
     suggestionsEl.hidden = true;
     suggestionsEl.innerHTML = "";
+    suggestionsEl.style.top = "";
+    suggestionsEl.style.left = "";
+    suggestionsEl.style.width = "";
   }
   if (referenceInput) {
     referenceInput.setAttribute("aria-expanded", "false");
@@ -399,12 +417,28 @@ function updateBibleReferenceSuggestionActiveState() {
     button.classList.toggle("is-active", active);
     if (active) {
       referenceInput.setAttribute("aria-activedescendant", button.id);
-      button.scrollIntoView({ block: "nearest" });
+      const buttonTop = button.offsetTop;
+      const buttonBottom = buttonTop + button.offsetHeight;
+      if (buttonTop < suggestionsEl.scrollTop) {
+        suggestionsEl.scrollTop = buttonTop;
+      } else if (buttonBottom > suggestionsEl.scrollTop + suggestionsEl.clientHeight) {
+        suggestionsEl.scrollTop = buttonBottom - suggestionsEl.clientHeight;
+      }
     }
   });
   if (bibleReferenceSuggestionIndex < 0) {
     referenceInput.removeAttribute("aria-activedescendant");
   }
+}
+
+function centerBibleVerseRowInList(row) {
+  const list = document.getElementById("bibleVerseList");
+  if (!list || !row) return;
+  const target =
+    row.offsetTop -
+    list.offsetTop -
+    Math.max(0, (list.clientHeight - row.offsetHeight) / 2);
+  list.scrollTop = Math.max(0, target);
 }
 
 function renderBibleReferenceSuggestions(options = {}) {
@@ -437,12 +471,18 @@ function renderBibleReferenceSuggestions(options = {}) {
   });
   suggestionsEl.appendChild(fragment);
   suggestionsEl.hidden = false;
+  positionBibleReferenceSuggestionsOverlay();
   referenceInput.setAttribute("aria-expanded", "true");
   document.getElementById("bibleReferenceToggle")?.setAttribute("aria-expanded", "true");
   if (bibleReferenceSuggestionIndex >= suggestions.length) {
     bibleReferenceSuggestionIndex = suggestions.length - 1;
   }
   updateBibleReferenceSuggestionActiveState();
+}
+
+function isBibleReferenceSuggestionsOpen() {
+  const suggestionsEl = document.getElementById("bibleReferenceSuggestions");
+  return Boolean(suggestionsEl && suggestionsEl.hidden === false);
 }
 
 function clampPptxSlideIndex(index, count = pptxSlideCount) {
@@ -735,6 +775,15 @@ function isCurrentPreviewLoad(token) {
   return token === previewLoadToken;
 }
 
+function nextPptxPreviewRequestToken() {
+  pptxPreviewRequestToken += 1;
+  return pptxPreviewRequestToken;
+}
+
+function isCurrentPptxPreviewRequest(token) {
+  return token === pptxPreviewRequestToken;
+}
+
 function nextLiveStartToken() {
   liveStartToken += 1;
   return liveStartToken;
@@ -800,6 +849,7 @@ function rememberPptxSlide(filePath, slideIndex) {
 }
 
 async function loadPptxPreview(filePath, opts = {}) {
+  const requestToken = nextPptxPreviewRequestToken();
   const startSlide = resolvePptxPreviewStartSlide(filePath, opts);
   const preserveLiveAudio = opts?.preserveLiveAudio === true;
   const preserveLiveVideo = opts?.preserveLiveVideo === true;
@@ -815,6 +865,7 @@ async function loadPptxPreview(filePath, opts = {}) {
   const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
     "../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
   );
+  if (!isCurrentPptxPreviewRequest(requestToken)) return;
   const container = document.getElementById("pptxPreviewContainer");
   if (!container) return;
   if (!preserveLiveAudio && !preserveLiveBible) stopLiveAudioPresentation();
@@ -851,9 +902,10 @@ async function loadPptxPreview(filePath, opts = {}) {
   container.style.display = "flex";
   ensurePptxPreviewShell(container);
   const arrayBuffer = await invoke("read-file-as-arraybuffer", filePath);
+  if (!isCurrentPptxPreviewRequest(requestToken)) return;
   const viewerHost = ensurePptxViewerHost();
   viewerHost.innerHTML = "";
-  pptxViewer = await PptxViewer.open(arrayBuffer, viewerHost, {
+  const openedViewer = await PptxViewer.open(arrayBuffer, viewerHost, {
     zipLimits: RECOMMENDED_ZIP_LIMITS,
     fitMode: "contain",
     renderMode: "slide",
@@ -861,6 +913,13 @@ async function loadPptxPreview(filePath, opts = {}) {
     // viewer is later asked to render a list (windowed mounting by default).
     listOptions: getPptxListRenderOptions(),
   });
+  if (!isCurrentPptxPreviewRequest(requestToken)) {
+    try {
+      openedViewer?.destroy?.();
+    } catch {}
+    return;
+  }
+  pptxViewer = openedViewer;
   pptxFilePath = filePath;
   pptxSlideCount = pptxViewer.slideCount ?? pptxViewer.slides?.length ?? 1;
   buildPptxNavigator();
@@ -874,6 +933,7 @@ async function loadPptxPreview(filePath, opts = {}) {
     });
   }
   await showPptxSlide(clampPptxSlideIndex(startSlide, pptxSlideCount));
+  if (!isCurrentPptxPreviewRequest(requestToken)) return;
   if (rememberPptxSlide(filePath, pptxCurrentSlide)) {
     scheduleAutosaveProjectState();
   }
@@ -1201,6 +1261,7 @@ function pptxNextSlide() {
 }
 
 function hidePptxPreview(options = {}) {
+  nextPptxPreviewRequestToken();
   const restoreVideoPreview = options.restoreVideoPreview !== false;
   const container = document.getElementById("pptxPreviewContainer");
   if (container) container.style.display = "none";
@@ -1357,6 +1418,7 @@ async function syncCurrentPptxSlideForProjectSnapshot() {
 }
 
 async function restorePptxPreviewForMediaTab() {
+  if (isNonPptxPreviewCueActive()) return;
   const pptxPath = currentPptxPreviewFilePath();
   if (!pptxPath) return;
 
@@ -1368,6 +1430,7 @@ async function restorePptxPreviewForMediaTab() {
   const container = document.getElementById("pptxPreviewContainer");
   const navBar = document.getElementById("pptxNavBar");
   const liveSlide = await getLivePptxSlideFromMediaWindow(pptxPath);
+  if (isNonPptxPreviewCueActive()) return;
   const savedSlide = isSavedPptxSlideIndex(liveSlide)
     ? liveSlide
     : savedPptxSlideForPath(pptxPath);
@@ -1533,8 +1596,13 @@ function currentPreviewCue() {
     startTime:
       Number.isFinite(item.cueStartTime) && item.cueStartTime > 0
         ? item.cueStartTime
-        : 0,
+      : 0,
   };
+}
+
+function isNonPptxPreviewCueActive() {
+  const cue = currentPreviewCue();
+  return Boolean(cue && !isQueueItemPptx(cue.item));
 }
 
 function currentAudioPreviewQueueIndex() {
@@ -1913,6 +1981,7 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
   const el = ensurePreviewCueVideoElement();
   if (!el) return;
   previewCueVideoIndex = index;
+  hidePptxPreviewIfNeeded({ restoreVideoPreview: true });
 
   // When an image is the current live output, img#preview sits after
   // #previewCue in the DOM and paints over it. Hide it so the operator
@@ -2284,66 +2353,20 @@ function currentBibleBackgroundVideoSync() {
 }
 
 function fitBiblePreviewText(panel, text, reference, message) {
-  const copy = panel?.querySelector(".bible-preview-copy");
-  if (!panel || !text || !reference || !copy) return;
-  const bodyRatio =
-    (message.fontSize || SCRIPTURE_BODY_FONT_SIZE) / SCRIPTURE_BODY_FONT_SIZE;
-  const referenceRatio =
-    (message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE) /
-    SCRIPTURE_BODY_FONT_SIZE;
-  const applyBodySize = (bodySize) => {
-    text.style.fontSize = `${Math.max(4, Math.floor(bodySize))}px`;
-    reference.style.fontSize = `${Math.max(4, Math.floor(bodySize * referenceRatio))}px`;
-  };
-  const panelRect = panel.getBoundingClientRect();
-  const parentRect = (panel.parentElement || panel).getBoundingClientRect();
-  const visibleLeft = Math.max(panelRect.left, parentRect.left);
-  const visibleRight = Math.min(panelRect.right, parentRect.right);
-  const visibleTop = Math.max(panelRect.top, parentRect.top);
-  const visibleBottom = Math.min(panelRect.bottom, parentRect.bottom);
-  const insetX = Math.max(10, Math.min(32, (visibleRight - visibleLeft) * 0.06));
-  const insetY = Math.max(10, Math.min(32, (visibleBottom - visibleTop) * 0.08));
-  copy.style.left = `${Math.max(0, visibleLeft - panelRect.left + insetX)}px`;
-  copy.style.right = `${Math.max(0, panelRect.right - visibleRight + insetX)}px`;
-  copy.style.top = `${Math.max(0, visibleTop - panelRect.top + insetY)}px`;
-  copy.style.bottom = `${Math.max(0, panelRect.bottom - visibleBottom + insetY)}px`;
+  const bodyAnchor = panel?.querySelector(".bible-preview-body-anchor");
+  if (!panel || !text || !reference || !bodyAnchor) return;
+  text.style.fontSize = `${Math.max(24, Math.round(message.fontSize || SCRIPTURE_BODY_FONT_SIZE))}px`;
+  reference.style.fontSize = `${Math.max(14, Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE))}px`;
   requestAnimationFrame(() => {
-    const copyRect = copy.getBoundingClientRect();
-    const visibleHeight = Math.max(
-      1,
-      copyRect.height,
-    );
-    const visibleWidth = Math.max(1, copyRect.width);
-    const maxBodySize = Math.max(
-      4,
-      Math.min(36, Math.round((message.fontSize || SCRIPTURE_BODY_FONT_SIZE) / 2)),
-    );
-    let low = 4;
-    let high = maxBodySize;
-    let best = low;
-    for (let attempt = 0; attempt < 12; attempt += 1) {
-      const mid = (low + high) / 2;
-      applyBodySize(mid * bodyRatio);
-      const fits =
-        copy.scrollHeight <= visibleHeight + 1 &&
-        copy.scrollWidth <= visibleWidth + 1;
-      if (fits) {
-        best = mid;
-        low = mid + 0.5;
-      } else {
-        high = mid - 0.5;
-      }
-    }
-    applyBodySize(best * bodyRatio);
+    const bodyHeight = bodyAnchor.getBoundingClientRect().height || 0;
+    const gap = Math.max(12, Math.min(28, Math.round((message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE) * 0.45)));
+    reference.style.top = `calc(50% + ${Math.round(bodyHeight / 2 + gap)}px)`;
   });
 }
 
 function ensureBiblePreviewResizeFit(panel, text, reference) {
   if (!panel || panel._emsBiblePreviewResizeFit) return;
-  panel._emsBiblePreviewResizeFit = new ResizeObserver(() => {
-    fitBiblePreviewText(panel, text, reference, buildBibleTextMessage(bibleDesignerState));
-  });
-  panel._emsBiblePreviewResizeFit.observe(panel);
+  panel._emsBiblePreviewResizeFit = true;
 }
 
 function buildBibleTextMessage(entry = bibleDesignerState) {
@@ -3393,7 +3416,7 @@ function jumpBibleReferenceToBrowser() {
     const row = document.querySelector(
       `.bible-verse-row[data-verse="${bibleDesignerState.verse}"]`,
     );
-    row?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    centerBibleVerseRowInList(row);
     refreshBibleLookupPreview();
   }
   return true;
@@ -3459,11 +3482,12 @@ function installBibleMediaControls() {
     applyBiblePreview(bibleDesignerState);
   });
   referenceInput.addEventListener("input", () => {
+    if (!isBibleReferenceSuggestionsOpen()) return;
     bibleReferenceSuggestionIndex = -1;
     renderBibleReferenceSuggestions();
   });
   referenceInput.addEventListener("focus", () => {
-    renderBibleReferenceSuggestions();
+    hideBibleReferenceSuggestions();
   });
   referenceInput.addEventListener("blur", () => {
     window.setTimeout(() => hideBibleReferenceSuggestions(), 120);
@@ -3480,9 +3504,11 @@ function installBibleMediaControls() {
     referenceInput.focus();
   });
   referenceInput.addEventListener("change", jumpBibleReferenceToBrowser);
+  window.addEventListener("resize", positionBibleReferenceSuggestionsOverlay);
+  window.addEventListener("scroll", positionBibleReferenceSuggestionsOverlay, true);
   referenceInput.addEventListener("keydown", (event) => {
     const suggestionButtons = referenceSuggestions?.querySelectorAll(".bible-reference-suggestion") || [];
-    if (event.key === "ArrowDown" && suggestionButtons.length) {
+    if (event.key === "ArrowDown" && isBibleReferenceSuggestionsOpen() && suggestionButtons.length) {
       event.preventDefault();
       bibleReferenceSuggestionIndex =
         bibleReferenceSuggestionIndex < suggestionButtons.length - 1
@@ -3491,7 +3517,7 @@ function installBibleMediaControls() {
       updateBibleReferenceSuggestionActiveState();
       return;
     }
-    if (event.key === "ArrowUp" && suggestionButtons.length) {
+    if (event.key === "ArrowUp" && isBibleReferenceSuggestionsOpen() && suggestionButtons.length) {
       event.preventDefault();
       bibleReferenceSuggestionIndex =
         bibleReferenceSuggestionIndex > 0
@@ -3503,6 +3529,7 @@ function installBibleMediaControls() {
     if (event.key === "Enter") {
       event.preventDefault();
       if (
+        isBibleReferenceSuggestionsOpen() &&
         bibleReferenceSuggestionIndex >= 0 &&
         bibleReferenceSuggestionIndex < suggestionButtons.length
       ) {
@@ -4781,7 +4808,9 @@ async function loadQueueItemIntoPreviewCue(index) {
       ? item.cueStartTime
       : 0;
 
-  if (isBiblePresentationActive() && !isQueueItemBible(item)) {
+  const bibleWorkspaceVisible =
+    document.getElementById("bibleWorkspace")?.hidden === false;
+  if (bibleWorkspaceVisible && !isQueueItemBible(item)) {
     hideBibleWorkspace();
   }
 
@@ -8524,7 +8553,9 @@ function generateMediaFormHTML(video = null) {
           <div id="biblePreviewPanel" class="bible-preview-panel">
             <video id="biblePreviewBackgroundVideo" class="bible-preview-background-video" muted loop playsinline hidden></video>
             <div class="bible-preview-copy">
-              <div id="biblePreviewText" class="bible-preview-text"></div>
+              <div class="bible-preview-body-anchor">
+                <div id="biblePreviewText" class="bible-preview-text"></div>
+              </div>
               <div id="biblePreviewReference" class="bible-preview-reference"></div>
             </div>
           </div>

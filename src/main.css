@@ -1603,7 +1603,7 @@ ul {
     object-fit: contain;
     display: block;
     background: var(--view-bg-color, #1d1d20);
-    z-index: 6;
+    z-index: 8;
 }
 
 #previewCue[hidden] {
@@ -1858,7 +1858,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     bottom: 0;
     left: 0;
     right: 0;
-    z-index: 7;
+    z-index: 9;
     padding: 8px 16px;
     display: flex;
     align-items: center;
@@ -2263,10 +2263,10 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .bible-reference-suggestions {
-    position: absolute;
-    top: calc(100% + 6px);
+    position: fixed;
+    top: 0;
     left: 0;
-    width: 100%;
+    width: min(320px, calc(100vw - 24px));
     z-index: 12;
     display: flex;
     flex-direction: column;
@@ -2277,6 +2277,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     border-radius: 12px;
     background: color-mix(in srgb, #1d1d20 96%, white);
     box-shadow: 0 10px 24px rgba(0, 0, 0, 0.36);
+    contain: layout style paint;
 }
 
 .bible-reference-suggestion {
@@ -2391,11 +2392,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     position: absolute;
     inset: 16px;
     z-index: 1;
-    display: grid;
-    grid-template-rows: minmax(0, auto) auto;
-    align-content: center;
-    justify-items: stretch;
-    row-gap: clamp(8px, 2cqh, 20px);
+    display: block;
     width: auto !important;
     max-width: none !important;
     min-width: 0;
@@ -2405,8 +2402,19 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     text-align: center;
 }
 
+.bible-preview-body-anchor {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    transform: translate(-50%, -50%);
+}
+
 .bible-preview-reference {
     display: block;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
     inline-size: 100%;
     width: 100%;
     min-width: 0;
