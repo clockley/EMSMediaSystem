@@ -32,6 +32,7 @@ var pptxCurrentSlide = 0;
 var autoPlay = false;
 var seekOnly = false;
 let pptxIpcHandlersInstalled = false;
+let textIpcHandlersInstalled = false;
 const PPTX_SMALL_DECK_MAX_SLIDES = 30;
 const PPTX_LARGE_DECK_MIN_SLIDES = 151;
 const SCRIPTURE_FONT_FAMILY = "'Nunito Sans', Arial, sans-serif";
@@ -287,8 +288,16 @@ async function applySlipstream(data) {
 
   if (newIsText) {
     isText = true;
+    isPptx = false;
+    installTextHandlers();
     const pptxCanvas = document.getElementById("pptxCanvas");
     if (pptxCanvas) pptxCanvas.style.display = "none";
+    if (window._pptxMediaViewer) {
+      try {
+        window._pptxMediaViewer.destroy();
+      } catch {}
+      window._pptxMediaViewer = null;
+    }
     document.querySelector("video").style.display = "none";
     try {
       video.pause();
@@ -306,10 +315,13 @@ async function applySlipstream(data) {
 
   if (isText && !newIsText) {
     isText = false;
+    textPresentationState.signature = "";
     const textCanvas = document.getElementById("textCanvas");
     if (textCanvas) {
       textCanvas.style.display = "none";
       textCanvas.style.backgroundImage = "";
+      textCanvas.style.backgroundSize = "";
+      textCanvas.style.backgroundPosition = "";
     }
     const backgroundVideo = document.getElementById("textBackgroundVideo");
     if (backgroundVideo) {
@@ -770,6 +782,8 @@ function applyTextMessage(message) {
 }
 
 function installTextHandlers() {
+  if (textIpcHandlersInstalled) return;
+  textIpcHandlersInstalled = true;
   ipcRenderer.on("update-text", (evt, message) => {
     applyTextMessage(message);
   });
