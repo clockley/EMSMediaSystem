@@ -133,20 +133,25 @@ export function parseScriptureReference(input) {
   let chapter;
   let verse;
   let verseEnd;
+  let verseSelector = "";
   tokens.forEach((token, index) => {
     if (token.includes(":")) {
       const parts = token.split(":");
       chapter = Number.parseInt(parts[0], 10);
-      const verseParts = String(parts[1] || "").split("-");
+      verseSelector = String(parts.slice(1).join(":") || "");
+      const firstVersePart = verseSelector.split(",")[0] || "";
+      const verseParts = firstVersePart.split("-");
       verse = Number.parseInt(verseParts[0], 10);
-      verseEnd = Number.parseInt(verseParts[1], 10);
+      verseEnd = verseSelector.includes(",")
+        ? undefined
+        : Number.parseInt(verseParts[1], 10);
     } else if (!Number.isNaN(Number.parseInt(token, 10)) && index === tokens.length - 1) {
       chapter = Number.parseInt(token, 10);
     } else {
       book = book ? `${book} ${token}` : token;
     }
   });
-  return { book, chapter, verse, verseEnd };
+  return { book, chapter, verse, verseEnd, verseSelector };
 }
 
 export function normalizeScriptureReference(input) {
@@ -154,7 +159,29 @@ export function normalizeScriptureReference(input) {
     .trim()
     .replace(/\s*:\s*/g, ":")
     .replace(/\s*-\s*/g, "-")
+    .replace(/\s*,\s*/g, ",")
     .replace(/\s+/g, " ");
+}
+
+function normalizeVerseSelector(selector) {
+  const parts = String(selector || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!parts.length) return "";
+  const normalized = [];
+  for (const part of parts) {
+    const [rawStart, rawEnd] = part.split("-");
+    const start = Number.parseInt(rawStart, 10);
+    const end = Number.parseInt(rawEnd, 10);
+    if (!Number.isFinite(start) || start < 1) return "";
+    if (Number.isFinite(end) && end > 0 && end !== start) {
+      normalized.push(`${Math.min(start, end)}-${Math.max(start, end)}`);
+    } else {
+      normalized.push(`${start}`);
+    }
+  }
+  return normalized.join(",");
 }
 
 export function normalizeBibleReferenceInput(
@@ -162,6 +189,30 @@ export function normalizeBibleReferenceInput(
   bibleBooksCache,
   aliasOverrides = EMS_BIBLE_ALIAS_OVERRIDES,
 ) {
+  const parsedDirect = parseScriptureReference(normalizeScriptureReference(rawReference));
+  if (
+    parsedDirect.book &&
+    Number.isFinite(parsedDirect.chapter) &&
+    parsedDirect.chapter > 0 &&
+    parsedDirect.verseSelector
+  ) {
+    const resolvedDirectBook = resolveBibleBookName(parsedDirect.book, bibleBooksCache);
+    const normalizedSelector = normalizeVerseSelector(parsedDirect.verseSelector);
+    if (resolvedDirectBook && normalizedSelector) {
+      const firstPart = normalizedSelector.split(",")[0] || "";
+      const [rawVerse, rawVerseEnd] = firstPart.split("-");
+      return {
+        book: resolvedDirectBook,
+        chapter: parsedDirect.chapter,
+        verse: Number.parseInt(rawVerse, 10),
+        verseEnd: normalizedSelector.includes(",")
+          ? 0
+          : Number.parseInt(rawVerseEnd, 10) || 0,
+        reference: `${resolvedDirectBook} ${parsedDirect.chapter}:${normalizedSelector}`,
+      };
+    }
+  }
+
   const cleanInput = String(rawReference || "")
     .toLowerCase()
     .replace(/[:\-.,]/g, " ")

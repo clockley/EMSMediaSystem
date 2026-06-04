@@ -2300,6 +2300,47 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     background: color-mix(in srgb, var(--accent-bg-color) 30%, transparent);
 }
 
+.bible-text-context-menu {
+    position: fixed;
+    z-index: 40;
+    min-width: 220px;
+    max-width: min(320px, calc(100vw - 16px));
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    border: 1px solid color-mix(in srgb, white 16%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, #1d1d20 96%, white);
+    color: #f4f4f6;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+}
+
+.bible-text-context-menu[hidden] {
+    display: none;
+}
+
+.bible-text-context-menu button {
+    width: 100%;
+    min-height: 34px;
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    padding: 7px 10px;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.bible-text-context-menu button:hover,
+.bible-text-context-menu button:focus-visible {
+    background: color-mix(in srgb, var(--accent-bg-color) 30%, transparent);
+    outline: none;
+}
+
 .bible-verse-list {
     flex: 1 1 0;
     min-height: 0;
@@ -2677,6 +2718,34 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.row-auto-advance-btn {
+    flex: 0 0 52px;
+    min-width: 52px;
+    min-height: 28px;
+    margin-left: 8px;
+    padding: 4px 8px;
+    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    color: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.row-auto-advance-btn:hover {
+    background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.row-auto-advance-btn:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
+.queue-item.is-selected .row-auto-advance-btn:focus-visible {
+    outline-color: #ffffff;
 }
 
 .queue-item .remove-btn {
