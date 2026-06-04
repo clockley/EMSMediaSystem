@@ -2725,10 +2725,52 @@ function resolveBibleQueueItemEntry(item) {
   };
 }
 
-function resolvedBibleEntryForItem(item, fallback = bibleDesignerState) {
+function resolvedBibleStyleDefaults() {
+  return {
+    fontFamily: projectScriptureOverrides.fontFamily || SCRIPTURE_FONT_FAMILY,
+    fontSize: Number.isFinite(projectScriptureOverrides.fontSize)
+      ? projectScriptureOverrides.fontSize
+      : SCRIPTURE_BODY_FONT_SIZE,
+    color: projectScriptureOverrides.color || "#ffffff",
+    backgroundColor: projectScriptureOverrides.backgroundColor || "#000000",
+    backgroundPath: projectScriptureOverrides.backgroundPath || "",
+  };
+}
+
+function hydrateBibleEntryStyle(entry = {}) {
+  const defaults = resolvedBibleStyleDefaults();
+  return {
+    ...defaults,
+    ...entry,
+    fontFamily:
+      typeof entry?.fontFamily === "string" && entry.fontFamily.trim()
+        ? entry.fontFamily
+        : defaults.fontFamily,
+    fontSize: Number.isFinite(entry?.fontSize) ? entry.fontSize : defaults.fontSize,
+    color:
+      typeof entry?.color === "string" && entry.color
+        ? entry.color
+        : defaults.color,
+    backgroundColor:
+      typeof entry?.backgroundColor === "string" && entry.backgroundColor
+        ? entry.backgroundColor
+        : defaults.backgroundColor,
+    backgroundPath:
+      typeof entry?.backgroundPath === "string"
+        ? entry.backgroundPath
+        : defaults.backgroundPath,
+  };
+}
+
+function resolvedBibleEntryForItem(item) {
   const resolvedEntry = resolveBibleQueueItemEntry(item);
-  if (resolvedEntry) return resolvedEntry;
-  return bibleEntryWithLookupText(fallback);
+  if (resolvedEntry) return hydrateBibleEntryStyle(resolvedEntry);
+  const pathEntry = parseBibleQueuePath(item?.path);
+  const baseEntry = {
+    ...(item?.bible && typeof item.bible === "object" ? item.bible : {}),
+    ...(pathEntry || {}),
+  };
+  return hydrateBibleEntryStyle(bibleEntryWithLookupText(baseEntry));
 }
 
 function syncBibleBackgroundLabel(filePath = bibleDesignerState.backgroundPath) {
@@ -2739,7 +2781,7 @@ function syncBibleBackgroundLabel(filePath = bibleDesignerState.backgroundPath) 
 }
 
 function loadBibleEntryIntoEditor(entry = bibleDesignerState) {
-  const resolvedEntry = bibleEntryWithLookupText(entry);
+  const resolvedEntry = hydrateBibleEntryStyle(bibleEntryWithLookupText(entry));
   Object.assign(bibleDesignerState, resolvedEntry);
   syncBibleSelectorsFromState();
   syncBibleStyleControlsFromState();
@@ -2915,10 +2957,11 @@ function applyBibleFontSizeToAllProjectText() {
   mediaQueue.forEach((item) => {
     if (!isQueueItemBible(item)) return;
     const entry = resolveBibleQueueItemEntry(item);
-    item.bible = {
+    const nextBible = {
       ...(entry || item.bible || {}),
-      fontSize: style.fontSize,
     };
+    delete nextBible.fontSize;
+    item.bible = nextBible;
     if (entry?.reference) {
       item.path = bibleQueuePath(entry.reference, entry.version);
       item.name = `${entry.reference} ${entry.version}`.trim();
@@ -3453,56 +3496,7 @@ function applyProjectStateSnapshot(state) {
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : -1,
       bible: x.bible && typeof x.bible === "object" ? { ...x.bible } : undefined,
     }));
-  if (
-    projectScriptureOverrides.fontFamily ||
-    Number.isFinite(projectScriptureOverrides.fontSize) ||
-    projectScriptureOverrides.color ||
-    projectScriptureOverrides.backgroundColor ||
-    projectScriptureOverrides.backgroundPath
-  ) {
-    mediaQueue.forEach((item) => {
-      if (!isQueueItemBible(item)) return;
-      const bible = item.bible || {};
-      item.bible = {
-        ...bible,
-        ...(projectScriptureOverrides.fontFamily &&
-        (!bible.fontFamily || bible.fontFamily === SCRIPTURE_FONT_FAMILY)
-          ? { fontFamily: projectScriptureOverrides.fontFamily }
-          : {}),
-        ...(Number.isFinite(projectScriptureOverrides.fontSize) &&
-        (!Number.isFinite(bible.fontSize) || bible.fontSize === SCRIPTURE_BODY_FONT_SIZE)
-          ? { fontSize: projectScriptureOverrides.fontSize }
-          : {}),
-        ...(projectScriptureOverrides.color && (!bible.color || bible.color === "#ffffff")
-          ? { color: projectScriptureOverrides.color }
-          : {}),
-        ...(projectScriptureOverrides.backgroundColor &&
-        (!bible.backgroundColor || bible.backgroundColor === "#000000")
-          ? { backgroundColor: projectScriptureOverrides.backgroundColor }
-          : {}),
-        ...(projectScriptureOverrides.backgroundPath && !bible.backgroundPath
-          ? { backgroundPath: projectScriptureOverrides.backgroundPath }
-          : {}),
-      };
-    });
-    Object.assign(bibleDesignerState, {
-      ...(projectScriptureOverrides.fontFamily
-        ? { fontFamily: projectScriptureOverrides.fontFamily }
-        : {}),
-      ...(Number.isFinite(projectScriptureOverrides.fontSize)
-        ? { fontSize: projectScriptureOverrides.fontSize }
-        : {}),
-      ...(projectScriptureOverrides.color
-        ? { color: projectScriptureOverrides.color }
-        : {}),
-      ...(projectScriptureOverrides.backgroundColor
-        ? { backgroundColor: projectScriptureOverrides.backgroundColor }
-        : {}),
-      ...(projectScriptureOverrides.backgroundPath
-        ? { backgroundPath: projectScriptureOverrides.backgroundPath }
-        : {}),
-    });
-  }
+  Object.assign(bibleDesignerState, resolvedBibleStyleDefaults());
   currentQueueIndex =
     Number.isInteger(state.currentQueueIndex) &&
     state.currentQueueIndex >= 0 &&
@@ -5089,9 +5083,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     playingMediaAudioOnly = false;
     const bibleEntry = resolvedBibleEntryForItem(item);
     item.bible = { ...bibleEntry };
-    Object.assign(bibleDesignerState, bibleEntry);
-    syncBibleSelectorsFromState();
-    applyBiblePreview(bibleEntry);
+    loadBibleEntryIntoEditor(bibleEntry);
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
     return;
   }
