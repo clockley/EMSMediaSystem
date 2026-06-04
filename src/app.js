@@ -267,6 +267,7 @@ const bibleVerseSelection = {
   anchor: 0,
 };
 let bibleBooksCache = [];
+let bibleReferenceSuggestionIndex = -1;
 /** @type {{ path: string, name: string, type: string, cueStartTime?: number, cueVolume?: number, pptxSlideIndex?: number }[]} */
 let mediaQueue = [];
 let currentQueueIndex = -1;
@@ -325,6 +326,123 @@ function isNonVideoPresentationItem(filePath) {
 
 function normalizeBibleReferenceInput(rawReference) {
   return normalizeBibleReferenceInputWithCache(rawReference, bibleBooksCache);
+}
+
+function bibleReferenceBookQuery(rawReference) {
+  const raw = String(rawReference || "").trim();
+  if (!raw) return "";
+  return raw.replace(/\s+\d.*$/, "").trim();
+}
+
+function bibleReferenceSuggestionsForInput(rawReference) {
+  const query = bibleReferenceBookQuery(rawReference);
+  if (!query) return [];
+  const normalizedQuery = query.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!normalizedQuery) return [];
+
+  const starts = [];
+  const contains = [];
+  for (const book of bibleBooksCache) {
+    const name = String(book?.name || "").trim();
+    if (!name) continue;
+    const normalizedName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (normalizedName === normalizedQuery) continue;
+    if (normalizedName.startsWith(normalizedQuery)) {
+      starts.push(name);
+    } else if (normalizedName.includes(normalizedQuery)) {
+      contains.push(name);
+    }
+  }
+  return [...starts, ...contains].slice(0, 8);
+}
+
+function bibleReferenceAllBooks() {
+  return bibleBooksCache
+    .map((book) => String(book?.name || "").trim())
+    .filter(Boolean);
+}
+
+function hideBibleReferenceSuggestions() {
+  const suggestionsEl = document.getElementById("bibleReferenceSuggestions");
+  const referenceInput = document.getElementById("bibleReferenceInput");
+  const toggleButton = document.getElementById("bibleReferenceToggle");
+  if (suggestionsEl) {
+    suggestionsEl.hidden = true;
+    suggestionsEl.innerHTML = "";
+  }
+  if (referenceInput) {
+    referenceInput.setAttribute("aria-expanded", "false");
+    referenceInput.removeAttribute("aria-activedescendant");
+  }
+  if (toggleButton) {
+    toggleButton.setAttribute("aria-expanded", "false");
+  }
+  bibleReferenceSuggestionIndex = -1;
+}
+
+function applyBibleReferenceSuggestion(bookName) {
+  const referenceInput = document.getElementById("bibleReferenceInput");
+  if (!referenceInput || !bookName) return;
+  referenceInput.value = `${bookName} 1:1`;
+  hideBibleReferenceSuggestions();
+  referenceInput.focus();
+  referenceInput.setSelectionRange(referenceInput.value.length, referenceInput.value.length);
+}
+
+function updateBibleReferenceSuggestionActiveState() {
+  const suggestionsEl = document.getElementById("bibleReferenceSuggestions");
+  const referenceInput = document.getElementById("bibleReferenceInput");
+  if (!suggestionsEl || !referenceInput) return;
+  const buttons = suggestionsEl.querySelectorAll(".bible-reference-suggestion");
+  buttons.forEach((button, index) => {
+    const active = index === bibleReferenceSuggestionIndex;
+    button.classList.toggle("is-active", active);
+    if (active) {
+      referenceInput.setAttribute("aria-activedescendant", button.id);
+      button.scrollIntoView({ block: "nearest" });
+    }
+  });
+  if (bibleReferenceSuggestionIndex < 0) {
+    referenceInput.removeAttribute("aria-activedescendant");
+  }
+}
+
+function renderBibleReferenceSuggestions(options = {}) {
+  const suggestionsEl = document.getElementById("bibleReferenceSuggestions");
+  const referenceInput = document.getElementById("bibleReferenceInput");
+  if (!suggestionsEl || !referenceInput) return;
+
+  const suggestions = options.showAll
+    ? bibleReferenceAllBooks()
+    : bibleReferenceSuggestionsForInput(referenceInput.value);
+  if (!suggestions.length) {
+    hideBibleReferenceSuggestions();
+    return;
+  }
+
+  suggestionsEl.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  suggestions.forEach((name, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = `bibleReferenceSuggestion-${index}`;
+    button.className = "bible-reference-suggestion";
+    button.setAttribute("role", "option");
+    button.textContent = name;
+    button.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      applyBibleReferenceSuggestion(name);
+    });
+    fragment.appendChild(button);
+  });
+  suggestionsEl.appendChild(fragment);
+  suggestionsEl.hidden = false;
+  referenceInput.setAttribute("aria-expanded", "true");
+  document.getElementById("bibleReferenceToggle")?.setAttribute("aria-expanded", "true");
+  if (bibleReferenceSuggestionIndex >= suggestions.length) {
+    bibleReferenceSuggestionIndex = suggestions.length - 1;
+  }
+  updateBibleReferenceSuggestionActiveState();
 }
 
 function clampPptxSlideIndex(index, count = pptxSlideCount) {
@@ -3244,17 +3362,30 @@ function refreshBibleBrowser() {
 
 function jumpBibleReferenceToBrowser() {
   const referenceInput = document.getElementById("bibleReferenceInput");
+  hideBibleReferenceSuggestions();
   const resolvedReference = normalizeBibleReferenceInput(referenceInput?.value || "");
   if (!resolvedReference) {
     showGnomeToast("Enter a reference like John 3:16");
     return false;
   }
-  bibleDesignerState.book = resolvedReference.book;
-  bibleDesignerState.chapter = resolvedReference.chapter;
-  bibleDesignerState.verse = resolvedReference.verse;
-  bibleDesignerState.verseEnd = resolvedReference.verseEnd;
-  bibleDesignerState.reference = resolvedReference.reference;
-  if (referenceInput) referenceInput.value = resolvedReference.reference;
+  const bookChanged =
+    String(resolvedReference.book || "").trim().toLowerCase() !==
+    String(bibleDesignerState.book || "").trim().toLowerCase();
+  const nextReference = bookChanged
+    ? {
+        ...resolvedReference,
+        chapter: 1,
+        verse: 1,
+        verseEnd: 0,
+        reference: `${resolvedReference.book} 1:1`,
+      }
+    : resolvedReference;
+  bibleDesignerState.book = nextReference.book;
+  bibleDesignerState.chapter = nextReference.chapter;
+  bibleDesignerState.verse = nextReference.verse;
+  bibleDesignerState.verseEnd = nextReference.verseEnd;
+  bibleDesignerState.reference = nextReference.reference;
+  if (referenceInput) referenceInput.value = nextReference.reference;
   bibleVerseSelection.verses.clear();
   bibleVerseSelection.anchor = 0;
   refreshBibleBrowser();
@@ -3307,6 +3438,7 @@ function installBibleMediaControls() {
   const versionSelect = document.getElementById("bibleVersionSelect");
   const referenceSuggestions = document.getElementById("bibleReferenceSuggestions");
   const referenceInput = document.getElementById("bibleReferenceInput");
+  const referenceToggle = document.getElementById("bibleReferenceToggle");
   if (!versionSelect || versionSelect.dataset.bibleBound === "1") return;
   versionSelect.dataset.bibleBound = "1";
 
@@ -3326,11 +3458,64 @@ function installBibleMediaControls() {
     refreshBibleBrowser();
     applyBiblePreview(bibleDesignerState);
   });
+  referenceInput.addEventListener("input", () => {
+    bibleReferenceSuggestionIndex = -1;
+    renderBibleReferenceSuggestions();
+  });
+  referenceInput.addEventListener("focus", () => {
+    renderBibleReferenceSuggestions();
+  });
+  referenceInput.addEventListener("blur", () => {
+    window.setTimeout(() => hideBibleReferenceSuggestions(), 120);
+  });
+  referenceToggle?.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    const isOpen = referenceSuggestions?.hidden === false;
+    if (isOpen) {
+      hideBibleReferenceSuggestions();
+      return;
+    }
+    bibleReferenceSuggestionIndex = -1;
+    renderBibleReferenceSuggestions({ showAll: true });
+    referenceInput.focus();
+  });
   referenceInput.addEventListener("change", jumpBibleReferenceToBrowser);
   referenceInput.addEventListener("keydown", (event) => {
+    const suggestionButtons = referenceSuggestions?.querySelectorAll(".bible-reference-suggestion") || [];
+    if (event.key === "ArrowDown" && suggestionButtons.length) {
+      event.preventDefault();
+      bibleReferenceSuggestionIndex =
+        bibleReferenceSuggestionIndex < suggestionButtons.length - 1
+          ? bibleReferenceSuggestionIndex + 1
+          : 0;
+      updateBibleReferenceSuggestionActiveState();
+      return;
+    }
+    if (event.key === "ArrowUp" && suggestionButtons.length) {
+      event.preventDefault();
+      bibleReferenceSuggestionIndex =
+        bibleReferenceSuggestionIndex > 0
+          ? bibleReferenceSuggestionIndex - 1
+          : suggestionButtons.length - 1;
+      updateBibleReferenceSuggestionActiveState();
+      return;
+    }
     if (event.key === "Enter") {
       event.preventDefault();
+      if (
+        bibleReferenceSuggestionIndex >= 0 &&
+        bibleReferenceSuggestionIndex < suggestionButtons.length
+      ) {
+        applyBibleReferenceSuggestion(
+          suggestionButtons[bibleReferenceSuggestionIndex].textContent || "",
+        );
+        return;
+      }
       jumpBibleReferenceToBrowser();
+      return;
+    }
+    if (event.key === "Escape") {
+      hideBibleReferenceSuggestions();
     }
   });
   ["bibleFontInput", "bibleFontSizeInput", "bibleTextColorInput", "bibleBackgroundColorInput"].forEach((id) => {
@@ -3404,12 +3589,7 @@ function installBibleMediaControls() {
       });
       bibleBooksCache = bibleAPI.getBooks().sort((a, b) => a.id - b.id);
       if (referenceSuggestions) {
-        referenceSuggestions.innerHTML = "";
-        bibleBooksCache.forEach((book) => {
-          const option = document.createElement("option");
-          option.value = book.name;
-          referenceSuggestions.appendChild(option);
-        });
+        hideBibleReferenceSuggestions();
       }
       versionSelect.value = bibleDesignerState.version;
       syncBibleSelectorsFromState();
@@ -8295,15 +8475,38 @@ function generateMediaFormHTML(video = null) {
           <div class="bible-workspace__selectors">
             <select id="bibleVersionSelect" class="display-select" aria-label="Bible version"></select>
           </div>
-          <input
-            type="text"
-            class="url-input"
-            id="bibleReferenceInput"
-            list="bibleReferenceSuggestions"
-            autocomplete="off"
-            placeholder="Enter reference"
-          >
-          <datalist id="bibleReferenceSuggestions"></datalist>
+          <div class="bible-reference-field">
+            <input
+              type="text"
+              class="url-input"
+              id="bibleReferenceInput"
+              autocomplete="off"
+              placeholder="Enter reference"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-controls="bibleReferenceSuggestions"
+            >
+            <button
+              type="button"
+              class="bible-reference-toggle"
+              id="bibleReferenceToggle"
+              aria-label="Show Bible books"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+              aria-controls="bibleReferenceSuggestions"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M4 6l4 4 4-4"/>
+              </svg>
+            </button>
+            <div
+              id="bibleReferenceSuggestions"
+              class="bible-reference-suggestions"
+              role="listbox"
+              aria-label="Bible reference suggestions"
+              hidden
+            ></div>
+          </div>
           <div id="bibleVerseList" class="bible-verse-list" role="listbox" aria-label="Chapter verses">
             <div class="list-placeholder">
               <span class="list-placeholder-title">Loading Bible…</span>
