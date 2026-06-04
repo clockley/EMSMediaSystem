@@ -3239,10 +3239,11 @@ async function slipstreamBiblePresentation(entry) {
 
 async function syncLiveBiblePresentation() {
   if (!isActiveMediaWindow() || activeMediaWindowContentType !== "bible") return false;
-  if (!isBibleEditorTargetLiveItem()) return false;
-  const entry = currentBibleQueueEntry();
+  const targetIsLiveItem = isBibleEditorTargetLiveItem();
+  const entry = targetIsLiveItem ? currentBibleQueueEntry() : currentBibleTextOnlyEntry();
   if (!entry) return false;
   if (
+    targetIsLiveItem &&
     isQueuePlaying &&
     currentQueueIndex >= 0 &&
     currentQueueIndex < mediaQueue.length &&
@@ -3259,7 +3260,8 @@ async function syncLiveBiblePresentation() {
     renderQueue();
     saveMediaFile();
   }
-  return slipstreamBiblePresentation(entry.bible);
+  sendBibleTextToOutput(entry.bible);
+  return true;
 }
 
 function insertBibleInSchedule() {

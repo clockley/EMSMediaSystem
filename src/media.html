@@ -79,6 +79,7 @@
             justify-content: center;
             font-family: 'Nunito Sans', Arial, sans-serif;
             z-index: 10;
+            overflow: hidden;
         }
 
         #textBackgroundVideo {
@@ -87,10 +88,13 @@
             width: 100vw;
             height: 100vh;
             object-fit: cover;
-            z-index: -1;
+            z-index: 0;
+            pointer-events: none;
         }
 
         #textContent {
+            position: relative;
+            z-index: 1;
             padding: 20px;
             max-width: 90%;
             word-wrap: break-word;
