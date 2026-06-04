@@ -73,85 +73,139 @@
         <main>
             <div class="content-section">
                 <h1>EMS Media System Help Guide</h1>
-                <p>EMS Media System allows you to play videos, display images, and stream media content on secondary
-                    displays. The application features a control window for preview and management, with fullscreen
-                    presentation capabilities.</p>
+                <p>EMS Media System is a schedule-based presentation tool. You build a service or event schedule in the
+                    main window, preview or cue items locally, then send the live output to your selected display with
+                    the <strong>Present</strong> button.</p>
 
                 <div class="toc">
                     <h2>Contents</h2>
                     <ul>
-                        <li><a href="#media-playback" onclick="saveLastSection('media-playback')">Media Playback</a>
-                        </li>
-                        <li><a href="#stream-integration" onclick="saveLastSection('stream-integration')">Stream
-                                Integration</a></li>
-                        <li><a href="#display-settings" onclick="saveLastSection('display-settings')">Display
-                                Settings</a></li>
-                        <li><a href="#presentation-mode" onclick="saveLastSection('presentation-mode')">Presentation
-                                Mode</a></li>
-                        <li><a href="#keyboard-shortcuts" onclick="saveLastSection('keyboard-shortcuts')">Keyboard
-                                Shortcuts</a></li>
+                        <li><a href="#getting-started" onclick="saveLastSection('getting-started')">Getting Started</a></li>
+                        <li><a href="#media-queue" onclick="saveLastSection('media-queue')">Schedule</a></li>
+                        <li><a href="#bible-workspace" onclick="saveLastSection('bible-workspace')">Bible Workspace</a></li>
+                        <li><a href="#presentation-workflow" onclick="saveLastSection('presentation-workflow')">Presentation Workflow</a></li>
+                        <li><a href="#projects" onclick="saveLastSection('projects')">Projects and Files</a></li>
+                        <li><a href="#streams" onclick="saveLastSection('streams')">Streams Tab</a></li>
+                        <li><a href="#keyboard-shortcuts" onclick="saveLastSection('keyboard-shortcuts')">Keyboard Shortcuts</a></li>
                     </ul>
                 </div>
             </div>
 
-            <div id="media-playback" class="content-section">
-                <h2>Media Playback</h2>
+            <div id="getting-started" class="content-section">
+                <h2>Getting Started</h2>
                 <div class="feature">
-                    <h3>Local Media</h3>
+                    <h3>Main Layout</h3>
                     <ul>
-                        <li>Click the "Media" tab to access local media files</li>
-                        <li>Use the "Open" button to select videos or images from your computer</li>
-                        <li>Preview your media in the control window before presentation</li>
-                        <li>Control playback using play, pause, and seek functions</li>
+                        <li>The left side of the Media tab is your schedule and settings area</li>
+                        <li>The main preview area shows the currently selected item, cued item, or Bible workspace</li>
+                        <li>Use <strong>Add Media</strong> or drag and drop files into the app to build your schedule</li>
+                        <li>The header <strong>Present</strong> button starts the selected scheduled item on the chosen output display</li>
                     </ul>
                 </div>
             </div>
 
-            <div id="stream-integration" class="content-section">
+            <div id="media-queue" class="content-section">
+                <h2>Schedule</h2>
                 <div class="feature">
-                    <h3>Stream Integration</h3>
+                    <h3>Building and Running a Schedule</h3>
                     <ul>
-                        <li>Select the "Streams" tab for network media content</li>
-                        <li>Enter the URL of your YouTube live stream or other network media</li>
-                        <li>Adjust volume using the slider in the control panel</li>
-                        <li>Note: Stream preview is not available in the control window</li>
+                        <li>The schedule supports video, audio, images, PowerPoint files, and Bible items</li>
+                        <li>Click a scheduled item to load it into preview when nothing is live</li>
+                        <li>Click a different item during a live presentation to cue it without interrupting the live output</li>
+                        <li>Drag scheduled items to reorder them</li>
+                        <li>Use the <strong>Auto</strong>/<strong>Stop</strong> button on each row to control whether the next item advances automatically</li>
+                        <li>Use the <strong>X</strong> button to remove one item, or <strong>Clear</strong> to empty the whole schedule</li>
                     </ul>
                 </div>
-            </div>
 
-            <div id="display-settings" class="content-section">
                 <div class="feature">
-                    <h3>Display Settings</h3>
+                    <h3>Preview and Cueing</h3>
                     <ul>
-                        <li>Choose your target display from the dropdown menu</li>
-                        <li>Note: Your display resolution will be automatically detected</li>
-                        <li>Toggle "Autoplay" for automatic media playback</li>
-                        <li>Enable "Repeat" for looped playback</li>
+                        <li>Use the custom controls under the preview to play, pause, scrub, loop, and change volume</li>
+                        <li>For audio and video cues, scrubbing can set a custom cue start time for that scheduled item</li>
+                        <li>Schedule rows show <strong>Live</strong> for the item currently on output and <strong>Start @</strong> when a cue start time has been saved</li>
+                        <li>Audio-only items play locally in the control window while still acting as the live presentation</li>
                     </ul>
                 </div>
             </div>
 
-            <div id="presentation-mode" class="content-section">
-                <h2>Presentation Mode</h2>
+            <div id="bible-workspace" class="content-section">
+                <h2>Bible Workspace</h2>
+                <div class="feature">
+                    <h3>Creating Scripture Slides</h3>
+                    <ul>
+                        <li>Click the <strong>Bible</strong> button in the sidebar to open the scripture workspace</li>
+                        <li>Choose a Bible version, type a reference, and select verses from the chapter list</li>
+                        <li>Use the live preview to adjust font, size, text color, background color, and optional image or video background</li>
+                        <li><strong>Show Now</strong> sends the current Bible text straight to the presentation display</li>
+                        <li><strong>Add to Schedule</strong> inserts the current Bible item into the schedule for later use</li>
+                        <li>Click Bible verse text to quickly show it now, add the selection, or schedule each selected verse separately</li>
+                        <li>The Apply buttons can push your Bible style choices across all Bible items in the current project</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div id="presentation-workflow" class="content-section">
+                <h2>Presentation Workflow</h2>
                 <ol>
-                    <li>Select your desired media or stream</li>
-                    <li>Configure your display settings</li>
-                    <li>Adjust volume if needed</li>
-                    <li>Click "Present" to begin fullscreen mode on the secondary display</li>
+                    <li>Add files or Bible items to the schedule</li>
+                    <li>Choose the target screen in <strong>Settings</strong> under <strong>Output Display</strong></li>
+                    <li>Leave <strong>Autoplay</strong> enabled if you want items to begin playing as soon as they are taken live</li>
+                    <li>Select or cue the item you want to start with</li>
+                    <li>Click <strong>Present</strong> to send it to the selected display</li>
+                    <li>While live, click another scheduled item to stage it, then take it live when ready</li>
+                    <li>Click <strong>Stop</strong> or press <strong>Esc</strong> to end the presentation</li>
                 </ol>
 
                 <div class="tip">
-                    <strong>Tip:</strong> All playback controls in the control window will be reflected in the
-                    fullscreen presentation on the secondary display.
+                    <strong>Tip:</strong> When possible, EMS switches the live output in place so the presentation window
+                    stays open while the next scheduled item loads.
+                </div>
+            </div>
+
+            <div id="projects" class="content-section">
+                <h2>Projects and Files</h2>
+                <div class="feature">
+                    <h3>Saving Your Work</h3>
+                    <ul>
+                        <li>Use <strong>Open</strong>, <strong>Save Project</strong>, and <strong>Save Project As</strong> from the menu to work with <code>.emproj</code> files</li>
+                        <li>Projects remember your schedule order, cue points, Bible items, preview selection, and project text styling</li>
+                        <li>EMS also keeps an autosaved project state and restores it when possible on the next launch</li>
+                    </ul>
+                </div>
+
+                <div class="feature">
+                    <h3>Working vs Portable Projects</h3>
+                    <ul>
+                        <li><strong>Save Project</strong> writes a working project that references files in their current locations</li>
+                        <li><strong>Export Portable Project</strong> creates a packed project intended to travel with its media</li>
+                        <li>If files have been moved, scheduled items are marked missing and can be repaired with <strong>Relink Missing Files</strong></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div id="streams" class="content-section">
+                <h2>Streams Tab</h2>
+                <div class="feature">
+                    <h3>Network Playback</h3>
+                    <ul>
+                        <li>Use the <strong>Streams</strong> tab for YouTube or direct stream URLs</li>
+                        <li>Streams are separate from the Media schedule workflow</li>
+                        <li>When a stream is presented, it opens on the selected display using the same presentation window system</li>
+                    </ul>
                 </div>
             </div>
 
             <div id="keyboard-shortcuts" class="content-section">
                 <h2>Keyboard Shortcuts</h2>
                 <ul>
-                    <li><strong>Space</strong> - Play/Pause</li>
-                    <li><strong>F5</strong> - Start fullscreen presentation</li>
-                    <li><strong>Esc</strong> - Exit fullscreen presentation</li>
+                    <li><strong>F1</strong> - Open this help window</li>
+                    <li><strong>F5</strong> - Start presentation</li>
+                    <li><strong>Esc</strong> - Stop the active presentation</li>
+                    <li><strong>Ctrl/Cmd + O</strong> - Open project</li>
+                    <li><strong>Ctrl/Cmd + S</strong> - Save project</li>
+                    <li><strong>Ctrl/Cmd + Shift + S</strong> - Save project as</li>
+                    <li><strong>Ctrl/Cmd + Q</strong> - Close the main window</li>
                 </ul>
             </div>
         </main>
@@ -193,16 +247,6 @@
             maximizeButton.setAttribute('data-maximized', isMaximized);
             document.querySelector('.window-container').classList.toggle('maximized', isMaximized);
         });
-        function saveLastSection(sectionId) {
-            localStorage.setItem('lastSection', sectionId);
-        }
-
-        function scrollToLastSection() {
-            const lastSection = localStorage.getItem('lastSection');
-            if (lastSection) {
-                document.getElementById(lastSection)?.scrollIntoView();
-            }
-        }
     </script>
 </body>
 

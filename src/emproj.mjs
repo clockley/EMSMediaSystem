@@ -851,7 +851,8 @@ export async function saveEmprojSnapshot(
   const manifestBuf = Buffer.from(canonicalJson(manifestJson), "utf8");
   const mimeBuf = Buffer.from(`${MIME_TYPE}\n`, "utf8");
 
-  const tmpPath = `${projectPath}.tmp`;
+  // Use a per-save temp path so overlapping saves do not race on the same file.
+  const tmpPath = `${projectPath}.${randomUUID()}.tmp`;
   const bakPath = `${projectPath}.bak`;
   const zipBuffers = [
     { path: "mimetype", buffer: mimeBuf, compress: false },
