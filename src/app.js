@@ -8323,19 +8323,23 @@ function generateMediaFormHTML(video = null) {
           </div>
           <div class="bible-editor-drawer">
             <div class="bible-editor-controls">
-              <label class="bible-field bible-field--font">Font <input id="bibleFontInput" type="text" class="url-input" value="'Nunito Sans', Arial, sans-serif"></label>
-              <label class="bible-field">Size <input id="bibleFontSizeInput" type="number" min="24" max="160" value="66" class="url-input"></label>
-              <label class="bible-field">Text <input id="bibleTextColorInput" type="color" value="#ffffff"></label>
-              <label class="bible-field">Backdrop <input id="bibleBackgroundColorInput" type="color" value="#000000"></label>
-              <label class="file-input-label bible-background-picker">
-                <input id="bibleBackgroundInput" type="file" accept="image/*,video/*" hidden>
-                <span id="bibleBackgroundLabel">Choose Background…</span>
-              </label>
-              <button type="button" id="bibleApplyFontAllBtn" class="pill-button secondary">Apply Font to All</button>
-              <button type="button" id="bibleApplyFontSizeAllBtn" class="pill-button secondary">Apply Size to All</button>
-              <button type="button" id="bibleApplyTextColorAllBtn" class="pill-button secondary">Apply Text Color to All</button>
-              <button type="button" id="bibleApplyBackgroundAllBtn" class="pill-button secondary">Apply Bg to All Text</button>
-              <button type="button" id="bibleClearBackgroundBtn" class="pill-button secondary">Remove Background</button>
+              <div class="bible-editor-fields">
+                <label class="bible-field bible-field--font">Font <input id="bibleFontInput" type="text" class="url-input" value="'Nunito Sans', Arial, sans-serif"></label>
+                <label class="bible-field">Size <input id="bibleFontSizeInput" type="number" min="24" max="160" value="66" class="url-input"></label>
+                <label class="bible-field">Text <input id="bibleTextColorInput" type="color" value="#ffffff"></label>
+                <label class="bible-field">Backdrop <input id="bibleBackgroundColorInput" type="color" value="#000000"></label>
+                <label class="file-input-label bible-background-picker">
+                  <input id="bibleBackgroundInput" type="file" accept="image/*,video/*" hidden>
+                  <span id="bibleBackgroundLabel">Choose Background…</span>
+                </label>
+              </div>
+              <div class="bible-editor-actions">
+                <button type="button" id="bibleApplyFontAllBtn" class="pill-button secondary">Apply Font to All</button>
+                <button type="button" id="bibleApplyFontSizeAllBtn" class="pill-button secondary">Apply Size to All</button>
+                <button type="button" id="bibleApplyTextColorAllBtn" class="pill-button secondary">Apply Text Color to All</button>
+                <button type="button" id="bibleApplyBackgroundAllBtn" class="pill-button secondary">Apply Bg to All Text</button>
+                <button type="button" id="bibleClearBackgroundBtn" class="pill-button secondary">Remove Background</button>
+              </div>
             </div>
           </div>
         </section>
