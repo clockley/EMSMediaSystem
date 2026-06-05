@@ -2755,6 +2755,7 @@ function setBiblePreviewText(reference, text, opts = {}) {
     ...getBibleDesignerStyle(),
   });
   applyBiblePreview(bibleDesignerState);
+  syncActiveScheduledBiblePresentation();
   syncShowNowBiblePresentation();
   return Boolean(bibleDesignerState.text);
 }
@@ -2860,6 +2861,7 @@ function applySelectedBibleVersePreview() {
   const referenceInput = document.getElementById("bibleReferenceInput");
   if (referenceInput) referenceInput.value = selectedEntry.reference;
   applyBiblePreview(bibleDesignerState);
+  syncActiveScheduledBiblePresentation();
   syncShowNowBiblePresentation();
   return true;
 }
@@ -2878,6 +2880,7 @@ function refreshBibleLookupPreview(opts = {}) {
   });
   applyBiblePreview(bibleDesignerState);
   if (opts.liveSync !== false) {
+    syncActiveScheduledBiblePresentation();
     syncShowNowBiblePresentation();
   }
   return true;
@@ -3274,6 +3277,7 @@ function applyBibleBackgroundToAllProjectText() {
   if (commitProjectStyle || changedCount > 0) {
     void saveCurrentProjectInStorageMode({ quiet: true });
   }
+  syncActiveScheduledBiblePresentation();
   syncShowNowBiblePresentation();
   showGnomeToast(
     changedCount > 0
@@ -3315,6 +3319,7 @@ function applyBibleTextColorToAllProjectText() {
   if (commitProjectStyle || changedCount > 0) {
     void saveCurrentProjectInStorageMode({ quiet: true });
   }
+  syncActiveScheduledBiblePresentation();
   syncShowNowBiblePresentation();
   showGnomeToast(
     changedCount > 0
@@ -3356,6 +3361,7 @@ function applyBibleFontToAllProjectText() {
   if (commitProjectStyle || changedCount > 0) {
     void saveCurrentProjectInStorageMode({ quiet: true });
   }
+  syncActiveScheduledBiblePresentation();
   syncShowNowBiblePresentation();
   showGnomeToast(
     changedCount > 0
@@ -3398,6 +3404,7 @@ function applyBibleFontSizeToAllProjectText() {
   if (commitProjectStyle || changedCount > 0) {
     void saveCurrentProjectInStorageMode({ quiet: true });
   }
+  syncActiveScheduledBiblePresentation();
   syncShowNowBiblePresentation();
   showGnomeToast(
     changedCount > 0
@@ -3434,6 +3441,21 @@ function syncShowNowBiblePresentation() {
   if (!entry) return false;
   const transientEntry = bibleEntryWithShowNowStyle(entry);
   sendBibleTextToOutput(transientEntry.bible);
+  return true;
+}
+
+function syncActiveScheduledBiblePresentation() {
+  if (
+    !isActiveMediaWindow() ||
+    activeMediaWindowContentType !== "bible" ||
+    !isQueuePlaying ||
+    !isBibleEditorTargetLiveItem()
+  ) {
+    return false;
+  }
+  void syncLiveBiblePresentation().catch((err) =>
+    console.error("Failed to update live Bible presentation:", err),
+  );
   return true;
 }
 
@@ -3984,6 +4006,7 @@ function installBibleMediaControls() {
       if (syncBibleDesignerStateToPreviewedQueueItem()) {
         saveMediaFile();
       }
+      syncActiveScheduledBiblePresentation();
       syncShowNowBiblePresentation();
     });
   });
@@ -3996,6 +4019,7 @@ function installBibleMediaControls() {
     if (syncBibleDesignerStateToPreviewedQueueItem()) {
       saveMediaFile();
     }
+    syncActiveScheduledBiblePresentation();
     syncShowNowBiblePresentation();
   });
   document
@@ -4020,6 +4044,7 @@ function installBibleMediaControls() {
     if (syncBibleDesignerStateToPreviewedQueueItem()) {
       saveMediaFile();
     }
+    syncActiveScheduledBiblePresentation();
     syncShowNowBiblePresentation();
   });
   document
@@ -4144,6 +4169,15 @@ function applyProjectStateSnapshot(state) {
     state.previewCueIndex < mediaQueue.length
       ? state.previewCueIndex
       : -1;
+  if (
+    currentMode === MEDIAPLAYER &&
+    mediaQueue.length > 0 &&
+    currentQueueIndex < 0 &&
+    previewCueIndex < 0 &&
+    !isQueuePresentationActive()
+  ) {
+    currentQueueIndex = 0;
+  }
   if (
     !isQueuePresentationActive() &&
     previewCueIndex >= 0 &&
