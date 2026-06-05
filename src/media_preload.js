@@ -17,36 +17,47 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 const { contextBridge, ipcRenderer } = require("electron/renderer");
 
-window.addEventListener("DOMContentLoaded", () => {
+const audioFxPromise = import(`./audioFx.min.mjs`);
+
+function exposeMediaApi() {
   const video = document.getElementById("bigPlayer");
 
   contextBridge.exposeInMainWorld("api", {
     video,
   });
+}
+
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", exposeMediaApi, { once: true });
+} else {
+  exposeMediaApi();
+}
+
+contextBridge.exposeInMainWorld("electron", {
+  ipcRenderer: {
+    send: ipcRenderer.send.bind(ipcRenderer),
+    on: ipcRenderer.on.bind(ipcRenderer),
+    invoke: ipcRenderer.invoke.bind(ipcRenderer),
+  },
+  attachCubicWaveShaper: async (...args) => {
+    const { attachCubicWaveShaper } = await audioFxPromise;
+    return attachCubicWaveShaper(...args);
+  },
+  argv: process.argv,
+  birth: process.argv[process.argv.length - 1],
+
+  createFadeOut: (duration = 3, debug = false) => {
+    const fadePromise = audioFxPromise.then(
+      ({ FadeOut }) => new FadeOut(duration, debug),
+    );
+    return {
+      attach: async (mediaEl, limiter = null) =>
+        (await fadePromise).attach(mediaEl, limiter),
+      fade: async (mediaEl, onComplete) =>
+        (await fadePromise).fade(mediaEl, onComplete),
+      cancel: async (mediaEl) => (await fadePromise).cancel(mediaEl),
+      detach: async (mediaEl) => (await fadePromise).detach(mediaEl),
+      detachAll: async () => (await fadePromise).detachAll(),
+    };
+  },
 });
-
-(async () => {
-  const { attachCubicWaveShaper } = await import(`./audioFx.min.mjs`);
-
-  contextBridge.exposeInMainWorld("electron", {
-    ipcRenderer: {
-      send: ipcRenderer.send.bind(ipcRenderer),
-      on: ipcRenderer.on.bind(ipcRenderer),
-      invoke: ipcRenderer.invoke.bind(ipcRenderer),
-    },
-    attachCubicWaveShaper,
-    argv: process.argv,
-    birth: process.argv[process.argv.length - 1],
-
-    createFadeOut: (duration = 3, debug = false) => {
-      const fade = new FadeOut(duration, debug);
-      return {
-        attach: (mediaEl, limiter = null) => fade.attach(mediaEl, limiter),
-        fade: (mediaEl, onComplete) => fade.fade(mediaEl, onComplete),
-        cancel: (mediaEl) => fade.cancel(mediaEl),
-        detach: (mediaEl) => fade.detach(mediaEl),
-        detachAll: () => fade.detachAll(),
-      };
-    },
-  });
-})();

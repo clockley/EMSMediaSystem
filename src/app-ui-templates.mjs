@@ -31,7 +31,9 @@ export function generateDyneTabShellHTML() {
 export function generateStreamsPanelHTML() {
   return `
     <div class="media-container">
-        <div class="video-wrapper stream-preview-host" aria-hidden="true"></div>
+        <div class="video-wrapper stream-preview-host" aria-hidden="true">
+            <video id="streamRendererPreview" class="stream-renderer-preview" autoplay muted playsinline disablePictureInPicture hidden></video>
+        </div>
         <div class="control-panel">
             <div class="control-group">
                 <span class="control-label">URL</span>

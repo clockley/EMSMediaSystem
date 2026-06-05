@@ -35,6 +35,7 @@ import settings from "./settings.min.mjs";
 import { loadEmprojSnapshot, saveEmprojSnapshot } from "./emproj.min.mjs";
 let sessionID = 0;
 let innertubePromise = null;
+const youtubePathNTransformCache = new Map();
 const isDevMode = process.env.ems_dev === "true";
 const openDevConsole = process.env.ems_dev_console === "true";
 let lastKnownDisplayState = null;
@@ -320,6 +321,29 @@ function handleCloseMediaWindow(event, id) {
   // Closing the projection window ends any active YouTube live HLS session;
   // clear the flag so the next item (often a VOD) isn't given the iOS UA.
   youtubeLiveSessionActive = false;
+}
+
+function isMediaWindowCapturable() {
+  return Boolean(
+    mediaWindow &&
+      !mediaWindow.isDestroyed() &&
+      !mediaWindow.webContents.isDestroyed(),
+  );
+}
+
+function handleMediaWindowCaptureAvailable() {
+  return isMediaWindowCapturable();
+}
+
+function handleMediaWindowDisplayMediaRequest(request, callback) {
+  if (!request.videoRequested || !isMediaWindowCapturable()) {
+    callback({});
+    return;
+  }
+
+  // Video-only frame capture keeps the Streams preview in-app; audio stays
+  // routed through the normal presentation controls.
+  callback({ video: mediaWindow.webContents.mainFrame });
 }
 
 async function handleCloseMediaWindowNow() {
@@ -1234,6 +1258,62 @@ async function getInnertube() {
   return innertubePromise;
 }
 
+function youtubePathParts(url) {
+  try {
+    const u = new URL(url);
+    const raw = u.pathname.split("/").filter(Boolean);
+    return {
+      url: u,
+      raw,
+      decoded: raw.map((part) => decodeURIComponent(part)),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function transformYoutubePathNUrl(url) {
+  if (typeof url !== "string" || !url.includes("googlevideo.com")) {
+    return null;
+  }
+  const parsed = youtubePathParts(url);
+  if (!parsed) return null;
+  const nIndex = parsed.decoded.indexOf("n");
+  if (nIndex < 0 || nIndex + 1 >= parsed.decoded.length) {
+    return null;
+  }
+
+  const originalN = parsed.decoded[nIndex + 1];
+  if (!originalN) return null;
+  let transformedN = youtubePathNTransformCache.get(originalN);
+
+  if (!transformedN) {
+    const yt = await getInnertube();
+    const player = yt.session?.player;
+    if (!player) return null;
+
+    // youtubei.js transforms query-string `n`, while live WEB HLS segment
+    // URLs carry it in the path (`.../n/<token>/...`). Temporarily mirror the
+    // path token into the query, let the player transform it, then write the
+    // transformed value back into the original path.
+    const probe = new URL(url);
+    probe.searchParams.set("n", originalN);
+    const deciphered = await player.decipher(probe.href);
+    transformedN = new URL(deciphered).searchParams.get("n");
+    if (!transformedN || transformedN === originalN) return null;
+    youtubePathNTransformCache.set(originalN, transformedN);
+    youtubePathNTransformCache.set(transformedN, transformedN);
+    if (youtubePathNTransformCache.size > 512) {
+      const oldestKey = youtubePathNTransformCache.keys().next().value;
+      youtubePathNTransformCache.delete(oldestKey);
+    }
+  }
+
+  parsed.raw[nIndex + 1] = encodeURIComponent(transformedN);
+  parsed.url.pathname = `/${parsed.raw.join("/")}`;
+  return parsed.url.href;
+}
+
 /** Clients to try for live HLS; IOS-first because its manifest works with the iOS UA spoof. */
 const YOUTUBE_LIVE_INFO_CLIENTS = [
   "IOS",
@@ -1943,6 +2023,10 @@ function setIPC() {
   ipcMain.handle("get-media-current-time", handleGetMediaCurrentTime);
   ipcMain.handle("get-pptx-current-slide", handleGetPptxCurrentSlide);
   ipcMain.handle("set-media-loop-status", handleSetLoopStatus);
+  ipcMain.handle(
+    "media-window-capture-available",
+    handleMediaWindowCaptureAvailable,
+  );
   ipcMain.on("close-media-window", handleCloseMediaWindow);
   ipcMain.handle("close-media-window-now", handleCloseMediaWindowNow);
   ipcMain.on("media-playback-ended", (event, endedMediaFile) => {
@@ -1957,6 +2041,9 @@ function setIPC() {
     if (win && !win.isDestroyed()) {
       win.webContents.send("media-playback-ended", endedMediaFile);
     }
+  });
+  ipcMain.on("media-window-error", (_event, message) => {
+    console.error("[media-window]", message);
   });
   ipcMain.handle("slipstream-media-window", async (event, data) => {
     const targetMediaWindow = mediaWindow;
@@ -2174,6 +2261,23 @@ app.whenReady().then(async () => {
     }
     callback({ requestHeaders });
   };
+  const redirectGooglevideoPathN = (details, callback) => {
+    transformYoutubePathNUrl(details.url)
+      .then((redirectURL) => {
+        callback(
+          redirectURL && redirectURL !== details.url ? { redirectURL } : {},
+        );
+      })
+      .catch((err) => {
+        console.error("Failed to transform YouTube HLS segment URL:", err);
+        callback({});
+      });
+  };
+  const googlevideoRequestFilter = { urls: ["*://*.googlevideo.com/*"] };
+  mediaPresentationSession.webRequest.onBeforeRequest(
+    googlevideoRequestFilter,
+    redirectGooglevideoPathN,
+  );
   mediaPresentationSession.webRequest.onBeforeSendHeaders(
     injectGooglevideoHeaders,
   );
@@ -2194,8 +2298,16 @@ app.whenReady().then(async () => {
   // Mirror the googlevideo header injection for the control window's stream
   // preview (uses defaultSession). Same conditional UA logic as the
   // presentation session: iOS UA only for live broadcast URLs.
+  session.defaultSession.webRequest.onBeforeRequest(
+    googlevideoRequestFilter,
+    redirectGooglevideoPathN,
+  );
   session.defaultSession.webRequest.onBeforeSendHeaders(
     injectGooglevideoHeaders,
+  );
+  session.defaultSession.setDisplayMediaRequestHandler(
+    handleMediaWindowDisplayMediaRequest,
+    { useSystemPicker: false },
   );
   measurePerformance("Creating window", createWindow);
   if (isDevMode) {

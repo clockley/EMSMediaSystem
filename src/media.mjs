@@ -15,9 +15,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-const { ipcRenderer, argv, birth, FadeOut, attachCubicWaveShaper } =
-  window.electron;
-const { video } = window.api;
+const { ipcRenderer, argv, birth, attachCubicWaveShaper } = window.electron;
+let video = null;
 var img = null;
 var mediaFile;
 var loopFile = false;
@@ -45,6 +44,103 @@ const TEXT_BACKGROUND_VIDEO_LOAD_COMPENSATION_SEC = 0.15;
 /** Live edge: true HLS-style live (no sync/duration UI); false for YouTube VOD in stream mode. */
 var streamActsAsLiveEdge = false;
 let i = argv.length - 1;
+
+function waitForDomReady() {
+  if (
+    document.readyState === "interactive" ||
+    document.readyState === "complete"
+  ) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    document.addEventListener("DOMContentLoaded", resolve, { once: true });
+  });
+}
+
+function reportProjectionError(context, error) {
+  const detail =
+    error?.stack ||
+    error?.message ||
+    (typeof error === "string" ? error : JSON.stringify(error));
+  const message = `${context}: ${detail}`;
+  console.error(message, error);
+  if (liveStreamMode) {
+    showStreamStatus(
+      "error",
+      "Stream unavailable",
+      "The live stream could not be loaded.",
+    );
+  }
+  try {
+    ipcRenderer.send("media-window-error", message);
+  } catch {
+    /* Main process may already be gone during shutdown. */
+  }
+}
+
+function showStreamStatus(state, title, detail = "") {
+  const overlay = document.getElementById("streamStatusOverlay");
+  if (!overlay) return;
+  overlay.dataset.state = state;
+  overlay.setAttribute("role", state === "error" ? "alert" : "status");
+  overlay.setAttribute("aria-live", state === "error" ? "assertive" : "polite");
+  overlay.hidden = false;
+  const titleEl = document.getElementById("streamStatusTitle");
+  const detailEl = document.getElementById("streamStatusDetail");
+  if (titleEl) titleEl.textContent = title || "";
+  if (detailEl) detailEl.textContent = detail || "";
+}
+
+function hideStreamStatus() {
+  const overlay = document.getElementById("streamStatusOverlay");
+  if (!overlay) return;
+  overlay.hidden = true;
+  overlay.dataset.state = "";
+}
+
+function showStreamLoading(detail = "Connecting to live stream") {
+  if (liveStreamMode) {
+    showStreamStatus("loading", "Loading stream", detail);
+  }
+}
+
+function installLiveStreamStatusHandlers(mediaEl, hls = null) {
+  if (!liveStreamMode || !mediaEl) return;
+  const showBuffering = () => {
+    if (
+      !mediaEl.error &&
+      mediaEl.readyState < HTMLMediaElement.HAVE_FUTURE_DATA
+    ) {
+      showStreamLoading("Buffering live stream");
+    }
+  };
+  const hideReady = () => hideStreamStatus();
+
+  mediaEl.addEventListener("loadstart", () => showStreamLoading(), {
+    once: true,
+  });
+  mediaEl.addEventListener("waiting", showBuffering);
+  mediaEl.addEventListener("stalled", showBuffering);
+  mediaEl.addEventListener("canplay", hideReady);
+  mediaEl.addEventListener("playing", hideReady);
+
+  const hlsEvents = hls?.constructor?.Events;
+  if (hlsEvents?.MANIFEST_PARSED) {
+    hls.on(hlsEvents.MANIFEST_PARSED, () =>
+      showStreamLoading("Buffering live stream"),
+    );
+  }
+  if (hlsEvents?.ERROR) {
+    hls.on(hlsEvents.ERROR, (_event, data) => {
+      if (data?.fatal) {
+        reportProjectionError(
+          "Live stream playback failed",
+          data?.details || data?.reason || data?.type || "HLS error",
+        );
+      }
+    });
+  }
+}
 
 do {
   if (argv[i].startsWith("__mediaf")) {
@@ -143,28 +239,26 @@ async function applyVideoStartTime(mediaEl, requestedStartTime) {
 
 /**
  * hls.js tuning for network streams (YouTube live HLS, generic m3u8) in the
- * projection window. Goal: maximum video quality on a presentation display.
- * We hold a large forward buffer, prefetch the next fragment early, stay
- * farther from the live edge for stability, and bias adaptive bitrate (ABR)
- * toward the highest available variant.
+ * projection window. Start quickly on live streams, then let ABR climb once
+ * hls.js has measured real segment throughput.
  */
-const HLS_AGGRESSIVE_BUFFER_CONFIG = {
-  maxBufferLength: 75,
-  maxMaxBufferLength: 600,
-  maxBufferSize: 120 * 1000 * 1000,
+const HLS_PRESENTATION_CONFIG = {
+  maxBufferLength: 30,
+  maxMaxBufferLength: 180,
+  maxBufferSize: 80 * 1000 * 1000,
   startFragPrefetch: true,
   highBufferWatchdogPeriod: 1,
-  /** Live only: more segments behind the live edge = fewer edge-of-playlist stalls */
-  liveSyncDurationCount: 6,
+  /** Live only: stay about 30s behind live for a larger stability cushion. */
+  liveSyncDuration: 30,
   /** Prefer filling the standard buffer over LL-HLS “stay on the edge” behaviour */
   lowLatencyMode: false,
   /** Quality: never cap quality to player render size — projection is fullscreen. */
   capLevelToPlayerSize: false,
-  /** Quality: skip the low-bitrate probe; we have plenty of bandwidth for live. */
-  testBandwidth: false,
-  /** Quality: assume 25 Mbps available so ABR starts near the top variant. */
-  abrEwmaDefaultEstimate: 25_000_000,
-  /** Quality: pick the highest quality level immediately rather than starting low. */
+  /** Let hls.js measure bandwidth instead of assuming top-quality capacity. */
+  testBandwidth: true,
+  /** Conservative startup estimate; ABR can still ramp up after playback begins. */
+  abrEwmaDefaultEstimate: 5_000_000,
+  /** Start in ABR mode instead of pinning the first fragment to the highest level. */
   startLevel: -1,
 };
 
@@ -172,7 +266,7 @@ async function createStreamingHls() {
   const { default: Hls } = await import(
     "../../node_modules/hls.js/dist/hls.mjs",
   );
-  return new Hls(HLS_AGGRESSIVE_BUFFER_CONFIG);
+  return new Hls(HLS_PRESENTATION_CONFIG);
 }
 
 /** dash.js tuning for YouTube DASH (and similar): higher buffer targets before switching down */
@@ -281,6 +375,7 @@ function ensurePreferredDashAudioTrack(player, maxAttempts = 25) {
 }
 
 async function applySlipstream(data) {
+  hideStreamStatus();
   const newIsText = !!data.isText;
   mediaFile = data.mediaFile ?? mediaFile;
   loopFile = !!data.loopFile;
@@ -822,6 +917,7 @@ function installTextHandlers() {
 async function loadMedia() {
   let h = null;
   let dashPlayer = null;
+  hideStreamStatus();
 
   if (isText) {
     installICPHandlers();
@@ -892,6 +988,7 @@ async function loadMedia() {
   let ytResolved = null;
   streamActsAsLiveEdge = liveStreamMode && !matchYouTubeUrl(mediaFile);
   if (liveStreamMode && matchYouTubeUrl(mediaFile)) {
+    showStreamLoading("Resolving YouTube stream");
     ytResolved = await ipcRenderer.invoke("resolve-youtube-stream", mediaFile);
     streamActsAsLiveEdge = ytResolved.type === "hls";
   }
@@ -906,22 +1003,25 @@ async function loadMedia() {
 
   ipcRenderer
     .invoke("get-platform")
-    .then((operatingSystem) => {
-      attachCubicWaveShaper(video, undefined, undefined, operatingSystem);
+    .then(async (operatingSystem) => {
+      await attachCubicWaveShaper(video, undefined, undefined, operatingSystem);
     })
     .catch((error) => {
       console.error("Failed to get platform, skipping audio setup:", error);
     });
 
   if (liveStreamMode) {
+    showStreamLoading("Connecting to live stream");
     if (ytResolved) {
       if (ytResolved.type === "hls") {
-        video.src = ytResolved.url;
         h = await createStreamingHls();
+        installLiveStreamStatusHandlers(video, h);
         h.loadSource(ytResolved.url);
       } else if (ytResolved.type === "progressive") {
+        installLiveStreamStatusHandlers(video);
         video.src = ytResolved.url;
       } else if (ytResolved.type === "dash") {
+        installLiveStreamStatusHandlers(video);
         const { MediaPlayer } = await import(
           "../../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
         );
@@ -933,8 +1033,8 @@ async function loadMedia() {
         dashPlayer.initialize(video, blobUrl, false);
       }
     } else {
-      video.src = mediaFile;
       h = await createStreamingHls();
+      installLiveStreamStatusHandlers(video, h);
       h.loadSource(mediaFile);
     }
   } else {
@@ -997,23 +1097,6 @@ async function loadMedia() {
       if (hlsEvents?.MANIFEST_PARSED) {
         h.on(hlsEvents.MANIFEST_PARSED, () => {
           selectPreferredHlsAudioTrack(h);
-          // Pin the projection player to the highest video variant once we
-          // know the manifest. ABR can still react to sustained stalls, but
-          // we start at top quality instead of climbing up from the bottom.
-          const levels = h.levels;
-          if (Array.isArray(levels) && levels.length > 0) {
-            const topIndex = levels.reduce(
-              (best, lvl, i) =>
-                (lvl?.bitrate ?? 0) > (levels[best]?.bitrate ?? 0) ? i : best,
-              0,
-            );
-            try {
-              h.startLevel = topIndex;
-              h.nextLevel = topIndex;
-            } catch {
-              /* hls.js setter may throw if levels race; safe to ignore. */
-            }
-          }
         });
       }
       if (hlsEvents?.AUDIO_TRACKS_UPDATED) {
@@ -1024,8 +1107,29 @@ async function loadMedia() {
     video.addEventListener("loadedmetadata", () => {
       selectPreferredNativeAudioTrack(video);
     });
-    video.play().catch(() => {});
+    video
+      .play()
+      .catch((error) =>
+        reportProjectionError("Live stream playback did not start", error),
+      );
   }
 }
 
-loadMedia();
+async function bootstrapMediaWindow() {
+  await waitForDomReady();
+  video = window.api?.video ?? document.getElementById("bigPlayer");
+  if (!video) {
+    throw new Error("Projection media element #bigPlayer was not found.");
+  }
+  video.addEventListener("error", () => {
+    const err = video.error;
+    const code = err?.code ? ` code ${err.code}` : "";
+    const detail = err?.message || "unknown media element error";
+    reportProjectionError("Projection media playback failed", `${detail}${code}`);
+  });
+  await loadMedia();
+}
+
+bootstrapMediaWindow().catch((error) => {
+  reportProjectionError("Failed to load projection media", error);
+});
