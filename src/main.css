@@ -12,6 +12,422 @@
     font-weight: 600;
 }
 
+/* Office-family aliases for PPTX rendering fidelity.
+   `local()` keeps native/system fonts first when installed, then falls back
+   to bundled metric-compatible substitutes. */
+@font-face {
+    font-family: 'Calibri';
+    font-display: swap;
+    src: local('Calibri'),
+        url('../../fonts/OfficeFallbacks/Carlito-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Calibri';
+    font-display: swap;
+    src: local('Calibri Bold'),
+        local('Calibri'),
+        url('../../fonts/OfficeFallbacks/Carlito-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Calibri';
+    font-display: swap;
+    src: local('Calibri Italic'),
+        local('Calibri'),
+        url('../../fonts/OfficeFallbacks/Carlito-Italic.ttf') format('truetype');
+    font-weight: 400;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Calibri';
+    font-display: swap;
+    src: local('Calibri Bold Italic'),
+        local('Calibri'),
+        url('../../fonts/OfficeFallbacks/Carlito-BoldItalic.ttf') format('truetype');
+    font-weight: 700;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Cambria';
+    font-display: swap;
+    src: local('Cambria'),
+        url('../../fonts/OfficeFallbacks/Caladea-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Cambria';
+    font-display: swap;
+    src: local('Cambria Bold'),
+        local('Cambria'),
+        url('../../fonts/OfficeFallbacks/Caladea-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Cambria';
+    font-display: swap;
+    src: local('Cambria Italic'),
+        local('Cambria'),
+        url('../../fonts/OfficeFallbacks/Caladea-Italic.ttf') format('truetype');
+    font-weight: 400;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Cambria';
+    font-display: swap;
+    src: local('Cambria Bold Italic'),
+        local('Cambria'),
+        url('../../fonts/OfficeFallbacks/Caladea-BoldItalic.ttf') format('truetype');
+    font-weight: 700;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Arial';
+    font-display: swap;
+    src: local('Arial'),
+        url('../../fonts/OfficeFallbacks/Arimo-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Arial';
+    font-display: swap;
+    src: local('Arial Bold'),
+        local('Arial'),
+        url('../../fonts/OfficeFallbacks/Arimo-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Arial';
+    font-display: swap;
+    src: local('Arial Italic'),
+        local('Arial'),
+        url('../../fonts/OfficeFallbacks/Arimo-Italic.ttf') format('truetype');
+    font-weight: 400;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Arial';
+    font-display: swap;
+    src: local('Arial Bold Italic'),
+        local('Arial'),
+        url('../../fonts/OfficeFallbacks/Arimo-BoldItalic.ttf') format('truetype');
+    font-weight: 700;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Times New Roman';
+    font-display: swap;
+    src: local('Times New Roman'),
+        url('../../fonts/OfficeFallbacks/Tinos-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Times New Roman';
+    font-display: swap;
+    src: local('Times New Roman Bold'),
+        local('Times New Roman'),
+        url('../../fonts/OfficeFallbacks/Tinos-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Times New Roman';
+    font-display: swap;
+    src: local('Times New Roman Italic'),
+        local('Times New Roman'),
+        url('../../fonts/OfficeFallbacks/Tinos-Italic.ttf') format('truetype');
+    font-weight: 400;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Times New Roman';
+    font-display: swap;
+    src: local('Times New Roman Bold Italic'),
+        local('Times New Roman'),
+        url('../../fonts/OfficeFallbacks/Tinos-BoldItalic.ttf') format('truetype');
+    font-weight: 700;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Courier New';
+    font-display: swap;
+    src: local('Courier New'),
+        url('../../fonts/OfficeFallbacks/Cousine-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Courier New';
+    font-display: swap;
+    src: local('Courier New Bold'),
+        local('Courier New'),
+        url('../../fonts/OfficeFallbacks/Cousine-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Courier New';
+    font-display: swap;
+    src: local('Courier New Italic'),
+        local('Courier New'),
+        url('../../fonts/OfficeFallbacks/Cousine-Italic.ttf') format('truetype');
+    font-weight: 400;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Courier New';
+    font-display: swap;
+    src: local('Courier New Bold Italic'),
+        local('Courier New'),
+        url('../../fonts/OfficeFallbacks/Cousine-BoldItalic.ttf') format('truetype');
+    font-weight: 700;
+    font-style: italic;
+}
+
+/* Extended Office-family aliases mapped onto the bundled fallback pack.
+   These improve compatibility for decks using non-core Office families. */
+@font-face {
+    font-family: 'Calibri Light';
+    font-display: swap;
+    src: local('Calibri Light'),
+        local('Calibri'),
+        url('../../fonts/OfficeFallbacks/Carlito-Regular.ttf') format('truetype');
+    font-weight: 300;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Segoe UI';
+    font-display: swap;
+    src: local('Segoe UI'),
+        url('../../fonts/OfficeFallbacks/Selawik-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Segoe UI';
+    font-display: swap;
+    src: local('Segoe UI Bold'),
+        local('Segoe UI'),
+        url('../../fonts/OfficeFallbacks/Selawik-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Segoe UI';
+    font-display: swap;
+    src: local('Segoe UI Italic');
+    font-weight: 400;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Segoe UI';
+    font-display: swap;
+    src: local('Segoe UI Bold Italic');
+    font-weight: 700;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Segoe UI Light';
+    font-display: swap;
+    src: local('Segoe UI Light'),
+        local('Segoe UI'),
+        url('../../fonts/OfficeFallbacks/Selawik-Light.ttf') format('truetype');
+    font-weight: 300;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Segoe UI Semilight';
+    font-display: swap;
+    src: local('Segoe UI Semilight'),
+        local('Segoe UI'),
+        url('../../fonts/OfficeFallbacks/Selawik-Semilight.ttf') format('truetype');
+    font-weight: 350;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Segoe UI Semibold';
+    font-display: swap;
+    src: local('Segoe UI Semibold'),
+        local('Segoe UI'),
+        url('../../fonts/OfficeFallbacks/Selawik-Semibold.ttf') format('truetype');
+    font-weight: 600;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Tahoma';
+    font-display: swap;
+    src: local('Tahoma'),
+        url('../../fonts/OfficeFallbacks/WineTahoma-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Tahoma';
+    font-display: swap;
+    src: local('Tahoma Bold'),
+        local('Tahoma'),
+        url('../../fonts/OfficeFallbacks/WineTahoma-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Verdana';
+    font-display: swap;
+    src: local('Verdana'),
+        url('../../fonts/OfficeFallbacks/Arimo-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Trebuchet MS';
+    font-display: swap;
+    src: local('Trebuchet MS'),
+        url('../../fonts/OfficeFallbacks/Arimo-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Candara';
+    font-display: swap;
+    src: local('Candara'),
+        url('../../fonts/OfficeFallbacks/Arimo-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Corbel';
+    font-display: swap;
+    src: local('Corbel'),
+        url('../../fonts/OfficeFallbacks/Arimo-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Aptos';
+    font-display: swap;
+    src: local('Aptos'),
+        url('../../fonts/OfficeFallbacks/Carlito-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Aptos Display';
+    font-display: swap;
+    src: local('Aptos Display'),
+        local('Aptos'),
+        url('../../fonts/OfficeFallbacks/Carlito-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Georgia';
+    font-display: swap;
+    src: local('Georgia'),
+        url('../../fonts/OfficeFallbacks/Gelasio-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Georgia';
+    font-display: swap;
+    src: local('Georgia Bold'),
+        local('Georgia'),
+        url('../../fonts/OfficeFallbacks/Gelasio-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Georgia';
+    font-display: swap;
+    src: local('Georgia Italic'),
+        local('Georgia'),
+        url('../../fonts/OfficeFallbacks/Gelasio-Italic.ttf') format('truetype');
+    font-weight: 400;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Georgia';
+    font-display: swap;
+    src: local('Georgia Bold Italic'),
+        local('Georgia'),
+        url('../../fonts/OfficeFallbacks/Gelasio-BoldItalic.ttf') format('truetype');
+    font-weight: 700;
+    font-style: italic;
+}
+
+@font-face {
+    font-family: 'Constantia';
+    font-display: swap;
+    src: local('Constantia'),
+        url('../../fonts/OfficeFallbacks/Caladea-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Cambria Math';
+    font-display: swap;
+    src: local('Cambria Math'),
+        local('Cambria'),
+        url('../../fonts/OfficeFallbacks/Caladea-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Consolas';
+    font-display: swap;
+    src: local('Consolas'),
+        url('../../fonts/OfficeFallbacks/Cousine-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
 * {
     transition: none;
 }
