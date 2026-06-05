@@ -1020,9 +1020,30 @@ footer {
     height: 100%;
 }
 
-/* YouTube / stream mode reuses #preview for playMedia + createMediaWindow; no local preview UI. */
+/* Streams mode mirrors the active media renderer into this surface. */
 .media-container .stream-preview-host {
+    display: block;
+}
+
+.stream-renderer-preview {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    background: black;
+    border-radius: 12px;
+}
+
+.stream-renderer-preview[hidden] {
     display: none;
+}
+
+.stream-preview-host[data-renderer-preview-active="true"]>video#preview,
+.stream-preview-host[data-renderer-preview-active="true"]>img#preview {
+    visibility: hidden;
 }
 
 #preview {

@@ -184,6 +184,8 @@ let gtkUpdateVolIcon = null;
 let liveAudio = null;
 let liveAudioQueueIndex = -1;
 let previewLoadToken = 0;
+let streamRendererPreviewStream = null;
+let streamRendererPreviewStartPromise = null;
 let liveStartToken = 0;
 let isHandlingLiveEnded = false;
 let isAdvancingQueue = false;
@@ -1578,6 +1580,23 @@ function getPreviewControlMediaElement() {
 function currentLiveQueueItem() {
   return currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
     ? mediaQueue[currentQueueIndex]
+    : null;
+}
+
+function queueIndexMatchesCurrentLiveOutput(index) {
+  if (!isQueuePresentationActive()) return false;
+  if (index < 0 || index >= mediaQueue.length) return false;
+  const item = mediaQueue[index];
+  if (!item?.path || !mediaFile) return false;
+  return (
+    normalizeMediaPathForCompare(mediaFile) ===
+    normalizeMediaPathForCompare(item.path)
+  );
+}
+
+function currentLiveQueueItemForSwitchPrompt() {
+  return queueIndexMatchesCurrentLiveOutput(currentQueueIndex)
+    ? currentLiveQueueItem()
     : null;
 }
 
@@ -5436,9 +5455,7 @@ function shouldConfirmLiveSwitch(targetItem) {
   if (!presentationActive) return false;
 
   const liveItem =
-    currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
-      ? mediaQueue[currentQueueIndex]
-      : null;
+    currentLiveQueueItemForSwitchPrompt();
   if (!liveItem || !targetItem) return presentationActive;
 
   // Scripture-to-scripture changes behave like advancing between slides in
@@ -5452,8 +5469,10 @@ function shouldConfirmLiveSwitch(targetItem) {
 
 async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
-  if (index === currentQueueIndex) return;
   const item = mediaQueue[index];
+  if (index === currentQueueIndex && queueIndexMatchesCurrentLiveOutput(index)) {
+    return;
+  }
 
   // If something is already presenting (either the dedicated media window or
   // an audio-only file in the app window), confirm with the operator before
@@ -5469,11 +5488,12 @@ async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
     return;
   }
   if (shouldConfirmLiveSwitch(item)) {
-    const liveItem =
-      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
-        ? mediaQueue[currentQueueIndex]
-        : null;
-    const liveLabel = liveItem ? liveItem.name : "the current presentation";
+    const liveItem = currentLiveQueueItemForSwitchPrompt();
+    const liveLabel = liveItem
+      ? liveItem.name
+      : activeLiveStream || isLiveStream(mediaFile)
+        ? "the current live stream"
+        : "the current presentation";
     const cueLabel = item?.name || "the selected item";
     const message = `Switch the live presentation from "${liveLabel}" to "${cueLabel}"?`;
     // Temporary ship-safe fallback: the custom modal has intermittent mouse
@@ -5976,6 +5996,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
   if (!isQueuePlaying && !allowBibleInPlaceSwitch) return false;
   if (!isActiveMediaWindow()) return false;
   if (index < 0 || index >= mediaQueue.length) return false;
+  if (activeLiveStream || isLiveStream(mediaFile)) {
+    return false;
+  }
 
   queueSlipstreamTransitionInProgress = true;
   try {
@@ -7940,6 +7963,7 @@ function installIPCHandler() {
 async function handleMediaWindowClosed(event, id) {
   resolveQueuePresentationVideo();
   const localVideo = video;
+  stopStreamRendererPreviewCapture();
   activeMediaWindowContentType = null;
   bibleShowNowModeActive = false;
 
@@ -8604,6 +8628,7 @@ function setSBFormStreamPlayer() {
   restoreLivePreviewIntoPanel(streamsPanel);
 
   video = document.getElementById("preview");
+  syncStreamRendererPreviewCapture();
 
   const mdFile = document.getElementById("mdFile");
   if (mediaFile !== null && isLiveStream(mediaFile) && mdFile) {
@@ -8822,6 +8847,120 @@ function restoreLivePreview() {
   return dyne ? restoreLivePreviewIntoPanel(dyne) : false;
 }
 
+function getStreamRendererPreviewElement() {
+  return document.getElementById("streamRendererPreview");
+}
+
+function setStreamRendererPreviewActive(active) {
+  const host = document.querySelector(".stream-preview-host");
+  if (!host) return;
+  if (active) {
+    host.dataset.rendererPreviewActive = "true";
+  } else {
+    delete host.dataset.rendererPreviewActive;
+  }
+}
+
+function stopStreamRendererPreviewCapture() {
+  const stream = streamRendererPreviewStream;
+  streamRendererPreviewStream = null;
+  streamRendererPreviewStartPromise = null;
+  if (stream) {
+    stream.getTracks().forEach((track) => track.stop());
+  }
+
+  const previewEl = getStreamRendererPreviewElement();
+  if (previewEl) {
+    previewEl.pause();
+    previewEl.srcObject = null;
+    previewEl.hidden = true;
+  }
+  setStreamRendererPreviewActive(false);
+}
+
+async function startStreamRendererPreviewCapture() {
+  if (currentMode !== STREAMPLAYER) {
+    stopStreamRendererPreviewCapture();
+    return;
+  }
+
+  const previewEl = getStreamRendererPreviewElement();
+  if (!previewEl || !navigator.mediaDevices?.getDisplayMedia) return;
+
+  const available = await invoke("media-window-capture-available").catch(() => false);
+  if (currentMode !== STREAMPLAYER) {
+    stopStreamRendererPreviewCapture();
+    return;
+  }
+  if (!available) {
+    stopStreamRendererPreviewCapture();
+    return;
+  }
+
+  if (
+    streamRendererPreviewStream &&
+    streamRendererPreviewStream.getVideoTracks().some((track) => track.readyState === "live")
+  ) {
+    if (previewEl.srcObject !== streamRendererPreviewStream) {
+      previewEl.srcObject = streamRendererPreviewStream;
+    }
+    previewEl.hidden = false;
+    setStreamRendererPreviewActive(true);
+    return;
+  }
+
+  if (streamRendererPreviewStartPromise) {
+    await streamRendererPreviewStartPromise;
+    return;
+  }
+
+  streamRendererPreviewStartPromise = (async () => {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        frameRate: { ideal: 30, max: 30 },
+      },
+      audio: false,
+    });
+    if (currentMode !== STREAMPLAYER) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+
+    streamRendererPreviewStream = stream;
+    stream.getVideoTracks().forEach((track) => {
+      track.addEventListener("ended", stopStreamRendererPreviewCapture, {
+        once: true,
+      });
+    });
+    previewEl.srcObject = stream;
+    previewEl.muted = true;
+    previewEl.controls = false;
+    previewEl.disablePictureInPicture = true;
+    previewEl.hidden = false;
+    setStreamRendererPreviewActive(true);
+    await previewEl.play().catch((error) => {
+      console.error("Failed to start media renderer preview:", error);
+    });
+  })();
+
+  try {
+    await streamRendererPreviewStartPromise;
+  } catch (error) {
+    console.error("Failed to capture media renderer preview:", error);
+    stopStreamRendererPreviewCapture();
+  } finally {
+    streamRendererPreviewStartPromise = null;
+  }
+}
+
+function syncStreamRendererPreviewCapture() {
+  if (currentMode !== STREAMPLAYER || !isActiveMediaWindow()) {
+    stopStreamRendererPreviewCapture();
+    return;
+  }
+  void startStreamRendererPreviewCapture();
+}
+
 function installDisplayChangeHandler() {
   if (installDisplayChangeHandler.initialized) return;
 
@@ -8870,6 +9009,7 @@ function setSBFormMediaPlayer() {
   if (currentMode === MEDIAPLAYER) {
     return;
   }
+  stopStreamRendererPreviewCapture();
   currentMode = MEDIAPLAYER;
   send("set-mode", currentMode);
   updateHeaderAddMediaButtonVisibility();
@@ -9266,6 +9406,7 @@ function cleanRefs(options = {}) {
   if (!options.fullDestroy) {
     return;
   }
+  stopStreamRendererPreviewCapture();
 
   const vol = document.getElementById("volume-slider");
   if (vol) {
@@ -10166,10 +10307,13 @@ async function createMediaWindow(options) {
   const seekOnly = options && options.seekOnly === true;
   const textItem = options?.textItem || null;
   const transientText = options?.transientText === true;
+  if (!video) {
+    video = document.getElementById("preview");
+  }
   if (seekOnly) {
     itc = performance.now() * 0.001;
   }
-  const isQueuePlaybackContext =
+  let isQueuePlaybackContext =
     !transientText &&
     isQueuePlaying &&
     currentQueueIndex >= 0 &&
@@ -10199,6 +10343,12 @@ async function createMediaWindow(options) {
   activeLiveStream = liveStreamMode;
 
   if (liveStreamMode === true) {
+    if (currentMode === STREAMPLAYER) {
+      isQueuePlaybackContext = false;
+      isQueuePlaying = false;
+      currentQueueIndex = -1;
+      renderQueue();
+    }
     if (video && !isImg(video.src)) {
       video.removeAttribute("src");
       video.load();
@@ -10235,7 +10385,7 @@ async function createMediaWindow(options) {
   consumePendingCueVolume();
   let strtVl = 0;
   if (isQueuePlaybackContext || currentMode === MEDIAPLAYER) {
-    strtVl = video.volume;
+    strtVl = Number.isFinite(video?.volume) ? video.volume : 1;
   } else {
     strtVl = streamVolume;
   }
@@ -10243,7 +10393,7 @@ async function createMediaWindow(options) {
   const autoPlayEnabled = isQueuePlaybackContext || !!autoPlayCtl?.checked;
   const autoPlayExplicitlyDisabled =
     !isQueuePlaybackContext && autoPlayCtl && !autoPlayCtl.checked;
-  const effectiveLoop = isQueuePlaybackContext ? false : video.loop;
+  const effectiveLoop = isQueuePlaybackContext ? false : !!video?.loop;
 
   if (liveStreamMode === false && video !== null) {
     startTime = video.currentTime;
@@ -10272,7 +10422,7 @@ async function createMediaWindow(options) {
         birth,
       ],
       preload: `${__dirname}/media_preload.min.js`,
-      devTools: false,
+      devTools: true,
     },
   };
 
@@ -10320,7 +10470,9 @@ async function createMediaWindow(options) {
   }
   if (autoPlayEnabled) {
     beginPidSeekSuppression();
-    unPauseMedia();
+    if (activeLiveStream || video) {
+      unPauseMedia();
+    }
     if (isQueuePlaybackContext || currentMode !== STREAMPLAYER) {
       if (video !== null && !isImgFile && !isPptxFile) {
         beginPidSeekSuppression();
@@ -10330,8 +10482,11 @@ async function createMediaWindow(options) {
   }
   if (autoPlayExplicitlyDisabled) {
     pauseMedia();
-    await video.pause();
+    if (video) {
+      await video.pause();
+    }
   }
+  syncStreamRendererPreviewCapture();
 }
 
 async function bootstrapRenderer() {
