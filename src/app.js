@@ -1691,6 +1691,10 @@ function currentAudioPreviewQueueIndex() {
 }
 
 function queueStartIndexForPresent() {
+  const cue = currentPreviewCue();
+  if (cue) {
+    return cue.index;
+  }
   if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
     return currentQueueIndex;
   }
@@ -6330,7 +6334,11 @@ async function toggleLocalAudioOnlyPlaybackFromControls() {
   }
   isPlaying = false;
   isQueuePlaying = false;
-  currentQueueIndex = -1;
+  // Manual Stop ends the live output, but the stopped queue item should remain
+  // selected so pressing Present again starts that item instead of item 1.
+  if (currentQueueIndex < 0 || currentQueueIndex >= mediaQueue.length) {
+    currentQueueIndex = -1;
+  }
   renderQueue();
   send("localMediaState", 0, "stop");
   removeFilenameFromTitlebar();
@@ -8571,7 +8579,12 @@ async function playMedia(e) {
     pendingQueueSwitchStartTime = 0;
     if (isQueuePlaying) {
       isQueuePlaying = false;
-      currentQueueIndex = -1;
+      // Keep the stopped queue item selected. `queueStartIndexForPresent()`
+      // uses this pointer for the next Present click, matching the boundary
+      // pause behavior and avoiding an unexpected restart from the top.
+      if (currentQueueIndex < 0 || currentQueueIndex >= mediaQueue.length) {
+        currentQueueIndex = -1;
+      }
       renderQueue();
     }
     startTime = 0;
