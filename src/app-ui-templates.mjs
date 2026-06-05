@@ -31,8 +31,17 @@ export function generateDyneTabShellHTML() {
 export function generateStreamsPanelHTML() {
   return `
     <div class="media-container">
-        <div class="video-wrapper stream-preview-host" aria-hidden="true">
+        <div class="video-wrapper stream-preview-host" data-network-stream-active="false">
             <video id="streamRendererPreview" class="stream-renderer-preview" autoplay muted playsinline disablePictureInPicture hidden></video>
+            <div id="streamPreviewEmptyState" class="stream-preview-empty-state" role="status" aria-live="polite">
+                <svg class="stream-preview-empty-state__icon" viewBox="0 0 64 64" aria-hidden="true">
+                    <rect x="12" y="14" width="40" height="28" rx="4" fill="none" stroke="currentColor" stroke-width="3"/>
+                    <path d="M25 50h14M32 42v8" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                    <path d="M22 28h8m4 0h8M24 34h16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity="0.55"/>
+                    <path d="M20 20l24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                </svg>
+                <span>No network streams loaded</span>
+            </div>
         </div>
         <div class="control-panel">
             <div class="control-group">
@@ -98,6 +107,10 @@ export function generateMediaFormHTML() {
         Bible
       </button>
 
+      <div id="confidenceMonitor" class="confidence-monitor" aria-label="Live audience output">
+        <video id="confidenceMonitorPreview" class="confidence-monitor__video" autoplay muted playsinline disablePictureInPicture></video>
+      </div>
+
       <!--
         Settings expander: Output Display and Autoplay. Collapsed by default
         to maximize schedule real estate; open-state is persisted to localStorage
@@ -136,25 +149,25 @@ export function generateMediaFormHTML() {
     </form>
 
     <div class="video-wrapper">
-      <div id="mediaCntDn"></div>
-      <video id="preview" disablePictureInPicture controls=false></video>
-      <!--
-        Dedicated cue scrub element. The main #preview element used to be
-        re-loaded with the cued media's src when the operator clicked a
-        non-live queue item, which forcibly paused the live mirror. With
-        a separate #previewCue overlay the main mirror keeps playing
-        uninterrupted while the operator scrubs the cued item on top of
-        it. Hidden by default; revealed only while a video cue is loaded.
-      -->
-      <!--
-        controls is a boolean HTML attribute: any value (even "false") turns
-        the native scrubber on. We omit the attribute entirely and re-assert
-        controls=false in JS (see ensurePreviewCueVideoElement) so the
-        operator never sees two scrubbers — the custom controls bar and the
-        browser's stock <video> chrome — stacked on top of each other.
-      -->
-      <video id="previewCue" class="preview-cue-overlay" disablePictureInPicture muted hidden></video>
-      <div id="bibleWorkspace" class="bible-workspace" hidden>
+      <div id="previewStack" class="preview-stack" data-active-surface="live">
+        <video id="preview" disablePictureInPicture controls=false></video>
+        <!--
+          Dedicated cue scrub element. The main #preview element used to be
+          re-loaded with the cued media's src when the operator clicked a
+          non-live queue item, which forcibly paused the live mirror. With
+          a separate #previewCue overlay the main mirror keeps playing
+          uninterrupted while the operator scrubs the cued item on top of
+          it. Hidden by default; revealed only while a video cue is loaded.
+        -->
+        <!--
+          controls is a boolean HTML attribute: any value (even "false") turns
+          the native scrubber on. We omit the attribute entirely and re-assert
+          controls=false in JS (see ensurePreviewCueVideoElement) so the
+          operator never sees two scrubbers — the custom controls bar and the
+          browser's stock <video> chrome — stacked on top of each other.
+        -->
+        <video id="previewCue" class="preview-cue-overlay" disablePictureInPicture muted hidden></video>
+        <div id="bibleWorkspace" class="bible-workspace" hidden>
         <aside class="bible-workspace__navigator" aria-label="Bible chapter navigator">
           <div class="bible-workspace__heading">Bible</div>
           <div class="bible-workspace__selectors">
@@ -237,34 +250,31 @@ export function generateMediaFormHTML() {
             </div>
           </div>
         </section>
-      </div>
-      <div id="pptxPreviewContainer"></div>
-      <div id="pptxNavBar">
-        <button id="pptxPrevBtn" onclick="pptxPrevSlide()" disabled>Prev</button>
-        <span id="pptxSlideCounter">Slide 1 / 1</span>
-        <button id="pptxNextBtn" onclick="pptxNextSlide()">Next</button>
-      </div>
-      <div id="previewEmptyState" class="preview-empty-state" hidden>
-        <div class="preview-empty-state__card" role="button" tabindex="0" aria-label="Add media to schedule">
-          <svg class="preview-empty-state__icon" width="48" height="48" viewBox="0 0 24 24" aria-hidden="true">
-            <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-                  d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>
-            <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
-                  d="M12 11v6M9 14h6"/>
-          </svg>
-          <span class="preview-empty-state__title">Drop media here</span>
-          <span class="preview-empty-state__hint">or click <strong>Add Media</strong></span>
+        </div>
+        <div id="pptxPreviewContainer"></div>
+        <div id="previewEmptyState" class="preview-empty-state" hidden>
+          <div class="preview-empty-state__card" role="button" tabindex="0" aria-label="Add media to schedule">
+            <svg class="preview-empty-state__icon" width="48" height="48" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                    d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/>
+              <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                    d="M12 11v6M9 14h6"/>
+            </svg>
+            <span class="preview-empty-state__title">Drop media here</span>
+            <span class="preview-empty-state__hint">or click <strong>Add Media</strong></span>
+          </div>
+        </div>
+        <div id="audioCuePanel" class="audio-cue-panel" hidden>
+          <div class="audio-cue-icon" aria-hidden="true">Audio</div>
+          <div class="audio-cue-copy">
+            <span class="audio-cue-heading">Preview / Cue Audio Track</span>
+            <span id="audioCueTitle" class="audio-cue-title"></span>
+            <span id="audioCueStart" class="audio-cue-start">Start from: 0:00.000</span>
+            <span id="audioCueHelp" class="audio-cue-help">Scrubbing is silent so the live output is not interrupted.</span>
+          </div>
         </div>
       </div>
-      <div id="audioCuePanel" class="audio-cue-panel" hidden>
-        <div class="audio-cue-icon" aria-hidden="true">Audio</div>
-        <div class="audio-cue-copy">
-          <span class="audio-cue-heading">Preview / Cue Audio Track</span>
-          <span id="audioCueTitle" class="audio-cue-title"></span>
-          <span id="audioCueStart" class="audio-cue-start">Start from: 0:00.000</span>
-          <span id="audioCueHelp" class="audio-cue-help">Scrubbing is silent so the live output is not interrupted.</span>
-        </div>
-      </div>
+      <div id="mediaCntDn"></div>
 
       <div id="customControls" class="controls-overlay">
 

@@ -186,6 +186,7 @@ let liveAudioQueueIndex = -1;
 let previewLoadToken = 0;
 let streamRendererPreviewStream = null;
 let streamRendererPreviewStartPromise = null;
+let streamRendererPreviewQualityMode = null;
 let liveStartToken = 0;
 let isHandlingLiveEnded = false;
 let isAdvancingQueue = false;
@@ -826,6 +827,64 @@ function isQueueItemVideo(item) {
   );
 }
 
+const PREVIEW_SURFACE_LIVE = "live";
+const PREVIEW_SURFACE_CUE_VIDEO = "cue-video";
+const PREVIEW_SURFACE_CUE_IMAGE = "cue-image";
+const PREVIEW_SURFACE_CUE_AUDIO = "cue-audio";
+const PREVIEW_SURFACE_PPTX = "pptx";
+const PREVIEW_SURFACE_BIBLE = "bible";
+
+function previewStackElement() {
+  return document.getElementById("previewStack");
+}
+
+function setPreviewStackSurface(surface = PREVIEW_SURFACE_LIVE) {
+  const stack = previewStackElement();
+  const wrapper = document.querySelector(".video-wrapper");
+  if (!stack) return;
+  if (stack.dataset.activeSurface === surface && wrapper?.dataset.previewSurface === surface) {
+    return;
+  }
+
+  stack.dataset.activeSurface = surface;
+  if (wrapper) wrapper.dataset.previewSurface = surface;
+}
+
+function syncPreviewStackSurface() {
+  if (document.getElementById("bibleWorkspace")?.hidden === false) {
+    setPreviewStackSurface(PREVIEW_SURFACE_BIBLE);
+  } else if (isPptxPreviewVisible()) {
+    setPreviewStackSurface(PREVIEW_SURFACE_PPTX);
+  } else if (isImagePreviewCueActive()) {
+    setPreviewStackSurface(PREVIEW_SURFACE_CUE_IMAGE);
+  } else if (isVideoPreviewCueActive()) {
+    setPreviewStackSurface(PREVIEW_SURFACE_CUE_VIDEO);
+  } else if (isAudioPreviewCueActive()) {
+    setPreviewStackSurface(PREVIEW_SURFACE_CUE_AUDIO);
+  } else {
+    setPreviewStackSurface(PREVIEW_SURFACE_LIVE);
+  }
+}
+
+function queueItemSupportsCueStartTime(item) {
+  return Boolean(
+    item &&
+      !isQueueItemBible(item) &&
+      !isQueueItemImage(item) &&
+      !isQueueItemPptx(item) &&
+      !isLiveStream(item.path) &&
+      (isQueueItemAudio(item) || isQueueItemVideo(item) || item.type === "file"),
+  );
+}
+
+function queueItemCueStartTime(item) {
+  return queueItemSupportsCueStartTime(item) &&
+    Number.isFinite(item?.cueStartTime) &&
+    item.cueStartTime > 0
+    ? item.cueStartTime
+    : 0;
+}
+
 function resolvePptxPreviewStartSlide(filePath, opts) {
   if (Number.isFinite(opts?.startSlide)) {
     return Math.max(0, Math.floor(opts.startSlide));
@@ -907,6 +966,7 @@ async function loadPptxPreview(filePath, opts = {}) {
   }
   container.innerHTML = "";
   container.style.display = "flex";
+  setPreviewStackSurface(PREVIEW_SURFACE_PPTX);
   ensurePptxPreviewShell(container);
   const arrayBuffer = await invoke("read-file-as-arraybuffer", filePath);
   if (!isCurrentPptxPreviewRequest(requestToken)) return;
@@ -944,9 +1004,7 @@ async function loadPptxPreview(filePath, opts = {}) {
   if (rememberPptxSlide(filePath, pptxCurrentSlide)) {
     scheduleAutosaveProjectState();
   }
-  const navBar = document.getElementById("pptxNavBar");
-  if (navBar) navBar.style.display = "flex";
-  updatePptxNavButtons();
+  setPreviewStackSurface(PREVIEW_SURFACE_PPTX);
   if (preserveLiveMedia) {
     syncPreviewAudioTrackState();
   }
@@ -1213,19 +1271,7 @@ async function showPptxSlide(index) {
   });
   stage.style.visibility = "";
   pptxCurrentSlide = slideIndex;
-  updatePptxNavButtons();
   updatePptxNavigatorSelection();
-}
-
-function updatePptxNavButtons() {
-  const prevBtn = document.getElementById("pptxPrevBtn");
-  const nextBtn = document.getElementById("pptxNextBtn");
-  const counter = document.getElementById("pptxSlideCounter");
-  if (prevBtn) prevBtn.disabled = pptxCurrentSlide <= 0;
-  if (nextBtn) nextBtn.disabled = pptxCurrentSlide >= pptxSlideCount - 1;
-  if (counter) {
-    counter.textContent = `Slide ${pptxCurrentSlide + 1} / ${Math.max(1, pptxSlideCount)}`;
-  }
 }
 
 function sendPptxSlideToMediaWindow(slideIndex) {
@@ -1255,25 +1301,11 @@ async function jumpToPptxSlide(index) {
   }
 }
 
-function pptxPrevSlide() {
-  if (pptxCurrentSlide > 0) {
-    void jumpToPptxSlide(pptxCurrentSlide - 1);
-  }
-}
-
-function pptxNextSlide() {
-  if (pptxCurrentSlide < pptxSlideCount - 1) {
-    void jumpToPptxSlide(pptxCurrentSlide + 1);
-  }
-}
-
 function hidePptxPreview(options = {}) {
   nextPptxPreviewRequestToken();
   const restoreVideoPreview = options.restoreVideoPreview !== false;
   const container = document.getElementById("pptxPreviewContainer");
   if (container) container.style.display = "none";
-  const navBar = document.getElementById("pptxNavBar");
-  if (navBar) navBar.style.display = "none";
   const videoPreview = document.getElementById("preview");
   if (videoPreview && restoreVideoPreview) videoPreview.style.display = "";
   if (mediaFile && isImg(mediaFile)) {
@@ -1294,15 +1326,14 @@ function hidePptxPreview(options = {}) {
   pptxFilePath = null;
   pptxSlideCount = 0;
   pptxCurrentSlide = 0;
+  syncPreviewStackSurface();
 }
 
 function isPptxPreviewVisible() {
   const container = document.getElementById("pptxPreviewContainer");
-  const navBar = document.getElementById("pptxNavBar");
   return Boolean(
     pptxViewer ||
-      (container && container.style.display !== "none" && container.style.display !== "") ||
-      (navBar && navBar.style.display !== "none" && navBar.style.display !== ""),
+      (container && container.style.display !== "none" && container.style.display !== ""),
   );
 }
 
@@ -1315,6 +1346,7 @@ function restoreNonPptxPreviewSurface(options = {}) {
   hidePptxPreviewIfNeeded({ restoreVideoPreview: !isImage });
   restoreLivePreview();
   resolveQueuePresentationVideo();
+  setPreviewStackSurface(PREVIEW_SURFACE_LIVE);
 
   if (!isImage) {
     const liveImg = document.querySelector("img#preview");
@@ -1435,7 +1467,6 @@ async function restorePptxPreviewForMediaTab() {
   if (queueIndex >= 0) updateQueueFileLabel(mediaQueue[queueIndex].name);
 
   const container = document.getElementById("pptxPreviewContainer");
-  const navBar = document.getElementById("pptxNavBar");
   const liveSlide = await getLivePptxSlideFromMediaWindow(pptxPath);
   if (isNonPptxPreviewCueActive()) return;
   const savedSlide = isSavedPptxSlideIndex(liveSlide)
@@ -1452,11 +1483,10 @@ async function restorePptxPreviewForMediaTab() {
     if (videoPreview) videoPreview.style.display = "none";
     if (imagePreview) imagePreview.style.display = "none";
     if (container) container.style.display = "flex";
-    if (navBar) navBar.style.display = "flex";
+    setPreviewStackSurface(PREVIEW_SURFACE_PPTX);
     if (isSavedPptxSlideIndex(savedSlide) && savedSlide !== pptxCurrentSlide) {
       await showPptxSlide(savedSlide);
     } else {
-      updatePptxNavButtons();
       updatePptxNavigatorSelection();
     }
   } else {
@@ -1583,6 +1613,17 @@ function currentLiveQueueItem() {
     : null;
 }
 
+function queueIndexIsCurrentLivePresentation(index) {
+  return Boolean(
+    index >= 0 &&
+      index < mediaQueue.length &&
+      index === currentQueueIndex &&
+      (isQueuePresentationActive() ||
+        isActiveMediaWindow() ||
+        isLocalAppWindowPresentationActive()),
+  );
+}
+
 function queueIndexMatchesCurrentLiveOutput(index) {
   if (!isQueuePresentationActive()) return false;
   if (index < 0 || index >= mediaQueue.length) return false;
@@ -1617,10 +1658,7 @@ function currentPreviewCue() {
   return {
     index: previewCueIndex,
     item,
-    startTime:
-      Number.isFinite(item.cueStartTime) && item.cueStartTime > 0
-        ? item.cueStartTime
-      : 0,
+    startTime: queueItemCueStartTime(item),
   };
 }
 
@@ -1661,7 +1699,9 @@ function queueStartIndexForPresent() {
 
 function currentCueEditableQueueIndex() {
   const explicitCue = currentPreviewCue();
-  if (explicitCue) return explicitCue.index;
+  if (explicitCue && queueItemSupportsCueStartTime(explicitCue.item)) {
+    return explicitCue.index;
+  }
 
   // Before pressing Present, the selected/previewed queue item is still
   // allowed to receive a cue start time. This lets the operator prep the
@@ -1670,7 +1710,8 @@ function currentCueEditableQueueIndex() {
     currentMode === MEDIAPLAYER &&
     !isQueuePresentationActive() &&
     currentQueueIndex >= 0 &&
-    currentQueueIndex < mediaQueue.length
+    currentQueueIndex < mediaQueue.length &&
+    queueItemSupportsCueStartTime(mediaQueue[currentQueueIndex])
   ) {
     return currentQueueIndex;
   }
@@ -1712,10 +1753,7 @@ function currentImplicitNextItem() {
   return {
     index: nextIdx,
     item,
-    startTime:
-      Number.isFinite(item.cueStartTime) && item.cueStartTime > 0
-        ? item.cueStartTime
-        : 0,
+    startTime: queueItemCueStartTime(item),
     implicit: true,
   };
 }
@@ -1732,10 +1770,7 @@ function currentImplicitPreviousItem() {
   return {
     index: prevIdx,
     item,
-    startTime:
-      Number.isFinite(item.cueStartTime) && item.cueStartTime > 0
-        ? item.cueStartTime
-        : 0,
+    startTime: queueItemCueStartTime(item),
     implicit: true,
   };
 }
@@ -1809,18 +1844,69 @@ function updatePreviewCueUI() {
   }
 }
 
-function setCueStartTime(index, start) {
+function updateQueueItemCueStartDisplay(index) {
+  const item = mediaQueue[index];
+  const row = document.querySelector(`.queue-item[data-queue-index="${index}"]`);
+  const itemText = row?.querySelector(".item-text");
+  if (!item || !row || !itemText) return false;
+
+  const cueStartTime = queueItemCueStartTime(item);
+  let statusRow = row.querySelector(".item-status-row");
+  let cueStartEl = row.querySelector(".item-cue-start");
+
+  if (cueStartTime > 0) {
+    if (!statusRow) {
+      statusRow = document.createElement("span");
+      statusRow.className = "item-status-row";
+      itemText.appendChild(statusRow);
+    }
+    if (!cueStartEl) {
+      cueStartEl = document.createElement("span");
+      cueStartEl.className = "item-cue-start";
+      statusRow.appendChild(cueStartEl);
+    }
+    cueStartEl.textContent = `Start @ ${formatCueTime(cueStartTime)}`;
+  } else if (cueStartEl) {
+    cueStartEl.remove();
+    if (statusRow && !statusRow.querySelector(".state-badge, .item-cue-start")) {
+      statusRow.remove();
+    }
+  }
+
+  return true;
+}
+
+function setCueStartTime(index, start, opts = {}) {
   if (index < 0 || index >= mediaQueue.length) return;
+  const render = opts?.render !== false;
+  if (!queueItemSupportsCueStartTime(mediaQueue[index])) {
+    if (Number.isFinite(mediaQueue[index]?.cueStartTime) && mediaQueue[index].cueStartTime !== 0) {
+      mediaQueue[index].cueStartTime = 0;
+      if (render) {
+        renderQueue();
+      } else {
+        updateQueueItemCueStartDisplay(index);
+      }
+      scheduleAutosaveProjectState();
+    }
+    return;
+  }
   const itemDuration =
     Number.isFinite(mediaQueue[index]?.duration) && mediaQueue[index].duration > 0
       ? mediaQueue[index].duration
       : 0;
   const safe = clampQueueStartTime(start, itemDuration);
+  const prev = Number.isFinite(mediaQueue[index].cueStartTime) ? mediaQueue[index].cueStartTime : 0;
+  if (Math.abs(prev - safe) < 0.001) return;
   mediaQueue[index].cueStartTime = safe;
   if (previewCueIndex === index) {
     updatePreviewCueUI();
   }
-  renderQueue();
+  if (render) {
+    renderQueue();
+  } else {
+    updateQueueItemCueStartDisplay(index);
+  }
   scheduleAutosaveProjectState();
 }
 
@@ -1859,6 +1945,7 @@ function trackedPreviewQueueIndexForMedia(mediaEl) {
 function syncTrackedPreviewStartTime(mediaEl, opts = {}) {
   const index = trackedPreviewQueueIndexForMedia(mediaEl);
   if (index < 0) return;
+  if (!queueItemSupportsCueStartTime(mediaQueue[index])) return;
   const duration =
     Number.isFinite(mediaEl?.duration) && mediaEl.duration > 0
       ? mediaEl.duration
@@ -1868,14 +1955,11 @@ function syncTrackedPreviewStartTime(mediaEl, opts = {}) {
   const rawNextTime =
     Number.isFinite(mediaEl?.currentTime) && mediaEl.currentTime > 0 ? mediaEl.currentTime : 0;
   const nextTime = clampQueueStartTime(rawNextTime, duration);
-  const prevTime =
-    Number.isFinite(mediaQueue[index]?.cueStartTime) && mediaQueue[index].cueStartTime > 0
-      ? mediaQueue[index].cueStartTime
-      : 0;
+  const prevTime = queueItemCueStartTime(mediaQueue[index]);
   if (!opts.force && Math.abs(prevTime - nextTime) < 0.2) {
     return;
   }
-  setCueStartTime(index, nextTime);
+  setCueStartTime(index, nextTime, { render: opts.render === true });
 }
 
 function setActiveCueVolume(vol) {
@@ -2035,6 +2119,7 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
   el.src = pathToMediaUrl(item.path);
   el.load();
   el.hidden = false;
+  setPreviewStackSurface(PREVIEW_SURFACE_CUE_VIDEO);
 
   await waitForLoadedMetadata(el);
   if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
@@ -2110,17 +2195,16 @@ function renderQueue() {
     // state, plus an optional start-offset label for non-zero cue starts.
     const presentationLive = isQueuePresentationActive();
     const separatePreviewCue = isPreparingSeparateCue();
-    const selectedQueueIndex =
-      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+    const selectedQueueIndex = separatePreviewCue
+      ? previewCueIndex
+      : currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
         ? currentQueueIndex
-        : separatePreviewCue
-          ? previewCueIndex
-          : -1;
+        : -1;
 
     listContainer.innerHTML = mediaQueue
       .map((item, index) => {
-        const hasCueStart =
-          Number.isFinite(item.cueStartTime) && item.cueStartTime > 0;
+        const cueStartTime = queueItemCueStartTime(item);
+        const hasCueStart = cueStartTime > 0;
 
         const isLive = presentationLive && index === currentQueueIndex;
         const isCued = separatePreviewCue && index === previewCueIndex;
@@ -2133,7 +2217,7 @@ function renderQueue() {
           isCued ? " is-cued" : "",
         ].join("");
         const cueStartMarkup = hasCueStart
-          ? `<span class="item-cue-start">Start @ ${formatCueTime(item.cueStartTime)}</span>`
+          ? `<span class="item-cue-start">Start @ ${formatCueTime(cueStartTime)}</span>`
           : "";
         const badges = [];
         if (isLive) {
@@ -2504,9 +2588,8 @@ function showBibleWorkspace() {
   workspace.hidden = false;
   button?.setAttribute("data-active", "true");
   document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
-  const navBar = document.getElementById("pptxNavBar");
-  if (navBar) navBar.style.display = "none";
   document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+  setPreviewStackSurface(PREVIEW_SURFACE_BIBLE);
   installBibleWorkspaceEventGuards();
   pauseInactivePreviewBehindBibleWorkspace();
 }
@@ -2516,6 +2599,7 @@ function hideBibleWorkspace() {
   const button = document.getElementById("openBibleWorkspaceBtn");
   if (workspace) workspace.hidden = true;
   button?.setAttribute("data-active", "false");
+  syncPreviewStackSurface();
 }
 
 function hideBiblePreview() {
@@ -4109,7 +4193,7 @@ function buildProjectStateSnapshot() {
       modifiedTime:
         typeof item.modifiedTime === "string" ? item.modifiedTime : undefined,
       autoAdvance: item.autoAdvance !== false,
-      cueStartTime: Number.isFinite(item.cueStartTime) ? item.cueStartTime : 0,
+      cueStartTime: queueItemCueStartTime(item),
       cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
       pptxSlideIndex: Number.isFinite(item.pptxSlideIndex)
         ? item.pptxSlideIndex
@@ -4134,32 +4218,36 @@ function applyProjectStateSnapshot(state) {
   bibleStyleDirtyState.backgroundPath = false;
   mediaQueue = state.mediaQueue
     .filter((x) => x && typeof x.path === "string" && x.path.length > 0)
-    .map((x) => ({
-      path: x.path,
-      name:
-        typeof x.name === "string" && x.name.length > 0
-          ? x.name
-          : queueBasename(x.path),
-      type: x.type === "bible" ? "bible" : classifyQueueMediaType(x.path),
-      missing: x.type === "bible" ? false : x.missing === true,
-      originalPath:
-        typeof x.originalPath === "string" && x.originalPath.length > 0
-          ? x.originalPath
-          : x.path,
-      originalName:
-        typeof x.originalName === "string" && x.originalName.length > 0
-          ? x.originalName
-          : queueBasename(x.originalPath || x.path),
-      sha256: typeof x.sha256 === "string" ? x.sha256 : undefined,
-      sizeBytes: Number.isFinite(x.sizeBytes) ? x.sizeBytes : undefined,
-      modifiedTime:
-        typeof x.modifiedTime === "string" ? x.modifiedTime : undefined,
-      autoAdvance: x.autoAdvance !== false,
-      cueStartTime: Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
-      cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
-      pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : -1,
-      bible: x.bible && typeof x.bible === "object" ? { ...x.bible } : undefined,
-    }));
+    .map((x) => {
+      const item = {
+        path: x.path,
+        name:
+          typeof x.name === "string" && x.name.length > 0
+            ? x.name
+            : queueBasename(x.path),
+        type: x.type === "bible" ? "bible" : classifyQueueMediaType(x.path),
+        missing: x.type === "bible" ? false : x.missing === true,
+        originalPath:
+          typeof x.originalPath === "string" && x.originalPath.length > 0
+            ? x.originalPath
+            : x.path,
+        originalName:
+          typeof x.originalName === "string" && x.originalName.length > 0
+            ? x.originalName
+            : queueBasename(x.originalPath || x.path),
+        sha256: typeof x.sha256 === "string" ? x.sha256 : undefined,
+        sizeBytes: Number.isFinite(x.sizeBytes) ? x.sizeBytes : undefined,
+        modifiedTime:
+          typeof x.modifiedTime === "string" ? x.modifiedTime : undefined,
+        autoAdvance: x.autoAdvance !== false,
+        cueStartTime: Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
+        cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
+        pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : -1,
+        bible: x.bible && typeof x.bible === "object" ? { ...x.bible } : undefined,
+      };
+      item.cueStartTime = queueItemCueStartTime(item);
+      return item;
+    });
   Object.assign(bibleDesignerState, resolvedBibleStyleDefaults());
   currentQueueIndex =
     Number.isInteger(state.currentQueueIndex) &&
@@ -4512,7 +4600,7 @@ async function captureQueueClearUndoState() {
       path: x.path,
       name: x.name,
       type: x.type,
-      cueStartTime: x.cueStartTime,
+      cueStartTime: queueItemCueStartTime(x),
       cueVolume: x.cueVolume,
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
     })),
@@ -4617,14 +4705,18 @@ async function restoreQueueClearUndoSnapshot() {
   if (!snap) return;
   queueClearUndoSnapshot = null;
 
-  mediaQueue = snap.items.map((x) => ({
-    path: x.path,
-    name: x.name,
-    type: x.type,
-    cueStartTime: x.cueStartTime || 0,
-    cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
-    pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
-  }));
+  mediaQueue = snap.items.map((x) => {
+    const item = {
+      path: x.path,
+      name: x.name,
+      type: x.type,
+      cueStartTime: x.cueStartTime || 0,
+      cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
+      pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
+    };
+    item.cueStartTime = queueItemCueStartTime(item);
+    return item;
+  });
   currentQueueIndex = snap.index;
   if (mediaQueue.length === 0) {
     currentQueueIndex = -1;
@@ -4794,10 +4886,7 @@ async function resumeQueueFromManualBoundaryIfReady(index) {
   const item = mediaQueue[index];
   await playCurrentQueueItem({
     preservePreviewSeek: false,
-    startTime:
-      Number.isFinite(item?.cueStartTime) && item.cueStartTime > 0
-        ? item.cueStartTime
-        : 0,
+    startTime: queueItemCueStartTime(item),
   });
 }
 
@@ -5040,6 +5129,9 @@ function installPreviewEmptyStateHandlers() {
 async function restorePreviewToLiveOutput(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   const item = mediaQueue[index];
+  if (!isQueueItemBible(item)) {
+    hideBibleWorkspace();
+  }
   if (isQueueItemPptx(item)) {
     const liveSlide = await getLivePptxSlideFromMediaWindow(item.path);
     const startSlide = isSavedPptxSlideIndex(liveSlide)
@@ -5078,6 +5170,7 @@ async function restorePreviewToLiveOutput(index) {
     textNode.data = "";
     item.bible = { ...liveBibleEntry };
     loadBibleEntryIntoEditor(liveBibleEntry);
+    showBibleWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
     updatePreviewCueUI();
     renderQueue();
@@ -5105,6 +5198,9 @@ async function restorePreviewToLiveOutput(index) {
   // source dictates: hidden for image live, repainted with live time
   // otherwise. handleTimeMessage takes over from the next IPC tick.
   restoreCountdownForLiveMedia();
+  if (!isQueueItemImage(item)) {
+    document.getElementById("customControls")?.style.setProperty("visibility", "");
+  }
 
   if (liveAudioQueueIndex >= 0 && liveAudio?.src && liveAudio.src !== "") {
     // The audio-cue panel may have been displayed over the audio-only mirror;
@@ -5235,6 +5331,7 @@ function clearVideoPreviewCueOverlay() {
     console.error("Failed to clear preview cue overlay:", err);
   }
   el.hidden = true;
+  syncPreviewStackSurface();
   if (hadPoster) {
     document.getElementById("customControls")?.style.setProperty("visibility", "");
   }
@@ -5251,7 +5348,7 @@ function clearVideoPreviewCueOverlay() {
 
 async function loadQueueItemIntoPreviewCue(index) {
   if (index < 0 || index >= mediaQueue.length) return;
-  if (index === currentQueueIndex && isQueuePresentationActive()) {
+  if (queueIndexIsCurrentLivePresentation(index)) {
     await restorePreviewToLiveOutput(index);
     return;
   }
@@ -5265,10 +5362,7 @@ async function loadQueueItemIntoPreviewCue(index) {
   const item = mediaQueue[index];
   pendingCueVolume = Number.isFinite(item.cueVolume) ? item.cueVolume : 1;
   syncGtkSliderToCueState();
-  const cueStart =
-    Number.isFinite(item.cueStartTime) && item.cueStartTime > 0
-      ? item.cueStartTime
-      : 0;
+  const cueStart = queueItemCueStartTime(item);
 
   const bibleWorkspaceVisible =
     document.getElementById("bibleWorkspace")?.hidden === false;
@@ -5324,6 +5418,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     if (cueEl) {
       cueEl.poster = pathToMediaUrl(item.path);
       cueEl.hidden = false;
+      setPreviewStackSurface(PREVIEW_SURFACE_CUE_IMAGE);
     }
     setMediaCountdownOverlayVisible(false);
     textNode.data = "";
@@ -5377,8 +5472,12 @@ async function takeQueueItemLive(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
   if (pendingQueueSwitchIndex !== null) return;
 
-  const safeStart = Number.isFinite(startTime) && startTime > 0 ? startTime : 0;
-  mediaQueue[index].cueStartTime = safeStart;
+  const item = mediaQueue[index];
+  const safeStart =
+    queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
+      ? startTime
+      : 0;
+  item.cueStartTime = safeStart;
 
   if (isAudioOnlyQueuePresentationActive()) {
     stopLiveAudioPresentation();
@@ -5470,7 +5569,8 @@ function shouldConfirmLiveSwitch(targetItem) {
 async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
   const item = mediaQueue[index];
-  if (index === currentQueueIndex && queueIndexMatchesCurrentLiveOutput(index)) {
+  if (queueIndexIsCurrentLivePresentation(index) || queueIndexMatchesCurrentLiveOutput(index)) {
+    await restorePreviewToLiveOutput(index);
     return;
   }
 
@@ -5504,9 +5604,9 @@ async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
   }
 
   const itemStart =
-    Number.isFinite(startTime) && startTime > 0
+    queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
       ? startTime
-      : (Number.isFinite(mediaQueue[index]?.cueStartTime) ? mediaQueue[index].cueStartTime : 0);
+      : queueItemCueStartTime(mediaQueue[index]);
   await takeQueueItemLive(index, itemStart);
 }
 
@@ -5525,11 +5625,7 @@ async function onQueueItemActivate(index) {
     currentQueueIndex = activateIndex;
     renderQueue();
     const token = nextPreviewLoadToken();
-    const previewStartTime =
-      Number.isFinite(mediaQueue[activateIndex]?.cueStartTime) &&
-      mediaQueue[activateIndex].cueStartTime > 0
-        ? mediaQueue[activateIndex].cueStartTime
-        : 0;
+    const previewStartTime = queueItemCueStartTime(mediaQueue[activateIndex]);
     await loadQueueItemIntoControlWindow(mediaQueue[activateIndex], {
       previewLoadToken: token,
       startTime: previewStartTime,
@@ -5632,10 +5728,7 @@ async function pauseQueuePresentationAtBoundary(index) {
     const item = mediaQueue[index];
     await loadQueueItemIntoControlWindow(item, {
       preservePreviewSeek: false,
-      startTime:
-        Number.isFinite(item?.cueStartTime) && item.cueStartTime > 0
-          ? item.cueStartTime
-          : 0,
+      startTime: queueItemCueStartTime(item),
     });
   } else {
     currentQueueIndex = -1;
@@ -5942,10 +6035,7 @@ async function advanceQueueAfterMediaWindowClosed() {
       updateDynUI();
       await playCurrentQueueItem({
         preservePreviewSeek: false,
-        startTime:
-          Number.isFinite(item?.cueStartTime) && item.cueStartTime > 0
-            ? item.cueStartTime
-            : 0,
+        startTime: queueItemCueStartTime(item),
       });
       return;
     }
@@ -6012,11 +6102,11 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     // obvious audio files, but metadata is authoritative for "audio-only"
     // containers that look like regular media files until loaded.
     const requestedStart =
-      typeof opts.startTime === "number" && Number.isFinite(opts.startTime)
+      queueItemSupportsCueStartTime(nextItem) &&
+      typeof opts.startTime === "number" &&
+      Number.isFinite(opts.startTime)
         ? opts.startTime
-        : Number.isFinite(nextItem.cueStartTime) && nextItem.cueStartTime > 0
-          ? nextItem.cueStartTime
-          : 0;
+        : queueItemCueStartTime(nextItem);
     await loadQueueItemIntoControlWindow(nextItem, {
       preservePreviewSeek: false,
       startTime: requestedStart,
@@ -6110,10 +6200,7 @@ async function trySlipstreamNextQueueItem() {
   const nextIndex = currentQueueIndex + 1;
   const nextItem = mediaQueue[nextIndex];
   return slipstreamQueueItemAtIndex(nextIndex, {
-    startTime:
-      Number.isFinite(nextItem?.cueStartTime) && nextItem.cueStartTime > 0
-        ? nextItem.cueStartTime
-        : 0,
+    startTime: queueItemCueStartTime(nextItem),
   });
 }
 
@@ -7592,7 +7679,14 @@ function getCountdownSourceElement() {
  */
 function isImagePreviewCueActive() {
   const cue = currentPreviewCue();
-  return Boolean(cue && isQueueItemImage(cue.item));
+  const cueEl = previewCueVideo || document.getElementById("previewCue");
+  return Boolean(
+    cue &&
+      isQueueItemImage(cue.item) &&
+      cueEl &&
+      cueEl.hidden === false &&
+      cueEl.hasAttribute("poster"),
+  );
 }
 
 /**
@@ -8756,6 +8850,8 @@ function getPreviewMountWrapperForPanel(panelEl) {
   if (!panelEl) return null;
   const streamHost = panelEl.querySelector(".stream-preview-host");
   if (streamHost) return streamHost;
+  const previewStack = panelEl.querySelector("#previewStack");
+  if (previewStack) return previewStack;
   const mediaWrap = panelEl.querySelector(".video-wrapper");
   if (mediaWrap && !mediaWrap.classList.contains("stream-preview-host")) {
     return mediaWrap;
@@ -8851,6 +8947,105 @@ function getStreamRendererPreviewElement() {
   return document.getElementById("streamRendererPreview");
 }
 
+function getConfidenceMonitorElement() {
+  return document.getElementById("confidenceMonitorPreview");
+}
+
+function isNetworkStreamSource(source) {
+  if (source === undefined || source === null || isBiblePath(source)) {
+    return false;
+  }
+  const text = String(source).trim();
+  if (!text) return false;
+  if (isLiveStream(text)) return true;
+  try {
+    const url = new URL(text);
+    return ["http:", "https:", "rtsp:", "rtmp:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function streamsTabNetworkStreamLoaded() {
+  return Boolean(
+    currentMode === STREAMPLAYER &&
+      isActiveMediaWindow() &&
+      (activeLiveStream || isNetworkStreamSource(mediaFile)),
+  );
+}
+
+function setStreamsPreviewNetworkState(active) {
+  const host = document.querySelector(".stream-preview-host");
+  if (!host) return;
+  host.dataset.networkStreamActive = active ? "true" : "false";
+  const emptyState = host.querySelector("#streamPreviewEmptyState");
+  if (emptyState) emptyState.hidden = active;
+  if (!active) {
+    const previewEl = getStreamRendererPreviewElement();
+    if (previewEl) {
+      previewEl.pause();
+      previewEl.srcObject = null;
+      previewEl.hidden = true;
+    }
+  }
+}
+
+const RENDERER_CAPTURE_QUALITY_STREAMS = "streams";
+const RENDERER_CAPTURE_QUALITY_CONFIDENCE = "confidence";
+
+function activeRendererCaptureQualityMode() {
+  return currentMode === MEDIAPLAYER
+    ? RENDERER_CAPTURE_QUALITY_CONFIDENCE
+    : RENDERER_CAPTURE_QUALITY_STREAMS;
+}
+
+function rendererCaptureVideoConstraints(mode = activeRendererCaptureQualityMode()) {
+  if (mode === RENDERER_CAPTURE_QUALITY_CONFIDENCE) {
+    return {
+      width: { ideal: 426, max: 640 },
+      height: { ideal: 240, max: 360 },
+      frameRate: { ideal: 30, max: 30 },
+    };
+  }
+
+  return {
+    frameRate: { ideal: 30, max: 30 },
+  };
+}
+
+function syncRendererCaptureQuality(stream, mode = activeRendererCaptureQualityMode()) {
+  if (!stream) {
+    streamRendererPreviewQualityMode = null;
+    return;
+  }
+  if (streamRendererPreviewQualityMode === mode) return;
+  streamRendererPreviewQualityMode = mode;
+  const [track] = stream.getVideoTracks();
+  if (!track?.applyConstraints) return;
+  track.applyConstraints(rendererCaptureVideoConstraints(mode)).catch((error) => {
+    console.error("Failed to update media renderer preview quality:", error);
+  });
+}
+
+function mediaRendererCaptureAllowedForCurrentMode() {
+  if (currentMode === MEDIAPLAYER) return true;
+  if (currentMode === STREAMPLAYER) return streamsTabNetworkStreamLoaded();
+  return false;
+}
+
+function activeMediaRendererCaptureElement() {
+  if (currentMode === STREAMPLAYER) return getStreamRendererPreviewElement();
+  if (currentMode === MEDIAPLAYER) return getConfidenceMonitorElement();
+  return null;
+}
+
+function allMediaRendererCaptureElements() {
+  return [
+    getStreamRendererPreviewElement(),
+    getConfidenceMonitorElement(),
+  ].filter(Boolean);
+}
+
 function setStreamRendererPreviewActive(active) {
   const host = document.querySelector(".stream-preview-host");
   if (!host) return;
@@ -8859,36 +9054,94 @@ function setStreamRendererPreviewActive(active) {
   } else {
     delete host.dataset.rendererPreviewActive;
   }
+  setStreamsPreviewNetworkState(Boolean(active && streamsTabNetworkStreamLoaded()));
+}
+
+function setConfidenceMonitorActive(active) {
+  const monitor = document.getElementById("confidenceMonitor");
+  if (!monitor) return;
+  monitor.hidden = currentMode !== MEDIAPLAYER;
+  if (active) {
+    monitor.dataset.rendererPreviewActive = "true";
+  } else {
+    delete monitor.dataset.rendererPreviewActive;
+  }
+}
+
+function disableCapturedAudioTracks(stream) {
+  stream.getAudioTracks().forEach((track) => {
+    track.enabled = false;
+    track.stop();
+  });
+}
+
+function prepareRendererCaptureElement(el, stream) {
+  if (!el) return;
+  disableCapturedAudioTracks(stream);
+  if (el.srcObject !== stream) {
+    el.srcObject = stream;
+  }
+  el.muted = true;
+  el.defaultMuted = true;
+  el.volume = 0;
+  el.controls = false;
+  el.disablePictureInPicture = true;
+  el.hidden = false;
+  el.play().catch((error) => {
+    console.error("Failed to start media renderer preview:", error);
+  });
+}
+
+function hideRendererCaptureElement(el) {
+  if (!el) return;
+  el.pause();
+  el.srcObject = null;
+  el.hidden = true;
+}
+
+function syncRendererCaptureSinks(stream = streamRendererPreviewStream) {
+  const activeEl = stream && isActiveMediaWindow()
+    ? activeMediaRendererCaptureElement()
+    : null;
+  if (activeEl) {
+    syncRendererCaptureQuality(stream);
+  }
+  allMediaRendererCaptureElements().forEach((el) => {
+    if (el === activeEl) {
+      prepareRendererCaptureElement(el, stream);
+    } else {
+      hideRendererCaptureElement(el);
+    }
+  });
+  setStreamRendererPreviewActive(activeEl === getStreamRendererPreviewElement());
+  setConfidenceMonitorActive(activeEl === getConfidenceMonitorElement());
 }
 
 function stopStreamRendererPreviewCapture() {
   const stream = streamRendererPreviewStream;
   streamRendererPreviewStream = null;
   streamRendererPreviewStartPromise = null;
+  streamRendererPreviewQualityMode = null;
   if (stream) {
     stream.getTracks().forEach((track) => track.stop());
   }
-
-  const previewEl = getStreamRendererPreviewElement();
-  if (previewEl) {
-    previewEl.pause();
-    previewEl.srcObject = null;
-    previewEl.hidden = true;
-  }
-  setStreamRendererPreviewActive(false);
+  syncRendererCaptureSinks(null);
 }
 
 async function startStreamRendererPreviewCapture() {
-  if (currentMode !== STREAMPLAYER) {
+  if (!mediaRendererCaptureAllowedForCurrentMode()) {
     stopStreamRendererPreviewCapture();
     return;
   }
 
-  const previewEl = getStreamRendererPreviewElement();
-  if (!previewEl || !navigator.mediaDevices?.getDisplayMedia) return;
+  const previewEl = activeMediaRendererCaptureElement();
+  if (!previewEl || !navigator.mediaDevices?.getDisplayMedia) {
+    syncRendererCaptureSinks(null);
+    return;
+  }
 
   const available = await invoke("media-window-capture-available").catch(() => false);
-  if (currentMode !== STREAMPLAYER) {
+  if (!mediaRendererCaptureAllowedForCurrentMode()) {
     stopStreamRendererPreviewCapture();
     return;
   }
@@ -8901,11 +9154,7 @@ async function startStreamRendererPreviewCapture() {
     streamRendererPreviewStream &&
     streamRendererPreviewStream.getVideoTracks().some((track) => track.readyState === "live")
   ) {
-    if (previewEl.srcObject !== streamRendererPreviewStream) {
-      previewEl.srcObject = streamRendererPreviewStream;
-    }
-    previewEl.hidden = false;
-    setStreamRendererPreviewActive(true);
+    syncRendererCaptureSinks(streamRendererPreviewStream);
     return;
   }
 
@@ -8915,32 +9164,25 @@ async function startStreamRendererPreviewCapture() {
   }
 
   streamRendererPreviewStartPromise = (async () => {
+    const qualityMode = activeRendererCaptureQualityMode();
     const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: {
-        frameRate: { ideal: 30, max: 30 },
-      },
+      video: rendererCaptureVideoConstraints(qualityMode),
       audio: false,
     });
-    if (currentMode !== STREAMPLAYER) {
+    if (!mediaRendererCaptureAllowedForCurrentMode() || !isActiveMediaWindow()) {
       stream.getTracks().forEach((track) => track.stop());
       return;
     }
 
+    disableCapturedAudioTracks(stream);
     streamRendererPreviewStream = stream;
+    syncRendererCaptureQuality(stream, qualityMode);
     stream.getVideoTracks().forEach((track) => {
       track.addEventListener("ended", stopStreamRendererPreviewCapture, {
         once: true,
       });
     });
-    previewEl.srcObject = stream;
-    previewEl.muted = true;
-    previewEl.controls = false;
-    previewEl.disablePictureInPicture = true;
-    previewEl.hidden = false;
-    setStreamRendererPreviewActive(true);
-    await previewEl.play().catch((error) => {
-      console.error("Failed to start media renderer preview:", error);
-    });
+    syncRendererCaptureSinks(stream);
   })();
 
   try {
@@ -8954,10 +9196,11 @@ async function startStreamRendererPreviewCapture() {
 }
 
 function syncStreamRendererPreviewCapture() {
-  if (currentMode !== STREAMPLAYER || !isActiveMediaWindow()) {
+  if (!mediaRendererCaptureAllowedForCurrentMode() || !isActiveMediaWindow()) {
     stopStreamRendererPreviewCapture();
     return;
   }
+  syncRendererCaptureSinks(streamRendererPreviewStream);
   void startStreamRendererPreviewCapture();
 }
 
@@ -9009,7 +9252,6 @@ function setSBFormMediaPlayer() {
   if (currentMode === MEDIAPLAYER) {
     return;
   }
-  stopStreamRendererPreviewCapture();
   currentMode = MEDIAPLAYER;
   send("set-mode", currentMode);
   updateHeaderAddMediaButtonVisibility();
@@ -9022,6 +9264,7 @@ function setSBFormMediaPlayer() {
   if (mediaPanel) mediaPanel.hidden = false;
 
   restoreLivePreviewIntoPanel(mediaPanel);
+  syncStreamRendererPreviewCapture();
 
   const mediaCntDnEl = document.getElementById("mediaCntDn");
   if (mediaCntDnEl && textNode && !mediaCntDnEl.contains(textNode)) {
@@ -10242,7 +10485,7 @@ async function playAudioOnlyLocally(startOverride = null) {
   const audioUrl = pathToMediaUrl(source);
   const queueCueStart =
     currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
-      ? (mediaQueue[currentQueueIndex]?.cueStartTime || 0)
+      ? queueItemCueStartTime(mediaQueue[currentQueueIndex])
       : 0;
   const requestedStart =
     Number.isFinite(startOverride) && startOverride > 0 ? startOverride : queueCueStart;
@@ -10449,6 +10692,7 @@ async function createMediaWindow(options) {
         : resolvedBibleEntryForItem(mediaQueue[currentQueueIndex]);
       sendBibleTextToOutput(entry);
     }, 150);
+    syncStreamRendererPreviewCapture();
     return;
   }
   if (isPptxFile) {

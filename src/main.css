@@ -1020,9 +1020,88 @@ footer {
     height: 100%;
 }
 
+.preview-stack {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: black;
+    border-radius: 12px;
+}
+
+.preview-stack>video#preview,
+.preview-stack>img#preview,
+.preview-stack>#previewCue,
+.preview-stack>#pptxPreviewContainer,
+.preview-stack>#bibleWorkspace,
+.preview-stack>#previewEmptyState,
+.preview-stack>#audioCuePanel {
+    position: absolute;
+    inset: 0;
+}
+
+.preview-stack>video#preview,
+.preview-stack>img#preview {
+    z-index: 1;
+}
+
+.preview-stack>#previewCue,
+.preview-stack>#pptxPreviewContainer,
+.preview-stack>#bibleWorkspace,
+.preview-stack>#audioCuePanel {
+    z-index: 2;
+}
+
+.preview-stack>#previewEmptyState {
+    z-index: 6;
+}
+
+.preview-stack[data-active-surface="cue-video"]>#previewCue,
+.preview-stack[data-active-surface="cue-image"]>#previewCue,
+.preview-stack[data-active-surface="pptx"]>#pptxPreviewContainer,
+.preview-stack[data-active-surface="bible"]>#bibleWorkspace,
+.preview-stack[data-active-surface="cue-audio"]>#audioCuePanel {
+    z-index: 4;
+}
+
 /* Streams mode mirrors the active media renderer into this surface. */
 .media-container .stream-preview-host {
     display: block;
+}
+
+.stream-preview-empty-state {
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 28px;
+    box-sizing: border-box;
+    background: var(--view-bg-color, #1d1d20);
+    color: color-mix(in srgb, var(--window-fg-color) 72%, transparent);
+    text-align: center;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.stream-preview-empty-state[hidden],
+.stream-preview-host[data-network-stream-active="true"] .stream-preview-empty-state {
+    display: none;
+}
+
+.stream-preview-empty-state__icon {
+    width: 72px;
+    height: 72px;
+    color: color-mix(in srgb, var(--window-fg-color) 46%, transparent);
+}
+
+.stream-preview-host:not([data-network-stream-active="true"])>video#preview,
+.stream-preview-host:not([data-network-stream-active="true"])>img#preview,
+.stream-preview-host:not([data-network-stream-active="true"])>.stream-renderer-preview {
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .stream-renderer-preview {
@@ -2226,21 +2305,6 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     max-height: none;
 }
 
-#pptxNavBar {
-    position: absolute;
-    left: calc((var(--pptx-sidebar-width) + 14px) + ((100% - (var(--pptx-sidebar-width) + 14px)) / 2));
-    bottom: 56px;
-    transform: translateX(-50%);
-    display: none;
-    align-items: center;
-    gap: 12px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    z-index: 5;
-    background: color-mix(in srgb, #000 70%, transparent);
-    color: #fff;
-}
-
 @media (max-width: 760px) {
     #pptxSlideNavigator {
         width: 112px;
@@ -2266,9 +2330,6 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
         padding: 18px 18px 78px;
     }
 
-    #pptxNavBar {
-        left: calc((112px + 10px) + ((100% - (112px + 10px)) / 2));
-    }
 }
 
 /*
@@ -2606,6 +2667,46 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     color: #ffffff;
 }
 
+.confidence-monitor {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    min-height: 72px;
+    max-height: 132px;
+    flex: 0 0 auto;
+    overflow: hidden;
+    background: black;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.confidence-monitor[hidden] {
+    display: none;
+}
+
+.confidence-monitor__video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+    background: black;
+}
+
+.confidence-monitor__video::-webkit-media-controls,
+.confidence-monitor__video::-webkit-media-controls-panel,
+.confidence-monitor__video::-webkit-media-controls-enclosure,
+.confidence-monitor__video::-webkit-media-controls-overlay-play-button,
+.confidence-monitor__video::-webkit-media-controls-start-playback-button,
+.stream-renderer-preview::-webkit-media-controls,
+.stream-renderer-preview::-webkit-media-controls-panel,
+.stream-renderer-preview::-webkit-media-controls-enclosure,
+.stream-renderer-preview::-webkit-media-controls-overlay-play-button,
+.stream-renderer-preview::-webkit-media-controls-start-playback-button {
+    display: none !important;
+}
+
 .bible-workspace {
     position: absolute;
     inset: 0;
@@ -2622,12 +2723,9 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     display: none;
 }
 
-#bibleWorkspace:not([hidden]) ~ #pptxNavBar {
-    display: none !important;
-}
-
 #bibleWorkspace:not([hidden]) ~ #audioCuePanel,
-#bibleWorkspace:not([hidden]) ~ .controls-overlay {
+#bibleWorkspace:not([hidden]) ~ .controls-overlay,
+.video-wrapper[data-preview-surface="bible"] .controls-overlay {
     opacity: 0 !important;
     transform: translateY(100%) !important;
     pointer-events: none !important;
