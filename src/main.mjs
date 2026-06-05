@@ -379,16 +379,20 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       },
     };
 
-    mediaWindow = new BrowserWindow(finalWindowOptions);
-    mediaWindow.setIgnoreMouseEvents(true);
+    const createdMediaWindow = new BrowserWindow(finalWindowOptions);
+    mediaWindow = createdMediaWindow;
+    createdMediaWindow.setIgnoreMouseEvents(true);
     //mediaWindow.openDevTools()
-    await mediaWindow.loadFile("derived/src/media.prod.html");
-    mediaWindow.on("closed", () => {
-      const closedId = mediaWindow?.id;
-      mediaWindow = null;
-      stopMediaPlaybackPowerHint();
-      if (win && !win.isDestroyed()) {
-        win.webContents.send("media-window-closed", closedId);
+    await createdMediaWindow.loadFile("derived/src/media.prod.html");
+    createdMediaWindow.on("closed", () => {
+      const closedId = createdMediaWindow.id;
+      const wasActiveMediaWindow = mediaWindow === createdMediaWindow;
+      if (wasActiveMediaWindow) {
+        mediaWindow = null;
+        stopMediaPlaybackPowerHint();
+        if (win && !win.isDestroyed()) {
+          win.webContents.send("media-window-closed", closedId);
+        }
       }
     });
 
@@ -397,7 +401,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       console.error("Error saving display preference:", error);
     });
 
-    return mediaWindow.id;
+    return createdMediaWindow.id;
   });
 }
 
@@ -1955,12 +1959,20 @@ function setIPC() {
     }
   });
   ipcMain.handle("slipstream-media-window", async (event, data) => {
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.setIgnoreMouseEvents(true);
-      mediaWindow.setSkipTaskbar(false);
-      await mediaWindow.webContents.executeJavaScript(
-        `window.emsApplySlipstream(${JSON.stringify(data)})`,
-      );
+    const targetMediaWindow = mediaWindow;
+    if (targetMediaWindow && !targetMediaWindow.isDestroyed()) {
+      targetMediaWindow.setIgnoreMouseEvents(true);
+      targetMediaWindow.setSkipTaskbar(false);
+      try {
+        await targetMediaWindow.webContents.executeJavaScript(
+          `window.emsApplySlipstream(${JSON.stringify(data)})`,
+        );
+      } catch (err) {
+        if (!targetMediaWindow.isDestroyed()) {
+          console.error("Failed to slipstream media window:", err);
+        }
+        return false;
+      }
       return true;
     }
     return false;

@@ -33,6 +33,7 @@ var autoPlay = false;
 var seekOnly = false;
 let pptxIpcHandlersInstalled = false;
 let textIpcHandlersInstalled = false;
+let ipcHandlersInstalled = false;
 const PPTX_SMALL_DECK_MAX_SLIDES = 30;
 const PPTX_LARGE_DECK_MIN_SLIDES = 151;
 const SCRIPTURE_FONT_FAMILY = "'Nunito Sans', Arial, sans-serif";
@@ -289,6 +290,8 @@ async function applySlipstream(data) {
   if (newIsText) {
     isText = true;
     isPptx = false;
+    streamActsAsLiveEdge = false;
+    liveStreamMode = false;
     installTextHandlers();
     const pptxCanvas = document.getElementById("pptxCanvas");
     if (pptxCanvas) pptxCanvas.style.display = "none";
@@ -331,6 +334,8 @@ async function applySlipstream(data) {
 
   if (newIsPptx) {
     isPptx = true;
+    streamActsAsLiveEdge = false;
+    liveStreamMode = false;
     installPptxIpcHandlers();
     if (!globalThis.process) {
       globalThis.process = { env: {} };
@@ -385,6 +390,8 @@ async function applySlipstream(data) {
   }
 
   if (isImg) {
+    streamActsAsLiveEdge = false;
+    liveStreamMode = false;
     try {
       video.pause();
     } catch {
@@ -409,6 +416,8 @@ async function applySlipstream(data) {
   }
 
   const videoEl = document.querySelector("video");
+  streamActsAsLiveEdge = false;
+  liveStreamMode = false;
   video.loop = loopFile;
   if (data.startVolume != null) {
     video.volume = data.startVolume;
@@ -430,19 +439,32 @@ window.emsApplySlipstream = applySlipstream;
 window.emsGetPptxCurrentSlide = () => (isPptx ? pptxCurrentSlide : null);
 
 function installICPHandlers() {
-  if (!streamActsAsLiveEdge) {
-    ipcRenderer.on("timeGoto-message", function (evt, message) {
-      const localTs = performance.now();
-      const now = Date.now();
-      const travelTime = now - message.timestamp;
+  if (ipcHandlersInstalled) return;
+  ipcHandlersInstalled = true;
 
-      const adjustedTime = message.currentTime + travelTime * 0.001;
-      requestAnimationFrame(() => {
-        video.currentTime =
-          adjustedTime + (performance.now() - localTs) * 0.001;
-      });
+  ipcRenderer.on("timeGoto-message", function (evt, message) {
+    if (
+      streamActsAsLiveEdge ||
+      isText ||
+      isPptx ||
+      isImg ||
+      !message ||
+      !Number.isFinite(message.currentTime) ||
+      !Number.isFinite(message.timestamp)
+    ) {
+      return;
+    }
+
+    const localTs = performance.now();
+    const now = Date.now();
+    const travelTime = now - message.timestamp;
+
+    const adjustedTime = message.currentTime + travelTime * 0.001;
+    requestAnimationFrame(() => {
+      video.currentTime =
+        adjustedTime + (performance.now() - localTs) * 0.001;
     });
-  }
+  });
 
   ipcRenderer.on("play-ctl", async function (event, cmd) {
     if (cmd == "pause") {
@@ -674,6 +696,46 @@ function resetTextBackgroundVideo(backgroundVideo, { keepSource = false } = {}) 
   backgroundVideo.style.display = "none";
 }
 
+function applyTextBackgroundVideoState(safeMessage, textCanvas) {
+  let backgroundVideo = document.getElementById("textBackgroundVideo");
+  if (safeMessage.backgroundVideo) {
+    if (!backgroundVideo) {
+      backgroundVideo = document.createElement("video");
+      backgroundVideo.id = "textBackgroundVideo";
+      backgroundVideo.autoplay = true;
+      backgroundVideo.loop = true;
+      backgroundVideo.muted = true;
+      backgroundVideo.playsInline = true;
+      textCanvas.prepend(backgroundVideo);
+    }
+
+    const shouldReloadVideo =
+      textPresentationState.backgroundVideo !== safeMessage.backgroundVideo ||
+      backgroundVideo.getAttribute("src") !== safeMessage.backgroundVideo;
+    if (shouldReloadVideo) {
+      backgroundVideo.addEventListener(
+        "loadedmetadata",
+        () => seekTextBackgroundVideoToPreview(backgroundVideo, safeMessage.backgroundVideoSync),
+        { once: true },
+      );
+      backgroundVideo.src = safeMessage.backgroundVideo;
+      backgroundVideo.load();
+      textPresentationState.backgroundVideo = safeMessage.backgroundVideo;
+    } else {
+      seekTextBackgroundVideoToPreview(backgroundVideo, safeMessage.backgroundVideoSync);
+    }
+    backgroundVideo.style.display = "block";
+    backgroundVideo.muted = true;
+    backgroundVideo.defaultMuted = true;
+    backgroundVideo.loop = true;
+    if (shouldReloadVideo || backgroundVideo.paused) {
+      void backgroundVideo.play().catch(() => {});
+    }
+  } else if (backgroundVideo) {
+    resetTextBackgroundVideo(backgroundVideo);
+  }
+}
+
 function applyTextMessage(message) {
   const textCanvas = document.getElementById("textCanvas");
   const textContent = document.getElementById("textContent");
@@ -693,6 +755,7 @@ function applyTextMessage(message) {
   const referenceText = safeMessage.referenceText || "";
   const signature = textPresentationSignature(safeMessage, bodyText, referenceText);
   if (signature === textPresentationState.signature) {
+    applyTextBackgroundVideoState(safeMessage, textCanvas);
     return;
   }
   textPresentationState.signature = signature;
@@ -745,40 +808,7 @@ function applyTextMessage(message) {
     textCanvas.style.backgroundPosition = "";
   }
 
-  let backgroundVideo = document.getElementById("textBackgroundVideo");
-  if (safeMessage.backgroundVideo) {
-    if (!backgroundVideo) {
-      backgroundVideo = document.createElement("video");
-      backgroundVideo.id = "textBackgroundVideo";
-      backgroundVideo.autoplay = true;
-      backgroundVideo.loop = true;
-      backgroundVideo.muted = true;
-      backgroundVideo.playsInline = true;
-      textCanvas.prepend(backgroundVideo);
-    }
-    const shouldReloadVideo = textPresentationState.backgroundVideo !== safeMessage.backgroundVideo;
-    if (shouldReloadVideo) {
-      backgroundVideo.addEventListener(
-        "loadedmetadata",
-        () => seekTextBackgroundVideoToPreview(backgroundVideo, safeMessage.backgroundVideoSync),
-        { once: true },
-      );
-      backgroundVideo.src = safeMessage.backgroundVideo;
-      backgroundVideo.load();
-      textPresentationState.backgroundVideo = safeMessage.backgroundVideo;
-    } else {
-      seekTextBackgroundVideoToPreview(backgroundVideo, safeMessage.backgroundVideoSync);
-    }
-    backgroundVideo.style.display = "block";
-    backgroundVideo.muted = true;
-    backgroundVideo.defaultMuted = true;
-    backgroundVideo.loop = true;
-    if (shouldReloadVideo || backgroundVideo.paused) {
-      void backgroundVideo.play().catch(() => {});
-    }
-  } else if (backgroundVideo) {
-    resetTextBackgroundVideo(backgroundVideo);
-  }
+  applyTextBackgroundVideoState(safeMessage, textCanvas);
 }
 
 function installTextHandlers() {

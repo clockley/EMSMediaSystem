@@ -10277,7 +10277,13 @@ async function createMediaWindow(options) {
   };
 
   isActiveMediaWindowCache = true;
-  await invoke("create-media-window", windowOptions, selectedIndex);
+  try {
+    await invoke("create-media-window", windowOptions, selectedIndex);
+  } catch (err) {
+    isActiveMediaWindowCache = false;
+    activeMediaWindowContentType = null;
+    throw err;
+  }
   activeMediaWindowContentType = isTextItem
     ? "bible"
     : isPptxFile
