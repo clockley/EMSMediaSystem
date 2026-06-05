@@ -123,6 +123,28 @@ function classifyKindFromPath(p) {
   return "other";
 }
 
+function sequenceItemPlaybackStartTime(item, kind) {
+  if (item?.type === "scripture" || kind === "image" || kind === "presentation") {
+    return 0;
+  }
+  return Number.isFinite(item?.playback?.startTime) && item.playback.startTime > 0
+    ? item.playback.startTime
+    : 0;
+}
+
+function queueItemSupportsPlaybackStart(item) {
+  const type = item?.type || classifyKindFromPath(item?.path || "");
+  return type === "audio" || type === "video" || type === "file" || type === "other";
+}
+
+function queueItemPlaybackStartTime(item) {
+  return queueItemSupportsPlaybackStart(item) &&
+    Number.isFinite(item?.cueStartTime) &&
+    item.cueStartTime > 0
+    ? item.cueStartTime
+    : 0;
+}
+
 function contentLocationForKind(kind) {
   return kind === "presentation" ? "presentations" : "media";
 }
@@ -211,7 +233,7 @@ function queueItemFromSequenceItem(item, resolvedPath, asset = null) {
     modifiedTime:
       typeof asset?.modifiedTime === "string" ? asset.modifiedTime : undefined,
     autoAdvance: item?.playback?.autoAdvance !== false,
-    cueStartTime: Number.isFinite(item?.playback?.startTime) ? item.playback.startTime : 0,
+    cueStartTime: sequenceItemPlaybackStartTime(item, kind),
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
     pptxSlideIndex: Number.isFinite(item?.startSlide) ? item.startSlide - 1 : -1,
   };
@@ -243,7 +265,7 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
     originalPath: undefined,
     originalName: undefined,
     autoAdvance: item?.playback?.autoAdvance !== false,
-    cueStartTime: Number.isFinite(item?.playback?.startTime) ? item.playback.startTime : 0,
+    cueStartTime: 0,
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
     bible: {
       version,
@@ -609,7 +631,7 @@ export async function saveEmprojSnapshot(
           backgroundPath: scripture.backgroundPath || "",
         },
         playback: {
-          startTime: Number.isFinite(item.cueStartTime) ? item.cueStartTime : 0,
+          startTime: 0,
           volume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
           loop: false,
           autoAdvance: item.autoAdvance !== false,
@@ -746,7 +768,7 @@ export async function saveEmprojSnapshot(
           ? item.pptxSlideIndex + 1
           : undefined,
       playback: {
-        startTime: Number.isFinite(item.cueStartTime) ? item.cueStartTime : 0,
+        startTime: queueItemPlaybackStartTime(item),
         volume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
         loop: false,
         autoAdvance: item.autoAdvance !== false,
