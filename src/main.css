@@ -3056,6 +3056,14 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     background: var(--accent-bg-color-hover);
 }
 
+.queue-item.is-cued:not(.is-selected) {
+    background: color-mix(in srgb, var(--accent-bg-color) 10%, transparent);
+}
+
+.queue-item.is-cued:not(.is-selected):hover {
+    background: color-mix(in srgb, var(--accent-bg-color) 16%, transparent);
+}
+
 .queue-item-dragging {
     opacity: 0.5;
 }
@@ -3097,7 +3105,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 /*
- * Secondary row beneath the filename: the LIVE pill and any explicit
+ * Secondary row beneath the filename: live/cued pills and any explicit
  * start-offset label. Queue order carries the rest of the meaning.
  */
 .item-status-row {
@@ -3125,6 +3133,11 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .state-badge--live {
     background: var(--destructive-bg-color, #c01c28);
     color: var(--destructive-fg-color, #ffffff);
+}
+
+.state-badge--cued {
+    background: color-mix(in srgb, var(--accent-bg-color) 18%, transparent);
+    color: var(--accent-bg-color);
 }
 
 .item-cue-start {

@@ -2087,14 +2087,16 @@ function renderQueue() {
       '<span class="list-placeholder-hint">Add media or Bible text to begin</span>' +
       "</div>";
   } else {
-    // Queue order is the primary source of truth. We only keep an explicit
-    // LIVE badge for the item currently on output, plus an optional per-item
-    // start-offset label when that item begins somewhere other than 0:00.
+    // Queue order is the primary source of truth. Badges show live/cued
+    // state, plus an optional start-offset label for non-zero cue starts.
     const presentationLive = isQueuePresentationActive();
+    const separatePreviewCue = isPreparingSeparateCue();
     const selectedQueueIndex =
-      previewCueIndex >= 0 && previewCueIndex < mediaQueue.length
-        ? previewCueIndex
-        : currentQueueIndex;
+      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+        ? currentQueueIndex
+        : separatePreviewCue
+          ? previewCueIndex
+          : -1;
 
     listContainer.innerHTML = mediaQueue
       .map((item, index) => {
@@ -2102,12 +2104,14 @@ function renderQueue() {
           Number.isFinite(item.cueStartTime) && item.cueStartTime > 0;
 
         const isLive = presentationLive && index === currentQueueIndex;
+        const isCued = separatePreviewCue && index === previewCueIndex;
         const isSelected = index === selectedQueueIndex;
 
         const classes = [
           "queue-item",
           isSelected ? " is-selected" : "",
           isLive ? " is-live" : "",
+          isCued ? " is-cued" : "",
         ].join("");
         const cueStartMarkup = hasCueStart
           ? `<span class="item-cue-start">Start @ ${formatCueTime(item.cueStartTime)}</span>`
@@ -2116,13 +2120,16 @@ function renderQueue() {
         if (isLive) {
           badges.push('<span class="state-badge state-badge--live">Live</span>');
         }
+        if (isCued) {
+          badges.push('<span class="state-badge state-badge--cued">Cued</span>');
+        }
         const statusMarkup =
           badges.length || hasCueStart
             ? `<span class="item-status-row">${badges.join("")}${cueStartMarkup}</span>`
             : "";
         const autoAdvanceEnabled = item.autoAdvance !== false;
         const autoAdvanceMarkup = `<button type="button" class="row-auto-advance-btn" data-queue-auto="${index}" aria-label="${autoAdvanceEnabled ? "Auto: continue to the next scheduled item" : "Stop: pause after this scheduled item"}" title="${autoAdvanceEnabled ? "Auto: continue to next item" : "Stop after this item"}">${autoAdvanceEnabled ? "Auto" : "Stop"}</button>`;
-        return `<div class="${classes}" role="listitem" data-queue-index="${index}" draggable="true" ${isSelected ? 'data-selected="true"' : ""} ${isLive ? 'data-live="true"' : ""}>
+        return `<div class="${classes}" role="listitem" data-queue-index="${index}" draggable="true" ${isSelected ? 'data-selected="true"' : ""} ${isLive ? 'data-live="true"' : ""} ${isCued ? 'data-cued="true"' : ""}>
       <span class="item-icon">${queueTypeIconMarkup(item)}</span>
       <span class="item-text">
         <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
@@ -5492,7 +5499,11 @@ async function onQueueItemActivate(index) {
 
   if (!isActiveMediaWindow() && !isLocalPresentation) {
     const activateIndex = index;
+    if (previewCueIndex >= 0) {
+      clearPreviewCue();
+    }
     currentQueueIndex = activateIndex;
+    renderQueue();
     const token = nextPreviewLoadToken();
     const previewStartTime =
       Number.isFinite(mediaQueue[activateIndex]?.cueStartTime) &&
