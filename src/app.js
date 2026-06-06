@@ -59,7 +59,6 @@ import {
   getPptxListRenderOptions,
   getPptxNaturalSlideSize,
   getPptxRenderedSlideElement,
-  getPptxSlideElementFromHandle,
   isSavedPptxSlideIndex,
   waitForNextFrame,
 } from "./app-pptx-utils.mjs";
@@ -573,25 +572,6 @@ function layoutPptxSlideStage(stage, slideEl, containerEl, fallbackSize = {}) {
   enforcePptxCoverFit(stage);
 }
 
-function relayoutVisiblePptxThumbnails() {
-  const thumbnailList = document.getElementById("pptxThumbnailList");
-  if (!thumbnailList) return;
-  thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
-    const viewport = button.querySelector(".pptx-thumbnail-viewport");
-    const stage = viewport?.querySelector(".pptx-thumbnail-stage");
-    if (!viewport || !stage) return;
-    const index = Number(button.dataset.slideIndex);
-    const slideEl = getPptxSlideElementFromHandle(
-      pptxThumbnailHandles.get(index),
-      stage,
-    );
-    layoutPptxSlideStage(stage, slideEl, viewport, {
-      slideWidth: pptxViewer?.slideWidth,
-      slideHeight: pptxViewer?.slideHeight,
-    });
-  });
-}
-
 function relayoutCurrentPptxSlide() {
   const mainPane = document.getElementById("pptxMainSlidePane");
   const stage = mainPane?.querySelector(".pptx-preview-stage");
@@ -610,7 +590,6 @@ function schedulePptxLiveRelayout() {
     pptxLayoutRefreshRaf = 0;
     if (!pptxViewer) return;
     relayoutCurrentPptxSlide();
-    relayoutVisiblePptxThumbnails();
   });
 }
 
@@ -1100,51 +1079,66 @@ function updatePptxNavigatorSelection() {
 }
 
 async function renderPptxThumbnail(index, button, opts = {}) {
-  if (!pptxViewer || !button) return;
+  if (!pptxViewer || !button?.isConnected) return;
   const force = opts?.force === true;
   const viewport = button.querySelector(".pptx-thumbnail-viewport");
   if (!viewport) return;
   const existingHandle = pptxThumbnailHandles.get(index);
   if (existingHandle) {
-    const existingSlide = getPptxSlideElementFromHandle(existingHandle);
-    if (!force && existingSlide && viewport.contains(existingSlide)) return;
+    if (
+      !force &&
+      existingHandle.element &&
+      viewport.contains(existingHandle.element)
+    ) {
+      return;
+    }
     try {
       existingHandle.dispose?.();
     } catch {}
     pptxThumbnailHandles.delete(index);
   }
   viewport.innerHTML = "";
-  const stage = document.createElement("div");
-  stage.className = "pptx-thumbnail-stage";
-  stage.style.visibility = "hidden";
-  viewport.appendChild(stage);
+  const { width } = getElementContentSize(viewport);
+  const thumbnailWidth = Math.max(
+    1,
+    Math.round(width || viewport.clientWidth || 96),
+  );
 
   let handle = null;
   try {
-    handle = pptxViewer.renderSlideToContainer(index, stage, 1);
+    handle = pptxViewer.renderThumbnailToContainer(index, viewport, {
+      width: thumbnailWidth,
+    });
   } catch (err) {
     console.error("Failed to render PPTX thumbnail:", err);
   }
   if (!handle) return;
+  handle.element?.classList?.add("pptx-thumbnail-stage");
+  if (handle.element) handle.element.style.visibility = "hidden";
   pptxThumbnailHandles.set(index, handle);
-  await waitForNextFrame();
-
-  const slideEl = getPptxSlideElementFromHandle(handle, stage);
-  layoutPptxSlideStage(stage, slideEl, viewport, {
-    slideWidth: pptxViewer?.slideWidth,
-    slideHeight: pptxViewer?.slideHeight,
-  });
-  stage.style.visibility = "";
+  try {
+    await handle.ready;
+  } catch (err) {
+    console.error("Failed to finish PPTX thumbnail render:", err);
+  }
+  if (
+    pptxThumbnailHandles.get(index) !== handle ||
+    !button.isConnected
+  ) {
+    return;
+  }
+  enforcePptxCoverFit(handle.element);
+  if (handle.element) handle.element.style.visibility = "";
 }
 
 function unmountPptxThumbnail(index, button) {
   const handle = pptxThumbnailHandles.get(index);
   if (!handle) return;
   const viewport = button?.querySelector?.(".pptx-thumbnail-viewport");
-  if (viewport?.isConnected) return;
   try {
     handle.dispose?.();
   } catch {}
+  if (viewport) viewport.innerHTML = "";
   pptxThumbnailHandles.delete(index);
 }
 
