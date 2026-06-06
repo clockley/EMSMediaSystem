@@ -31,6 +31,7 @@ import { createHash } from "crypto";
 import { createReadStream } from "fs";
 import { readdir, readFile, stat } from "fs/promises";
 import path from "path";
+import { fileURLToPath } from "url";
 import settings from "./settings.min.mjs";
 import { loadEmprojSnapshot, saveEmprojSnapshot } from "./emproj.min.mjs";
 let sessionID = 0;
@@ -533,20 +534,16 @@ async function handleGetPptxCurrentSlide() {
 async function handleSetLoopStatus(event, arg) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     if (arg !== undefined) {
-      if (arg === true) {
-        await mediaWindow.webContents.executeJavaScript(
-          "window.api.video.loop=true",
-        );
-      } else {
-        await mediaWindow.webContents.executeJavaScript(
-          "window.api.video.loop=false",
-        );
-      }
+      const enabled = arg === true;
+      return await mediaWindow.webContents.executeJavaScript(
+        `typeof window.emsSetLoopEnabled === "function" ? window.emsSetLoopEnabled(${enabled}) : (window.api && window.api.video ? (window.api.video.loop = ${enabled}, window.api.video.loop) : false)`,
+      );
     }
     return await mediaWindow.webContents.executeJavaScript(
-      "window.api.video.loop",
+      'typeof window.emsGetLoopEnabled === "function" ? window.emsGetLoopEnabled() : !!(window.api && window.api.video && window.api.video.loop)',
     );
   }
+  return false;
 }
 
 function handleSetMode(event, arg) {
@@ -1967,8 +1964,16 @@ function handleFilterMediaDropPaths(_, paths) {
 }
 
 async function handleReadFileAsArrayBuffer(_, filePath) {
-  const buf = await readFile(filePath);
+  const buf = await readFile(localFileSystemPathFromMediaPath(filePath));
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
+function localFileSystemPathFromMediaPath(filePath) {
+  if (typeof filePath !== "string" || filePath.length === 0) {
+    throw new Error("Invalid file path");
+  }
+  const trimmed = filePath.trim();
+  return /^file:\/\//i.test(trimmed) ? fileURLToPath(trimmed) : trimmed;
 }
 
 async function handleCheckMediaPathsExist(_, paths) {
@@ -1983,7 +1988,13 @@ async function handleCheckMediaPathsExist(_, paths) {
       out.push({ path: p, exists: true });
       continue;
     }
-    const fsPath = /^file:\/\//i.test(p) ? new URL(p).pathname : p;
+    let fsPath;
+    try {
+      fsPath = localFileSystemPathFromMediaPath(p);
+    } catch {
+      out.push({ path: p, exists: false });
+      continue;
+    }
     try {
       const info = await stat(fsPath);
       out.push({ path: p, exists: info.isFile() });

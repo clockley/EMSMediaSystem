@@ -6,7 +6,7 @@ JSZip-compat wrapper backed by fflate for renderer use.
 that through import maps to this file.
 */
 
-import { unzip, strFromU8 } from "../node_modules/fflate/esm/browser.js";
+import { unzip, strFromU8 } from "fflate";
 
 function toUint8Array(input) {
   if (input instanceof Uint8Array) return input;

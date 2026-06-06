@@ -278,11 +278,12 @@ export function generateMediaFormHTML() {
 
       <div id="customControls" class="controls-overlay">
 
-        <button class="control-button custom-media-control" id="mediaWindowRepeatButton" title="Repeat (Toggle Loop)">
+        <button class="control-button custom-media-control" id="mediaWindowRepeatButton" title="Loop off" aria-label="Loop playback" aria-pressed="false">
             <svg viewBox="0 0 24 24">
                 <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v3z"/>
             </svg>
         </button>
+        <span id="loopStatusBadge" class="loop-status-badge" hidden>Loop On</span>
 
         <button class="control-button" id="playPauseBtn">
             <svg viewBox="0 0 24 24" id="playPauseIcon"><path d="M8 5v14l11-7z"/></svg>

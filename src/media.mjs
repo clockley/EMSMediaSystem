@@ -45,6 +45,14 @@ const TEXT_BACKGROUND_VIDEO_LOAD_COMPENSATION_SEC = 0.15;
 var streamActsAsLiveEdge = false;
 let i = argv.length - 1;
 
+function setLoopEnabled(enabled) {
+  loopFile = !!enabled;
+  if (video) {
+    video.loop = loopFile;
+  }
+  return loopFile;
+}
+
 function waitForDomReady() {
   if (
     document.readyState === "interactive" ||
@@ -378,7 +386,7 @@ async function applySlipstream(data) {
   hideStreamStatus();
   const newIsText = !!data.isText;
   mediaFile = data.mediaFile ?? mediaFile;
-  loopFile = !!data.loopFile;
+  setLoopEnabled(!!data.loopFile);
   isImg = !!data.isImg;
   const newIsPptx = !!data.isPptx;
 
@@ -513,7 +521,7 @@ async function applySlipstream(data) {
   const videoEl = document.querySelector("video");
   streamActsAsLiveEdge = false;
   liveStreamMode = false;
-  video.loop = loopFile;
+  setLoopEnabled(loopFile);
   if (data.startVolume != null) {
     video.volume = data.startVolume;
   }
@@ -532,6 +540,8 @@ async function applySlipstream(data) {
 
 window.emsApplySlipstream = applySlipstream;
 window.emsGetPptxCurrentSlide = () => (isPptx ? pptxCurrentSlide : null);
+window.emsSetLoopEnabled = setLoopEnabled;
+window.emsGetLoopEnabled = () => !!loopFile;
 
 function installICPHandlers() {
   if (ipcHandlersInstalled) return;
@@ -998,7 +1008,7 @@ async function loadMedia() {
   video.volume = strtvl;
   // `loop` is a boolean HTML attribute — its mere presence enables looping,
   // so setAttribute("loop", false) would still loop. Use the IDL property.
-  video.loop = !!loopFile;
+  setLoopEnabled(loopFile);
   video.preload = "auto";
 
   ipcRenderer
@@ -1077,7 +1087,7 @@ async function loadMedia() {
   }
 
   video.onended = () => {
-    if (loopFile) return;
+    if (loopFile || video.loop) return;
     video.style.display = "none";
     ipcRenderer.send("media-playback-ended", mediaFile);
   };
