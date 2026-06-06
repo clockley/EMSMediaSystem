@@ -3449,29 +3449,52 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 
 /* --- GTK-Style Repeat Button (#mediaWindowRepeatButton) --- */
 #mediaWindowRepeatButton {
-    /* Inherit base button styles (size, padding, corners) */
     background-color: transparent;
     border: none;
     color: #dfdfdf;
-    /* Default icon color (white/light gray) */
     cursor: pointer;
-    padding: 0;
+    min-width: 28px;
+    height: 28px;
+    padding: 4px;
     margin: 0 5px;
-    transition: all 0.15s ease-in-out;
-}
-
-#mediaWindowRepeatButton:hover {
-    /* GTK-style hover color */
-    color: #4c4c4c;
-}
-
-/* Style for when the loop is active (visually pressed/toggled) */
-#mediaWindowRepeatButton.active {
-    /* GTK-style accent color for active state */
-    color: #4c4c4c;
-    /* Slight background change for active state */
-    background-color: #6a6a6a;
     border-radius: 4px;
+    transition: background-color 0.15s ease-in-out, color 0.15s ease-in-out, opacity 0.15s ease-in-out;
+}
+
+#mediaWindowRepeatButton:hover:not(:disabled) {
+    background: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+#mediaWindowRepeatButton.active {
+    color: #fff;
+    background-color: var(--accent-bg-color);
+    box-shadow:
+        inset 0 0 0 1px var(--accent-bg-color-hover),
+        0 0 0 3px color-mix(in srgb, var(--accent-bg-color) 24%, transparent);
+}
+
+#mediaWindowRepeatButton:disabled {
+    cursor: default;
+    opacity: 0.35;
+}
+
+.loop-status-badge {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-bg-color) 88%, black 12%);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    box-shadow: 0 0 0 1px color-mix(in srgb, white 24%, transparent);
+}
+
+.loop-status-badge[hidden] {
+    display: none !important;
 }
 
 .gtk-volume-inline {

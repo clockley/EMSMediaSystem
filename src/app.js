@@ -213,6 +213,7 @@ let currentTimeDisplay;
 let volumePopupOpen = false;
 let durationTimeDisplay;
 let repeatButton;
+let mediaLoopEnabled = false;
 const MEDIAPLAYER = 0,
   STREAMPLAYER = 1,
   BULKMEDIAPLAYER = 5,
@@ -702,6 +703,7 @@ function shouldAutoTransitionToIndex(nextIndex) {
 }
 
 function shouldAdvanceAfterCurrentItemEnds() {
+  if (loopEnabledForMediaPath(mediaFile)) return false;
   return shouldAutoTransitionToIndex(nextQueueBoundaryIndex());
 }
 
@@ -1512,6 +1514,103 @@ function isLikelyAudioItem(filePath) {
 function currentPreviewSourcePath() {
   const src = video?.src || "";
   return mediaFile || (src.startsWith("file://") ? removeFileProtocol(decodeURI(src)) : src);
+}
+
+function mediaPathSupportsLoop(filePath) {
+  if (!filePath || typeof filePath !== "string") return false;
+  if (isBiblePath(filePath) || pptxRegex.test(filePath) || isImg(filePath)) {
+    return false;
+  }
+  if (isLiveStream(filePath)) return false;
+  const type = classifyQueueMediaType(filePath);
+  return type === "video" || type === "audio" || type === "file";
+}
+
+function currentLoopMediaPath() {
+  if (liveAudioQueueIndex >= 0 && liveAudio?.src) {
+    return mediaFile || removeFileProtocol(decodeURI(liveAudio.src));
+  }
+  return currentPreviewSourcePath();
+}
+
+function loopEnabledForMediaPath(filePath) {
+  return mediaLoopEnabled && mediaPathSupportsLoop(filePath);
+}
+
+function applyLoopStateToPreviewMedia() {
+  const enabled = loopEnabledForMediaPath(currentLoopMediaPath());
+  if (video) {
+    video.loop = enabled;
+  }
+  if (liveAudio) {
+    liveAudio.loop = enabled;
+  }
+  return enabled;
+}
+
+function updateLoopControlState() {
+  const filePath = currentLoopMediaPath();
+  const supportsLoop = mediaPathSupportsLoop(filePath);
+  const active = loopEnabledForMediaPath(filePath);
+  const loopBadge = document.getElementById("loopStatusBadge");
+  const wrapper = videoWrapper || document.querySelector(".video-wrapper");
+
+  if (repeatButton) {
+    repeatButton.classList.toggle("active", active);
+    repeatButton.disabled = !supportsLoop;
+    repeatButton.setAttribute("aria-pressed", active ? "true" : "false");
+    repeatButton.setAttribute("aria-disabled", supportsLoop ? "false" : "true");
+    repeatButton.title = supportsLoop
+      ? active
+        ? "Loop on - auto advance paused"
+        : "Loop off"
+      : "Loop unavailable for this item";
+  }
+  if (loopBadge) {
+    loopBadge.hidden = !active;
+  }
+  if (wrapper) {
+    wrapper.dataset.loopActive = active ? "true" : "false";
+  }
+}
+
+function activeMediaWindowSupportsLoop() {
+  return Boolean(
+    isActiveMediaWindow() &&
+      activeMediaWindowContentType === "video" &&
+      mediaPathSupportsLoop(mediaFile),
+  );
+}
+
+async function notifyMediaWindowLoopState() {
+  if (!activeMediaWindowSupportsLoop()) return;
+  try {
+    await invoke("set-media-loop-status", loopEnabledForMediaPath(mediaFile));
+  } catch (err) {
+    console.error("Failed to sync media window loop state:", err);
+  }
+}
+
+function syncMediaLoopState({ notify = true } = {}) {
+  applyLoopStateToPreviewMedia();
+  updateLoopControlState();
+  if (notify) {
+    void notifyMediaWindowLoopState();
+  }
+}
+
+function setMediaLoopEnabled(enabled, options) {
+  mediaLoopEnabled = !!enabled;
+  syncMediaLoopState(options);
+}
+
+function toggleMediaLoopEnabled() {
+  const filePath = currentLoopMediaPath();
+  if (!mediaPathSupportsLoop(filePath)) {
+    updateLoopControlState();
+    return;
+  }
+  setMediaLoopEnabled(!loopEnabledForMediaPath(filePath));
 }
 
 function mediaElementHasTracks(mediaEl, trackName) {
@@ -5847,6 +5946,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   mediaFile = item.path;
   mediaPlayerInputState.filePaths = [item.path];
   updateQueueFileLabel(item.name);
+  syncMediaLoopState({ notify: false });
   if (itemIsBible) {
     hidePptxPreviewIfNeeded();
     restoreNonPptxPreviewSurface({ isImage: false });
@@ -5948,11 +6048,6 @@ async function playCurrentQueueItem(opts) {
   const localVideo = video;
   manualBoundaryPauseIndex = -1;
   mediaPlaybackEndedPending = false;
-  if (localVideo) {
-    // Queue items should advance; keep local preview loop disabled so its state
-    // matches the projection window behaviour.
-    localVideo.loop = false;
-  }
   itc = performance.now() * 0.001;
   const item = mediaQueue[currentQueueIndex];
   if (!item) {
@@ -6004,6 +6099,11 @@ async function playCurrentQueueItem(opts) {
 
 async function advanceQueueAfterMediaWindowClosed() {
   if (isAdvancingQueue) return;
+  if (loopEnabledForMediaPath(mediaFile)) {
+    mediaPlaybackEndedPending = false;
+    syncMediaLoopState();
+    return;
+  }
   isAdvancingQueue = true;
   try {
     isPlaying = false;
@@ -6138,7 +6238,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
           isImg: isImgFile,
           isPptx: isPptxFile,
           pptxStartSlide: isPptxFile ? pptxStartSlideForItem(nextItem) : 0,
-          loopFile: false,
+          loopFile: loopEnabledForMediaPath(nextItem.path),
           startVolume: video ? video.volume : 1,
           startTime: requestedStart,
         };
@@ -6603,7 +6703,7 @@ function setupCustomMediaControls() {
       overlay.style.visibility = hasSeekableMedia ? "visible" : "hidden";
     }
 
-    repeatButton.classList.toggle("active", video.loop);
+    updateLoopControlState();
   };
   const updateControlsForTime = (mediaEl) => {
     if (mediaEl !== currentControlMedia()) return;
@@ -6909,10 +7009,7 @@ function setupCustomMediaControls() {
   repeatButton.addEventListener(
     "click",
     () => {
-      video.loop = !video.loop;
-      repeatButton.classList.toggle("active", video.loop);
-
-      send("media-set-loop", video.loop);
+      toggleMediaLoopEnabled();
     },
     sig,
   );
@@ -6922,7 +7019,7 @@ function setupCustomMediaControls() {
     "ended",
     () => {
       if (video !== currentControlMedia()) return;
-      if (!video.loop && currentMode === MEDIAPLAYER) {
+      if (!loopEnabledForMediaPath(currentLoopMediaPath()) && currentMode === MEDIAPLAYER) {
         video.currentTime = 0;
         video.pause();
         timeline.value = 0;
@@ -7006,6 +7103,7 @@ function setupCustomMediaControls() {
   }
 
   setupCustomMediaControls.updateControlsForMetadata = updateControlsForMetadata;
+  syncMediaLoopState({ notify: false });
 }
 
 function closeVolumePopup() {
@@ -8032,6 +8130,11 @@ function installIPCHandler() {
     ) {
       return;
     }
+    if (loopEnabledForMediaPath(endedMediaFile || mediaFile)) {
+      mediaPlaybackEndedPending = false;
+      syncMediaLoopState();
+      return;
+    }
     mediaPlaybackEndedPending = true;
     try {
       const slipstreamed = await trySlipstreamNextQueueItem();
@@ -8168,7 +8271,7 @@ async function handleMediaWindowClosed(event, id) {
     syncPreviewAudioTrackState();
 
     if (
-      localVideo.loop &&
+      loopEnabledForMediaPath(mediaFile) &&
       localVideo.currentTime > 0 &&
       localVideo.duration - localVideo.currentTime < 0.5
     ) {
@@ -8664,6 +8767,7 @@ function updateDynUI() {
   // Without this, a one-file queue stayed at "Nothing live" forever and
   // the Live / Cued pills never appeared because no later path called
   // `renderQueue` again.
+  syncMediaLoopState({ notify: false });
   renderQueue();
 }
 
@@ -9244,21 +9348,8 @@ function getCachedPlatformOS() {
 }
 
 function loopCtlHandler(event) {
-  // Queue presentation relies on `ended` events to advance/slipstream, so
-  // per-item looping must be suppressed while the queue is actively playing.
-  if (isQueuePlaying) {
-    video.loop = false;
-    event.target.checked = false;
-    if (isActiveMediaWindow()) {
-      invoke("set-media-loop-status", false);
-    }
-    return;
-  }
-
-  video.loop = event.target.checked;
-  if (isActiveMediaWindow()) {
-    invoke("set-media-loop-status", event.target.checked);
-  }
+  setMediaLoopEnabled(event.target.checked);
+  event.target.checked = loopEnabledForMediaPath(currentLoopMediaPath());
 }
 
 function setSBFormMediaPlayer() {
@@ -9974,6 +10065,11 @@ function endLocalMedia() {
     video &&
     !playingMediaAudioOnly
   ) {
+    if (loopEnabledForMediaPath(mediaFile)) {
+      mediaPlaybackEndedPending = false;
+      syncMediaLoopState();
+      return;
+    }
     mediaPlaybackEndedPending = true;
     void (async () => {
       try {
@@ -10019,7 +10115,7 @@ function endLocalMedia() {
     !isActiveMediaWindow() &&
     playingMediaAudioOnly &&
     video &&
-    !video.loop;
+    !loopEnabledForMediaPath(mediaFile);
 
   isPlaying = false;
   updateDynUI();
@@ -10439,11 +10535,15 @@ async function endLiveAudioPresentation() {
   isHandlingLiveEnded = true;
   textNode.data = "";
   try {
+    if (loopEnabledForMediaPath(mediaFile)) {
+      syncMediaLoopState({ notify: false });
+      return;
+    }
     const wasAudioOnlyQueueItem =
       isQueuePlaying &&
       !isActiveMediaWindow() &&
       playingMediaAudioOnly &&
-      !liveAudio?.loop;
+      !loopEnabledForMediaPath(mediaFile);
 
     isPlaying = false;
     audioOnlyFile = false;
@@ -10509,6 +10609,7 @@ async function playAudioOnlyLocally(startOverride = null) {
   isPlaying = true;
   isActiveMediaWindowCache = false;
   liveAudioQueueIndex = currentQueueIndex;
+  syncMediaLoopState({ notify: false });
   send("localMediaState", 0, "play");
   if (source) {
     try {
@@ -10536,6 +10637,7 @@ async function playAudioOnlyLocally(startOverride = null) {
     consumePendingCueVolume();
     audio.volume = localVideo.volume;
     audio.muted = false;
+    audio.loop = loopEnabledForMediaPath(source);
     await audio.play();
     if (token !== liveStartToken) return;
     localVideo.pause();
@@ -10649,7 +10751,8 @@ async function createMediaWindow(options) {
   const autoPlayEnabled = isQueuePlaybackContext || !!autoPlayCtl?.checked;
   const autoPlayExplicitlyDisabled =
     !isQueuePlaybackContext && autoPlayCtl && !autoPlayCtl.checked;
-  const effectiveLoop = isQueuePlaybackContext ? false : !!video?.loop;
+  const effectiveLoop = loopEnabledForMediaPath(mediaFile);
+  syncMediaLoopState({ notify: false });
 
   if (liveStreamMode === false && video !== null) {
     startTime = video.currentTime;

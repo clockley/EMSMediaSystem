@@ -79,11 +79,13 @@ JS_FILES := $(patsubst ./%,%,$(JS_FILES))
 JS_FILES := $(filter-out src/app.js,$(JS_FILES))
 APP_BUNDLE_SRC = src/app.js
 APP_BUNDLE_OUT = $(DERIVED_DIR)/src/app.min.js
+WASM_SRC = src/main.wasm
+WASM_DEST = $(DERIVED_DIR)/src/main.wasm
 
 # Corresponding destination files in derived directory.
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
 IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
-DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all images
+DERIVED_RESOURCES = $(IMAGE_DEST) $(WASM_DEST) # Includes all copied binary/static resources
 
 ifeq ($(NO_COLOR), 1)
   COLOR_GREEN =
@@ -147,6 +149,17 @@ endif
 
 # Rule for ICO files
 $(DERIVED_DIR)/%.ico: %.ico | $(DERIVED_DIR)
+	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+else
+	@mkdir -p $(dir $@)
+endif
+	@echo "$(COLOR_YELLOW)Copying $< → $@$(COLOR_RESET)"
+	@cp "$<" "$@"
+	@echo "$(COLOR_GREEN)$(TICK) Copied $@$(COLOR_RESET)"
+
+$(WASM_DEST): $(WASM_SRC) | $(DERIVED_DIR)
 	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
