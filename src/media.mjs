@@ -35,11 +35,11 @@ let textIpcHandlersInstalled = false;
 let ipcHandlersInstalled = false;
 const PPTX_SMALL_DECK_MAX_SLIDES = 30;
 const PPTX_LARGE_DECK_MIN_SLIDES = 151;
-const SCRIPTURE_FONT_FAMILY = "'Nunito Sans', Arial, sans-serif";
+const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
 const SCRIPTURE_BODY_FONT_SIZE = 66;
 const SCRIPTURE_REFERENCE_FONT_SIZE = 38;
-const SCRIPTURE_FONT_WEIGHT = 600;
-const SCRIPTURE_LINE_HEIGHT = 1.45;
+const SCRIPTURE_FONT_WEIGHT = 700;
+const SCRIPTURE_LINE_HEIGHT = 1.32;
 const TEXT_BACKGROUND_VIDEO_LOAD_COMPENSATION_SEC = 0.15;
 /** Live edge: true HLS-style live (no sync/duration UI); false for YouTube VOD in stream mode. */
 var streamActsAsLiveEdge = false;

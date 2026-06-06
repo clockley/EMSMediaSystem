@@ -20,7 +20,7 @@ const IMAGE_EXT = new Set([".bmp", ".gif", ".jpg", ".jpeg", ".png", ".webp", ".s
 const VIDEO_EXT = new Set([".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".wmv"]);
 const AUDIO_EXT = new Set([".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma"]);
 const PRESENTATION_EXT = new Set([".pptx"]);
-const SCRIPTURE_FONT_FAMILY = "'Nunito Sans', Arial, sans-serif";
+const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
 const SCRIPTURE_BODY_FONT_SIZE = 66;
 
 function canonicalJson(value) {

@@ -231,7 +231,7 @@ export function generateMediaFormHTML() {
           <div class="bible-editor-drawer">
             <div class="bible-editor-controls">
               <div class="bible-editor-fields">
-                <label class="bible-field bible-field--font">Font <input id="bibleFontInput" type="text" class="url-input" value="'Nunito Sans', Arial, sans-serif"></label>
+                <label class="bible-field bible-field--font">Font <input id="bibleFontInput" type="text" class="url-input" value="'CMG Sans'"></label>
                 <label class="bible-field">Size <input id="bibleFontSizeInput" type="number" min="24" max="160" value="66" class="url-input"></label>
                 <label class="bible-field">Text <input id="bibleTextColorInput" type="color" value="#ffffff"></label>
                 <label class="bible-field">Backdrop <input id="bibleBackgroundColorInput" type="color" value="#000000"></label>
