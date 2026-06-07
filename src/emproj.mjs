@@ -235,6 +235,7 @@ function queueItemFromSequenceItem(item, resolvedPath, asset = null) {
     autoAdvance: item?.playback?.autoAdvance !== false,
     cueStartTime: sequenceItemPlaybackStartTime(item, kind),
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
+    loop: item?.playback?.loop === true && kind !== "presentation",
     pptxSlideIndex: Number.isFinite(item?.startSlide) ? item.startSlide - 1 : -1,
   };
 }
@@ -770,7 +771,7 @@ export async function saveEmprojSnapshot(
       playback: {
         startTime: queueItemPlaybackStartTime(item),
         volume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
-        loop: false,
+        loop: item.loop === true,
         autoAdvance: item.autoAdvance !== false,
       },
       routing: {

@@ -212,7 +212,7 @@ let currentTimeDisplay;
 let volumePopupOpen = false;
 let durationTimeDisplay;
 let repeatButton;
-let mediaLoopEnabled = false;
+const mediaLoopByPath = new Map();
 const MEDIAPLAYER = 0,
   STREAMPLAYER = 1,
   BULKMEDIAPLAYER = 5,
@@ -282,7 +282,7 @@ const bibleVerseSelection = {
 };
 let bibleBooksCache = [];
 let bibleReferenceSuggestionIndex = -1;
-/** @type {{ path: string, name: string, type: string, cueStartTime?: number, cueVolume?: number, pptxSlideIndex?: number }[]} */
+/** @type {{ path: string, name: string, type: string, cueStartTime?: number, cueVolume?: number, loop?: boolean, pptxSlideIndex?: number }[]} */
 let mediaQueue = [];
 let currentQueueIndex = -1;
 let previewCueIndex = -1;
@@ -318,7 +318,7 @@ let suppressPreviewForwarding = false;
 let pendingQueueClearPostClose = false;
 /**
  * Snapshot for undo after "Clear" on the media queue (HIG: perform + restore).
- * @type {null | { items: { path: string; name: string; type: string; cueStartTime: number; cueVolume?: number }[]; index: number; cueIndex: number; seekTime: number; wasPresentationActive: boolean }}
+ * @type {null | { items: { path: string; name: string; type: string; cueStartTime: number; cueVolume?: number; loop?: boolean }[]; index: number; cueIndex: number; seekTime: number; wasPresentationActive: boolean }}
  */
 let queueClearUndoSnapshot = null;
 /** After reorder drop, ignore the synthetic click on the row. */
@@ -682,7 +682,7 @@ function shouldAutoTransitionToIndex(nextIndex) {
 }
 
 function shouldAdvanceAfterCurrentItemEnds() {
-  if (loopEnabledForMediaPath(mediaFile)) return false;
+  if (loopEnabledForLiveMedia()) return false;
   return shouldAutoTransitionToIndex(nextQueueBoundaryIndex());
 }
 
@@ -1520,32 +1520,121 @@ function mediaPathSupportsLoop(filePath) {
   return type === "video" || type === "audio" || type === "file";
 }
 
-function currentLoopMediaPath() {
-  if (liveAudioQueueIndex >= 0 && liveAudio?.src) {
-    return mediaFile || removeFileProtocol(decodeURI(liveAudio.src));
+function mediaLoopKey(filePath) {
+  return normalizeMediaPathForCompare(filePath);
+}
+
+function queueItemSupportsLoop(item) {
+  return Boolean(item && mediaPathSupportsLoop(item.path));
+}
+
+function loopEnabledForQueueItem(item) {
+  return queueItemSupportsLoop(item) && item.loop === true;
+}
+
+function queueLoopTarget(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= mediaQueue.length) {
+    return null;
   }
-  return currentPreviewSourcePath();
+  const item = mediaQueue[index];
+  return item ? { type: "queue", index, item, path: item.path } : null;
+}
+
+function pathLoopTarget(filePath) {
+  return filePath ? { type: "path", path: filePath } : null;
+}
+
+function liveLoopTarget(filePath = mediaFile) {
+  if (
+    liveAudioQueueIndex >= 0 &&
+    liveAudioQueueIndex < mediaQueue.length &&
+    queueItemSupportsLoop(mediaQueue[liveAudioQueueIndex]) &&
+    (playingMediaAudioOnly || liveAudio?.src)
+  ) {
+    return queueLoopTarget(liveAudioQueueIndex);
+  }
+  if (
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length &&
+    queueItemSupportsLoop(mediaQueue[currentQueueIndex])
+  ) {
+    return queueLoopTarget(currentQueueIndex);
+  }
+  return pathLoopTarget(filePath);
+}
+
+function loopControlTarget() {
+  const cue = currentPreviewCue();
+  if (cue && queueItemSupportsLoop(cue.item)) {
+    return queueLoopTarget(cue.index);
+  }
+  const liveTarget = liveLoopTarget();
+  if (loopTargetSupportsLoop(liveTarget)) {
+    return liveTarget;
+  }
+  return pathLoopTarget(currentPreviewSourcePath());
+}
+
+function loopTargetSupportsLoop(target) {
+  if (!target) return false;
+  if (target.item) return queueItemSupportsLoop(target.item);
+  return mediaPathSupportsLoop(target.path);
 }
 
 function loopEnabledForMediaPath(filePath) {
-  return mediaLoopEnabled && mediaPathSupportsLoop(filePath);
+  const key = mediaLoopKey(filePath);
+  return Boolean(key && mediaPathSupportsLoop(filePath) && mediaLoopByPath.get(key));
+}
+
+function loopTargetEnabled(target) {
+  if (!loopTargetSupportsLoop(target)) return false;
+  if (target.item) return loopEnabledForQueueItem(target.item);
+  return loopEnabledForMediaPath(target.path);
+}
+
+function loopEnabledForLiveMedia(filePath = mediaFile) {
+  return loopTargetEnabled(liveLoopTarget(filePath));
+}
+
+function setLoopTargetEnabled(target, enabled) {
+  if (!loopTargetSupportsLoop(target)) return false;
+  if (target.item) {
+    target.item.loop = !!enabled;
+    return true;
+  }
+  const key = mediaLoopKey(target.path);
+  if (!key) return false;
+  if (enabled) {
+    mediaLoopByPath.set(key, true);
+  } else {
+    mediaLoopByPath.delete(key);
+  }
+  return true;
 }
 
 function applyLoopStateToPreviewMedia() {
-  const enabled = loopEnabledForMediaPath(currentLoopMediaPath());
+  const liveEnabled = loopEnabledForLiveMedia();
+  const cue = currentPreviewCue();
+  const cueEnabled = cue ? loopTargetEnabled(queueLoopTarget(cue.index)) : false;
   if (video) {
-    video.loop = enabled;
+    video.loop = liveEnabled;
   }
   if (liveAudio) {
-    liveAudio.loop = enabled;
+    liveAudio.loop = liveEnabled;
   }
-  return enabled;
+  if (previewAudio) {
+    previewAudio.loop = isAudioPreviewCueActive() && cueEnabled;
+  }
+  if (previewCueVideo) {
+    previewCueVideo.loop = isVideoPreviewCueActive() && cueEnabled;
+  }
+  return loopTargetEnabled(loopControlTarget());
 }
 
 function updateLoopControlState() {
-  const filePath = currentLoopMediaPath();
-  const supportsLoop = mediaPathSupportsLoop(filePath);
-  const active = loopEnabledForMediaPath(filePath);
+  const target = loopControlTarget();
+  const supportsLoop = loopTargetSupportsLoop(target);
+  const active = loopTargetEnabled(target);
   const loopBadge = document.getElementById("loopStatusBadge");
   const wrapper = videoWrapper || document.querySelector(".video-wrapper");
 
@@ -1556,8 +1645,8 @@ function updateLoopControlState() {
     repeatButton.setAttribute("aria-disabled", supportsLoop ? "false" : "true");
     repeatButton.title = supportsLoop
       ? active
-        ? "Loop on - auto advance paused"
-        : "Loop off"
+        ? "Loop on for this item - auto advance paused"
+        : "Loop off for this item"
       : "Loop unavailable for this item";
   }
   if (loopBadge) {
@@ -1569,17 +1658,18 @@ function updateLoopControlState() {
 }
 
 function activeMediaWindowSupportsLoop() {
+  const target = liveLoopTarget();
   return Boolean(
     isActiveMediaWindow() &&
       activeMediaWindowContentType === "video" &&
-      mediaPathSupportsLoop(mediaFile),
+      loopTargetSupportsLoop(target),
   );
 }
 
 async function notifyMediaWindowLoopState() {
   if (!activeMediaWindowSupportsLoop()) return;
   try {
-    await invoke("set-media-loop-status", loopEnabledForMediaPath(mediaFile));
+    await invoke("set-media-loop-status", loopEnabledForLiveMedia());
   } catch (err) {
     console.error("Failed to sync media window loop state:", err);
   }
@@ -1594,17 +1684,22 @@ function syncMediaLoopState({ notify = true } = {}) {
 }
 
 function setMediaLoopEnabled(enabled, options) {
-  mediaLoopEnabled = !!enabled;
+  const target = options?.target || loopControlTarget();
+  if (!setLoopTargetEnabled(target, enabled)) {
+    updateLoopControlState();
+    return;
+  }
+  saveMediaFile();
   syncMediaLoopState(options);
 }
 
 function toggleMediaLoopEnabled() {
-  const filePath = currentLoopMediaPath();
-  if (!mediaPathSupportsLoop(filePath)) {
+  const target = loopControlTarget();
+  if (!loopTargetSupportsLoop(target)) {
     updateLoopControlState();
     return;
   }
-  setMediaLoopEnabled(!loopEnabledForMediaPath(filePath));
+  setMediaLoopEnabled(!loopTargetEnabled(target), { target });
 }
 
 function mediaElementHasTracks(mediaEl, trackName) {
@@ -2115,6 +2210,7 @@ function clearPreviewCue() {
   syncGtkSliderToCueState();
   if (isBiblePresentationActive()) showBibleWorkspace();
   restoreCountdownForLiveMedia();
+  syncMediaLoopState({ notify: false });
   updatePreviewCueUI();
   renderQueue();
 }
@@ -2130,6 +2226,7 @@ function clearCueAfterTake(index) {
     if (isBiblePresentationActive()) showBibleWorkspace();
     restoreCountdownForLiveMedia();
   }
+  syncMediaLoopState({ notify: false });
   updatePreviewCueUI();
   renderQueue();
 }
@@ -2209,6 +2306,7 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
   }
   el.muted = true;
   el.volume = 0;
+  el.loop = loopEnabledForQueueItem(item);
   el.preload = "metadata";
   el.removeAttribute("src");
   el.removeAttribute("poster");
@@ -2243,6 +2341,7 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
       .getElementById("customControls")
       ?.style.setProperty("visibility", "visible");
   }
+  syncMediaLoopState({ notify: false });
 }
 
 /**
@@ -4292,6 +4391,7 @@ function buildProjectStateSnapshot() {
       autoAdvance: item.autoAdvance !== false,
       cueStartTime: queueItemCueStartTime(item),
       cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
+      loop: loopEnabledForQueueItem(item),
       pptxSlideIndex: Number.isFinite(item.pptxSlideIndex)
         ? item.pptxSlideIndex
         : undefined,
@@ -4339,6 +4439,7 @@ function applyProjectStateSnapshot(state) {
         autoAdvance: x.autoAdvance !== false,
         cueStartTime: Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
         cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
+        loop: x.loop === true && mediaPathSupportsLoop(x.path),
         pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : -1,
         bible: x.bible && typeof x.bible === "object" ? { ...x.bible } : undefined,
       };
@@ -4657,6 +4758,7 @@ function clearMediaQueue() {
   // that previously hosted an image cue would leave the overlay hidden
   // even after the operator dragged in a new audio/video clip.
   restoreCountdownForLiveMedia();
+  syncMediaLoopState({ notify: false });
   resetPreviewSurfaceToEmptyState();
   renderQueue();
 }
@@ -4699,6 +4801,7 @@ async function captureQueueClearUndoState() {
       type: x.type,
       cueStartTime: queueItemCueStartTime(x),
       cueVolume: x.cueVolume,
+      loop: loopEnabledForQueueItem(x),
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
     })),
     index: currentQueueIndex,
@@ -4809,6 +4912,7 @@ async function restoreQueueClearUndoSnapshot() {
       type: x.type,
       cueStartTime: x.cueStartTime || 0,
       cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
+      loop: x.loop === true && mediaPathSupportsLoop(x.path),
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
     };
     item.cueStartTime = queueItemCueStartTime(item);
@@ -4927,6 +5031,7 @@ function removeFromQueue(index) {
     // the still-active cue after the surrounding queue shrinks.
     if (previewCueVideoIndex > index) previewCueVideoIndex--;
   } else if (previewCueIndex >= mediaQueue.length) previewCueIndex = -1;
+  syncMediaLoopState({ notify: false });
   if (mediaQueue.length === 0) {
     resetPreviewSurfaceToEmptyState();
   }
@@ -5247,6 +5352,7 @@ async function restorePreviewToLiveOutput(index) {
     setMediaCountdownOverlayVisible(false);
     textNode.data = "";
     await loadPptxPreview(item.path, { startSlide });
+    syncMediaLoopState({ notify: false });
     updatePreviewCueUI();
     renderQueue();
     syncPlayPauseIconToControlMedia();
@@ -5269,6 +5375,7 @@ async function restorePreviewToLiveOutput(index) {
     loadBibleEntryIntoEditor(liveBibleEntry);
     showBibleWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+    syncMediaLoopState({ notify: false });
     updatePreviewCueUI();
     renderQueue();
     syncPlayPauseIconToControlMedia();
@@ -5306,6 +5413,7 @@ async function restorePreviewToLiveOutput(index) {
   }
 
   syncPreviewAudioTrackState();
+  syncMediaLoopState({ notify: false });
   updatePreviewCueUI();
   renderQueue();
 
@@ -5383,6 +5491,7 @@ async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
   audio.load();
   audio.muted = true;
   audio.volume = 0;
+  audio.loop = loopEnabledForQueueItem(item);
   audio.preload = "metadata";
   audio.src = pathToMediaUrl(item.path);
 
@@ -5408,6 +5517,7 @@ async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
       ?.style.setProperty("visibility", "visible");
   }
   syncPreviewAudioCueAudibility();
+  syncMediaLoopState({ notify: false });
 }
 
 /**
@@ -5456,6 +5566,7 @@ async function loadQueueItemIntoPreviewCue(index) {
   // Paint the Cued badge immediately — the overlay/metadata load below is
   // async and callers may flip playback flags before it finishes.
   renderQueue();
+  syncMediaLoopState({ notify: false });
   const item = mediaQueue[index];
   pendingCueVolume = Number.isFinite(item.cueVolume) ? item.cueVolume : 1;
   syncGtkSliderToCueState();
@@ -5470,6 +5581,7 @@ async function loadQueueItemIntoPreviewCue(index) {
   if (isLocalAppWindowPresentationActive() && isQueueItemAudio(item)) {
     restoreNonPptxPreviewSurface();
     setCueStartTime(index, cueStart);
+    syncMediaLoopState({ notify: false });
     updatePreviewCueUI();
     renderQueue();
     return;
@@ -5483,6 +5595,7 @@ async function loadQueueItemIntoPreviewCue(index) {
       preserveLiveVideo: isQueuePresentationActive() && isQueueItemVideo(currentLiveQueueItem()),
       preserveLiveBible: isBiblePresentationActive(),
     });
+    syncMediaLoopState({ notify: false });
     updatePreviewCueUI();
     renderQueue();
     return;
@@ -5561,6 +5674,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     await loadVideoQueueItemIntoPreviewCueOverlay(index, item, cueStart);
     syncPreviewAudioTrackState();
   }
+  syncMediaLoopState({ notify: false });
   updatePreviewCueUI();
   renderQueue();
 }
@@ -5821,6 +5935,7 @@ async function pauseQueuePresentationAtBoundary(index) {
       stopPreviewAudioCue();
       clearVideoPreviewCueOverlay();
       syncGtkSliderToCueState();
+      syncMediaLoopState({ notify: false });
     }
     const item = mediaQueue[index];
     await loadQueueItemIntoControlWindow(item, {
@@ -6093,7 +6208,7 @@ async function playCurrentQueueItem(opts) {
 
 async function advanceQueueAfterMediaWindowClosed() {
   if (isAdvancingQueue) return;
-  if (loopEnabledForMediaPath(mediaFile)) {
+  if (loopEnabledForLiveMedia()) {
     mediaPlaybackEndedPending = false;
     syncMediaLoopState();
     return;
@@ -6232,7 +6347,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
           isImg: isImgFile,
           isPptx: isPptxFile,
           pptxStartSlide: isPptxFile ? pptxStartSlideForItem(nextItem) : 0,
-          loopFile: loopEnabledForMediaPath(nextItem.path),
+          loopFile: loopEnabledForQueueItem(nextItem),
           startVolume: video ? video.volume : 1,
           startTime: requestedStart,
         };
@@ -7013,7 +7128,7 @@ function setupCustomMediaControls() {
     "ended",
     () => {
       if (video !== currentControlMedia()) return;
-      if (!loopEnabledForMediaPath(currentLoopMediaPath()) && currentMode === MEDIAPLAYER) {
+      if (!video.loop && currentMode === MEDIAPLAYER) {
         video.currentTime = 0;
         video.pause();
         timeline.value = 0;
@@ -7026,6 +7141,7 @@ function setupCustomMediaControls() {
     "ended",
     () => {
       if (!isAudioPreviewCueActive() || currentMode !== MEDIAPLAYER) return;
+      if (previewAudio.loop) return;
       previewAudio.currentTime = 0;
       previewAudio.pause();
       timeline.value = 0;
@@ -7049,6 +7165,7 @@ function setupCustomMediaControls() {
       "ended",
       () => {
         if (previewCue !== currentControlMedia() || currentMode !== MEDIAPLAYER) return;
+        if (previewCue.loop) return;
         previewCue.currentTime = 0;
         previewCue.pause();
         timeline.value = 0;
@@ -8124,7 +8241,7 @@ function installIPCHandler() {
     ) {
       return;
     }
-    if (loopEnabledForMediaPath(endedMediaFile || mediaFile)) {
+    if (loopEnabledForLiveMedia(endedMediaFile || mediaFile)) {
       mediaPlaybackEndedPending = false;
       syncMediaLoopState();
       return;
@@ -8265,7 +8382,7 @@ async function handleMediaWindowClosed(event, id) {
     syncPreviewAudioTrackState();
 
     if (
-      loopEnabledForMediaPath(mediaFile) &&
+      loopEnabledForLiveMedia() &&
       localVideo.currentTime > 0 &&
       localVideo.duration - localVideo.currentTime < 0.5
     ) {
@@ -9343,7 +9460,7 @@ function getCachedPlatformOS() {
 
 function loopCtlHandler(event) {
   setMediaLoopEnabled(event.target.checked);
-  event.target.checked = loopEnabledForMediaPath(currentLoopMediaPath());
+  event.target.checked = loopTargetEnabled(loopControlTarget());
 }
 
 function setSBFormMediaPlayer() {
@@ -10059,7 +10176,7 @@ function endLocalMedia() {
     video &&
     !playingMediaAudioOnly
   ) {
-    if (loopEnabledForMediaPath(mediaFile)) {
+    if (loopEnabledForLiveMedia()) {
       mediaPlaybackEndedPending = false;
       syncMediaLoopState();
       return;
@@ -10109,7 +10226,7 @@ function endLocalMedia() {
     !isActiveMediaWindow() &&
     playingMediaAudioOnly &&
     video &&
-    !loopEnabledForMediaPath(mediaFile);
+    !loopEnabledForLiveMedia();
 
   isPlaying = false;
   updateDynUI();
@@ -10529,7 +10646,7 @@ async function endLiveAudioPresentation() {
   isHandlingLiveEnded = true;
   textNode.data = "";
   try {
-    if (loopEnabledForMediaPath(mediaFile)) {
+    if (loopEnabledForLiveMedia()) {
       syncMediaLoopState({ notify: false });
       return;
     }
@@ -10537,7 +10654,7 @@ async function endLiveAudioPresentation() {
       isQueuePlaying &&
       !isActiveMediaWindow() &&
       playingMediaAudioOnly &&
-      !loopEnabledForMediaPath(mediaFile);
+      !loopEnabledForLiveMedia();
 
     isPlaying = false;
     audioOnlyFile = false;
@@ -10631,7 +10748,7 @@ async function playAudioOnlyLocally(startOverride = null) {
     consumePendingCueVolume();
     audio.volume = localVideo.volume;
     audio.muted = false;
-    audio.loop = loopEnabledForMediaPath(source);
+    audio.loop = loopTargetEnabled(liveLoopTarget(source));
     await audio.play();
     if (token !== liveStartToken) return;
     localVideo.pause();
@@ -10745,7 +10862,7 @@ async function createMediaWindow(options) {
   const autoPlayEnabled = isQueuePlaybackContext || !!autoPlayCtl?.checked;
   const autoPlayExplicitlyDisabled =
     !isQueuePlaybackContext && autoPlayCtl && !autoPlayCtl.checked;
-  const effectiveLoop = loopEnabledForMediaPath(mediaFile);
+  const effectiveLoop = loopEnabledForLiveMedia(mediaFile);
   syncMediaLoopState({ notify: false });
 
   if (liveStreamMode === false && video !== null) {

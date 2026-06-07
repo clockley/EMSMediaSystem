@@ -89,6 +89,7 @@ export function createQueueEntry(filePath) {
     originalName: queueBasename(filePath),
     autoAdvance: false,
     cueStartTime: 0,
+    loop: false,
     pptxSlideIndex: type === "pptx" ? -1 : undefined,
   };
 }
