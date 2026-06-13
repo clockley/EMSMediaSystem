@@ -224,6 +224,21 @@ const SCRIPTURE_LABEL_FONT_SIZE = 28;
 const SCRIPTURE_HEADING_FONT_SIZE = 52;
 const SCRIPTURE_FONT_WEIGHT = 700;
 const SCRIPTURE_LINE_HEIGHT = 1.32;
+const SCRIPTURE_LOOK_FULLSCREEN = "fullscreen";
+const SCRIPTURE_LOOK_LOWER_THIRD = "lower-third";
+const BIBLE_LOWER_THIRD_FEATURE_ENABLED = false;
+const SCRIPTURE_DEFAULT_LOOK = SCRIPTURE_LOOK_FULLSCREEN;
+const SCRIPTURE_LOWER_THIRD_TEXT_COLOR = "#ffffff";
+const SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR = "#00ff00";
+const SCRIPTURE_REFERENCE_LIGHT_COLOR = "rgba(255, 255, 255, 0.78)";
+const SCRIPTURE_REFERENCE_DARK_COLOR = "rgba(24, 24, 28, 0.84)";
+const SCRIPTURE_REFERENCE_LIGHT_SHADOW = "0 2px 14px rgba(0, 0, 0, 0.72)";
+const SCRIPTURE_REFERENCE_DARK_SHADOW = "0 2px 12px rgba(255, 255, 255, 0.62)";
+const SCRIPTURE_REFERENCE_LIGHT_BACKGROUND_LUMINANCE = 0.58;
+const LOWER_THIRD_MAX_LINES = 2;
+const LOWER_THIRD_MEASURE_ID = "bibleLowerThirdMeasure";
+const BIBLE_PREVIEW_DEFAULT_OUTPUT_WIDTH = 1920;
+const BIBLE_PREVIEW_DEFAULT_OUTPUT_HEIGHT = 1080;
 let isActiveMediaWindowCache = false;
 const SECONDS = new Int32Array(1);
 const SECONDSFLOAT = new Float64Array(1);
@@ -247,6 +262,9 @@ let currentProjectPath = "";
 let currentProjectStorageMode = "working";
 let activeMediaWindowContentType = null;
 let bibleShowNowModeActive = false;
+let bibleLowerThirdOutputActive = false;
+let biblePreviewActiveMediaWindowSize = null;
+let biblePreviewMediaWindowSizePromise = null;
 const bibleDesignerState = {
   version: "KJV",
   reference: "",
@@ -260,6 +278,12 @@ const bibleDesignerState = {
   color: "#ffffff",
   backgroundColor: "#000000",
   backgroundPath: "",
+  lowerThirdColor: SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
+  lowerThirdChromaKeyColor: SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
+  look: SCRIPTURE_DEFAULT_LOOK,
+  lowerThirdSegments: [],
+  lowerThirdSegmentIndex: 0,
+  lowerThirdSourceText: "",
 };
 const projectScriptureOverrides = {
   fontFamily: "",
@@ -267,6 +291,8 @@ const projectScriptureOverrides = {
   color: "",
   backgroundColor: "",
   backgroundPath: "",
+  lowerThirdColor: "",
+  lowerThirdChromaKeyColor: "",
 };
 const bibleStyleDirtyState = {
   fontFamily: false,
@@ -274,6 +300,8 @@ const bibleStyleDirtyState = {
   color: false,
   backgroundColor: false,
   backgroundPath: false,
+  lowerThirdColor: false,
+  lowerThirdChromaKeyColor: false,
 };
 let lastShownBibleStyleOverrides = {};
 const bibleVerseSelection = {
@@ -1398,7 +1426,7 @@ function resetPreviewSurfaceToEmptyState() {
   playingMediaAudioOnly = false;
   localTimeStampUpdateIsRunning = false;
   mediaPlayerInputState.clear();
-  textNode.data = "";
+  setMediaCountdownText("");
   pendingCueVolume = null;
   cueVolumeDirty = false;
   setMediaCountdownOverlayVisible(false);
@@ -2621,13 +2649,18 @@ function getBibleDesignerStyle() {
   const sizeInput = document.getElementById("bibleFontSizeInput");
   const colorInput = document.getElementById("bibleTextColorInput");
   const backgroundInput = document.getElementById("bibleBackgroundColorInput");
+  const lowerThirdColorInput = document.getElementById("bibleLowerThirdTextColorInput");
+  const lowerThirdChromaKeyInput = document.getElementById("bibleLowerThirdChromaKeyInput");
   const fontSize = Number.parseInt(sizeInput?.value, 10);
   return {
-    fontFamily: fontInput?.value?.trim() || bibleDesignerState.fontFamily,
+    fontFamily: fontInput?.value || bibleDesignerState.fontFamily,
     fontSize: Number.isFinite(fontSize) ? Math.max(24, Math.min(160, fontSize)) : 64,
     color: colorInput?.value || bibleDesignerState.color,
     backgroundColor: backgroundInput?.value || bibleDesignerState.backgroundColor,
     backgroundPath: bibleDesignerState.backgroundPath || "",
+    lowerThirdColor: lowerThirdColorInput?.value || bibleDesignerState.lowerThirdColor,
+    lowerThirdChromaKeyColor:
+      lowerThirdChromaKeyInput?.value || bibleDesignerState.lowerThirdChromaKeyColor,
   };
 }
 
@@ -2647,6 +2680,15 @@ function bibleStyleSnapshot(entry = {}) {
   }
   if (typeof entry.backgroundPath === "string") {
     style.backgroundPath = entry.backgroundPath;
+  }
+  if (typeof entry.lowerThirdColor === "string" && entry.lowerThirdColor) {
+    style.lowerThirdColor = entry.lowerThirdColor;
+  }
+  if (
+    typeof entry.lowerThirdChromaKeyColor === "string" &&
+    entry.lowerThirdChromaKeyColor
+  ) {
+    style.lowerThirdChromaKeyColor = entry.lowerThirdChromaKeyColor;
   }
   return style;
 }
@@ -2674,35 +2716,460 @@ function currentBibleBackgroundVideoSync() {
   };
 }
 
-function fitBiblePreviewText(panel, text, reference, message) {
-  const bodyAnchor = panel?.querySelector(".bible-preview-body-anchor");
-  if (!panel || !text || !reference || !bodyAnchor) return;
-  text.style.fontSize = `${Math.max(24, Math.round(message.fontSize || SCRIPTURE_BODY_FONT_SIZE))}px`;
-  reference.style.fontSize = `${Math.max(14, Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE))}px`;
-  requestAnimationFrame(() => {
-    const bodyHeight = bodyAnchor.getBoundingClientRect().height || 0;
-    const gap = Math.max(12, Math.min(28, Math.round((message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE) * 0.45)));
-    reference.style.top = `calc(50% + ${Math.round(bodyHeight / 2 + gap)}px)`;
+function normalizeScriptureLook(value) {
+  return value === SCRIPTURE_LOOK_LOWER_THIRD
+    ? SCRIPTURE_LOOK_LOWER_THIRD
+    : SCRIPTURE_LOOK_FULLSCREEN;
+}
+
+function scriptureLowerThirdFontSize(fontSize) {
+  const base = Number.isFinite(fontSize) ? fontSize : SCRIPTURE_BODY_FONT_SIZE;
+  return Math.max(26, Math.min(72, Math.round(base * 0.68)));
+}
+
+function scriptureColorToRgb(value) {
+  const color = String(value || "").trim();
+  const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const hex = hexMatch[1];
+    if (hex.length === 3) {
+      return {
+        r: Number.parseInt(hex[0] + hex[0], 16),
+        g: Number.parseInt(hex[1] + hex[1], 16),
+        b: Number.parseInt(hex[2] + hex[2], 16),
+      };
+    }
+    return {
+      r: Number.parseInt(hex.slice(0, 2), 16),
+      g: Number.parseInt(hex.slice(2, 4), 16),
+      b: Number.parseInt(hex.slice(4, 6), 16),
+    };
+  }
+  const rgbMatch = color.match(
+    /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})(?:[\s,/]+[\d.]+)?\s*\)$/i,
+  );
+  if (!rgbMatch) return null;
+  return {
+    r: Math.max(0, Math.min(255, Number.parseInt(rgbMatch[1], 10))),
+    g: Math.max(0, Math.min(255, Number.parseInt(rgbMatch[2], 10))),
+    b: Math.max(0, Math.min(255, Number.parseInt(rgbMatch[3], 10))),
+  };
+}
+
+function scriptureRelativeLuminance({ r, g, b }) {
+  const channel = (value) => {
+    const normalized = value / 255;
+    return normalized <= 0.03928
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+function scriptureReferencePresentationForBackground(backgroundColor, options = {}) {
+  if (options.forceLight === true) {
+    return {
+      color: SCRIPTURE_REFERENCE_LIGHT_COLOR,
+      shadow: SCRIPTURE_REFERENCE_LIGHT_SHADOW,
+    };
+  }
+  const rgb = scriptureColorToRgb(backgroundColor);
+  if (!rgb) {
+    return {
+      color: SCRIPTURE_REFERENCE_LIGHT_COLOR,
+      shadow: SCRIPTURE_REFERENCE_LIGHT_SHADOW,
+    };
+  }
+  const isLightBackground =
+    scriptureRelativeLuminance(rgb) >= SCRIPTURE_REFERENCE_LIGHT_BACKGROUND_LUMINANCE;
+  return isLightBackground
+    ? {
+        color: SCRIPTURE_REFERENCE_DARK_COLOR,
+        shadow: SCRIPTURE_REFERENCE_DARK_SHADOW,
+      }
+    : {
+        color: SCRIPTURE_REFERENCE_LIGHT_COLOR,
+        shadow: SCRIPTURE_REFERENCE_LIGHT_SHADOW,
+      };
+}
+
+function normalizeLowerThirdSegmentText(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeLowerThirdSegments(segments) {
+  if (!Array.isArray(segments)) return [];
+  return segments
+    .map((segment) => {
+      const text =
+        typeof segment === "string"
+          ? segment
+          : typeof segment?.text === "string"
+            ? segment.text
+            : "";
+      return { text: normalizeLowerThirdSegmentText(text) };
+    })
+    .filter((segment) => segment.text.length > 0);
+}
+
+function clampLowerThirdSegmentIndex(index, segments) {
+  if (!Array.isArray(segments) || segments.length === 0) return 0;
+  const numericIndex = Number.isFinite(index) ? Math.trunc(index) : 0;
+  return Math.max(0, Math.min(segments.length - 1, numericIndex));
+}
+
+function fallbackLowerThirdSegments(text, maxChars = 82) {
+  const clean = normalizeLowerThirdSegmentText(text);
+  if (!clean) return [];
+  const words = clean.split(/\s+/);
+  const segments = [];
+  let current = "";
+  words.forEach((word) => {
+    const candidate = current ? `${current} ${word}` : word;
+    if (current && candidate.length > maxChars) {
+      segments.push({ text: current });
+      current = word;
+    } else {
+      current = candidate;
+    }
   });
+  if (current) segments.push({ text: current });
+  return segments;
 }
 
-function ensureBiblePreviewResizeFit(panel, text, reference) {
-  if (!panel || panel._emsBiblePreviewResizeFit) return;
-  panel._emsBiblePreviewResizeFit = true;
+function lowerThirdMeasureElements() {
+  if (!document?.body) return null;
+  let root = document.getElementById(LOWER_THIRD_MEASURE_ID);
+  if (!root) {
+    root = document.createElement("div");
+    root.id = LOWER_THIRD_MEASURE_ID;
+    root.className = "scripture-render scripture-render--lower-third scripture-render-measure";
+    root.innerHTML = `
+      <div class="scripture-render__box">
+        <div class="scripture-render__body"></div>
+        <div class="scripture-render__reference"></div>
+      </div>
+    `;
+    document.body.appendChild(root);
+  }
+  return {
+    root,
+    body: root.querySelector(".scripture-render__body"),
+    reference: root.querySelector(".scripture-render__reference"),
+  };
 }
 
-function buildBibleTextMessage(entry = bibleDesignerState) {
+function applyScriptureRenderVariables(el, message) {
+  if (!el) return;
+  const bodyFontSize = Math.max(
+    24,
+    Math.round(message.fontSize || SCRIPTURE_BODY_FONT_SIZE),
+  );
+  const referenceFontSize = Math.max(
+    14,
+    Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
+  );
+  el.style.setProperty("--scripture-font-size", `${bodyFontSize}px`);
+  el.style.setProperty(
+    "--scripture-lower-third-font-size",
+    `${scriptureLowerThirdFontSize(bodyFontSize)}px`,
+  );
+  el.style.setProperty("--scripture-reference-font-size", `${referenceFontSize}px`);
+  el.style.setProperty("--scripture-line-height", `${message.lineHeight || SCRIPTURE_LINE_HEIGHT}`);
+  el.style.setProperty("--scripture-font-weight", `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`);
+  el.style.setProperty("--scripture-color", message.color || "#ffffff");
+  const referencePresentation = scriptureReferencePresentationForBackground(
+    message.backgroundColor,
+    {
+      forceLight:
+        normalizeScriptureLook(message.look) === SCRIPTURE_LOOK_LOWER_THIRD ||
+        Boolean(message.backgroundImage || message.backgroundVideo || message.backgroundPath),
+    },
+  );
+  el.style.setProperty(
+    "--scripture-reference-color",
+    message.referenceColor || referencePresentation.color,
+  );
+  el.style.setProperty(
+    "--scripture-reference-shadow",
+    message.referenceTextShadow || referencePresentation.shadow,
+  );
+  el.style.fontFamily = message.fontFamily || SCRIPTURE_FONT_FAMILY;
+}
+
+function lowerThirdSegmentFits(text, style, width) {
+  const elements = lowerThirdMeasureElements();
+  if (!elements?.root || !elements.body) return true;
+  const message = {
+    fontFamily: style.fontFamily || SCRIPTURE_FONT_FAMILY,
+    fontSize: Number.isFinite(style.fontSize) ? style.fontSize : SCRIPTURE_BODY_FONT_SIZE,
+    referenceFontSize: SCRIPTURE_REFERENCE_FONT_SIZE,
+    fontWeight: SCRIPTURE_FONT_WEIGHT,
+    lineHeight: SCRIPTURE_LINE_HEIGHT,
+    color: style.color || "#ffffff",
+  };
+  elements.root.style.width = `${Math.max(360, Math.round(width || window.innerWidth || 1280))}px`;
+  elements.root.style.height = `${Math.max(220, Math.round((window.innerHeight || 720) * 0.35))}px`;
+  applyScriptureRenderVariables(elements.root, message);
+  elements.body.textContent = normalizeLowerThirdSegmentText(text) || " ";
+  if (elements.reference) elements.reference.textContent = "";
+  const fontSize = scriptureLowerThirdFontSize(message.fontSize);
+  const maxHeight = fontSize * 1.18 * LOWER_THIRD_MAX_LINES + 4;
+  return elements.body.scrollHeight <= maxHeight;
+}
+
+function buildMeasuredLowerThirdSegments(text, style = {}, panel = null) {
+  const clean = normalizeLowerThirdSegmentText(text);
+  if (!clean) return [];
+  const width =
+    panel?.getBoundingClientRect?.().width ||
+    document.getElementById("biblePreviewPanel")?.getBoundingClientRect?.().width ||
+    window.innerWidth ||
+    1280;
+  const words = clean.split(/\s+/);
+  const segments = [];
+  let current = "";
+  words.forEach((word) => {
+    const candidate = current ? `${current} ${word}` : word;
+    if (current && !lowerThirdSegmentFits(candidate, style, width)) {
+      segments.push({ text: current });
+      current = word;
+    } else {
+      current = candidate;
+    }
+  });
+  if (current) segments.push({ text: current });
+  return segments.length ? segments : fallbackLowerThirdSegments(clean);
+}
+
+function bibleLowerThirdMeasurePanel() {
+  return (
+    document.getElementById("bibleAudiencePreviewShell") ||
+    document.getElementById("biblePreviewPanel")
+  );
+}
+
+function resolveBibleLowerThirdState(entry, opts = {}) {
+  if (!entry || typeof entry !== "object") {
+    return { segments: [], index: 0, text: "" };
+  }
+  const sourceText = String(entry.text || "");
+  let segments = normalizeLowerThirdSegments(entry.lowerThirdSegments);
+  const sourceChanged = entry.lowerThirdSourceText !== sourceText;
+  const needsRebuild =
+    opts.rebuild === true ||
+    segments.length === 0 ||
+    sourceChanged;
+  if (needsRebuild) {
+    segments = buildMeasuredLowerThirdSegments(sourceText, entry, opts.panel);
+    entry.lowerThirdSegments = segments;
+    entry.lowerThirdSourceText = sourceText;
+    if (sourceChanged) {
+      entry.lowerThirdSegmentIndex = 0;
+    }
+  }
+  const index = clampLowerThirdSegmentIndex(entry.lowerThirdSegmentIndex, segments);
+  entry.lowerThirdSegmentIndex = index;
+  return {
+    segments,
+    index,
+    text: segments[index]?.text || normalizeLowerThirdSegmentText(sourceText),
+  };
+}
+
+function applyScriptureRenderToPreview(render, bodyEl, referenceEl, message) {
+  if (!render || !bodyEl || !referenceEl) return;
+  const look = normalizeScriptureLook(message.look);
+  render.classList.toggle("scripture-render--fullscreen", look === SCRIPTURE_LOOK_FULLSCREEN);
+  render.classList.toggle("scripture-render--lower-third", look === SCRIPTURE_LOOK_LOWER_THIRD);
+  render.dataset.scriptureLook = look;
+  applyScriptureRenderVariables(render, message);
+  bodyEl.textContent = message.bodyText || "No verse loaded";
+  referenceEl.textContent = message.referenceText || "";
+  referenceEl.hidden = !message.referenceText;
+}
+
+function isBibleLowerThirdFeatureEnabled() {
+  return BIBLE_LOWER_THIRD_FEATURE_ENABLED === true;
+}
+
+function syncLowerThirdFeatureAvailability() {
+  const enabled = isBibleLowerThirdFeatureEnabled();
+  document.querySelectorAll("[data-lower-third-feature]").forEach((element) => {
+    element.hidden = !enabled;
+    element.setAttribute("aria-hidden", enabled ? "false" : "true");
+    element.querySelectorAll("button, input, select, textarea").forEach((control) => {
+      if (!enabled) {
+        if (!control.dataset.lowerThirdWasDisabled) {
+          control.dataset.lowerThirdWasDisabled = control.disabled ? "true" : "false";
+        }
+        control.disabled = true;
+        return;
+      }
+      if (control.dataset.lowerThirdWasDisabled) {
+        control.disabled = control.dataset.lowerThirdWasDisabled === "true";
+        delete control.dataset.lowerThirdWasDisabled;
+      }
+    });
+  });
+  const lowerThirdKeyColorField = document.querySelector("[data-lower-third-key-color]");
+  if (lowerThirdKeyColorField) {
+    lowerThirdKeyColorField.hidden = !enabled;
+    lowerThirdKeyColorField.setAttribute("aria-hidden", enabled ? "false" : "true");
+    lowerThirdKeyColorField
+      .querySelectorAll("button, input, select, textarea")
+      .forEach((control) => {
+        control.disabled = !enabled;
+      });
+  }
+
+  document
+    .getElementById("biblePreviewPanel")
+    ?.classList.toggle("bible-preview-panel--audience-only", !enabled);
+  document
+    .querySelector(".bible-editor-fields")
+    ?.classList.toggle("bible-editor-fields--audience-only", !enabled);
+
+  if (!enabled) {
+    const lowerThirdDisplaySelect = document.getElementById("lowerThirdDspSelct");
+    if (lowerThirdDisplaySelect) lowerThirdDisplaySelect.value = "";
+    if (bibleLowerThirdOutputActive) void closeBibleLowerThirdOutput();
+  }
+}
+
+function normalizeBiblePreviewOutputSize(value) {
+  const width = Number.parseInt(value?.width || "", 10);
+  const height = Number.parseInt(value?.height || "", 10);
+  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+    return { width, height };
+  }
+  return null;
+}
+
+function selectedBiblePreviewOutputSize(selectId = "dspSelct") {
+  if (selectId === "dspSelct") {
+    const mediaWindowSize = normalizeBiblePreviewOutputSize(biblePreviewActiveMediaWindowSize);
+    if (mediaWindowSize) return mediaWindowSize;
+  }
+  const select = document.getElementById(selectId);
+  const option = select?.selectedOptions?.[0];
+  const width = Number.parseInt(option?.dataset?.displayWidth || "", 10);
+  const height = Number.parseInt(option?.dataset?.displayHeight || "", 10);
+  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+    return { width, height };
+  }
+  return {
+    width: BIBLE_PREVIEW_DEFAULT_OUTPUT_WIDTH,
+    height: BIBLE_PREVIEW_DEFAULT_OUTPUT_HEIGHT,
+  };
+}
+
+async function refreshBiblePreviewMediaWindowSize() {
+  if (biblePreviewMediaWindowSizePromise) {
+    return biblePreviewMediaWindowSizePromise;
+  }
+  biblePreviewMediaWindowSizePromise = invoke("get-media-window-bounds")
+    .then((bounds) => {
+      biblePreviewActiveMediaWindowSize = normalizeBiblePreviewOutputSize(bounds);
+      syncBiblePreviewOutputScale();
+      return biblePreviewActiveMediaWindowSize;
+    })
+    .catch((error) => {
+      console.error("Failed to read media window bounds:", error);
+      biblePreviewActiveMediaWindowSize = null;
+      syncBiblePreviewOutputScale();
+      return null;
+    })
+    .finally(() => {
+      biblePreviewMediaWindowSizePromise = null;
+    });
+  return biblePreviewMediaWindowSizePromise;
+}
+
+function queueBiblePreviewMediaWindowSizeRefresh(delayMs = 0) {
+  window.setTimeout(() => {
+    void refreshBiblePreviewMediaWindowSize();
+  }, Math.max(0, delayMs));
+}
+
+function applyBiblePreviewOutputScale(surface, outputSize) {
+  if (!surface || !outputSize) return;
+  const width = Math.max(1, Math.round(outputSize.width));
+  const height = Math.max(1, Math.round(outputSize.height));
+  surface.style.setProperty("--bible-preview-output-width", `${width}px`);
+  surface.style.setProperty("--bible-preview-output-height", `${height}px`);
+  const rect = surface.getBoundingClientRect();
+  const scale =
+    rect.width > 0 && rect.height > 0
+      ? Math.min(rect.width / width, rect.height / height)
+      : 1;
+  surface.style.setProperty(
+    "--bible-preview-output-scale",
+    `${Math.max(0.01, scale)}`,
+  );
+}
+
+function syncBiblePreviewOutputScale() {
+  applyBiblePreviewOutputScale(
+    document.getElementById("bibleAudiencePreviewShell"),
+    selectedBiblePreviewOutputSize("dspSelct"),
+  );
+  if (isBibleLowerThirdFeatureEnabled()) {
+    applyBiblePreviewOutputScale(
+      document.getElementById("bibleLowerThirdPreviewShell"),
+      selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
+    );
+  }
+}
+
+function installBiblePreviewScaleObserver() {
+  const panel = document.getElementById("biblePreviewPanel");
+  if (!panel || panel.dataset.previewScaleObserverBound === "1") return;
+  panel.dataset.previewScaleObserverBound = "1";
+  if (typeof ResizeObserver === "function") {
+    const observer = new ResizeObserver(() => syncBiblePreviewOutputScale());
+    observer.observe(panel);
+    document.getElementById("bibleAudiencePreviewShell") &&
+      observer.observe(document.getElementById("bibleAudiencePreviewShell"));
+    document.getElementById("bibleLowerThirdPreviewShell") &&
+      observer.observe(document.getElementById("bibleLowerThirdPreviewShell"));
+    panel._biblePreviewScaleObserver = observer;
+  } else {
+    window.addEventListener("resize", syncBiblePreviewOutputScale);
+  }
+}
+
+function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
   const style = {
     fontFamily: entry.fontFamily || bibleDesignerState.fontFamily,
     fontSize: Number.isFinite(entry.fontSize) ? entry.fontSize : bibleDesignerState.fontSize,
     color: entry.color || bibleDesignerState.color,
     backgroundColor: entry.backgroundColor || bibleDesignerState.backgroundColor,
     backgroundPath: entry.backgroundPath || "",
+    lowerThirdColor:
+      entry.lowerThirdColor ||
+      bibleDesignerState.lowerThirdColor ||
+      SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
+    lowerThirdChromaKeyColor:
+      entry.lowerThirdChromaKeyColor ||
+      bibleDesignerState.lowerThirdChromaKeyColor ||
+      SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
   };
+  const look = normalizeScriptureLook(opts.look || entry.look || bibleDesignerState.look);
+  const isLowerThird = look === SCRIPTURE_LOOK_LOWER_THIRD;
+  const lowerThird = resolveBibleLowerThirdState(entry, {
+    rebuild: opts.rebuildLowerThird === true,
+    panel: opts.measurePanel || bibleLowerThirdMeasurePanel(),
+  });
   const backgroundUrl = style.backgroundPath ? pathToMediaUrl(style.backgroundPath) : "";
-  const backgroundVideo = /\.(mp4|m4v|mov|mkv|webm)$/i.test(style.backgroundPath)
+  const backgroundVideo = !isLowerThird && /\.(mp4|m4v|mov|mkv|webm)$/i.test(style.backgroundPath)
     ? backgroundUrl
     : "";
+  const fullBodyText = entry.text || "";
+  const referencePresentation = scriptureReferencePresentationForBackground(
+    style.backgroundColor,
+    { forceLight: isLowerThird || Boolean(style.backgroundPath) },
+  );
   return {
     text: `${entry.text || ""}\n\n${entry.reference || ""} ${entry.version || ""}`.trim(),
     reference: entry.reference || "",
@@ -2712,44 +3179,86 @@ function buildBibleTextMessage(entry = bibleDesignerState) {
     verse: Number.isFinite(entry.verse) ? entry.verse : 0,
     verseEnd: Number.isFinite(entry.verseEnd) ? entry.verseEnd : 0,
     ...style,
-    backgroundImage: imageRegex.test(style.backgroundPath) ? backgroundUrl : "",
+    color: isLowerThird ? style.lowerThirdColor : style.color,
+    backgroundColor: isLowerThird ? style.lowerThirdChromaKeyColor : style.backgroundColor,
+    backgroundPath: isLowerThird ? "" : style.backgroundPath,
+    backgroundImage: !isLowerThird && imageRegex.test(style.backgroundPath) ? backgroundUrl : "",
     backgroundVideo,
     backgroundVideoSync: backgroundVideo ? currentBibleBackgroundVideoSync() : null,
-    bodyText: entry.text || "",
+    chromaKeyColor: style.lowerThirdChromaKeyColor,
     referenceText: `${entry.reference || ""} ${entry.version || ""}`.trim(),
+    referenceColor: referencePresentation.color,
+    referenceTextShadow: referencePresentation.shadow,
     referenceFontSize: SCRIPTURE_REFERENCE_FONT_SIZE,
     labelFontSize: SCRIPTURE_LABEL_FONT_SIZE,
     headingFontSize: SCRIPTURE_HEADING_FONT_SIZE,
     fontWeight: SCRIPTURE_FONT_WEIGHT,
     lineHeight: SCRIPTURE_LINE_HEIGHT,
+    look,
+    fullBodyText,
+    lowerThirdSegments: lowerThird.segments,
+    lowerThirdSegmentIndex: lowerThird.index,
+    lowerThirdSegmentCount: lowerThird.segments.length,
+    bodyText: isLowerThird ? lowerThird.text : fullBodyText,
     position: { vertical: "center", horizontal: "center" },
   };
 }
 
 function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
   if (opts.show !== false) showBibleWorkspace();
+  const lowerThirdEnabled = isBibleLowerThirdFeatureEnabled();
   const panel = document.getElementById("biblePreviewPanel");
-  const reference = document.getElementById("biblePreviewReference");
-  const text = document.getElementById("biblePreviewText");
+  const audienceShell = document.getElementById("bibleAudiencePreviewShell");
+  const audienceRender = document.getElementById("biblePreviewRender");
+  const audienceReference = document.getElementById("biblePreviewReference");
+  const audienceText = document.getElementById("biblePreviewText");
+  const lowerThirdRender = document.getElementById("bibleLowerThirdPreviewRender");
+  const lowerThirdReference = document.getElementById("bibleLowerThirdPreviewReference");
+  const lowerThirdText = document.getElementById("bibleLowerThirdPreviewText");
   const title = document.getElementById("bibleWorkspaceTitle");
   const backgroundVideo = document.getElementById("biblePreviewBackgroundVideo");
-  if (!panel || !reference || !text) return;
+  if (
+    !panel ||
+    !audienceShell ||
+    !audienceRender ||
+    !audienceReference ||
+    !audienceText ||
+    (lowerThirdEnabled && (!lowerThirdRender || !lowerThirdReference || !lowerThirdText))
+  ) {
+    return;
+  }
+  syncLowerThirdFeatureAvailability();
   const resolvedEntry = bibleEntryWithLookupText(entry);
   if (entry === bibleDesignerState && resolvedEntry !== entry) {
     Object.assign(bibleDesignerState, resolvedEntry);
   }
-  const message = buildBibleTextMessage(resolvedEntry);
+  const previewEntry = entry === bibleDesignerState ? bibleDesignerState : resolvedEntry;
+  const audienceMessage = buildBibleTextMessage(previewEntry, {
+    look: SCRIPTURE_LOOK_FULLSCREEN,
+  });
+  const lowerThirdMessage = lowerThirdEnabled
+    ? buildBibleTextMessage(previewEntry, {
+        look: SCRIPTURE_LOOK_LOWER_THIRD,
+      })
+    : null;
   panel.hidden = false;
-  panel.style.backgroundColor = message.backgroundColor;
-  if (message.backgroundImage) {
-    panel.style.backgroundImage = `url('${message.backgroundImage}')`;
+  audienceShell.style.backgroundColor = audienceMessage.backgroundColor;
+  const lowerThirdShell = document.getElementById("bibleLowerThirdPreviewShell");
+  if (lowerThirdShell && lowerThirdMessage) {
+    lowerThirdShell.style.backgroundColor =
+      lowerThirdMessage.chromaKeyColor || SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR;
+  }
+  queueBiblePreviewMediaWindowSizeRefresh();
+  syncBiblePreviewOutputScale();
+  if (audienceMessage.backgroundImage) {
+    audienceShell.style.backgroundImage = `url('${audienceMessage.backgroundImage}')`;
   } else {
-    panel.style.backgroundImage = "";
+    audienceShell.style.backgroundImage = "";
   }
   if (backgroundVideo) {
-    if (message.backgroundVideo) {
-      if (backgroundVideo.src !== message.backgroundVideo) {
-        backgroundVideo.src = message.backgroundVideo;
+    if (audienceMessage.backgroundVideo) {
+      if (backgroundVideo.src !== audienceMessage.backgroundVideo) {
+        backgroundVideo.src = audienceMessage.backgroundVideo;
       }
       backgroundVideo.hidden = false;
       backgroundVideo.muted = true;
@@ -2763,24 +3272,264 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
       backgroundVideo.hidden = true;
     }
   }
-  reference.textContent = `${message.reference} ${message.version}`.trim();
-  text.textContent = resolvedEntry.text || "No verse loaded";
-  if (title) title.textContent = `${message.reference || "Bible"} ${message.version}`.trim();
-  text.style.fontFamily = message.fontFamily;
-  text.style.fontWeight = `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`;
-  text.style.lineHeight = `${message.lineHeight || SCRIPTURE_LINE_HEIGHT}`;
-  text.style.color = message.color;
-  reference.style.fontFamily = message.fontFamily;
-  reference.style.fontWeight = `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`;
-  syncBibleBackgroundLabel(message.backgroundPath);
-  ensureBiblePreviewResizeFit(panel, text, reference);
-  fitBiblePreviewText(panel, text, reference, message);
+  if (title) {
+    title.textContent = `${audienceMessage.reference || "Bible"} ${audienceMessage.version}`.trim();
+  }
+  applyScriptureRenderToPreview(
+    audienceRender,
+    audienceText,
+    audienceReference,
+    audienceMessage,
+  );
+  if (lowerThirdEnabled && lowerThirdMessage) {
+    applyScriptureRenderToPreview(
+      lowerThirdRender,
+      lowerThirdText,
+      lowerThirdReference,
+      lowerThirdMessage,
+    );
+  }
+  syncBibleBackgroundLabel(audienceMessage.backgroundPath);
+  syncBibleLookControls(lowerThirdMessage || audienceMessage);
+}
+
+function syncBibleLookControls(message) {
+  const lookSelect = document.getElementById("bibleLookSelect");
+  const lowerThirdControls = document.getElementById("bibleLowerThirdControls");
+  const status = document.getElementById("bibleLowerThirdStatus");
+  const prevButton = document.getElementById("bibleLowerThirdPrevBtn");
+  const nextButton = document.getElementById("bibleLowerThirdNextBtn");
+  if (!isBibleLowerThirdFeatureEnabled()) {
+    if (lookSelect) lookSelect.value = SCRIPTURE_LOOK_FULLSCREEN;
+    if (lowerThirdControls) lowerThirdControls.hidden = true;
+    if (status) status.textContent = "";
+    if (prevButton) prevButton.disabled = true;
+    if (nextButton) nextButton.disabled = true;
+    return;
+  }
+  const controlMessage =
+    message || buildBibleTextMessage(bibleDesignerState, { look: SCRIPTURE_LOOK_LOWER_THIRD });
+  const look = normalizeScriptureLook(bibleDesignerState.look || controlMessage.look);
+  const count = Number.isFinite(controlMessage.lowerThirdSegmentCount)
+    ? controlMessage.lowerThirdSegmentCount
+    : normalizeLowerThirdSegments(bibleDesignerState.lowerThirdSegments).length;
+  const segmentCount = Math.max(0, Math.trunc(count));
+  const rawIndex = Number.isFinite(controlMessage.lowerThirdSegmentIndex)
+    ? Math.trunc(controlMessage.lowerThirdSegmentIndex)
+    : 0;
+  const index = segmentCount > 0
+    ? Math.max(0, Math.min(segmentCount - 1, rawIndex))
+    : 0;
+  if (lookSelect) lookSelect.value = look;
+  if (lowerThirdControls) lowerThirdControls.hidden = false;
+  if (status) {
+    status.textContent =
+      segmentCount > 0 && index >= segmentCount - 1
+        ? `Segment ${index + 1} of ${segmentCount}. Next advances text.`
+        : `Segment ${segmentCount > 0 ? index + 1 : 0} of ${segmentCount}`;
+  }
+  if (prevButton) prevButton.disabled = index <= 0;
+  if (nextButton) nextButton.disabled = segmentCount <= 0;
+}
+
+function commitBibleDesignerRenderState({ rebuildLowerThird = false } = {}) {
+  syncBibleStateFromControls();
+  resolveBibleLowerThirdState(bibleDesignerState, {
+    rebuild: rebuildLowerThird,
+    panel: bibleLowerThirdMeasurePanel(),
+  });
+  applyBiblePreview(bibleDesignerState, { show: false });
+  if (syncBibleDesignerStateToPreviewedQueueItem()) {
+    saveMediaFile();
+  }
+  syncActiveScheduledBiblePresentation();
+  syncShowNowBiblePresentation();
+}
+
+function setBibleLowerThirdSegmentIndex(index) {
+  if (!isBibleLowerThirdFeatureEnabled()) return false;
+  syncBibleStateFromControls();
+  const resolvedEntry = bibleEntryWithLookupText(bibleDesignerState);
+  if (resolvedEntry && resolvedEntry !== bibleDesignerState) {
+    Object.assign(bibleDesignerState, resolvedEntry);
+  }
+  const lowerThird = resolveBibleLowerThirdState(bibleDesignerState, {
+    panel: bibleLowerThirdMeasurePanel(),
+  });
+  const nextIndex = clampLowerThirdSegmentIndex(index, lowerThird.segments);
+  if (nextIndex === bibleDesignerState.lowerThirdSegmentIndex) {
+    syncBibleLookControls(buildBibleTextMessage(bibleDesignerState));
+    return false;
+  }
+  bibleDesignerState.lowerThirdSegmentIndex = nextIndex;
+  commitBibleDesignerRenderState();
+  return true;
+}
+
+function changeBibleLowerThirdSegment(delta) {
+  const current = Number.isFinite(bibleDesignerState.lowerThirdSegmentIndex)
+    ? bibleDesignerState.lowerThirdSegmentIndex
+    : 0;
+  return setBibleLowerThirdSegmentIndex(current + delta);
+}
+
+function findNextScheduledBibleTextIndex(startIndex = currentQueueIndex) {
+  const from = Number.isFinite(startIndex) ? Math.trunc(startIndex) + 1 : 0;
+  for (let index = Math.max(0, from); index < mediaQueue.length; index += 1) {
+    if (isQueueItemBible(mediaQueue[index])) return index;
+  }
+  return -1;
+}
+
+function isScheduledBiblePresentationActive() {
+  return Boolean(
+    isQueuePlaying &&
+      currentQueueIndex >= 0 &&
+      currentQueueIndex < mediaQueue.length &&
+      isQueueItemBible(mediaQueue[currentQueueIndex]) &&
+      ((isActiveMediaWindow() && activeMediaWindowContentType === "bible") ||
+        (isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive)),
+  );
+}
+
+function nextBibleVerseEntryFromDesigner() {
+  syncBibleStateFromControls();
+  const resolvedEntry = bibleEntryWithLookupText(bibleDesignerState);
+  if (resolvedEntry && resolvedEntry !== bibleDesignerState) {
+    Object.assign(bibleDesignerState, resolvedEntry);
+  }
+
+  const parsed = parseScriptureReference(bibleDesignerState.reference || "");
+  const book = bibleDesignerState.book || parsed.book;
+  const chapter = Number.isFinite(bibleDesignerState.chapter)
+    ? bibleDesignerState.chapter
+    : parsed.chapter;
+  if (!book || !Number.isFinite(chapter) || chapter < 1) return null;
+
+  let textData = null;
+  try {
+    textData = bibleAPI.getText(bibleDesignerState.version, book, String(chapter));
+  } catch (err) {
+    console.error("Failed to load next Bible verse:", err);
+    return null;
+  }
+  const verses = Array.isArray(textData?.verses) ? textData.verses : [];
+  const selectedVerses = selectedBibleVerseNumbers();
+  const selectedEnd = selectedVerses.length ? selectedVerses[selectedVerses.length - 1] : 0;
+  const entryEnd =
+    Number.isFinite(bibleDesignerState.verseEnd) && bibleDesignerState.verseEnd > 0
+      ? bibleDesignerState.verseEnd
+      : Number.isFinite(bibleDesignerState.verse) && bibleDesignerState.verse > 0
+        ? bibleDesignerState.verse
+        : 0;
+  const currentVerse = Math.max(selectedEnd, entryEnd);
+  const nextVerse = currentVerse > 0 ? currentVerse + 1 : 1;
+  const text = verses[nextVerse - 1];
+  if (!text) return null;
+
+  return {
+    ...bibleDesignerState,
+    ...getBibleDesignerStyle(),
+    book,
+    chapter,
+    reference: `${book} ${chapter}:${nextVerse}`,
+    text,
+    verse: nextVerse,
+    verseEnd: 0,
+    selectedVerses: [nextVerse],
+    lowerThirdSegments: [],
+    lowerThirdSegmentIndex: 0,
+    lowerThirdSourceText: "",
+  };
+}
+
+function advanceBibleDesignerToNextVerse() {
+  const nextEntry = nextBibleVerseEntryFromDesigner();
+  if (!nextEntry) {
+    showGnomeToast("End of chapter");
+    return false;
+  }
+  Object.assign(bibleDesignerState, nextEntry);
+  bibleVerseSelection.verses.clear();
+  bibleVerseSelection.verses.add(nextEntry.verse);
+  bibleVerseSelection.anchor = nextEntry.verse;
+  syncBibleSelectorsFromState();
+  renderBibleVerseList();
+  applyBiblePreview(bibleDesignerState, { show: false });
+  window.requestAnimationFrame(scrollBibleViewerToCurrentVerse);
+  if (syncBibleDesignerStateToPreviewedQueueItem()) {
+    saveMediaFile();
+  }
+  syncActiveScheduledBiblePresentation();
+  syncShowNowBiblePresentation();
+  return true;
+}
+
+async function advanceToNextScheduledBibleText() {
+  const nextIndex = findNextScheduledBibleTextIndex(currentQueueIndex);
+  if (nextIndex < 0) {
+    showGnomeToast("No next scheduled Bible text");
+    return false;
+  }
+  const nextEntry = resolvedBibleEntryForItem(mediaQueue[nextIndex]);
+  mediaQueue[nextIndex] = {
+    ...mediaQueue[nextIndex],
+    path: bibleQueuePath(nextEntry.reference, nextEntry.version),
+    name: `${nextEntry.reference} ${nextEntry.version}`.trim(),
+    type: "bible",
+    bible: {
+      ...nextEntry,
+      lowerThirdSegmentIndex: 0,
+    },
+  };
+  renderQueue();
+  saveMediaFile();
+  await switchQueueItemLiveWithConfirmation(nextIndex);
+  return true;
+}
+
+async function advanceBibleLowerThirdCursor() {
+  if (!isBibleLowerThirdFeatureEnabled()) return false;
+  syncBibleStateFromControls();
+  const resolvedEntry = bibleEntryWithLookupText(bibleDesignerState);
+  if (resolvedEntry && resolvedEntry !== bibleDesignerState) {
+    Object.assign(bibleDesignerState, resolvedEntry);
+  }
+  const lowerThird = resolveBibleLowerThirdState(bibleDesignerState, {
+    panel: bibleLowerThirdMeasurePanel(),
+  });
+  if (!lowerThird.segments.length) {
+    syncBibleLookControls(buildBibleTextMessage(bibleDesignerState, {
+      look: SCRIPTURE_LOOK_LOWER_THIRD,
+    }));
+    return false;
+  }
+  if (lowerThird.index < lowerThird.segments.length - 1) {
+    return changeBibleLowerThirdSegment(1);
+  }
+  if (isScheduledBiblePresentationActive()) {
+    return advanceToNextScheduledBibleText();
+  }
+  return advanceBibleDesignerToNextVerse();
+}
+
+function rebuildBibleLowerThirdSegments() {
+  if (!isBibleLowerThirdFeatureEnabled()) return false;
+  syncBibleStateFromControls();
+  const resolvedEntry = bibleEntryWithLookupText(bibleDesignerState);
+  if (resolvedEntry && resolvedEntry !== bibleDesignerState) {
+    Object.assign(bibleDesignerState, resolvedEntry);
+  }
+  bibleDesignerState.lowerThirdSegmentIndex = 0;
+  commitBibleDesignerRenderState({ rebuildLowerThird: true });
+  return true;
 }
 
 function showBibleWorkspace() {
   const workspace = document.getElementById("bibleWorkspace");
   const button = document.getElementById("openBibleWorkspaceBtn");
   if (!workspace) return;
+  syncLowerThirdFeatureAvailability();
   workspace.hidden = false;
   button?.setAttribute("data-active", "true");
   document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
@@ -3000,7 +3749,9 @@ function bibleEntryWithLookupText(entry = bibleDesignerState) {
 function syncBibleStateFromControls() {
   const versionSelect = document.getElementById("bibleVersionSelect");
   const referenceInput = document.getElementById("bibleReferenceInput");
+  const lookSelect = document.getElementById("bibleLookSelect");
   bibleDesignerState.version = versionSelect?.value || bibleDesignerState.version;
+  bibleDesignerState.look = normalizeScriptureLook(lookSelect?.value || bibleDesignerState.look);
   const resolvedReference = normalizeBibleReferenceInput(
     referenceInput?.value || bibleDesignerState.reference,
   );
@@ -3206,7 +3957,95 @@ function currentBibleTextOnlyEntry() {
 function sendBibleTextToOutput(entry = bibleDesignerState) {
   const resolvedEntry = bibleEntryWithLookupText(entry);
   lastShownBibleStyleOverrides = bibleStyleSnapshot(resolvedEntry);
-  send("update-text", buildBibleTextMessage(resolvedEntry));
+  send("update-text", buildBibleTextMessage(resolvedEntry, {
+    look: SCRIPTURE_LOOK_FULLSCREEN,
+  }));
+}
+
+function selectedDisplayIndexFromSelect(id) {
+  const select = document.getElementById(id);
+  if (!select || select.value === "") return null;
+  const index = Number.parseInt(select.value, 10);
+  return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
+function hasAudienceOutputSelected() {
+  const selectId = currentMode === STREAMPLAYER ? "dspSelctStreams" : "dspSelct";
+  return selectedDisplayIndexFromSelect(selectId) !== null;
+}
+
+function hasLowerThirdOutputSelected() {
+  if (!isBibleLowerThirdFeatureEnabled()) return false;
+  return selectedDisplayIndexFromSelect("lowerThirdDspSelct") !== null;
+}
+
+function buildBibleLowerThirdOutputMessage(entry = bibleDesignerState) {
+  return {
+    ...buildBibleTextMessage(entry, { look: SCRIPTURE_LOOK_LOWER_THIRD }),
+    outputRole: "lower-third",
+    backgroundImage: "",
+    backgroundVideo: "",
+    backgroundPath: "",
+  };
+}
+
+function sendBibleLowerThirdTextToOutput(entry = bibleDesignerState) {
+  if (!isBibleLowerThirdFeatureEnabled()) return;
+  send("update-lower-third-text", buildBibleLowerThirdOutputMessage(entry));
+}
+
+async function closeBibleLowerThirdOutput() {
+  bibleLowerThirdOutputActive = false;
+  try {
+    return await invoke("close-lower-third-window-now");
+  } catch (err) {
+    console.error("Failed to close lower third output:", err);
+    return false;
+  }
+}
+
+async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
+  if (!isBibleLowerThirdFeatureEnabled()) {
+    await closeBibleLowerThirdOutput();
+    return false;
+  }
+  const displayIndex = selectedDisplayIndexFromSelect("lowerThirdDspSelct");
+  if (displayIndex === null) {
+    await closeBibleLowerThirdOutput();
+    return false;
+  }
+  const message = buildBibleLowerThirdOutputMessage(entry);
+  const windowOptions = {
+    backgroundColor: message.chromaKeyColor || SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
+    webPreferences: {
+      v8CacheOptions: "bypassHeatCheckAndEagerCompile",
+      contextIsolation: true,
+      sandbox: true,
+      enableWebSQL: false,
+      webgl: false,
+      skipTaskbar: true,
+      additionalArguments: [
+        "__mediafile-ems=" + encodeURIComponent(bibleQueuePath(entry.reference, entry.version)),
+        "__isText",
+        "__lowerThirdOutput",
+      ],
+      preload: `${__dirname}/media_preload.min.js`,
+      devTools: true,
+    },
+  };
+  try {
+    const windowId = await invoke("create-lower-third-window", windowOptions, displayIndex);
+    bibleLowerThirdOutputActive = Boolean(windowId);
+    if (bibleLowerThirdOutputActive) {
+      window.setTimeout(() => sendBibleLowerThirdTextToOutput(entry), 100);
+    }
+    return bibleLowerThirdOutputActive;
+  } catch (err) {
+    console.error("Failed to create lower third output:", err);
+    showGnomeToast("Failed to open lower third output");
+    bibleLowerThirdOutputActive = false;
+    return false;
+  }
 }
 
 function normalizeProjectScriptureOverrides(overrides = {}) {
@@ -3217,6 +4056,8 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
       color: "",
       backgroundColor: "",
       backgroundPath: "",
+      lowerThirdColor: "",
+      lowerThirdChromaKeyColor: "",
     };
   }
   return {
@@ -3230,6 +4071,12 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
       typeof overrides.backgroundColor === "string" ? overrides.backgroundColor : "",
     backgroundPath:
       typeof overrides.backgroundPath === "string" ? overrides.backgroundPath : "",
+    lowerThirdColor:
+      typeof overrides.lowerThirdColor === "string" ? overrides.lowerThirdColor : "",
+    lowerThirdChromaKeyColor:
+      typeof overrides.lowerThirdChromaKeyColor === "string"
+        ? overrides.lowerThirdChromaKeyColor
+        : "",
   };
 }
 
@@ -3240,7 +4087,9 @@ function projectScriptureTextFromOverrides(overrides = projectScriptureOverrides
     !Number.isFinite(normalized.fontSize) &&
     !normalized.color &&
     !normalized.backgroundColor &&
-    !normalized.backgroundPath
+    !normalized.backgroundPath &&
+    !normalized.lowerThirdColor &&
+    !normalized.lowerThirdChromaKeyColor
   ) {
     return undefined;
   }
@@ -3264,6 +4113,8 @@ function projectScriptureTextFromOverrides(overrides = projectScriptureOverrides
       textColor: normalized.color || undefined,
       backgroundColor: normalized.backgroundColor || undefined,
       backgroundPath: normalized.backgroundPath || "",
+      lowerThirdTextColor: normalized.lowerThirdColor || undefined,
+      lowerThirdChromaKeyColor: normalized.lowerThirdChromaKeyColor || undefined,
     },
   };
 }
@@ -3312,11 +4163,19 @@ function overridesFromProjectScriptureText(projectScriptureText = {}) {
       typeof presentation.backgroundPath === "string"
         ? presentation.backgroundPath
         : "",
+    lowerThirdColor:
+      typeof presentation.lowerThirdTextColor === "string"
+        ? presentation.lowerThirdTextColor
+        : "",
+    lowerThirdChromaKeyColor:
+      typeof presentation.lowerThirdChromaKeyColor === "string"
+        ? presentation.lowerThirdChromaKeyColor
+        : "",
   });
 }
 
 function bibleBackgroundDisplayName(filePath) {
-  if (typeof filePath !== "string" || filePath.length === 0) return "Choose Background…";
+  if (typeof filePath !== "string" || filePath.length === 0) return "Audience Background…";
   return queueBasename(filePath) || "Selected Background";
 }
 
@@ -3365,6 +4224,15 @@ function resolvedBibleStyleDefaults() {
     color: projectScriptureOverrides.color || "#ffffff",
     backgroundColor: projectScriptureOverrides.backgroundColor || "#000000",
     backgroundPath: projectScriptureOverrides.backgroundPath || "",
+    lowerThirdColor:
+      projectScriptureOverrides.lowerThirdColor || SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
+    lowerThirdChromaKeyColor:
+      projectScriptureOverrides.lowerThirdChromaKeyColor ||
+      SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
+    look: SCRIPTURE_DEFAULT_LOOK,
+    lowerThirdSegments: [],
+    lowerThirdSegmentIndex: 0,
+    lowerThirdSourceText: "",
   };
 }
 
@@ -3390,6 +4258,23 @@ function hydrateBibleEntryStyle(entry = {}) {
       typeof entry?.backgroundPath === "string"
         ? entry.backgroundPath
         : defaults.backgroundPath,
+    lowerThirdColor:
+      typeof entry?.lowerThirdColor === "string" && entry.lowerThirdColor
+        ? entry.lowerThirdColor
+        : defaults.lowerThirdColor,
+    lowerThirdChromaKeyColor:
+      typeof entry?.lowerThirdChromaKeyColor === "string" && entry.lowerThirdChromaKeyColor
+        ? entry.lowerThirdChromaKeyColor
+        : defaults.lowerThirdChromaKeyColor,
+    look: normalizeScriptureLook(entry?.look || defaults.look),
+    lowerThirdSegments: normalizeLowerThirdSegments(entry?.lowerThirdSegments),
+    lowerThirdSegmentIndex: Number.isFinite(entry?.lowerThirdSegmentIndex)
+      ? Math.max(0, Math.trunc(entry.lowerThirdSegmentIndex))
+      : 0,
+    lowerThirdSourceText:
+      typeof entry?.lowerThirdSourceText === "string"
+        ? entry.lowerThirdSourceText
+        : "",
   };
 }
 
@@ -3699,6 +4584,94 @@ function applyBibleFontSizeToAllProjectText() {
   );
 }
 
+function bibleCurrentStylePayload() {
+  const style = getBibleDesignerStyle();
+  return {
+    fontFamily: style.fontFamily,
+    fontSize: style.fontSize,
+    color: style.color,
+    backgroundColor: style.backgroundColor,
+    backgroundPath: style.backgroundPath,
+    lowerThirdColor: style.lowerThirdColor,
+    lowerThirdChromaKeyColor: style.lowerThirdChromaKeyColor,
+  };
+}
+
+function applyBibleStylePayloadToEntry(entry, style) {
+  return {
+    ...(entry || {}),
+    ...style,
+    lowerThirdSegments: [],
+    lowerThirdSegmentIndex: 0,
+    lowerThirdSourceText: "",
+  };
+}
+
+function clearBibleStyleDirtyState() {
+  bibleStyleDirtyState.fontFamily = false;
+  bibleStyleDirtyState.fontSize = false;
+  bibleStyleDirtyState.color = false;
+  bibleStyleDirtyState.backgroundColor = false;
+  bibleStyleDirtyState.backgroundPath = false;
+  bibleStyleDirtyState.lowerThirdColor = false;
+  bibleStyleDirtyState.lowerThirdChromaKeyColor = false;
+}
+
+function applyBibleStyleToCurrentText() {
+  syncBibleStateFromControls();
+  const style = bibleCurrentStylePayload();
+  Object.assign(bibleDesignerState, applyBibleStylePayloadToEntry(bibleDesignerState, style));
+  clearBibleStyleDirtyState();
+  commitBibleDesignerRenderState({ rebuildLowerThird: true });
+  showGnomeToast("Applied style to current Bible text");
+}
+
+function applyBibleStyleToScheduledText() {
+  syncBibleStateFromControls();
+  const style = bibleCurrentStylePayload();
+  Object.assign(bibleDesignerState, applyBibleStylePayloadToEntry(bibleDesignerState, style));
+  clearBibleStyleDirtyState();
+
+  let changedCount = 0;
+  mediaQueue.forEach((item) => {
+    if (!isQueueItemBible(item)) return;
+    const entry = resolveBibleQueueItemEntry(item);
+    item.bible = applyBibleStylePayloadToEntry(entry || item.bible || {}, style);
+    if (entry?.reference) {
+      item.path = bibleQueuePath(entry.reference, entry.version);
+      item.name = `${entry.reference} ${entry.version}`.trim();
+      item.type = "bible";
+    }
+    changedCount += 1;
+  });
+
+  renderQueue();
+  applyBiblePreview(bibleDesignerState, { show: false });
+  if (changedCount > 0) {
+    void saveCurrentProjectInStorageMode({ quiet: true });
+  }
+  syncActiveScheduledBiblePresentation();
+  syncShowNowBiblePresentation();
+  showGnomeToast(
+    changedCount > 0
+      ? `Applied style to ${changedCount} scheduled Bible text item${changedCount === 1 ? "" : "s"}`
+      : "No scheduled Bible text to update",
+  );
+}
+
+function useBibleStyleAsDefaults() {
+  syncBibleStateFromControls();
+  const style = bibleCurrentStylePayload();
+  Object.assign(projectScriptureOverrides, style);
+  Object.assign(bibleDesignerState, applyBibleStylePayloadToEntry(bibleDesignerState, style));
+  clearBibleStyleDirtyState();
+  applyBiblePreview(bibleDesignerState, { show: false });
+  void saveCurrentProjectInStorageMode({ quiet: true });
+  syncShowNowBiblePresentation();
+  syncActiveScheduledBiblePresentation();
+  showGnomeToast("Bible style defaults updated");
+}
+
 function bibleEntryWithShowNowStyle(entry) {
   const bible = {
     ...(entry?.bible || {}),
@@ -3720,18 +4693,33 @@ function isBibleShowNowLiveMode() {
 }
 
 function syncShowNowBiblePresentation() {
-  if (!isBibleShowNowLiveMode()) return false;
+  if (
+    !isBibleShowNowLiveMode() &&
+    !(bibleShowNowModeActive && (bibleLowerThirdOutputActive || hasLowerThirdOutputSelected()))
+  ) {
+    return false;
+  }
   const entry = currentBibleTextOnlyEntry();
   if (!entry) return false;
   const transientEntry = bibleEntryWithShowNowStyle(entry);
-  sendBibleTextToOutput(transientEntry.bible);
+  if (isBibleShowNowLiveMode()) {
+    sendBibleTextToOutput(transientEntry.bible);
+  }
+  if (hasLowerThirdOutputSelected()) {
+    void ensureBibleLowerThirdOutput(transientEntry.bible);
+  } else if (bibleLowerThirdOutputActive) {
+    void closeBibleLowerThirdOutput();
+  }
   return true;
 }
 
 function syncActiveScheduledBiblePresentation() {
   if (
-    !isActiveMediaWindow() ||
-    activeMediaWindowContentType !== "bible" ||
+    !(
+      (isActiveMediaWindow() && activeMediaWindowContentType === "bible") ||
+      bibleLowerThirdOutputActive ||
+      hasLowerThirdOutputSelected()
+    ) ||
     !isQueuePlaying ||
     !isBibleEditorTargetLiveItem()
   ) {
@@ -3750,13 +4738,22 @@ async function showBibleTextNow() {
     return false;
   }
   const transientEntry = bibleEntryWithShowNowStyle(entry);
+  const wantsAudience = hasAudienceOutputSelected();
+  const wantsLowerThird = hasLowerThirdOutputSelected();
+  if (!wantsAudience && !wantsLowerThird) {
+    showGnomeToast("Choose an output display");
+    return false;
+  }
   try {
     mediaPlaybackEndedPending = false;
     pendingQueueSwitchIndex = null;
     pendingQueueSwitchStartTime = 0;
     userStopPresentationPending = false;
     currentQueueIndex = -1;
-    if (isActiveMediaWindow()) {
+    const lowerThirdStarted = wantsLowerThird
+      ? await ensureBibleLowerThirdOutput(transientEntry.bible)
+      : await closeBibleLowerThirdOutput();
+    if (wantsAudience && isActiveMediaWindow()) {
       const didSlipstream = await slipstreamBiblePresentation(transientEntry.bible);
       if (didSlipstream) {
         isPlaying = true;
@@ -3767,12 +4764,18 @@ async function showBibleTextNow() {
         return true;
       }
     }
-    await createMediaWindow({ textItem: transientEntry, transientText: true });
-    activeMediaWindowContentType = "bible";
+    const audienceStarted = wantsAudience
+      ? await createMediaWindow({ textItem: transientEntry, transientText: true })
+      : false;
+    if (!audienceStarted && !lowerThirdStarted) {
+      showGnomeToast("No Bible output started");
+      return false;
+    }
+    activeMediaWindowContentType = audienceStarted ? "bible" : null;
     isPlaying = true;
     isQueuePlaying = false;
     bibleShowNowModeActive = true;
-    isActiveMediaWindowCache = true;
+    isActiveMediaWindowCache = audienceStarted;
     updateDynUI();
     renderQueue();
     return true;
@@ -3807,7 +4810,7 @@ async function saveCurrentProjectInStorageMode({ quiet = false } = {}) {
 }
 
 async function slipstreamBiblePresentation(entry) {
-  const textPayload = buildBibleTextMessage(entry);
+  const textPayload = buildBibleTextMessage(entry, { look: SCRIPTURE_LOOK_FULLSCREEN });
   const slipstreamSuccess = await invoke("slipstream-media-window", {
     isText: true,
     mediaFile: bibleQueuePath(entry.reference, entry.version),
@@ -3820,7 +4823,10 @@ async function slipstreamBiblePresentation(entry) {
 }
 
 async function syncLiveBiblePresentation() {
-  if (!isActiveMediaWindow() || activeMediaWindowContentType !== "bible") return false;
+  const audienceLive = isActiveMediaWindow() && activeMediaWindowContentType === "bible";
+  if (!audienceLive && !bibleLowerThirdOutputActive && !hasLowerThirdOutputSelected()) {
+    return false;
+  }
   const targetIsLiveItem = isBibleEditorTargetLiveItem();
   const entry = targetIsLiveItem ? currentBibleQueueEntry() : currentBibleTextOnlyEntry();
   if (!entry) return false;
@@ -3845,7 +4851,14 @@ async function syncLiveBiblePresentation() {
     renderQueue();
     saveMediaFile();
   }
-  sendBibleTextToOutput(entry.bible);
+  if (audienceLive) {
+    sendBibleTextToOutput(entry.bible);
+  }
+  if (hasLowerThirdOutputSelected()) {
+    await ensureBibleLowerThirdOutput(entry.bible);
+  } else if (bibleLowerThirdOutputActive) {
+    await closeBibleLowerThirdOutput();
+  }
   return true;
 }
 
@@ -3994,10 +5007,30 @@ function syncBibleStyleControlsFromState() {
   const fontSizeInput = document.getElementById("bibleFontSizeInput");
   const textColorInput = document.getElementById("bibleTextColorInput");
   const backgroundColorInput = document.getElementById("bibleBackgroundColorInput");
-  if (fontInput) fontInput.value = bibleDesignerState.fontFamily;
+  const lowerThirdColorInput = document.getElementById("bibleLowerThirdTextColorInput");
+  const lowerThirdChromaKeyInput = document.getElementById("bibleLowerThirdChromaKeyInput");
+  const lookSelect = document.getElementById("bibleLookSelect");
+  if (fontInput) {
+    const fontValue = bibleDesignerState.fontFamily || SCRIPTURE_FONT_FAMILY;
+    if (
+      fontInput instanceof HTMLSelectElement &&
+      !Array.from(fontInput.options).some((option) => option.value === fontValue)
+    ) {
+      const option = document.createElement("option");
+      option.value = fontValue;
+      option.textContent = fontValue.replace(/^['"]|['"]$/g, "");
+      fontInput.appendChild(option);
+    }
+    fontInput.value = fontValue;
+  }
   if (fontSizeInput) fontSizeInput.value = bibleDesignerState.fontSize;
   if (textColorInput) textColorInput.value = bibleDesignerState.color;
   if (backgroundColorInput) backgroundColorInput.value = bibleDesignerState.backgroundColor;
+  if (lowerThirdColorInput) lowerThirdColorInput.value = bibleDesignerState.lowerThirdColor;
+  if (lowerThirdChromaKeyInput) {
+    lowerThirdChromaKeyInput.value = bibleDesignerState.lowerThirdChromaKeyColor;
+  }
+  if (lookSelect) lookSelect.value = normalizeScriptureLook(bibleDesignerState.look);
 }
 
 function renderBibleVerseList() {
@@ -4193,6 +5226,8 @@ function installBibleMediaControls() {
   if (!versionSelect || versionSelect.dataset.bibleBound === "1") return;
   versionSelect.dataset.bibleBound = "1";
   installBibleWorkspaceEventGuards();
+  syncLowerThirdFeatureAvailability();
+  installBiblePreviewScaleObserver();
 
   versionSelect.innerHTML = '<option value="KJV">KJV</option>';
   versionSelect.value = bibleDesignerState.version;
@@ -4278,21 +5313,60 @@ function installBibleMediaControls() {
       hideBibleReferenceSuggestions();
     }
   });
-  ["bibleFontInput", "bibleFontSizeInput", "bibleTextColorInput", "bibleBackgroundColorInput"].forEach((id) => {
-    document.getElementById(id)?.addEventListener("input", () => {
+  document.getElementById("bibleLookSelect")?.addEventListener("change", () => {
+    syncBibleStateFromControls();
+    resolveBibleLowerThirdState(bibleDesignerState, {
+      panel: bibleLowerThirdMeasurePanel(),
+    });
+    commitBibleDesignerRenderState();
+  });
+  document.getElementById("bibleLowerThirdPrevBtn")?.addEventListener("click", () => {
+    changeBibleLowerThirdSegment(-1);
+  });
+  document.getElementById("bibleLowerThirdNextBtn")?.addEventListener("click", () => {
+    void advanceBibleLowerThirdCursor().catch((err) => {
+      console.error("Failed to advance Bible lower-third cursor:", err);
+      showGnomeToast("Failed to advance Bible text");
+    });
+  });
+  document.getElementById("bibleLowerThirdAutoSplitBtn")?.addEventListener("click", () => {
+    rebuildBibleLowerThirdSegments();
+  });
+  [
+    "bibleFontInput",
+    "bibleFontSizeInput",
+    "bibleTextColorInput",
+    "bibleBackgroundColorInput",
+    "bibleLowerThirdTextColorInput",
+    "bibleLowerThirdChromaKeyInput",
+  ].forEach((id) => {
+    const control = document.getElementById(id);
+    const handleBibleStyleChange = () => {
       if (id === "bibleFontInput") bibleStyleDirtyState.fontFamily = true;
       if (id === "bibleFontSizeInput") bibleStyleDirtyState.fontSize = true;
       if (id === "bibleTextColorInput") bibleStyleDirtyState.color = true;
       if (id === "bibleBackgroundColorInput") bibleStyleDirtyState.backgroundColor = true;
+      if (id === "bibleLowerThirdTextColorInput") bibleStyleDirtyState.lowerThirdColor = true;
+      if (id === "bibleLowerThirdChromaKeyInput") {
+        bibleStyleDirtyState.lowerThirdChromaKeyColor = true;
+      }
       syncBibleStateFromControls();
       Object.assign(bibleDesignerState, getBibleDesignerStyle());
+      if (id === "bibleFontInput" || id === "bibleFontSizeInput") {
+        resolveBibleLowerThirdState(bibleDesignerState, {
+          rebuild: true,
+          panel: bibleLowerThirdMeasurePanel(),
+        });
+      }
       applyBiblePreview(bibleDesignerState, { show: false });
       if (syncBibleDesignerStateToPreviewedQueueItem()) {
         saveMediaFile();
       }
       syncActiveScheduledBiblePresentation();
       syncShowNowBiblePresentation();
-    });
+    };
+    control?.addEventListener("input", handleBibleStyleChange);
+    control?.addEventListener("change", handleBibleStyleChange);
   });
   document.getElementById("bibleBackgroundInput")?.addEventListener("change", (event) => {
     const file = event.target.files?.[0];
@@ -4307,17 +5381,14 @@ function installBibleMediaControls() {
     syncShowNowBiblePresentation();
   });
   document
-    .getElementById("bibleApplyFontAllBtn")
-    ?.addEventListener("click", applyBibleFontToAllProjectText);
+    .getElementById("bibleApplyCurrentBtn")
+    ?.addEventListener("click", applyBibleStyleToCurrentText);
   document
-    .getElementById("bibleApplyFontSizeAllBtn")
-    ?.addEventListener("click", applyBibleFontSizeToAllProjectText);
+    .getElementById("bibleApplyStyleScheduleBtn")
+    ?.addEventListener("click", applyBibleStyleToScheduledText);
   document
-    .getElementById("bibleApplyTextColorAllBtn")
-    ?.addEventListener("click", applyBibleTextColorToAllProjectText);
-  document
-    .getElementById("bibleApplyBackgroundAllBtn")
-    ?.addEventListener("click", applyBibleBackgroundToAllProjectText);
+    .getElementById("bibleUseStyleDefaultsBtn")
+    ?.addEventListener("click", useBibleStyleAsDefaults);
   document.getElementById("bibleClearBackgroundBtn")?.addEventListener("click", () => {
     bibleDesignerState.backgroundPath = "";
     bibleStyleDirtyState.backgroundPath = true;
@@ -4413,6 +5484,8 @@ function applyProjectStateSnapshot(state) {
   bibleStyleDirtyState.color = false;
   bibleStyleDirtyState.backgroundColor = false;
   bibleStyleDirtyState.backgroundPath = false;
+  bibleStyleDirtyState.lowerThirdColor = false;
+  bibleStyleDirtyState.lowerThirdChromaKeyColor = false;
   mediaQueue = state.mediaQueue
     .filter((x) => x && typeof x.path === "string" && x.path.length > 0)
     .map((x) => {
@@ -4860,6 +5933,15 @@ async function resumeQueuePresentationAtTime(seekTime) {
   isQueuePlaying = true;
   isPlaying = true;
   updateDynUI();
+
+  if (!isQueueItemBible(item) && !audioOnlyFile && !hasAudienceOutputSelected()) {
+    showGnomeToast("Choose an audience output display");
+    isQueuePlaying = false;
+    isPlaying = false;
+    updateDynUI();
+    renderQueue();
+    return;
+  }
 
   const iM = isImg(mediaFile);
   if (iM) {
@@ -5350,7 +6432,7 @@ async function restorePreviewToLiveOutput(index) {
     stopPreviewAudioCue();
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
-    textNode.data = "";
+    setMediaCountdownText("");
     await loadPptxPreview(item.path, { startSlide });
     syncMediaLoopState({ notify: false });
     updatePreviewCueUI();
@@ -5370,7 +6452,7 @@ async function restorePreviewToLiveOutput(index) {
     stopPreviewAudioCue();
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
-    textNode.data = "";
+    setMediaCountdownText("");
     item.bible = { ...liveBibleEntry };
     loadBibleEntryIntoEditor(liveBibleEntry);
     showBibleWorkspace();
@@ -5436,14 +6518,14 @@ async function restorePreviewCueAfterPresentationStopped() {
     stopPreviewAudioCue();
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
-    textNode.data = "";
+    setMediaCountdownText("");
     const cueBibleEntry = resolvedBibleEntryForItem(cue.item);
     if (cue.item) cue.item.bible = { ...cueBibleEntry };
     loadBibleEntryIntoEditor(cueBibleEntry);
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemAudio(cue.item)) {
     setMediaCountdownOverlayVisible(true);
-    textNode.data = "";
+    setMediaCountdownText("");
     if (!isAudioPreviewCueActive()) {
       await loadAudioQueueItemIntoPreviewCue(cue.index, cue.item, cue.startTime);
     }
@@ -5457,12 +6539,12 @@ async function restorePreviewCueAfterPresentationStopped() {
       cueEl.hidden = false;
     }
     setMediaCountdownOverlayVisible(false);
-    textNode.data = "";
+    setMediaCountdownText("");
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else {
     restoreNonPptxPreviewSurface();
     setMediaCountdownOverlayVisible(true);
-    textNode.data = "";
+    setMediaCountdownText("");
     if (!isVideoPreviewCueActive()) {
       await loadVideoQueueItemIntoPreviewCueOverlay(cue.index, cue.item, cue.startTime);
     }
@@ -5606,7 +6688,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     stopPreviewAudioCue();
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
-    textNode.data = "";
+    setMediaCountdownText("");
     const cueBibleEntry = resolvedBibleEntryForItem(item);
     item.bible = { ...cueBibleEntry };
     loadBibleEntryIntoEditor(cueBibleEntry);
@@ -5631,7 +6713,7 @@ async function loadQueueItemIntoPreviewCue(index) {
       setPreviewStackSurface(PREVIEW_SURFACE_CUE_IMAGE);
     }
     setMediaCountdownOverlayVisible(false);
-    textNode.data = "";
+    setMediaCountdownText("");
     // No timeline to scrub for a static image — hide the transport controls
     // so the operator isn't offered play/seek/loop actions that have no effect.
     // clearVideoPreviewCueOverlay restores visibility when the cue clears.
@@ -5652,7 +6734,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     // stale text first so we don't briefly flash the live media's
     // countdown before the cue's metadata loads.
     setMediaCountdownOverlayVisible(true);
-    textNode.data = "";
+    setMediaCountdownText("");
     await loadAudioQueueItemIntoPreviewCue(index, item, cueStart);
   } else {
     if (!isBiblePresentationActive()) {
@@ -5666,11 +6748,10 @@ async function loadQueueItemIntoPreviewCue(index) {
     // the queued media"). The cue now goes into a dedicated overlay so
     // the mirror keeps playing underneath, undisturbed.
     stopPreviewAudioCue();
-    // Make sure the countdown overlay is visible before the cue's
-    // metadata handler paints into it — the live media might have hidden
-    // it (image live) and we don't want a frame of blank chrome.
+    // Allow the cue metadata handler to show a fresh countdown when it
+    // paints; until then the pill stays hidden so no blank chrome leaks.
     setMediaCountdownOverlayVisible(true);
-    textNode.data = "";
+    setMediaCountdownText("");
     await loadVideoQueueItemIntoPreviewCueOverlay(index, item, cueStart);
     syncPreviewAudioTrackState();
   }
@@ -5854,6 +6935,7 @@ async function onQueueItemActivate(index) {
 
 async function stopQueuePresentationUserClosed() {
   stopLiveAudioPresentation();
+  void closeBibleLowerThirdOutput();
   activeMediaWindowContentType = null;
   bibleShowNowModeActive = false;
   mediaPlaybackEndedPending = false;
@@ -5903,7 +6985,7 @@ async function stopQueuePresentationUserClosed() {
   masterPauseState = false;
   saveMediaFile();
   removeFilenameFromTitlebar();
-  textNode.data = "";
+  setMediaCountdownText("");
   syncPreviewMediaAfterPresentationStateChange();
 }
 
@@ -5923,7 +7005,7 @@ async function pauseQueuePresentationAtBoundary(index) {
   audioOnlyFile = false;
   playingMediaAudioOnly = false;
   masterPauseState = false;
-  textNode.data = "";
+  setMediaCountdownText("");
   removeFilenameFromTitlebar();
 
   if (index >= 0 && index < mediaQueue.length) {
@@ -6173,8 +7255,32 @@ async function playCurrentQueueItem(opts) {
   updateDynUI();
 
   if (isQueueItemBible(item)) {
-    await createMediaWindow({ textItem: item });
-    window.setTimeout(() => sendBibleTextToOutput(resolvedBibleEntryForItem(item)), 150);
+    const entry = resolvedBibleEntryForItem(item);
+    const lowerThirdStarted = hasLowerThirdOutputSelected()
+      ? await ensureBibleLowerThirdOutput(entry)
+      : await closeBibleLowerThirdOutput();
+    const audienceStarted = hasAudienceOutputSelected()
+      ? await createMediaWindow({ textItem: item })
+      : false;
+    if (audienceStarted) {
+      window.setTimeout(() => sendBibleTextToOutput(entry), 150);
+    }
+    if (!audienceStarted && !lowerThirdStarted) {
+      showGnomeToast("Choose an output display");
+      isPlaying = false;
+      isQueuePlaying = false;
+      updateDynUI();
+      renderQueue();
+    }
+    return;
+  }
+
+  if (!audioOnlyFile && !hasAudienceOutputSelected()) {
+    showGnomeToast("Choose an audience output display");
+    isPlaying = false;
+    isQueuePlaying = false;
+    updateDynUI();
+    renderQueue();
     return;
   }
 
@@ -6276,7 +7382,7 @@ async function advanceQueueAfterMediaWindowClosed() {
     updatePlayButtonOnMediaWindow();
     masterPauseState = false;
     removeFilenameFromTitlebar();
-    textNode.data = "";
+    setMediaCountdownText("");
   } finally {
     isAdvancingQueue = false;
   }
@@ -6340,7 +7446,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       ? {
           isText: true,
           mediaFile: nextItem.path,
-          textPayload: buildBibleTextMessage(resolvedBibleEntryForItem(nextItem)),
+          textPayload: buildBibleTextMessage(resolvedBibleEntryForItem(nextItem), {
+            look: SCRIPTURE_LOOK_FULLSCREEN,
+          }),
         }
       : {
           mediaFile: nextItem.path,
@@ -6366,7 +7474,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     isPlaying = true;
     lastUpdateTime = 0;
     localTimeStampUpdateIsRunning = false;
-    textNode.data = "";
+    setMediaCountdownText("");
     // endLocalMedia (which runs from the preview's "ended" event right before
     // this) marks fileEnded so the next pause is treated as a natural stop.
     // Slipstream is not a stop — clear the flag before the new src is loaded.
@@ -6376,7 +7484,13 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     updateDynUI();
     syncPreviewAudioTrackState();
     if (isBibleItem) {
-      sendBibleTextToOutput(resolvedBibleEntryForItem(nextItem));
+      const entry = resolvedBibleEntryForItem(nextItem);
+      sendBibleTextToOutput(entry);
+      if (hasLowerThirdOutputSelected()) {
+        await ensureBibleLowerThirdOutput(entry);
+      } else {
+        await closeBibleLowerThirdOutput();
+      }
     }
     renderQueue();
     if (opts.clearCue !== false) {
@@ -7980,7 +9094,7 @@ function paintCountdownFor(mediaEl) {
   writeTwoDigits(minutes, 3);
   writeTwoDigits(seconds, 6);
   writeThreeDigits(millis > 999 ? 999 : millis, 9);
-  textNode.data = String.fromCharCode(
+  setMediaCountdownText(String.fromCharCode(
     CUE_COUNTDOWN_CHARS[0],
     CUE_COUNTDOWN_CHARS[1],
     CUE_COUNTDOWN_CHARS[2],
@@ -7993,7 +9107,7 @@ function paintCountdownFor(mediaEl) {
     CUE_COUNTDOWN_CHARS[9],
     CUE_COUNTDOWN_CHARS[10],
     CUE_COUNTDOWN_CHARS[11],
-  );
+  ));
 }
 
 /**
@@ -8024,7 +9138,7 @@ function restoreCountdownForLiveMedia() {
   const showCountdown = hasLiveSource && !liveIsImage;
   setMediaCountdownOverlayVisible(showCountdown);
   if (!showCountdown) {
-    textNode.data = "";
+    setMediaCountdownText("");
     return;
   }
   // Prefer liveAudio's clock for audio-only live presentations — the
@@ -8056,7 +9170,7 @@ function updateCountdownNode() {
   STRING_BUFFER[10] = ZERO + (((NUM_BUFFER[3] / 10) | 0) % 10);
   STRING_BUFFER[11] = ZERO + (NUM_BUFFER[3] % 10);
 
-  textNode.data = String.fromCharCode(
+  setMediaCountdownText(String.fromCharCode(
     STRING_BUFFER[0],
     STRING_BUFFER[1],
     STRING_BUFFER[2],
@@ -8069,7 +9183,7 @@ function updateCountdownNode() {
     STRING_BUFFER[9],
     STRING_BUFFER[10],
     STRING_BUFFER[11],
-  );
+  ));
 
   updatePending[0] = 0;
 }
@@ -8227,6 +9341,13 @@ function installIPCHandler() {
   on("update-playback-state", handlePlaybackState);
   on("remoteplaypause", handlePlayPause);
   on("media-window-closed", handleMediaWindowClosed);
+  on("media-window-closed", () => {
+    biblePreviewActiveMediaWindowSize = null;
+    syncBiblePreviewOutputScale();
+  });
+  on("lower-third-window-closed", () => {
+    bibleLowerThirdOutputActive = false;
+  });
   on("media-playback-ended", async (event, endedMediaFile) => {
     if (userStopPresentationPending) {
       mediaPlaybackEndedPending = false;
@@ -8343,11 +9464,24 @@ async function handleMediaWindowClosed(event, id) {
         }
       }
     } else if (isQueueItemBible(mediaQueue[idx])) {
-      await createMediaWindow({ textItem: mediaQueue[idx] });
-      window.setTimeout(
-        () => sendBibleTextToOutput(resolvedBibleEntryForItem(mediaQueue[idx])),
-        150,
-      );
+      const entry = resolvedBibleEntryForItem(mediaQueue[idx]);
+      const lowerThirdStarted = hasLowerThirdOutputSelected()
+        ? await ensureBibleLowerThirdOutput(entry)
+        : await closeBibleLowerThirdOutput();
+      const audienceStarted = hasAudienceOutputSelected()
+        ? await createMediaWindow({ textItem: mediaQueue[idx] })
+        : false;
+      if (audienceStarted) {
+        window.setTimeout(() => sendBibleTextToOutput(entry), 150);
+      }
+      if (!audienceStarted && !lowerThirdStarted) {
+        showGnomeToast("Choose an output display");
+        isPlaying = false;
+        isQueuePlaying = false;
+        updateDynUI();
+        renderQueue();
+        return;
+      }
     } else if (
       audioOnlyFile ||
       classifyQueueMediaType(mediaQueue[idx].path) === "audio"
@@ -8429,7 +9563,7 @@ async function handleMediaWindowClosed(event, id) {
   masterPauseState = false;
   saveMediaFile();
   removeFilenameFromTitlebar();
-  textNode.data = "";
+  setMediaCountdownText("");
   syncPreviewMediaAfterPresentationStateChange();
 }
 function handleMediaPlayback(isImgFile) {
@@ -8443,7 +9577,27 @@ function handleMediaPlayback(isImgFile) {
 function setMediaCountdownOverlayVisible(isVisible) {
   const countdownEl = document.getElementById("mediaCntDn");
   if (!countdownEl) return;
-  countdownEl.style.display = isVisible ? "inline-flex" : "none";
+  const wasAllowed = countdownEl.dataset.countdownAllowed === "true";
+  countdownEl.dataset.countdownAllowed = isVisible ? "true" : "false";
+  if (!isVisible || !wasAllowed) {
+    textNode.data = "";
+  }
+  syncMediaCountdownOverlayState();
+}
+
+function setMediaCountdownText(value) {
+  textNode.data = typeof value === "string" ? value : "";
+  syncMediaCountdownOverlayState();
+}
+
+function syncMediaCountdownOverlayState() {
+  const countdownEl = document.getElementById("mediaCntDn");
+  if (!countdownEl) return;
+  const hasText = textNode.data.trim().length > 0;
+  const isAllowed = countdownEl.dataset.countdownAllowed === "true";
+  const isActive = isAllowed && hasText;
+  countdownEl.hidden = !isActive;
+  countdownEl.classList.toggle("is-active", isActive);
 }
 
 function handleImageDisplay(isImgFile, imgEle) {
@@ -8762,6 +9916,10 @@ async function playMedia(e) {
   }
 
   if (!isPlaying) {
+    if (!audioOnlyFile && !hasAudienceOutputSelected()) {
+      showGnomeToast("Choose an audience output display");
+      return;
+    }
     isPlaying = true;
     updateDynUI();
     if (currentMode === MEDIAPLAYER) {
@@ -8807,6 +9965,7 @@ async function playMedia(e) {
       userStopPresentationPending = true;
       send("close-media-window", 0);
     }
+    void closeBibleLowerThirdOutput();
     isActiveMediaWindowCache = false;
     if (playingMediaAudioOnly || liveAudio?.paused === false) {
       stopLiveAudioPresentation();
@@ -8843,7 +10002,7 @@ async function playMedia(e) {
 }
 
 function updateDynUI() {
-  textNode.data = "";
+  setMediaCountdownText("");
   const playButton = document.getElementById("mediaWindowPlayButton");
   if (playButton) {
     // The button now wraps an icon + label; write only into the label span
@@ -8884,9 +10043,15 @@ function updateDynUI() {
 
 async function populateDisplaySelect(options = {}) {
   const force = options.force === true;
-  const displaySelects = document.querySelectorAll(
-    "#dspSelct, #dspSelctStreams",
-  );
+  syncLowerThirdFeatureAvailability();
+  const audienceDisplaySelects = document.querySelectorAll("#dspSelct, #dspSelctStreams");
+  const lowerThirdDisplaySelect = isBibleLowerThirdFeatureEnabled()
+    ? document.getElementById("lowerThirdDspSelct")
+    : null;
+  const displaySelects = [
+    ...Array.from(audienceDisplaySelects),
+    ...(lowerThirdDisplaySelect ? [lowerThirdDisplaySelect] : []),
+  ];
   if (!displaySelects.length) return;
 
   const alreadyReady =
@@ -8898,35 +10063,71 @@ async function populateDisplaySelect(options = {}) {
 
   const syncPeerSelects = (source) => {
     const v = source.value;
-    displaySelects.forEach((sel) => {
+    audienceDisplaySelects.forEach((sel) => {
       if (sel !== source) sel.value = v;
     });
   };
 
-  displaySelects.forEach((sel) => {
+  audienceDisplaySelects.forEach((sel) => {
     sel.onchange = (event) => {
-      send("set-display-index", parseInt(event.target.value, 10));
+      const value = event.target.value === "" ? -1 : Number.parseInt(event.target.value, 10);
+      send("set-display-index", value);
       syncPeerSelects(event.target);
+      syncBiblePreviewOutputScale();
+      queueBiblePreviewMediaWindowSizeRefresh(50);
     };
   });
+  if (lowerThirdDisplaySelect) {
+    lowerThirdDisplaySelect.onchange = (event) => {
+      const value = event.target.value === "" ? -1 : Number.parseInt(event.target.value, 10);
+      send("set-lower-third-display-index", value);
+      if (value < 0) {
+        void closeBibleLowerThirdOutput();
+      } else {
+        syncShowNowBiblePresentation();
+        syncActiveScheduledBiblePresentation();
+      }
+      syncBiblePreviewOutputScale();
+    };
+  }
 
   try {
-    const { displays, defaultDisplayIndex } = await invoke("get-all-displays");
+    const { displays, defaultDisplayIndex, defaultLowerThirdDisplayIndex } =
+      await invoke("get-all-displays");
 
     displaySelects.forEach((displaySelect) => {
+      const firstOptionText =
+        displaySelect.id === "lowerThirdDspSelct"
+          ? "No Lower Third Output"
+          : displaySelect.id === "dspSelct"
+            ? "No Audience Output"
+            : "No Output";
       displaySelect.options.length = 1;
+      displaySelect.options[0].value = "";
+      displaySelect.options[0].textContent = firstOptionText;
 
       const fragment = document.createDocumentFragment();
-      for (const { value, label } of displays) {
+      for (const { value, label, bounds } of displays) {
         const option = document.createElement("option");
         option.value = value;
         option.textContent = label;
+        if (Number.isFinite(bounds?.width) && bounds.width > 0) {
+          option.dataset.displayWidth = String(bounds.width);
+        }
+        if (Number.isFinite(bounds?.height) && bounds.height > 0) {
+          option.dataset.displayHeight = String(bounds.height);
+        }
         fragment.appendChild(option);
       }
 
       displaySelect.appendChild(fragment);
-      displaySelect.value = defaultDisplayIndex;
+      displaySelect.value =
+        displaySelect.id === "lowerThirdDspSelct"
+          ? defaultLowerThirdDisplayIndex
+          : defaultDisplayIndex;
     });
+    syncBiblePreviewOutputScale();
+    queueBiblePreviewMediaWindowSizeRefresh(50);
   } catch (error) {
     console.error("Failed to populate display select:", error);
   }
@@ -9630,7 +10831,7 @@ function removeFileProtocol(filePath) {
 function saveMediaFile() {
   scheduleAutosaveProjectState();
   resetPreviewWarningState();
-  textNode.data = "";
+  setMediaCountdownText("");
   const mdfileElement = document.getElementById("mdFile");
   if (mediaPlayerInputState.filePaths.length < 1) {
     if (!mdfileElement && mediaQueue.length === 0) {
@@ -10160,7 +11361,7 @@ function seekingLocalMedia(e) {
 }
 
 function endLocalMedia() {
-  textNode.data = "";
+  setMediaCountdownText("");
 
   // When queue playback is being projected in the media window, this local
   // preview <video> hitting "ended" is informational only. The authoritative
@@ -10644,7 +11845,7 @@ function isLiveStream(mediaFile) {
 async function endLiveAudioPresentation() {
   if (isHandlingLiveEnded) return;
   isHandlingLiveEnded = true;
-  textNode.data = "";
+  setMediaCountdownText("");
   try {
     if (loopEnabledForLiveMedia()) {
       syncMediaLoopState({ notify: false });
@@ -10805,10 +12006,10 @@ async function createMediaWindow(options) {
     currentMode === STREAMPLAYER
       ? document.getElementById("dspSelctStreams")
       : document.getElementById("dspSelct");
-  var selectedIndex =
-    displaySelectEl && displaySelectEl.selectedIndex > 0
-      ? displaySelectEl.selectedIndex - 1
-      : 0;
+  const selectedIndex =
+    displaySelectEl && displaySelectEl.value !== ""
+      ? Number.parseInt(displaySelectEl.value, 10)
+      : null;
   activeLiveStream = liveStreamMode;
 
   if (liveStreamMode === true) {
@@ -10896,9 +12097,20 @@ async function createMediaWindow(options) {
     },
   };
 
+  if (selectedIndex === null || !Number.isInteger(selectedIndex) || selectedIndex < 0) {
+    showGnomeToast("Choose an audience output display");
+    isActiveMediaWindowCache = false;
+    return false;
+  }
+
   isActiveMediaWindowCache = true;
   try {
-    await invoke("create-media-window", windowOptions, selectedIndex);
+    const windowId = await invoke("create-media-window", windowOptions, selectedIndex);
+    if (!windowId) {
+      isActiveMediaWindowCache = false;
+      return false;
+    }
+    queueBiblePreviewMediaWindowSizeRefresh();
   } catch (err) {
     isActiveMediaWindowCache = false;
     activeMediaWindowContentType = null;

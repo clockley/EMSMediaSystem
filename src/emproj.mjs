@@ -44,6 +44,8 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
       color: "",
       backgroundColor: "",
       backgroundPath: "",
+      lowerThirdColor: "",
+      lowerThirdChromaKeyColor: "",
     };
   }
   return {
@@ -57,6 +59,12 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
       typeof overrides.backgroundColor === "string" ? overrides.backgroundColor : "",
     backgroundPath:
       typeof overrides.backgroundPath === "string" ? overrides.backgroundPath : "",
+    lowerThirdColor:
+      typeof overrides.lowerThirdColor === "string" ? overrides.lowerThirdColor : "",
+    lowerThirdChromaKeyColor:
+      typeof overrides.lowerThirdChromaKeyColor === "string"
+        ? overrides.lowerThirdChromaKeyColor
+        : "",
   };
 }
 
@@ -67,7 +75,9 @@ function projectScriptureTextFromOverrides(overrides = {}) {
     !Number.isFinite(normalized.fontSize) &&
     !normalized.color &&
     !normalized.backgroundColor &&
-    !normalized.backgroundPath
+    !normalized.backgroundPath &&
+    !normalized.lowerThirdColor &&
+    !normalized.lowerThirdChromaKeyColor
   ) {
     return undefined;
   }
@@ -91,6 +101,8 @@ function projectScriptureTextFromOverrides(overrides = {}) {
       textColor: normalized.color || undefined,
       backgroundColor: normalized.backgroundColor || undefined,
       backgroundPath: normalized.backgroundPath || "",
+      lowerThirdTextColor: normalized.lowerThirdColor || undefined,
+      lowerThirdChromaKeyColor: normalized.lowerThirdChromaKeyColor || undefined,
     },
   };
 }
@@ -282,11 +294,42 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
           : SCRIPTURE_FONT_FAMILY,
       fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : undefined,
       color: typeof scripture.color === "string" ? scripture.color : "#ffffff",
+      lowerThirdColor:
+        typeof scripture.lowerThirdColor === "string"
+          ? scripture.lowerThirdColor
+          : "#ffffff",
+      lowerThirdChromaKeyColor:
+        typeof scripture.lowerThirdChromaKeyColor === "string"
+          ? scripture.lowerThirdChromaKeyColor
+          : "#00ff00",
       backgroundColor:
         typeof scripture.backgroundColor === "string"
           ? scripture.backgroundColor
           : "#000000",
       backgroundPath,
+      look:
+        scripture.look === "lower-third" || scripture.look === "fullscreen"
+          ? scripture.look
+          : "fullscreen",
+      lowerThirdSegments: Array.isArray(scripture.lowerThirdSegments)
+        ? scripture.lowerThirdSegments
+            .map((segment) => ({
+              text:
+                typeof segment === "string"
+                  ? segment
+                  : typeof segment?.text === "string"
+                    ? segment.text
+                    : "",
+            }))
+            .filter((segment) => segment.text.length > 0)
+        : [],
+      lowerThirdSegmentIndex: Number.isFinite(scripture.lowerThirdSegmentIndex)
+        ? scripture.lowerThirdSegmentIndex
+        : 0,
+      lowerThirdSourceText:
+        typeof scripture.lowerThirdSourceText === "string"
+          ? scripture.lowerThirdSourceText
+          : "",
     },
   };
 }
@@ -503,6 +546,9 @@ export async function saveEmprojSnapshot(
           color: snapshot.projectScriptureText.presentation.textColor,
           backgroundColor: snapshot.projectScriptureText.presentation.backgroundColor,
           backgroundPath: snapshot.projectScriptureText.presentation.backgroundPath,
+          lowerThirdColor: snapshot.projectScriptureText.presentation.lowerThirdTextColor,
+          lowerThirdChromaKeyColor:
+            snapshot.projectScriptureText.presentation.lowerThirdChromaKeyColor,
         }
       : {},
   );
@@ -627,9 +673,34 @@ export async function saveEmprojSnapshot(
           fontFamily: scripture.fontFamily || SCRIPTURE_FONT_FAMILY,
           fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : undefined,
           color: scripture.color || "#ffffff",
+          lowerThirdColor: scripture.lowerThirdColor || "#ffffff",
+          lowerThirdChromaKeyColor: scripture.lowerThirdChromaKeyColor || "#00ff00",
           backgroundColor: scripture.backgroundColor || "#000000",
           backgroundAssetId: backgroundAsset?.assetId,
           backgroundPath: scripture.backgroundPath || "",
+          look:
+            scripture.look === "lower-third" || scripture.look === "fullscreen"
+              ? scripture.look
+              : "fullscreen",
+          lowerThirdSegments: Array.isArray(scripture.lowerThirdSegments)
+            ? scripture.lowerThirdSegments
+                .map((segment) => ({
+                  text:
+                    typeof segment === "string"
+                      ? segment
+                      : typeof segment?.text === "string"
+                        ? segment.text
+                        : "",
+                }))
+                .filter((segment) => segment.text.length > 0)
+            : [],
+          lowerThirdSegmentIndex: Number.isFinite(scripture.lowerThirdSegmentIndex)
+            ? scripture.lowerThirdSegmentIndex
+            : 0,
+          lowerThirdSourceText:
+            typeof scripture.lowerThirdSourceText === "string"
+              ? scripture.lowerThirdSourceText
+              : "",
         },
         playback: {
           startTime: 0,

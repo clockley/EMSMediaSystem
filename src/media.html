@@ -113,15 +113,90 @@
         #textContent {
             position: relative;
             z-index: 1;
-            padding: 20px;
-            max-width: 90%;
-            word-wrap: break-word;
-            text-align: center;
-            white-space: pre-wrap;
-            text-shadow: 0 2px 12px rgba(0, 0, 0, 0.65);
-            font-weight: 700;
-            line-height: 1.32;
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box;
+        }
+
+        .scripture-render {
+            --scripture-font-size: 66px;
+            --scripture-reference-font-size: 38px;
+            --scripture-lower-third-font-size: 52px;
+            --scripture-line-height: 1.32;
+            --scripture-font-weight: 700;
+            --scripture-color: #ffffff;
+            --scripture-reference-color: rgba(255, 255, 255, 0.78);
+            --scripture-reference-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
+            --scripture-lower-third-backdrop: rgba(0, 0, 0, 0.74);
+            font-family: 'CMG Sans';
+            color: var(--scripture-color);
+        }
+
+        .scripture-render__box {
+            min-width: 0;
+            box-sizing: border-box;
+        }
+
+        .scripture-render__body,
+        .scripture-render__reference {
+            font-family: inherit;
+            font-weight: var(--scripture-font-weight);
             overflow-wrap: anywhere;
+            word-break: normal;
+            hyphens: auto;
+            white-space: pre-wrap;
+        }
+
+        .scripture-render__body {
+            color: var(--scripture-color);
+            font-size: var(--scripture-font-size);
+            line-height: var(--scripture-line-height);
+            text-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
+        }
+
+        .scripture-render__reference {
+            color: var(--scripture-reference-color);
+            font-size: var(--scripture-reference-font-size);
+            line-height: 1.2;
+            margin-top: 0.62em;
+            text-shadow: var(--scripture-reference-shadow);
+        }
+
+        .scripture-render--fullscreen {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .scripture-render--fullscreen .scripture-render__box {
+            width: min(90%, 1720px);
+        }
+
+        .scripture-render--lower-third {
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            text-align: left;
+            padding: 0 7.5% 7%;
+        }
+
+        .scripture-render--lower-third .scripture-render__box {
+            width: min(84%, 1460px);
+            padding: clamp(18px, 2.1vw, 34px) clamp(24px, 3vw, 46px);
+            border-radius: 8px;
+            background: var(--scripture-lower-third-backdrop);
+            box-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
+        }
+
+        .scripture-render--lower-third .scripture-render__body {
+            font-size: var(--scripture-lower-third-font-size);
+            line-height: 1.18;
+        }
+
+        .scripture-render--lower-third .scripture-render__reference {
+            font-size: clamp(18px, calc(var(--scripture-lower-third-font-size) * 0.42), 30px);
+            margin-top: 0.48em;
         }
 
         #streamStatusOverlay {
@@ -205,7 +280,12 @@
     </div>
     <div id="pptxCanvas"></div>
     <div id="textCanvas">
-        <div id="textContent"></div>
+        <div id="textContent" class="scripture-render scripture-render--fullscreen">
+            <div class="scripture-render__box">
+                <div id="textBody" class="scripture-render__body"></div>
+                <div id="textReference" class="scripture-render__reference"></div>
+            </div>
+        </div>
     </div>
 </body>
 

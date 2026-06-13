@@ -112,6 +112,7 @@ function getHelpWindowBounds() {
 }
 
 let mediaWindow = null;
+let lowerThirdWindow = null;
 let windowBounds = measurePerformance("Getting window bounds", getWindowBounds);
 let win = null;
 
@@ -362,6 +363,18 @@ async function handleCloseMediaWindowNow() {
   return closed;
 }
 
+async function handleCloseLowerThirdWindowNow() {
+  if (!lowerThirdWindow || lowerThirdWindow.isDestroyed()) {
+    return false;
+  }
+  const windowToClose = lowerThirdWindow;
+  const closed = new Promise((resolve) => {
+    windowToClose.once("closed", () => resolve(true));
+  });
+  windowToClose.close();
+  return closed;
+}
+
 function localMediaStateUpdate(event, id, state) {
   switch (state) {
     case "play":
@@ -374,14 +387,40 @@ function localMediaStateUpdate(event, id, state) {
   }
 }
 
+function displayForExplicitIndex(displayIndex) {
+  if (!Number.isInteger(displayIndex) || displayIndex < 0) return null;
+  const displays = screen.getAllDisplays();
+  return displays[displayIndex] || null;
+}
+
+function fullscreenWindowBoundsForDisplay(display) {
+  return {
+    x: display.bounds.x,
+    y: display.bounds.y,
+    width: display.bounds.width,
+    height: display.bounds.height,
+  };
+}
+
+function boundsPayload(bounds) {
+  if (!bounds) return null;
+  return {
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+  };
+}
+
+function handleGetMediaWindowBounds() {
+  if (!mediaWindow || mediaWindow.isDestroyed()) return null;
+  return boundsPayload(mediaWindow.getContentBounds?.() || mediaWindow.getBounds());
+}
+
 async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
   return measurePerformance("Creating media window", async () => {
-    const displays = screen.getAllDisplays();
-    // Use selected display or fall back
-    const targetDisplay =
-      displays[displayIndex] ||
-      displays.find((d) => d.bounds.x !== 0 || d.bounds.y !== 0) ||
-      displays[0];
+    const targetDisplay = displayForExplicitIndex(displayIndex);
+    if (!targetDisplay) return null;
 
     const { webPreferences: incomingPrefs = {}, ...restWindowOptions } =
       windowOptions;
@@ -394,10 +433,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       fullscreen: true,
       frame: false,
       icon: `${import.meta.dirname}/icon.png`,
-      x: targetDisplay.bounds.x,
-      y: targetDisplay.bounds.y,
-      width: targetDisplay.bounds.width,
-      height: targetDisplay.bounds.height,
+      ...fullscreenWindowBoundsForDisplay(targetDisplay),
       webPreferences: {
         ...incomingPrefs,
         session: mediaPresentationSession,
@@ -427,6 +463,58 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     });
 
     return createdMediaWindow.id;
+  });
+}
+
+async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) {
+  return measurePerformance("Creating lower third window", async () => {
+    const targetDisplay = displayForExplicitIndex(displayIndex);
+    if (!targetDisplay) return null;
+
+    const { webPreferences: incomingPrefs = {}, ...restWindowOptions } =
+      windowOptions || {};
+    const backgroundColor =
+      typeof restWindowOptions.backgroundColor === "string"
+        ? restWindowOptions.backgroundColor
+        : "#00ff00";
+
+    if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
+      lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetDisplay));
+      lowerThirdWindow.setFullScreen(true);
+      lowerThirdWindow.setBackgroundColor(backgroundColor);
+      return lowerThirdWindow.id;
+    }
+
+    const createdLowerThirdWindow = new BrowserWindow({
+      ...restWindowOptions,
+      backgroundThrottling: false,
+      backgroundColor,
+      transparent: false,
+      fullscreen: true,
+      frame: false,
+      skipTaskbar: true,
+      icon: `${import.meta.dirname}/icon.png`,
+      ...fullscreenWindowBoundsForDisplay(targetDisplay),
+      webPreferences: {
+        ...incomingPrefs,
+        session: mediaPresentationSession,
+      },
+    });
+    lowerThirdWindow = createdLowerThirdWindow;
+    createdLowerThirdWindow.setIgnoreMouseEvents(true);
+    await createdLowerThirdWindow.loadFile("derived/src/media.prod.html");
+    createdLowerThirdWindow.on("closed", () => {
+      if (lowerThirdWindow === createdLowerThirdWindow) {
+        lowerThirdWindow = null;
+        if (win && !win.isDestroyed()) {
+          win.webContents.send("lower-third-window-closed");
+        }
+      }
+    });
+    settings.set("lastLowerThirdDisplayIndex", displayIndex).catch((error) => {
+      console.error("Error saving lower third display preference:", error);
+    });
+    return createdLowerThirdWindow.id;
   });
 }
 
@@ -794,16 +882,16 @@ async function handleGetAllDisplays() {
   const displays = screen.getAllDisplays();
   let edidDisplayInfo = [];
   const savedDisplayIndex = settings.getSync("lastDisplayIndex");
+  const savedLowerThirdDisplayIndex = settings.getSync("lastLowerThirdDisplayIndex");
 
-  let defaultDisplayIndex;
-  if (savedDisplayIndex !== undefined && displays[savedDisplayIndex]) {
-    defaultDisplayIndex = savedDisplayIndex;
-  } else {
-    defaultDisplayIndex = displays.findIndex(
-      (d) => d.bounds.x !== 0 || d.bounds.y !== 0,
-    );
-    if (defaultDisplayIndex === -1) defaultDisplayIndex = 0;
-  }
+  const defaultDisplayIndex =
+    Number.isInteger(savedDisplayIndex) && displays[savedDisplayIndex]
+      ? savedDisplayIndex
+      : "";
+  const defaultLowerThirdDisplayIndex =
+    Number.isInteger(savedLowerThirdDisplayIndex) && displays[savedLowerThirdDisplayIndex]
+      ? savedLowerThirdDisplayIndex
+      : "";
 
   if (process.platform === "linux") {
     try {
@@ -879,28 +967,42 @@ async function handleGetAllDisplays() {
   return {
     displays: displayOptions,
     defaultDisplayIndex,
+    defaultLowerThirdDisplayIndex,
   };
 }
 
 function handleSetDisplayIndex(event, index) {
-  settings.set("lastDisplayIndex", index).catch((error) => {
+  const displayIndex = Number.isInteger(index) && index >= 0 ? index : -1;
+  settings.set("lastDisplayIndex", displayIndex).catch((error) => {
     console.error("Error saving display index:", error);
   });
 
   // If there's an active media window, move it to the new display
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-    const displays = screen.getAllDisplays();
-    const targetDisplay =
-      displays[index] ||
-      displays.find((d) => d.bounds.x !== 0 || d.bounds.y !== 0) ||
-      displays[0];
+    const targetDisplay = displayForExplicitIndex(displayIndex);
+    if (!targetDisplay) {
+      mediaWindow.close();
+      return;
+    }
 
-    mediaWindow.setBounds({
-      x: targetDisplay.bounds.x,
-      y: targetDisplay.bounds.y,
-      width: targetDisplay.bounds.width,
-      height: targetDisplay.bounds.height,
-    });
+    mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetDisplay));
+  }
+}
+
+function handleSetLowerThirdDisplayIndex(event, index) {
+  const displayIndex = Number.isInteger(index) && index >= 0 ? index : -1;
+  settings.set("lastLowerThirdDisplayIndex", displayIndex).catch((error) => {
+    console.error("Error saving lower third display index:", error);
+  });
+
+  if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
+    const targetDisplay = displayForExplicitIndex(displayIndex);
+    if (!targetDisplay) {
+      lowerThirdWindow.close();
+      return;
+    }
+    lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetDisplay));
+    lowerThirdWindow.setFullScreen(true);
   }
 }
 
@@ -2032,6 +2134,7 @@ function setIPC() {
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);
   ipcMain.handle("get-media-current-time", handleGetMediaCurrentTime);
+  ipcMain.handle("get-media-window-bounds", handleGetMediaWindowBounds);
   ipcMain.handle("get-pptx-current-slide", handleGetPptxCurrentSlide);
   ipcMain.handle("set-media-loop-status", handleSetLoopStatus);
   ipcMain.handle(
@@ -2082,7 +2185,14 @@ function setIPC() {
       mediaWindow.webContents.send("update-text", message);
     }
   });
+  ipcMain.on("update-lower-third-text", (_event, message) => {
+    if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
+      lowerThirdWindow.webContents.send("update-text", message);
+    }
+  });
   ipcMain.handle("create-media-window", handleCreateMediaWindow);
+  ipcMain.handle("create-lower-third-window", handleCreateLowerThirdWindow);
+  ipcMain.handle("close-lower-third-window-now", handleCloseLowerThirdWindowNow);
   ipcMain.on("timeGoto-message", handleTimeGotoMessage);
   ipcMain.on("play-ctl", handlePlayCtl);
   ipcMain.on("pptx-goto-slide", (_event, data) => {
@@ -2091,6 +2201,7 @@ function setIPC() {
     }
   });
   ipcMain.on("set-display-index", handleSetDisplayIndex);
+  ipcMain.on("set-lower-third-display-index", handleSetLowerThirdDisplayIndex);
   ipcMain.on("media-seekto", (event, seekTime) => {
     win?.webContents.send("timeGoto-message", {
       currentTime: seekTime,

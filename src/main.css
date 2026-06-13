@@ -1235,7 +1235,7 @@ footer {
     top: 12px;
     right: 12px;
     z-index: 5;
-    display: inline-flex;
+    display: none;
     align-items: center;
     justify-content: center;
     min-width: 90px;
@@ -1253,6 +1253,17 @@ footer {
     font-feature-settings: "tnum" 1, "ss01" 1;
     letter-spacing: 0.02em;
     pointer-events: none;
+}
+
+#mediaCntDn.is-active {
+    display: inline-flex;
+}
+
+#mediaCntDn[hidden] {
+    display: none !important;
+    border-color: transparent;
+    background: transparent;
+    backdrop-filter: none;
 }
 
 /* Focus styles */
@@ -2963,83 +2974,209 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     container-type: size;
     min-height: 0;
     block-size: 100%;
-    display: block;
-    padding: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) minmax(136px, 24%);
+    gap: 8px;
+    padding: 8px;
     box-sizing: border-box;
-    background-size: cover;
-    background-position: center;
+    background: #242428;
     text-align: center;
     overflow: hidden;
 }
 
+.bible-preview-panel--audience-only {
+    grid-template-rows: minmax(0, 1fr);
+}
+
+[data-lower-third-feature][hidden] {
+    display: none !important;
+}
+
+.bible-preview-surface {
+    --bible-preview-output-width: 1920px;
+    --bible-preview-output-height: 1080px;
+    --bible-preview-output-scale: 1;
+    position: relative;
+    container-type: size;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, white 14%, transparent);
+    border-radius: 6px;
+    background-color: #000000;
+    background-size: cover;
+    background-position: center;
+}
+
+.bible-preview-surface--audience {
+    isolation: isolate;
+}
+
+.bible-preview-surface--lower-third {
+    background: #00ff00;
+}
+
+.bible-preview-surface-label {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 3;
+    max-width: calc(100% - 16px);
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(20, 20, 22, 0.72);
+    color: rgba(244, 244, 246, 0.86);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
 .bible-preview-background-video {
     position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
+    top: 50%;
+    left: 50%;
+    width: var(--bible-preview-output-width);
+    height: var(--bible-preview-output-height);
     object-fit: cover;
+    transform: translate(-50%, -50%) scale(var(--bible-preview-output-scale));
+    transform-origin: center;
     z-index: 0;
+}
+
+.scripture-render {
+    --scripture-font-size: 66px;
+    --scripture-reference-font-size: 38px;
+    --scripture-lower-third-font-size: 52px;
+    --scripture-line-height: 1.32;
+    --scripture-font-weight: 700;
+    --scripture-color: #ffffff;
+    --scripture-reference-color: rgba(255, 255, 255, 0.78);
+    --scripture-reference-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
+    --scripture-lower-third-backdrop: rgba(0, 0, 0, 0.74);
+    font-family: 'CMG Sans';
+    color: var(--scripture-color);
+}
+
+.scripture-render__box {
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.scripture-render__body,
+.scripture-render__reference {
+    font-family: inherit;
+    font-weight: var(--scripture-font-weight);
+    overflow-wrap: anywhere;
+    word-break: normal;
+    hyphens: auto;
+    white-space: pre-wrap;
+}
+
+.scripture-render__body {
+    color: var(--scripture-color);
+    font-size: var(--scripture-font-size);
+    line-height: var(--scripture-line-height);
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
+}
+
+.scripture-render__reference {
+    color: var(--scripture-reference-color);
+    font-size: var(--scripture-reference-font-size);
+    line-height: 1.2;
+    margin-top: 0.62em;
+    text-shadow: var(--scripture-reference-shadow);
+}
+
+.scripture-render--fullscreen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+
+.scripture-render--fullscreen .scripture-render__box {
+    width: min(90%, 1720px);
+}
+
+.scripture-render--lower-third {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    text-align: left;
+    padding: 0 7.5% 7%;
+}
+
+.scripture-render--lower-third .scripture-render__box {
+    width: min(84%, 1460px);
+    padding: clamp(18px, 2.1vw, 34px) clamp(24px, 3vw, 46px);
+    border-radius: 8px;
+    background: var(--scripture-lower-third-backdrop);
+    box-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
+}
+
+.scripture-render--lower-third .scripture-render__body {
+    font-size: var(--scripture-lower-third-font-size);
+    line-height: 1.18;
+}
+
+.scripture-render--lower-third .scripture-render__reference {
+    font-size: clamp(18px, calc(var(--scripture-lower-third-font-size) * 0.42), 30px);
+    margin-top: 0.48em;
+}
+
+.scripture-render-measure {
+    position: fixed !important;
+    left: -10000px !important;
+    top: -10000px !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    z-index: -1 !important;
 }
 
 .bible-preview-copy {
     position: absolute;
-    inset: 16px;
+    top: 50%;
+    left: 50%;
     z-index: 1;
-    display: block;
-    width: auto !important;
+    width: var(--bible-preview-output-width) !important;
+    height: var(--bible-preview-output-height);
     max-width: none !important;
     min-width: 0;
     max-inline-size: none;
     box-sizing: border-box;
     overflow: hidden;
-    text-align: center;
+    transform: translate(-50%, -50%) scale(var(--bible-preview-output-scale));
+    transform-origin: center;
 }
 
-.bible-preview-body-anchor {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 100%;
-    transform: translate(-50%, -50%);
+.bible-preview-surface--lower-third .scripture-render--lower-third {
+    padding: 0 5% 5%;
+}
+
+.bible-preview-surface--lower-third .scripture-render--lower-third .scripture-render__box {
+    width: min(88%, 1460px);
+    padding: clamp(10px, 2.8cqh, 20px) clamp(16px, 4cqi, 34px);
+}
+
+.bible-preview-surface--lower-third .scripture-render--lower-third .scripture-render__body {
+    font-size: clamp(18px, calc(var(--scripture-lower-third-font-size) * 0.72), 52px);
+}
+
+.bible-preview-surface--lower-third .scripture-render--lower-third .scripture-render__reference {
+    font-size: clamp(12px, calc(var(--scripture-lower-third-font-size) * 0.3), 24px);
 }
 
 .bible-preview-reference {
     display: block;
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-    inline-size: 100%;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    max-inline-size: 100%;
-    justify-self: stretch;
-    color: rgba(255, 255, 255, 0.72);
-    font-size: clamp(10px, min(1.8cqw, 4cqh), var(--bible-preview-reference-size, 19px));
-    font-weight: 600;
-    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
-    overflow-wrap: anywhere;
-    word-break: normal;
-    white-space: normal;
-    overflow: hidden;
 }
 
 .bible-preview-text {
     display: block;
-    inline-size: 100%;
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-    max-inline-size: 100%;
-    justify-self: stretch;
-    font-size: clamp(12px, min(3.2cqw, 6.5cqh), var(--bible-preview-body-size, 33px));
-    line-height: 1.45;
-    white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: normal;
-    hyphens: auto;
-    overflow: hidden;
-    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
 }
 
 .bible-editor-drawer {
@@ -3060,14 +3197,78 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     min-width: 0;
 }
 
+.bible-output-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: end;
+    min-width: 0;
+}
+
+.bible-field--look {
+    flex: 0 0 min(190px, 100%);
+}
+
+.bible-lower-third-controls {
+    flex: 1 1 520px;
+    min-width: min(100%, 320px);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.bible-lower-third-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    color: rgba(244, 244, 246, 0.88);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.bible-cursor-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px;
+    border: 1px solid color-mix(in srgb, white 14%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, #2f2f34 94%, white);
+}
+
+.bible-cursor-stepper .pill-button {
+    min-height: 28px;
+    padding-inline: 12px;
+}
+
+.bible-lower-third-controls[hidden] {
+    display: none;
+}
+
+.bible-lower-third-status {
+    flex: 1 1 120px;
+    min-width: 112px;
+    color: rgba(244, 244, 246, 0.78);
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.bible-lower-third-controls .pill-button {
+    min-width: 0;
+}
+
 .bible-editor-fields {
     display: grid;
     grid-template-columns:
-        minmax(260px, 2fr)
+        minmax(190px, 1.35fr)
         minmax(96px, 108px)
-        minmax(112px, 0.75fr)
-        minmax(132px, 0.9fr)
-        minmax(180px, 1.2fr);
+        minmax(132px, 0.85fr)
+        minmax(150px, 0.95fr)
+        minmax(118px, 0.75fr)
+        minmax(110px, 0.72fr)
+        minmax(190px, 1.2fr);
     gap: 10px;
     align-items: end;
     min-width: 0;
@@ -3082,6 +3283,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     flex-wrap: wrap;
     gap: 8px;
     align-items: center;
+    padding-top: 2px;
 }
 
 .bible-editor-actions > .pill-button {
@@ -3130,6 +3332,38 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     .bible-field:nth-child(n + 3),
     .bible-background-picker {
         grid-column: span 2;
+    }
+}
+
+.bible-editor-fields--audience-only {
+    grid-template-columns:
+        minmax(190px, 1.35fr)
+        minmax(96px, 108px)
+        minmax(132px, 0.85fr)
+        minmax(150px, 0.95fr)
+        minmax(190px, 1.2fr);
+}
+
+@media (max-width: 1240px) {
+    .bible-editor-fields--audience-only {
+        grid-template-columns:
+            minmax(220px, 1.6fr)
+            minmax(96px, 104px)
+            minmax(104px, 0.72fr)
+            minmax(120px, 0.85fr)
+            minmax(150px, 1fr);
+    }
+}
+
+@media (max-width: 900px) {
+    .bible-editor-fields--audience-only {
+        grid-template-columns: minmax(180px, 1fr) 96px 88px 96px;
+    }
+}
+
+@media (max-width: 680px) {
+    .bible-editor-fields--audience-only {
+        grid-template-columns: minmax(0, 1fr) 60px;
     }
 }
 

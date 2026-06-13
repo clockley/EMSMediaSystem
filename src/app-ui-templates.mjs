@@ -57,7 +57,7 @@ export function generateStreamsPanelHTML() {
             <div class="control-group">
                 <span class="control-label">Display</span>
                 <select name="dspSelctStreams" id="dspSelctStreams" class="display-select">
-                    <option value="" disabled>Select Display</option>
+                    <option value="">No Output</option>
                 </select>
             </div>
 
@@ -129,7 +129,16 @@ export function generateMediaFormHTML() {
             <span class="control-label">Output Display</span>
             <div class="display-select-group">
               <select name="dspSelct" id="dspSelct" class="display-select">
-                <option value="" disabled>--Select Display Device--</option>
+                <option value="">No Audience Output</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="control-group" data-lower-third-feature hidden>
+            <span class="control-label">Lower Third Display</span>
+            <div class="display-select-group">
+              <select name="lowerThirdDspSelct" id="lowerThirdDspSelct" class="display-select">
+                <option value="">No Lower Third Output</option>
               </select>
             </div>
           </div>
@@ -220,32 +229,69 @@ export function generateMediaFormHTML() {
             </div>
           </div>
           <div id="biblePreviewPanel" class="bible-preview-panel">
-            <video id="biblePreviewBackgroundVideo" class="bible-preview-background-video" muted loop playsinline hidden></video>
-            <div class="bible-preview-copy">
-              <div class="bible-preview-body-anchor">
-                <div id="biblePreviewText" class="bible-preview-text"></div>
+            <section id="bibleAudiencePreviewShell" class="bible-preview-surface bible-preview-surface--audience" aria-label="Audience output preview">
+              <span class="bible-preview-surface-label">Audience</span>
+              <video id="biblePreviewBackgroundVideo" class="bible-preview-background-video" muted loop playsinline hidden></video>
+              <div id="biblePreviewRender" class="bible-preview-copy scripture-render scripture-render--fullscreen">
+                <div class="scripture-render__box">
+                  <div id="biblePreviewText" class="bible-preview-text scripture-render__body"></div>
+                  <div id="biblePreviewReference" class="bible-preview-reference scripture-render__reference"></div>
+                </div>
               </div>
-              <div id="biblePreviewReference" class="bible-preview-reference"></div>
-            </div>
+            </section>
+            <section id="bibleLowerThirdPreviewShell" class="bible-preview-surface bible-preview-surface--lower-third" aria-label="Lower third output preview" data-lower-third-feature hidden>
+              <span class="bible-preview-surface-label">Lower Third</span>
+              <div id="bibleLowerThirdPreviewRender" class="bible-preview-copy scripture-render scripture-render--lower-third">
+                <div class="scripture-render__box">
+                  <div id="bibleLowerThirdPreviewText" class="bible-preview-text scripture-render__body"></div>
+                  <div id="bibleLowerThirdPreviewReference" class="bible-preview-reference scripture-render__reference"></div>
+                </div>
+              </div>
+            </section>
           </div>
           <div class="bible-editor-drawer">
             <div class="bible-editor-controls">
+              <div class="bible-output-controls" data-lower-third-feature hidden>
+                <div id="bibleLowerThirdControls" class="bible-lower-third-controls" aria-label="Lower third cursor controls">
+                  <span class="bible-lower-third-label">Lower Third Cursor</span>
+                  <div class="bible-cursor-stepper" role="group" aria-label="Move lower third cursor">
+                    <button type="button" id="bibleLowerThirdPrevBtn" class="pill-button secondary">Previous</button>
+                    <button type="button" id="bibleLowerThirdNextBtn" class="pill-button secondary">Next</button>
+                  </div>
+                  <span id="bibleLowerThirdStatus" class="bible-lower-third-status">Segment 1 of 1</span>
+                  <button type="button" id="bibleLowerThirdAutoSplitBtn" class="pill-button secondary">Auto Split</button>
+                </div>
+              </div>
               <div class="bible-editor-fields">
-                <label class="bible-field bible-field--font">Font <input id="bibleFontInput" type="text" class="url-input" value="'CMG Sans'"></label>
+                <label class="bible-field bible-field--font">Font
+                  <select id="bibleFontInput" class="display-select">
+                    <option value="'CMG Sans'">CMG Sans</option>
+                    <option value="'Adwaita'">Adwaita</option>
+                    <option value="'Arial'">Arial</option>
+                    <option value="'Calibri'">Calibri</option>
+                    <option value="'Cambria'">Cambria</option>
+                    <option value="'Georgia'">Georgia</option>
+                    <option value="'Segoe UI'">Segoe UI</option>
+                    <option value="'Tahoma'">Tahoma</option>
+                    <option value="'Times New Roman'">Times New Roman</option>
+                    <option value="'Verdana'">Verdana</option>
+                  </select>
+                </label>
                 <label class="bible-field">Size <input id="bibleFontSizeInput" type="number" min="24" max="160" value="66" class="url-input"></label>
-                <label class="bible-field">Text <input id="bibleTextColorInput" type="color" value="#ffffff"></label>
-                <label class="bible-field">Backdrop <input id="bibleBackgroundColorInput" type="color" value="#000000"></label>
+                <label class="bible-field">Audience Text <input id="bibleTextColorInput" type="color" value="#ffffff"></label>
+                <label class="bible-field">Audience Backdrop <input id="bibleBackgroundColorInput" type="color" value="#000000"></label>
+                <label class="bible-field" data-lower-third-feature hidden>Lower Text <input id="bibleLowerThirdTextColorInput" type="color" value="#ffffff"></label>
+                <label class="bible-field" data-lower-third-feature data-lower-third-key-color hidden>Key Color <input id="bibleLowerThirdChromaKeyInput" type="color" value="#00ff00"></label>
                 <label class="file-input-label bible-background-picker">
                   <input id="bibleBackgroundInput" type="file" accept="image/*,video/*" hidden>
-                  <span id="bibleBackgroundLabel">Choose Background…</span>
+                  <span id="bibleBackgroundLabel">Audience Background…</span>
                 </label>
               </div>
               <div class="bible-editor-actions">
-                <button type="button" id="bibleApplyFontAllBtn" class="pill-button secondary">Apply Font to All</button>
-                <button type="button" id="bibleApplyFontSizeAllBtn" class="pill-button secondary">Apply Size to All</button>
-                <button type="button" id="bibleApplyTextColorAllBtn" class="pill-button secondary">Apply Text Color to All</button>
-                <button type="button" id="bibleApplyBackgroundAllBtn" class="pill-button secondary">Apply Bg to All Text</button>
-                <button type="button" id="bibleClearBackgroundBtn" class="pill-button secondary">Remove Background</button>
+                <button type="button" id="bibleApplyCurrentBtn" class="pill-button suggested-action">Apply to Current</button>
+                <button type="button" id="bibleApplyStyleScheduleBtn" class="pill-button secondary">Apply Style to Schedule</button>
+                <button type="button" id="bibleUseStyleDefaultsBtn" class="pill-button secondary">Use as Defaults</button>
+                <button type="button" id="bibleClearBackgroundBtn" class="pill-button secondary">Clear Audience Background</button>
               </div>
             </div>
           </div>
