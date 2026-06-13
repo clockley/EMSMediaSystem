@@ -79,13 +79,21 @@ JS_FILES := $(patsubst ./%,%,$(JS_FILES))
 JS_FILES := $(filter-out src/app.js,$(JS_FILES))
 APP_BUNDLE_SRC = src/app.js
 APP_BUNDLE_OUT = $(DERIVED_DIR)/src/app.min.js
-WASM_SRC = src/main.wasm
 WASM_DEST = $(DERIVED_DIR)/src/main.wasm
+BIBLE_WASM_BUILDER = bibleBackend/build-bible-wasm.mjs
+BIBLE_NKJV_IMPORTER = bibleBackend/import-nkjv.mjs
+BIBLE_NKJV_JSON = bibleBackend/NEW\ KING\ JAMES\ VERSION.json
+BIBLE_BACKEND_FILES = bibleBackend/main.go bibleBackend/go.mod bibleBackend/go.sum bibleBackend/bible-sqlite.db
+BUILD_ARTIFACTS_DIR = build-artifacts
+BIBLE_PUBLIC_STAMP = $(BUILD_ARTIFACTS_DIR)/.main.public.wasm.stamp
+BIBLE_PAID_STAMP = $(BUILD_ARTIFACTS_DIR)/.main.paid.wasm.stamp
 
 # Corresponding destination files in derived directory.
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
 IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
-DERIVED_RESOURCES = $(IMAGE_DEST) $(WASM_DEST) # Includes all copied binary/static resources
+DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all copied binary/static resources
+PUBLIC_DERIVED_RESOURCES = $(DERIVED_RESOURCES) $(BIBLE_PUBLIC_STAMP)
+PAID_DERIVED_RESOURCES = $(DERIVED_RESOURCES) $(BIBLE_PAID_STAMP)
 
 ifeq ($(NO_COLOR), 1)
   COLOR_GREEN =
@@ -110,8 +118,11 @@ HTML_PROD_FILES := $(patsubst %.html,$(DERIVED_DIR)/%.prod.html,$(HTML_FILES))
 MINIFIED_JS_FILES := $(patsubst %.js,$(DERIVED_DIR)/%.min.js,$(patsubst %.mjs,$(DERIVED_DIR)/%.min.mjs,$(JS_FILES))) $(APP_BUNDLE_OUT)
 
 # Default target
-all: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES)
+all: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(PUBLIC_DERIVED_RESOURCES)
 	@echo "$(COLOR_GREEN)$($(TICK)) Build complete!$(COLOR_RESET)"
+
+all-paid: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(PAID_DERIVED_RESOURCES)
+	@echo "$(COLOR_GREEN)$($(TICK)) Paid build complete!$(COLOR_RESET)"
 
 # Ensure derived directory exists
 $(DERIVED_DIR):
@@ -159,16 +170,33 @@ endif
 	@cp "$<" "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Copied $@$(COLOR_RESET)"
 
-$(WASM_DEST): $(WASM_SRC) | $(DERIVED_DIR)
+$(BIBLE_PUBLIC_STAMP): $(BIBLE_WASM_BUILDER) $(BIBLE_BACKEND_FILES) src/wasm_exec.js | $(DERIVED_DIR)
 	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
 ifeq ($(WINDOWS), 1)
-	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $(WASM_DEST))'" >nul 2>&1
 else
-	@mkdir -p $(dir $@)
+	@mkdir -p $(dir $(WASM_DEST))
 endif
-	@echo "$(COLOR_YELLOW)Copying $< → $@$(COLOR_RESET)"
-	@cp "$<" "$@"
-	@echo "$(COLOR_GREEN)$(TICK) Copied $@$(COLOR_RESET)"
+	@echo "$(COLOR_YELLOW)Building public-domain Bible WASM → $(WASM_DEST)$(COLOR_RESET)"
+	@node "$(BIBLE_WASM_BUILDER)" public "$(WASM_DEST)"
+	@rm -f "$(BIBLE_PAID_STAMP)"
+	@touch "$@"
+	@echo "$(COLOR_GREEN)$(TICK) Built public-domain Bible WASM$(COLOR_RESET)"
+
+$(BIBLE_PAID_STAMP): $(BIBLE_WASM_BUILDER) $(BIBLE_NKJV_IMPORTER) $(BIBLE_NKJV_JSON) $(BIBLE_BACKEND_FILES) src/wasm_exec.js | $(DERIVED_DIR)
+	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $(WASM_DEST))'" >nul 2>&1
+else
+	@mkdir -p $(dir $(WASM_DEST))
+endif
+	@echo "$(COLOR_YELLOW)Building paid Bible WASM with NKJV → $(WASM_DEST)$(COLOR_RESET)"
+	@node "$(BIBLE_WASM_BUILDER)" paid "$(WASM_DEST)"
+	@rm -f "$(BIBLE_PUBLIC_STAMP)"
+	@touch "$@"
+	@echo "$(COLOR_GREEN)$(TICK) Built paid Bible WASM$(COLOR_RESET)"
+
+$(WASM_DEST): $(BIBLE_PUBLIC_STAMP)
 
 # --- Other Rules (Unchanged) ---
 
@@ -264,6 +292,7 @@ ifeq ($(WINDOWS), 1)
 else
 	@rm -rf $(DERIVED_DIR)
 	@rm -rf $(DIST_DIR)
+	@rm -rf $(BUILD_ARTIFACTS_DIR)
 endif
 	@echo "$(COLOR_GREEN)$(TICK) Clean complete$(COLOR_RESET)"
 
@@ -286,6 +315,7 @@ help:
 	@echo ""
 	@echo "$(COLOR_BLUE)Available targets:$(COLOR_RESET)"
 	@echo "  $(COLOR_GREEN)all$(COLOR_RESET)       - Build all artifacts (default)"
+	@echo "  $(COLOR_GREEN)all-paid$(COLOR_RESET)  - Build all artifacts with paid Bible content"
 	@echo "  $(COLOR_GREEN)clean$(COLOR_RESET)     - Remove all build artifacts"
 	@echo "  $(COLOR_GREEN)rebuild$(COLOR_RESET)   - Clean and build all artifacts"
 	@echo "  $(COLOR_GREEN)status$(COLOR_RESET)    - Show build status"
