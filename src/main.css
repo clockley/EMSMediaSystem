@@ -2658,8 +2658,8 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     width: 100%;
     justify-content: center;
     white-space: nowrap;
-    min-width: 0;
-    max-width: 180px;
+    min-width: 190px;
+    max-width: none;
     overflow: hidden;
     text-overflow: ellipsis;
 }
@@ -3101,6 +3101,18 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 
 .scripture-render--fullscreen .scripture-render__box {
     width: min(90%, 1720px);
+    display: grid;
+    grid-template-rows: minmax(0, auto) auto;
+    gap: clamp(16px, 2vh, 34px);
+    max-height: 86%;
+}
+
+.scripture-render--fullscreen .scripture-render__body {
+    min-height: 0;
+}
+
+.scripture-render--fullscreen .scripture-render__reference {
+    margin-top: 0;
 }
 
 .scripture-render--lower-third {
@@ -3268,7 +3280,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
         minmax(150px, 0.95fr)
         minmax(118px, 0.75fr)
         minmax(110px, 0.72fr)
-        minmax(190px, 1.2fr);
+        minmax(220px, 1.35fr);
     gap: 10px;
     align-items: end;
     min-width: 0;
@@ -3341,7 +3353,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
         minmax(96px, 108px)
         minmax(132px, 0.85fr)
         minmax(150px, 0.95fr)
-        minmax(190px, 1.2fr);
+        minmax(220px, 1.35fr);
 }
 
 @media (max-width: 1240px) {
