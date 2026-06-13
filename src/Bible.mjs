@@ -40,10 +40,6 @@ export class Bible {
     }
   }
 
-  getBooks() {
-    return JSON.parse(_getBooks());
-  }
-
   getVersions() {
     return JSON.parse(_getVersions());
   }
