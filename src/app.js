@@ -7308,9 +7308,6 @@ async function playCurrentQueueItem(opts) {
     const audienceStarted = hasAudienceOutputSelected()
       ? await createMediaWindow({ textItem: item })
       : false;
-    if (audienceStarted) {
-      window.setTimeout(() => sendBibleTextToOutput(entry), 150);
-    }
     if (!audienceStarted && !lowerThirdStarted) {
       showGnomeToast("Choose an output display");
       isPlaying = false;
@@ -9517,9 +9514,6 @@ async function handleMediaWindowClosed(event, id) {
       const audienceStarted = hasAudienceOutputSelected()
         ? await createMediaWindow({ textItem: mediaQueue[idx] })
         : false;
-      if (audienceStarted) {
-        window.setTimeout(() => sendBibleTextToOutput(entry), 150);
-      }
       if (!audienceStarted && !lowerThirdStarted) {
         showGnomeToast("Choose an output display");
         isPlaying = false;
@@ -12178,7 +12172,7 @@ async function createMediaWindow(options) {
       sendBibleTextToOutput(entry);
     }, 150);
     syncStreamRendererPreviewCapture();
-    return;
+    return true;
   }
   if (isPptxFile) {
     setTimeout(() => {
@@ -12216,6 +12210,7 @@ async function createMediaWindow(options) {
     }
   }
   syncStreamRendererPreviewCapture();
+  return true;
 }
 
 async function bootstrapRenderer() {

@@ -3,3 +3,6 @@ dist/
 .vscode
 .yarn/
 derived/
+build-artifacts/
+bibleBackend/NEW KING JAMES VERSION.json
+bibleBackend/bible-sqlite.db.old
