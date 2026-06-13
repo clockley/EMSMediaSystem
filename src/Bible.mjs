@@ -59,4 +59,23 @@ export class Bible {
   getChapterInfo(version, name, verse) {
     return JSON.parse(_getChapterInfo(version, name, verse));
   }
+
+  resolveReference(version, reference) {
+    return JSON.parse(_resolveReference(version, reference));
+  }
+
+  getPassage(version, reference) {
+    return JSON.parse(_getPassage(version, reference));
+  }
+
+  getBookMetadata(version) {
+    return JSON.parse(_getBookMetadata(version));
+  }
+
+  suggestReferences(version, input) {
+    if (input === undefined) {
+      return JSON.parse(_suggestReferences(version));
+    }
+    return JSON.parse(_suggestReferences(version, input));
+  }
 }

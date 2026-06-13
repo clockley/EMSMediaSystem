@@ -43,7 +43,6 @@ import {
   waitForMetadata as waitForMediaMetadata,
 } from "./app-media-loading-utils.mjs";
 import {
-  normalizeBibleReferenceInput as normalizeBibleReferenceInputWithCache,
   normalizeScriptureReference,
   parseScriptureReference,
 } from "./app-bible-reference-utils.mjs";
@@ -365,41 +364,69 @@ function isNonVideoPresentationItem(filePath) {
 }
 
 function normalizeBibleReferenceInput(rawReference) {
-  return normalizeBibleReferenceInputWithCache(rawReference, bibleBooksCache);
-}
-
-function bibleReferenceBookQuery(rawReference) {
-  const raw = String(rawReference || "").trim();
-  if (!raw) return "";
-  return raw.replace(/\s+\d.*$/, "").trim();
+  try {
+    const resolved = bibleAPI.resolveReference(
+      bibleDesignerState.version || "KJV",
+      rawReference,
+    );
+    if (resolved && !resolved.error && resolved.reference) {
+      return {
+        book: resolved.book,
+        chapter: resolved.chapter,
+        verse: resolved.verse || 0,
+        verseEnd: resolved.verseEnd || 0,
+        reference: resolved.reference,
+      };
+    }
+  } catch {}
+  return null;
 }
 
 function bibleReferenceSuggestionsForInput(rawReference) {
-  const query = bibleReferenceBookQuery(rawReference);
+  const query = String(rawReference || "").trim();
   if (!query) return [];
-  const normalizedQuery = query.toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!normalizedQuery) return [];
-
-  const starts = [];
-  const contains = [];
-  for (const book of bibleBooksCache) {
-    const name = String(book?.name || "").trim();
-    if (!name) continue;
-    const normalizedName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (normalizedName === normalizedQuery) continue;
-    if (normalizedName.startsWith(normalizedQuery)) {
-      starts.push(name);
-    } else if (normalizedName.includes(normalizedQuery)) {
-      contains.push(name);
-    }
-  }
-  return [...starts, ...contains].slice(0, 8);
+  try {
+    const result = bibleAPI.suggestReferences(
+      bibleDesignerState.version || "KJV",
+      query,
+    );
+    const seen = new Set();
+    return (Array.isArray(result?.suggestions) ? result.suggestions : [])
+      .map((suggestion) => {
+        const type = suggestion?.type === "book" ? "book" : "reference";
+        const reference = String(suggestion?.reference || suggestion?.book || "").trim();
+        const book = String(suggestion?.book || reference).trim();
+        if (!reference || !book) return null;
+        const value = type === "book" ? `${book} 1:1` : reference;
+        return {
+          type,
+          label: String(suggestion?.label || reference).trim(),
+          value,
+          reference,
+        };
+      })
+      .filter(Boolean)
+      .filter((suggestion) => {
+        const key = suggestion.value;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 8);
+  } catch {}
+  return [];
 }
 
 function bibleReferenceAllBooks() {
   return bibleBooksCache
     .map((book) => String(book?.name || "").trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((name) => ({
+      type: "book",
+      label: name,
+      value: `${name} 1:1`,
+      reference: name,
+    }));
 }
 
 function positionBibleReferenceSuggestionsOverlay() {
@@ -437,13 +464,18 @@ function hideBibleReferenceSuggestions() {
   bibleReferenceSuggestionIndex = -1;
 }
 
-function applyBibleReferenceSuggestion(bookName) {
+function applyBibleReferenceSuggestion(suggestion) {
   const referenceInput = document.getElementById("bibleReferenceInput");
-  if (!referenceInput || !bookName) return;
-  referenceInput.value = `${bookName} 1:1`;
+  const value =
+    typeof suggestion === "string"
+      ? suggestion
+      : String(suggestion?.value || suggestion?.reference || suggestion?.label || "").trim();
+  if (!referenceInput || !value) return;
+  referenceInput.value = value;
   hideBibleReferenceSuggestions();
   referenceInput.focus();
   referenceInput.setSelectionRange(referenceInput.value.length, referenceInput.value.length);
+  jumpBibleReferenceToBrowser();
 }
 
 function updateBibleReferenceSuggestionActiveState() {
@@ -495,16 +527,17 @@ function renderBibleReferenceSuggestions(options = {}) {
 
   suggestionsEl.innerHTML = "";
   const fragment = document.createDocumentFragment();
-  suggestions.forEach((name, index) => {
+  suggestions.forEach((suggestion, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.id = `bibleReferenceSuggestion-${index}`;
     button.className = "bible-reference-suggestion";
     button.setAttribute("role", "option");
-    button.textContent = name;
+    button.dataset.referenceValue = suggestion.value;
+    button.textContent = suggestion.label;
     button.addEventListener("mousedown", (event) => {
       event.preventDefault();
-      applyBibleReferenceSuggestion(name);
+      applyBibleReferenceSuggestion(suggestion);
     });
     fragment.appendChild(button);
   });
@@ -515,6 +548,9 @@ function renderBibleReferenceSuggestions(options = {}) {
   document.getElementById("bibleReferenceToggle")?.setAttribute("aria-expanded", "true");
   if (bibleReferenceSuggestionIndex >= suggestions.length) {
     bibleReferenceSuggestionIndex = suggestions.length - 1;
+  }
+  if (bibleReferenceSuggestionIndex < 0) {
+    bibleReferenceSuggestionIndex = 0;
   }
   updateBibleReferenceSuggestionActiveState();
 }
@@ -3699,67 +3735,25 @@ function referenceForBibleVerseNumbers(book, chapter, selectedVerses) {
 }
 
 function lookupBibleReference(reference, version) {
-  const normalized = normalizeScriptureReference(reference);
-  const parsed = parseScriptureReference(normalized);
-  if (!parsed.book || !Number.isFinite(parsed.chapter)) return null;
-  const textData = bibleAPI.getText(version || "KJV", parsed.book, String(parsed.chapter));
-  if (!textData?.verses?.length) return null;
-  const selectedVerseNumbers = verseNumbersFromSelector(
-    verseSelectorFromReference(normalized),
-    textData.verses.length,
-  );
-  if (selectedVerseNumbers.length > 0) {
-    const selectedVerseTexts = selectedVerseNumbers.map((verseNumber) => ({
-      verseNumber,
-      text: textData.verses[verseNumber - 1],
-    }));
-    const selectedText =
-      selectedVerseTexts.length === 1
-        ? selectedVerseTexts[0].text
-        : selectedVerseTexts
-            .map(({ verseNumber, text }) => `${verseNumber}. ${text}`)
-            .join("\n");
-    if (!selectedText) return null;
-    return {
-      version: version || "KJV",
-      reference: referenceForBibleVerseNumbers(
-        parsed.book,
-        parsed.chapter,
-        selectedVerseNumbers,
-      ),
-      text: selectedText,
-      selectedVerses: selectedVerseNumbers,
-    };
-  }
-  if (Number.isFinite(parsed.verse) && parsed.verse > 0) {
-    const verseStart = parsed.verse;
-    const verseEnd =
-      Number.isFinite(parsed.verseEnd) && parsed.verseEnd > verseStart
-        ? Math.min(parsed.verseEnd, textData.verses.length)
-        : verseStart;
-    const selectedVerses = textData.verses.slice(verseStart - 1, verseEnd);
-    if (!selectedVerses.length) return null;
-    const isRange = verseEnd > verseStart;
-    return {
-      version: version || "KJV",
-      reference: `${parsed.book} ${parsed.chapter}:${verseStart}${isRange ? `-${verseEnd}` : ""}`,
-      selectedVerses: Array.from(
-        { length: verseEnd - verseStart + 1 },
-        (_, index) => verseStart + index,
-      ),
-      text: isRange
-        ? selectedVerses
-            .map((verseText, index) => `${verseStart + index}. ${verseText}`)
-            .join("\n")
-        : selectedVerses[0],
-    };
-  }
-  return {
-    version: version || "KJV",
-    reference: `${parsed.book} ${parsed.chapter}`,
-    selectedVerses: [],
-    text: textData.verses.map((verseText, index) => `${index + 1}. ${verseText}`).join("\n"),
-  };
+  try {
+    const passage = bibleAPI.getPassage(version || "KJV", reference);
+    if (passage && !passage.error && passage.reference && passage.text) {
+      return {
+        version: passage.version || version || "KJV",
+        reference: passage.reference,
+        text: passage.text,
+        selectedVerses: Array.isArray(passage.selectedVerses)
+          ? passage.selectedVerses
+          : [],
+        book: passage.book,
+        chapter: passage.chapter,
+        verse: passage.verse || 0,
+        verseEnd: passage.verseEnd || 0,
+        verseSelector: passage.verseSelector || "",
+      };
+    }
+  } catch {}
+  return null;
 }
 
 function bibleEntryWithLookupText(entry = bibleDesignerState) {
@@ -3767,7 +3761,6 @@ function bibleEntryWithLookupText(entry = bibleDesignerState) {
   try {
     const result = lookupBibleReference(entry.reference, entry.version);
     if (!result) return entry;
-    const parsed = parseScriptureReference(result.reference);
     const selectedVerses = Array.isArray(result.selectedVerses)
       ? result.selectedVerses
       : [];
@@ -3779,12 +3772,12 @@ function bibleEntryWithLookupText(entry = bibleDesignerState) {
     return {
       ...entry,
       ...result,
-      book: parsed.book || entry.book || bibleDesignerState.book,
-      chapter: Number.isFinite(parsed.chapter) ? parsed.chapter : entry.chapter,
-      verse: selectedVerses[0] || (Number.isFinite(parsed.verse) ? parsed.verse : 0),
+      book: result.book || entry.book || bibleDesignerState.book,
+      chapter: Number.isFinite(result.chapter) ? result.chapter : entry.chapter,
+      verse: selectedVerses[0] || result.verse || 0,
       verseEnd: contiguousSelection
         ? selectedVerses[selectedVerses.length - 1]
-        : Number.isFinite(parsed.verseEnd) ? parsed.verseEnd : 0,
+        : result.verseEnd || 0,
       selectedVerses,
     };
   } catch {
@@ -3951,12 +3944,11 @@ function refreshBibleLookupPreview(opts = {}) {
   syncBibleStateFromControls();
   const result = lookupBibleReference(bibleDesignerState.reference, bibleDesignerState.version);
   if (!result) return false;
-  const parsed = parseScriptureReference(result.reference);
   Object.assign(bibleDesignerState, result, {
-    book: parsed.book || bibleDesignerState.book,
-    chapter: Number.isFinite(parsed.chapter) ? parsed.chapter : bibleDesignerState.chapter,
-    verse: Number.isFinite(parsed.verse) ? parsed.verse : 0,
-    verseEnd: Number.isFinite(parsed.verseEnd) ? parsed.verseEnd : 0,
+    book: result.book || bibleDesignerState.book,
+    chapter: Number.isFinite(result.chapter) ? result.chapter : bibleDesignerState.chapter,
+    verse: result.verse || 0,
+    verseEnd: result.verseEnd || 0,
     ...getBibleDesignerStyle(),
   });
   applyBiblePreview(bibleDesignerState);
@@ -5296,7 +5288,6 @@ function installBibleMediaControls() {
     syncShowNowBiblePresentation();
   });
   referenceInput.addEventListener("input", () => {
-    if (!isBibleReferenceSuggestionsOpen()) return;
     bibleReferenceSuggestionIndex = -1;
     renderBibleReferenceSuggestions();
   });
@@ -5348,7 +5339,9 @@ function installBibleMediaControls() {
         bibleReferenceSuggestionIndex < suggestionButtons.length
       ) {
         applyBibleReferenceSuggestion(
-          suggestionButtons[bibleReferenceSuggestionIndex].textContent || "",
+          suggestionButtons[bibleReferenceSuggestionIndex].dataset.referenceValue ||
+            suggestionButtons[bibleReferenceSuggestionIndex].textContent ||
+            "",
         );
         return;
       }
