@@ -46,12 +46,6 @@ type Version struct {
 	TableName    string `json:"tableName"`
 }
 
-type Book struct {
-	ID        int    `json:"id"`
-	Name      string `json:"name"`
-	Testament string `json:"testament"`
-}
-
 type BookMetadata struct {
 	ID           int      `json:"id"`
 	Name         string   `json:"name"`
@@ -140,6 +134,7 @@ var cachedBookDetails map[int]BookMetadata
 var cachedBookOrder []BookMetadata
 var cachedAliases map[string]string
 var cachedAliasKeys []string
+var cachedBookMetadataByVersion map[string]BookMetadataResponse
 
 func init() {
 	memdb.Create("bible-sqlite.db", bibleDB)
@@ -168,9 +163,9 @@ func init() {
 	if err != nil {
 		log.Fatal("Failed to cache book aliases:", err)
 	}
+	cachedBookMetadataByVersion = make(map[string]BookMetadataResponse)
 
 	js.Global().Set("_getVersions", js.FuncOf(getVersions))
-	js.Global().Set("_getBooks", js.FuncOf(getBooks))
 	js.Global().Set("_getText", js.FuncOf(getText))
 	js.Global().Set("_getBookInfo", js.FuncOf(getBookInfo))
 	js.Global().Set("_getChapterInfo", js.FuncOf(getChapterInfo))
@@ -449,21 +444,6 @@ func getVersions(this js.Value, p []js.Value) interface{} {
 	stream := jsoniter.ConfigFastest.BorrowStream(nil)
 	defer jsoniter.ConfigFastest.ReturnStream(stream)
 	stream.WriteVal(cachedVersions)
-	return string(stream.Buffer())
-}
-
-func getBooks(this js.Value, p []js.Value) interface{} {
-	books := make([]Book, 0, len(cachedBookOrder))
-	for _, book := range cachedBookOrder {
-		books = append(books, Book{
-			ID:        book.ID,
-			Name:      book.Name,
-			Testament: book.Testament,
-		})
-	}
-	stream := jsoniter.ConfigFastest.BorrowStream(nil)
-	defer jsoniter.ConfigFastest.ReturnStream(stream)
-	stream.WriteVal(books)
 	return string(stream.Buffer())
 }
 
@@ -973,6 +953,9 @@ func getBookMetadata(this js.Value, p []js.Value) interface{} {
 	if err != nil {
 		return writeJSON(BookMetadataResponse{Version: defaultVersion(p[0].String()), Error: err.Error()})
 	}
+	if cached, ok := cachedBookMetadataByVersion[versionInfo.Abbreviation]; ok {
+		return writeJSON(cached)
+	}
 	tableName, err := safeTableName(versionInfo.TableName)
 	if err != nil {
 		return writeJSON(BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()})
@@ -1016,10 +999,12 @@ func getBookMetadata(this js.Value, p []js.Value) interface{} {
 		books = append(books, book)
 	}
 
-	return writeJSON(BookMetadataResponse{
+	response := BookMetadataResponse{
 		Version: versionInfo.Abbreviation,
 		Books:   books,
-	})
+	}
+	cachedBookMetadataByVersion[versionInfo.Abbreviation] = response
+	return writeJSON(response)
 }
 
 func suggestionExists(suggestions []ReferenceSuggestion, reference string, suggestionType string) bool {

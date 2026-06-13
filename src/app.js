@@ -310,7 +310,6 @@ const bibleVerseSelection = {
   verses: new Set(),
   anchor: 0,
 };
-let bibleBooksCache = [];
 let bibleReferenceSuggestionIndex = -1;
 /** @type {{ path: string, name: string, type: string, cueStartTime?: number, cueVolume?: number, loop?: boolean, pptxSlideIndex?: number }[]} */
 let mediaQueue = [];
@@ -418,15 +417,20 @@ function bibleReferenceSuggestionsForInput(rawReference) {
 }
 
 function bibleReferenceAllBooks() {
-  return bibleBooksCache
-    .map((book) => String(book?.name || "").trim())
-    .filter(Boolean)
-    .map((name) => ({
-      type: "book",
-      label: name,
-      value: `${name} 1:1`,
-      reference: name,
-    }));
+  try {
+    const metadata = bibleAPI.getBookMetadata(bibleDesignerState.version || "KJV");
+    if (metadata?.error) return [];
+    return (Array.isArray(metadata?.books) ? metadata.books : [])
+      .map((book) => String(book?.name || "").trim())
+      .filter(Boolean)
+      .map((name) => ({
+        type: "book",
+        label: name,
+        value: `${name} 1:1`,
+        reference: name,
+      }));
+  } catch {}
+  return [];
 }
 
 function positionBibleReferenceSuggestionsOverlay() {
@@ -5457,7 +5461,6 @@ function installBibleMediaControls() {
         option.textContent = value;
         versionSelect.appendChild(option);
       });
-      bibleBooksCache = bibleAPI.getBooks().sort((a, b) => a.id - b.id);
       if (referenceSuggestions) {
         hideBibleReferenceSuggestions();
       }
