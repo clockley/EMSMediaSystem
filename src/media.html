@@ -171,6 +171,18 @@
 
         .scripture-render--fullscreen .scripture-render__box {
             width: min(90%, 1720px);
+            display: grid;
+            grid-template-rows: minmax(0, auto) auto;
+            gap: clamp(16px, 2vh, 34px);
+            max-height: 86%;
+        }
+
+        .scripture-render--fullscreen .scripture-render__body {
+            min-height: 0;
+        }
+
+        .scripture-render--fullscreen .scripture-render__reference {
+            margin-top: 0;
         }
 
         .scripture-render--lower-third {

@@ -235,6 +235,9 @@ const SCRIPTURE_REFERENCE_DARK_COLOR = "rgba(24, 24, 28, 0.84)";
 const SCRIPTURE_REFERENCE_LIGHT_SHADOW = "0 2px 14px rgba(0, 0, 0, 0.72)";
 const SCRIPTURE_REFERENCE_DARK_SHADOW = "0 2px 12px rgba(255, 255, 255, 0.62)";
 const SCRIPTURE_REFERENCE_LIGHT_BACKGROUND_LUMINANCE = 0.58;
+const SCRIPTURE_MIN_BODY_FONT_SIZE = 34;
+const SCRIPTURE_MIN_REFERENCE_FONT_SIZE = 20;
+const SCRIPTURE_FIT_HEIGHT_RATIO = 0.86;
 const LOWER_THIRD_MAX_LINES = 2;
 const LOWER_THIRD_MEASURE_ID = "bibleLowerThirdMeasure";
 const BIBLE_PREVIEW_DEFAULT_OUTPUT_WIDTH = 1920;
@@ -2897,6 +2900,47 @@ function applyScriptureRenderVariables(el, message) {
   el.style.fontFamily = message.fontFamily || SCRIPTURE_FONT_FAMILY;
 }
 
+function fitFullscreenScriptureRender(render, message) {
+  if (!render || normalizeScriptureLook(message?.look) !== SCRIPTURE_LOOK_FULLSCREEN) return;
+  const box = render.querySelector(".scripture-render__box");
+  if (!box) return;
+  const baseBodySize = Math.max(
+    24,
+    Math.round(message.fontSize || SCRIPTURE_BODY_FONT_SIZE),
+  );
+  const baseReferenceSize = Math.max(
+    14,
+    Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
+  );
+  const minBodySize = Math.min(baseBodySize, SCRIPTURE_MIN_BODY_FONT_SIZE);
+  const renderBounds = render.getBoundingClientRect();
+  const maxHeight =
+    Math.max(180, render.clientHeight || renderBounds.height || BIBLE_PREVIEW_DEFAULT_OUTPUT_HEIGHT) *
+    SCRIPTURE_FIT_HEIGHT_RATIO;
+  const referenceScale = baseReferenceSize / baseBodySize;
+  let fittedBodySize = baseBodySize;
+
+  while (true) {
+    const fittedReferenceSize = Math.max(
+      SCRIPTURE_MIN_REFERENCE_FONT_SIZE,
+      Math.round(fittedBodySize * referenceScale),
+    );
+    render.style.setProperty("--scripture-font-size", `${fittedBodySize}px`);
+    render.style.setProperty("--scripture-reference-font-size", `${fittedReferenceSize}px`);
+    if (box.scrollHeight <= maxHeight || fittedBodySize <= minBodySize) break;
+    fittedBodySize -= 2;
+  }
+}
+
+function refitBiblePreviewScripture() {
+  const audienceRender = document.getElementById("biblePreviewRender");
+  if (!audienceRender) return;
+  fitFullscreenScriptureRender(
+    audienceRender,
+    buildBibleTextMessage(bibleDesignerState, { look: SCRIPTURE_LOOK_FULLSCREEN }),
+  );
+}
+
 function lowerThirdSegmentFits(text, style, width) {
   const elements = lowerThirdMeasureElements();
   if (!elements?.root || !elements.body) return true;
@@ -2987,6 +3031,7 @@ function applyScriptureRenderToPreview(render, bodyEl, referenceEl, message) {
   bodyEl.textContent = message.bodyText || "No verse loaded";
   referenceEl.textContent = message.referenceText || "";
   referenceEl.hidden = !message.referenceText;
+  fitFullscreenScriptureRender(render, message);
 }
 
 function isBibleLowerThirdFeatureEnabled() {
@@ -3120,6 +3165,7 @@ function syncBiblePreviewOutputScale() {
       selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
     );
   }
+  refitBiblePreviewScripture();
 }
 
 function installBiblePreviewScaleObserver() {
@@ -4175,7 +4221,7 @@ function overridesFromProjectScriptureText(projectScriptureText = {}) {
 }
 
 function bibleBackgroundDisplayName(filePath) {
-  if (typeof filePath !== "string" || filePath.length === 0) return "Audience Background…";
+  if (typeof filePath !== "string" || filePath.length === 0) return "Choose Background…";
   return queueBasename(filePath) || "Selected Background";
 }
 

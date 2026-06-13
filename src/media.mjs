@@ -48,6 +48,9 @@ const SCRIPTURE_REFERENCE_DARK_COLOR = "rgba(24, 24, 28, 0.84)";
 const SCRIPTURE_REFERENCE_LIGHT_SHADOW = "0 2px 14px rgba(0, 0, 0, 0.72)";
 const SCRIPTURE_REFERENCE_DARK_SHADOW = "0 2px 12px rgba(255, 255, 255, 0.62)";
 const SCRIPTURE_REFERENCE_LIGHT_BACKGROUND_LUMINANCE = 0.58;
+const SCRIPTURE_MIN_BODY_FONT_SIZE = 34;
+const SCRIPTURE_MIN_REFERENCE_FONT_SIZE = 20;
+const SCRIPTURE_FIT_HEIGHT_RATIO = 0.86;
 const TEXT_BACKGROUND_VIDEO_LOAD_COMPENSATION_SEC = 0.15;
 /** Live edge: true HLS-style live (no sync/duration UI); false for YouTube VOD in stream mode. */
 var streamActsAsLiveEdge = false;
@@ -748,8 +751,10 @@ const DEFAULT_TEXT_PRESENTATION = Object.freeze({
 
 const textPresentationState = {
   backgroundVideo: "",
+  lastMessage: null,
   signature: "",
 };
+let textPresentationResizeFrame = 0;
 
 function normalizeScriptureLook(value) {
   return value === SCRIPTURE_LOOK_LOWER_THIRD
@@ -864,6 +869,53 @@ function applyScriptureRenderVariables(el, message) {
     message.referenceTextShadow || referencePresentation.shadow,
   );
   el.style.fontFamily = message.fontFamily || SCRIPTURE_FONT_FAMILY;
+}
+
+function fitFullscreenScriptureRender(render, message) {
+  if (!render || normalizeScriptureLook(message?.look) !== SCRIPTURE_LOOK_FULLSCREEN) return;
+  const box = render.querySelector(".scripture-render__box");
+  if (!box) return;
+  const baseBodySize = Math.max(
+    24,
+    Math.round(message.fontSize || SCRIPTURE_BODY_FONT_SIZE),
+  );
+  const baseReferenceSize = Math.max(
+    14,
+    Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
+  );
+  const minBodySize = Math.min(baseBodySize, SCRIPTURE_MIN_BODY_FONT_SIZE);
+  const renderBounds = render.getBoundingClientRect();
+  const maxHeight =
+    Math.max(180, render.clientHeight || renderBounds.height || window.innerHeight || 720) *
+    SCRIPTURE_FIT_HEIGHT_RATIO;
+  const referenceScale = baseReferenceSize / baseBodySize;
+  let fittedBodySize = baseBodySize;
+
+  while (true) {
+    const fittedReferenceSize = Math.max(
+      SCRIPTURE_MIN_REFERENCE_FONT_SIZE,
+      Math.round(fittedBodySize * referenceScale),
+    );
+    render.style.setProperty("--scripture-font-size", `${fittedBodySize}px`);
+    render.style.setProperty("--scripture-reference-font-size", `${fittedReferenceSize}px`);
+    if (box.scrollHeight <= maxHeight || fittedBodySize <= minBodySize) break;
+    fittedBodySize -= 2;
+  }
+}
+
+function refitCurrentTextPresentation() {
+  if (!textPresentationState.lastMessage) return;
+  fitFullscreenScriptureRender(textContent, textPresentationState.lastMessage);
+}
+
+function scheduleTextPresentationRefit() {
+  if (textPresentationResizeFrame) {
+    window.cancelAnimationFrame(textPresentationResizeFrame);
+  }
+  textPresentationResizeFrame = window.requestAnimationFrame(() => {
+    textPresentationResizeFrame = 0;
+    refitCurrentTextPresentation();
+  });
 }
 
 function ensureScriptureTextShell(textContent) {
@@ -1052,6 +1104,9 @@ function applyTextMessage(message) {
     "";
   const referenceText = safeMessage.referenceText || "";
   const signature = textPresentationSignature(safeMessage, bodyText, referenceText);
+  const look = lowerThirdOutput
+    ? SCRIPTURE_LOOK_LOWER_THIRD
+    : normalizeScriptureLook(safeMessage.look);
   if (signature === textPresentationState.signature) {
     if (normalizeScriptureLook(safeMessage.look) === SCRIPTURE_LOOK_LOWER_THIRD) {
       const backgroundVideo = document.getElementById("textBackgroundVideo");
@@ -1059,12 +1114,11 @@ function applyTextMessage(message) {
     } else {
       applyTextBackgroundVideoState(safeMessage, textCanvas);
     }
+    textPresentationState.lastMessage = { ...safeMessage, look };
+    refitCurrentTextPresentation();
     return;
   }
   textPresentationState.signature = signature;
-  const look = lowerThirdOutput
-    ? SCRIPTURE_LOOK_LOWER_THIRD
-    : normalizeScriptureLook(safeMessage.look);
   const shell = ensureScriptureTextShell(textContent);
   textContent.classList.toggle("scripture-render--fullscreen", look === SCRIPTURE_LOOK_FULLSCREEN);
   textContent.classList.toggle("scripture-render--lower-third", look === SCRIPTURE_LOOK_LOWER_THIRD);
@@ -1075,6 +1129,8 @@ function applyTextMessage(message) {
     shell.reference.textContent = referenceText;
     shell.reference.hidden = !referenceText;
   }
+  textPresentationState.lastMessage = { ...safeMessage, look };
+  refitCurrentTextPresentation();
 
   textCanvas.style.alignItems = safeMessage.position.vertical;
   textCanvas.style.justifyContent = safeMessage.position.horizontal;
@@ -1110,6 +1166,7 @@ function installTextHandlers() {
   ipcRenderer.on("update-text", (evt, message) => {
     applyTextMessage(message);
   });
+  window.addEventListener("resize", scheduleTextPresentationRefit);
 }
 
 async function loadMedia() {

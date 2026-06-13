@@ -284,14 +284,14 @@ export function generateMediaFormHTML() {
                 <label class="bible-field" data-lower-third-feature data-lower-third-key-color hidden>Key Color <input id="bibleLowerThirdChromaKeyInput" type="color" value="#00ff00"></label>
                 <label class="file-input-label bible-background-picker">
                   <input id="bibleBackgroundInput" type="file" accept="image/*,video/*" hidden>
-                  <span id="bibleBackgroundLabel">Audience Background…</span>
+                  <span id="bibleBackgroundLabel">Choose Background…</span>
                 </label>
               </div>
               <div class="bible-editor-actions">
-                <button type="button" id="bibleApplyCurrentBtn" class="pill-button suggested-action">Apply to Current</button>
-                <button type="button" id="bibleApplyStyleScheduleBtn" class="pill-button secondary">Apply Style to Schedule</button>
-                <button type="button" id="bibleUseStyleDefaultsBtn" class="pill-button secondary">Use as Defaults</button>
-                <button type="button" id="bibleClearBackgroundBtn" class="pill-button secondary">Clear Audience Background</button>
+                <button type="button" id="bibleApplyCurrentBtn" class="pill-button suggested-action">Apply to Selected Text</button>
+                <button type="button" id="bibleApplyStyleScheduleBtn" class="pill-button secondary">Apply to Scheduled Text</button>
+                <button type="button" id="bibleUseStyleDefaultsBtn" class="pill-button secondary">Save as Default Style</button>
+                <button type="button" id="bibleClearBackgroundBtn" class="pill-button secondary">Clear Background</button>
               </div>
             </div>
           </div>
