@@ -26,6 +26,7 @@ var isText = false;
 var liveStreamMode = false;
 var isImg = false;
 var isPptx = false;
+var isLowerThirdOutput = false;
 var pptxStartSlide = 0;
 var pptxCurrentSlide = 0;
 var autoPlay = false;
@@ -40,6 +41,13 @@ const SCRIPTURE_BODY_FONT_SIZE = 66;
 const SCRIPTURE_REFERENCE_FONT_SIZE = 38;
 const SCRIPTURE_FONT_WEIGHT = 700;
 const SCRIPTURE_LINE_HEIGHT = 1.32;
+const SCRIPTURE_LOOK_FULLSCREEN = "fullscreen";
+const SCRIPTURE_LOOK_LOWER_THIRD = "lower-third";
+const SCRIPTURE_REFERENCE_LIGHT_COLOR = "rgba(255, 255, 255, 0.78)";
+const SCRIPTURE_REFERENCE_DARK_COLOR = "rgba(24, 24, 28, 0.84)";
+const SCRIPTURE_REFERENCE_LIGHT_SHADOW = "0 2px 14px rgba(0, 0, 0, 0.72)";
+const SCRIPTURE_REFERENCE_DARK_SHADOW = "0 2px 12px rgba(255, 255, 255, 0.62)";
+const SCRIPTURE_REFERENCE_LIGHT_BACKGROUND_LUMINANCE = 0.58;
 const TEXT_BACKGROUND_VIDEO_LOAD_COMPENSATION_SEC = 0.15;
 /** Live edge: true HLS-style live (no sync/duration UI); false for YouTube VOD in stream mode. */
 var streamActsAsLiveEdge = false;
@@ -173,6 +181,8 @@ do {
     seekOnly = true;
   } else if (argv[i] === "__isText") {
     isText = true;
+  } else if (argv[i] === "__lowerThirdOutput") {
+    isLowerThirdOutput = true;
   }
   --i;
 } while (argv[i][0] !== "-");
@@ -719,8 +729,17 @@ const DEFAULT_TEXT_PRESENTATION = Object.freeze({
   backgroundImage: "",
   backgroundVideo: "",
   backgroundVideoSync: null,
+  chromaKeyColor: "#00ff00",
+  outputRole: "",
   bodyText: "",
   referenceText: "",
+  referenceColor: "",
+  referenceTextShadow: "",
+  fullBodyText: "",
+  look: SCRIPTURE_LOOK_FULLSCREEN,
+  lowerThirdSegments: [],
+  lowerThirdSegmentIndex: 0,
+  lowerThirdSegmentCount: 0,
   position: {
     vertical: "center",
     horizontal: "center",
@@ -731,6 +750,144 @@ const textPresentationState = {
   backgroundVideo: "",
   signature: "",
 };
+
+function normalizeScriptureLook(value) {
+  return value === SCRIPTURE_LOOK_LOWER_THIRD
+    ? SCRIPTURE_LOOK_LOWER_THIRD
+    : SCRIPTURE_LOOK_FULLSCREEN;
+}
+
+function scriptureLowerThirdFontSize(fontSize) {
+  const base = Number.isFinite(fontSize) ? fontSize : SCRIPTURE_BODY_FONT_SIZE;
+  return Math.max(26, Math.min(72, Math.round(base * 0.68)));
+}
+
+function scriptureColorToRgb(value) {
+  const color = String(value || "").trim();
+  const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const hex = hexMatch[1];
+    if (hex.length === 3) {
+      return {
+        r: Number.parseInt(hex[0] + hex[0], 16),
+        g: Number.parseInt(hex[1] + hex[1], 16),
+        b: Number.parseInt(hex[2] + hex[2], 16),
+      };
+    }
+    return {
+      r: Number.parseInt(hex.slice(0, 2), 16),
+      g: Number.parseInt(hex.slice(2, 4), 16),
+      b: Number.parseInt(hex.slice(4, 6), 16),
+    };
+  }
+  const rgbMatch = color.match(
+    /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})(?:[\s,/]+[\d.]+)?\s*\)$/i,
+  );
+  if (!rgbMatch) return null;
+  return {
+    r: Math.max(0, Math.min(255, Number.parseInt(rgbMatch[1], 10))),
+    g: Math.max(0, Math.min(255, Number.parseInt(rgbMatch[2], 10))),
+    b: Math.max(0, Math.min(255, Number.parseInt(rgbMatch[3], 10))),
+  };
+}
+
+function scriptureRelativeLuminance({ r, g, b }) {
+  const channel = (value) => {
+    const normalized = value / 255;
+    return normalized <= 0.03928
+      ? normalized / 12.92
+      : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+function scriptureReferencePresentationForBackground(backgroundColor, options = {}) {
+  if (options.forceLight === true) {
+    return {
+      color: SCRIPTURE_REFERENCE_LIGHT_COLOR,
+      shadow: SCRIPTURE_REFERENCE_LIGHT_SHADOW,
+    };
+  }
+  const rgb = scriptureColorToRgb(backgroundColor);
+  if (!rgb) {
+    return {
+      color: SCRIPTURE_REFERENCE_LIGHT_COLOR,
+      shadow: SCRIPTURE_REFERENCE_LIGHT_SHADOW,
+    };
+  }
+  const isLightBackground =
+    scriptureRelativeLuminance(rgb) >= SCRIPTURE_REFERENCE_LIGHT_BACKGROUND_LUMINANCE;
+  return isLightBackground
+    ? {
+        color: SCRIPTURE_REFERENCE_DARK_COLOR,
+        shadow: SCRIPTURE_REFERENCE_DARK_SHADOW,
+      }
+    : {
+        color: SCRIPTURE_REFERENCE_LIGHT_COLOR,
+        shadow: SCRIPTURE_REFERENCE_LIGHT_SHADOW,
+      };
+}
+
+function applyScriptureRenderVariables(el, message) {
+  if (!el) return;
+  const bodyFontSize = Math.max(
+    24,
+    Math.round(message.fontSize || SCRIPTURE_BODY_FONT_SIZE),
+  );
+  const referenceFontSize = Math.max(
+    14,
+    Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
+  );
+  el.style.setProperty("--scripture-font-size", `${bodyFontSize}px`);
+  el.style.setProperty(
+    "--scripture-lower-third-font-size",
+    `${scriptureLowerThirdFontSize(bodyFontSize)}px`,
+  );
+  el.style.setProperty("--scripture-reference-font-size", `${referenceFontSize}px`);
+  el.style.setProperty("--scripture-line-height", `${message.lineHeight || SCRIPTURE_LINE_HEIGHT}`);
+  el.style.setProperty("--scripture-font-weight", `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`);
+  el.style.setProperty("--scripture-color", message.color || "#ffffff");
+  const referencePresentation = scriptureReferencePresentationForBackground(
+    message.backgroundColor,
+    {
+      forceLight:
+        normalizeScriptureLook(message.look) === SCRIPTURE_LOOK_LOWER_THIRD ||
+        Boolean(message.backgroundImage || message.backgroundVideo || message.backgroundPath),
+    },
+  );
+  el.style.setProperty(
+    "--scripture-reference-color",
+    message.referenceColor || referencePresentation.color,
+  );
+  el.style.setProperty(
+    "--scripture-reference-shadow",
+    message.referenceTextShadow || referencePresentation.shadow,
+  );
+  el.style.fontFamily = message.fontFamily || SCRIPTURE_FONT_FAMILY;
+}
+
+function ensureScriptureTextShell(textContent) {
+  if (!textContent) return {};
+  let box = textContent.querySelector(".scripture-render__box");
+  if (!box) {
+    textContent.textContent = "";
+    box = document.createElement("div");
+    box.className = "scripture-render__box";
+    const body = document.createElement("div");
+    body.id = "textBody";
+    body.className = "scripture-render__body";
+    const reference = document.createElement("div");
+    reference.id = "textReference";
+    reference.className = "scripture-render__reference";
+    box.append(body, reference);
+    textContent.appendChild(box);
+  }
+  return {
+    box,
+    body: box.querySelector(".scripture-render__body"),
+    reference: box.querySelector(".scripture-render__reference"),
+  };
+}
 
 function textPresentationSignature(message, bodyText, referenceText) {
   const position =
@@ -759,10 +916,24 @@ function textPresentationSignature(message, bodyText, referenceText) {
     referenceFontSize: Number.isFinite(message.referenceFontSize)
       ? message.referenceFontSize
       : DEFAULT_TEXT_PRESENTATION.referenceFontSize,
+    referenceColor: message.referenceColor || "",
+    referenceTextShadow: message.referenceTextShadow || "",
+    look: normalizeScriptureLook(message.look),
+    lowerThirdSegmentIndex: Number.isFinite(message.lowerThirdSegmentIndex)
+      ? message.lowerThirdSegmentIndex
+      : 0,
+    lowerThirdSegmentCount: Number.isFinite(message.lowerThirdSegmentCount)
+      ? message.lowerThirdSegmentCount
+      : 0,
+    lowerThirdSegments: Array.isArray(message.lowerThirdSegments)
+      ? message.lowerThirdSegments.map((segment) => segment?.text || segment).join("|")
+      : "",
     backgroundColor: message.backgroundColor || "",
     backgroundImage: message.backgroundImage || "",
     backgroundVideo: message.backgroundVideo || "",
     backgroundPath: message.backgroundPath || "",
+    chromaKeyColor: message.chromaKeyColor || "",
+    outputRole: message.outputRole || "",
     vertical: position.vertical || "",
     horizontal: position.horizontal || "",
   });
@@ -856,54 +1027,66 @@ function applyTextMessage(message) {
         }
       : DEFAULT_TEXT_PRESENTATION;
 
-  const bodyText = safeMessage.bodyText || safeMessage.text || "";
+  const lowerThirdOutput = isLowerThirdOutput || safeMessage.outputRole === "lower-third";
+  if (lowerThirdOutput) {
+    safeMessage.look = SCRIPTURE_LOOK_LOWER_THIRD;
+    safeMessage.backgroundImage = "";
+    safeMessage.backgroundVideo = "";
+    safeMessage.backgroundPath = "";
+  }
+
+  const activeSegment =
+    Array.isArray(safeMessage.lowerThirdSegments) &&
+    safeMessage.look === SCRIPTURE_LOOK_LOWER_THIRD
+      ? safeMessage.lowerThirdSegments[
+          Number.isFinite(safeMessage.lowerThirdSegmentIndex)
+            ? Math.max(0, Math.trunc(safeMessage.lowerThirdSegmentIndex))
+            : 0
+        ]
+      : null;
+  const bodyText =
+    (typeof activeSegment?.text === "string" ? activeSegment.text : "") ||
+    (typeof activeSegment === "string" ? activeSegment : "") ||
+    safeMessage.bodyText ||
+    safeMessage.text ||
+    "";
   const referenceText = safeMessage.referenceText || "";
   const signature = textPresentationSignature(safeMessage, bodyText, referenceText);
   if (signature === textPresentationState.signature) {
-    applyTextBackgroundVideoState(safeMessage, textCanvas);
+    if (normalizeScriptureLook(safeMessage.look) === SCRIPTURE_LOOK_LOWER_THIRD) {
+      const backgroundVideo = document.getElementById("textBackgroundVideo");
+      if (backgroundVideo) resetTextBackgroundVideo(backgroundVideo);
+    } else {
+      applyTextBackgroundVideoState(safeMessage, textCanvas);
+    }
     return;
   }
   textPresentationState.signature = signature;
-  const bodyFontSize = Number.isFinite(safeMessage.fontSize)
-    ? safeMessage.fontSize
-    : DEFAULT_TEXT_PRESENTATION.fontSize;
-  const referenceFontSize = Number.isFinite(safeMessage.referenceFontSize)
-    ? safeMessage.referenceFontSize
-    : DEFAULT_TEXT_PRESENTATION.referenceFontSize;
-  const scalableBodyFontSize = `clamp(28px, 3.4vw, ${bodyFontSize}px)`;
-  const scalableReferenceFontSize = `clamp(18px, 2vw, ${referenceFontSize}px)`;
-  textContent.textContent = "";
-  if (referenceText) {
-    const bodyEl = document.createElement("div");
-    bodyEl.textContent = bodyText;
-    bodyEl.style.fontSize = scalableBodyFontSize;
-    bodyEl.style.lineHeight = `${Number.isFinite(safeMessage.lineHeight) ? safeMessage.lineHeight : DEFAULT_TEXT_PRESENTATION.lineHeight}`;
-    const referenceEl = document.createElement("div");
-    referenceEl.textContent = referenceText;
-    referenceEl.style.fontSize = scalableReferenceFontSize;
-    referenceEl.style.lineHeight = "1.2";
-    referenceEl.style.marginTop = "28px";
-    referenceEl.style.opacity = "0.78";
-    textContent.append(bodyEl, referenceEl);
-    const referenceOffset = Math.min(36, Math.max(0, referenceFontSize * 0.5 + 14));
-    textContent.style.transform = `translateY(${referenceOffset}px)`;
-  } else {
-    textContent.textContent = bodyText;
-    textContent.style.transform = "";
+  const look = lowerThirdOutput
+    ? SCRIPTURE_LOOK_LOWER_THIRD
+    : normalizeScriptureLook(safeMessage.look);
+  const shell = ensureScriptureTextShell(textContent);
+  textContent.classList.toggle("scripture-render--fullscreen", look === SCRIPTURE_LOOK_FULLSCREEN);
+  textContent.classList.toggle("scripture-render--lower-third", look === SCRIPTURE_LOOK_LOWER_THIRD);
+  textContent.dataset.scriptureLook = look;
+  applyScriptureRenderVariables(textContent, safeMessage);
+  if (shell.body) shell.body.textContent = bodyText;
+  if (shell.reference) {
+    shell.reference.textContent = referenceText;
+    shell.reference.hidden = !referenceText;
   }
-  textContent.style.color = safeMessage.color;
-  textContent.style.fontSize = scalableBodyFontSize;
-  textContent.style.fontFamily = safeMessage.fontFamily;
-  textContent.style.fontWeight = `${Number.isFinite(safeMessage.fontWeight) ? safeMessage.fontWeight : DEFAULT_TEXT_PRESENTATION.fontWeight}`;
-  textContent.style.lineHeight = `${Number.isFinite(safeMessage.lineHeight) ? safeMessage.lineHeight : DEFAULT_TEXT_PRESENTATION.lineHeight}`;
-  textContent.style.backgroundColor = "";
 
   textCanvas.style.alignItems = safeMessage.position.vertical;
   textCanvas.style.justifyContent = safeMessage.position.horizontal;
-  textCanvas.style.backgroundColor = safeMessage.backgroundColor;
+  textCanvas.style.backgroundColor =
+    lowerThirdOutput
+      ? safeMessage.chromaKeyColor || "#00ff00"
+      : look === SCRIPTURE_LOOK_LOWER_THIRD
+      ? "transparent"
+      : safeMessage.backgroundColor;
   textCanvas.style.backgroundRepeat = "no-repeat";
 
-  if (safeMessage.backgroundImage) {
+  if (!lowerThirdOutput && look !== SCRIPTURE_LOOK_LOWER_THIRD && safeMessage.backgroundImage) {
     textCanvas.style.backgroundImage = `url('${safeMessage.backgroundImage}')`;
     textCanvas.style.backgroundSize = "cover";
     textCanvas.style.backgroundPosition = "center";
@@ -913,7 +1096,12 @@ function applyTextMessage(message) {
     textCanvas.style.backgroundPosition = "";
   }
 
-  applyTextBackgroundVideoState(safeMessage, textCanvas);
+  if (lowerThirdOutput || look === SCRIPTURE_LOOK_LOWER_THIRD) {
+    const backgroundVideo = document.getElementById("textBackgroundVideo");
+    if (backgroundVideo) resetTextBackgroundVideo(backgroundVideo);
+  } else {
+    applyTextBackgroundVideoState(safeMessage, textCanvas);
+  }
 }
 
 function installTextHandlers() {
