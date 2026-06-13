@@ -67,6 +67,25 @@ const bibleAPI = {
     if (!isInitialized) throw new Error("Bible API not initialized");
     return bibleInstance.getChapterInfo(version, name, chapterNumber);
   },
+  resolveReference: (version, reference) => {
+    if (!isInitialized) throw new Error("Bible API not initialized");
+    return bibleInstance.resolveReference(version, reference);
+  },
+  getPassage: (version, reference) => {
+    if (!isInitialized) throw new Error("Bible API not initialized");
+    return bibleInstance.getPassage(version, reference);
+  },
+  getBookMetadata: (version) => {
+    if (!isInitialized) throw new Error("Bible API not initialized");
+    return bibleInstance.getBookMetadata(version);
+  },
+  suggestReferences: (version, input) => {
+    if (!isInitialized) throw new Error("Bible API not initialized");
+    if (input === undefined) {
+      return bibleInstance.suggestReferences(version);
+    }
+    return bibleInstance.suggestReferences(version, input);
+  },
 };
 
 contextBridge.exposeInMainWorld("electron", {
