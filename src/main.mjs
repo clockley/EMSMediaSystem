@@ -32,6 +32,7 @@ import { createReadStream } from "fs";
 import { readdir, readFile, stat } from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import { BibleRpcClient } from "./bible_rpc_client.min.mjs";
 import settings from "./settings.min.mjs";
 import { loadEmprojSnapshot, saveEmprojSnapshot } from "./emproj.min.mjs";
 let sessionID = 0;
@@ -48,6 +49,10 @@ let queueSwitchDialogWindow = null;
 const QUEUE_SWITCH_DIALOG_IPC_CHANNEL = "queue-switch-dialog-response";
 let queueSwitchDialogResponseListener = null;
 let pendingProjectOpenPath = null;
+const bibleRpcClient = new BibleRpcClient({
+  app,
+  devRoot: path.dirname(import.meta.dirname),
+});
 
 app.commandLine.appendSwitch("js-flags", "--maglev --no-use-osr");
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
@@ -2107,6 +2112,16 @@ async function handleCheckMediaPathsExist(_, paths) {
   return out;
 }
 
+async function handleBibleRPC(_event, method, params = []) {
+  if (typeof method !== "string" || !method.startsWith("bible.")) {
+    throw new Error("Invalid Bible RPC method");
+  }
+  if (!Array.isArray(params)) {
+    throw new Error("Invalid Bible RPC params");
+  }
+  return bibleRpcClient.call(method, params);
+}
+
 function setIPC() {
   ipcMain.handle("get-system-time", getSystemTIme);
   ipcMain.handle("get-platform", getPlatform);
@@ -2130,6 +2145,7 @@ function setIPC() {
   ipcMain.handle("filter-media-drop-paths", handleFilterMediaDropPaths);
   ipcMain.handle("read-file-as-arraybuffer", handleReadFileAsArrayBuffer);
   ipcMain.handle("check-media-paths-exist", handleCheckMediaPathsExist);
+  ipcMain.handle("bible-rpc", handleBibleRPC);
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);
@@ -2281,6 +2297,10 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  bibleRpcClient.stop();
 });
 
 app.on("activate", () => {

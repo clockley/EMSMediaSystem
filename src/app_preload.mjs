@@ -16,72 +16,42 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 import { contextBridge, ipcRenderer, webUtils } from "electron/renderer";
-import { readFile } from "fs/promises";
-import { Bible } from "./Bible.min.mjs";
-import { Script } from "vm";
 import { FadeOut, attachCubicWaveShaper } from "./audioFx.min.mjs";
 
 let isInitialized = false;
 let initPromise = null;
-let bibleInstance = null;
 
 async function initialize() {
   if (isInitialized) return;
   if (!initPromise) {
     initPromise = (async () => {
-      // Load WASM script
-      const wasmExecScript = await readFile(
-        `${import.meta.dirname}/wasm_exec.min.js`,
-        "utf8",
-      );
-      new Script(wasmExecScript).runInThisContext();
-
-      // Initialize Bible
-      bibleInstance = new Bible();
-      await bibleInstance.init();
+      await ipcRenderer.invoke("bible-rpc", "bible.ready", []);
       isInitialized = true;
     })();
   }
   return initPromise;
 }
 
+async function callBible(method, params = []) {
+  await initialize();
+  return ipcRenderer.invoke("bible-rpc", method, params);
+}
+
 const bibleAPI = {
   waitForReady: () => initialize(),
-  getVersions: () => {
-    if (!isInitialized) throw new Error("Bible API not initialized");
-    return bibleInstance.getVersions();
-  },
-  getText: (version, book, verse) => {
-    if (!isInitialized) throw new Error("Bible API not initialized");
-    return bibleInstance.getText(version, book, verse);
-  },
-  getBookInfo: (version, name) => {
-    if (!isInitialized) throw new Error("Bible API not initialized");
-    return bibleInstance.getBookInfo(version, name);
-  },
-  getChapterInfo: (version, name, chapterNumber) => {
-    if (!isInitialized) throw new Error("Bible API not initialized");
-    return bibleInstance.getChapterInfo(version, name, chapterNumber);
-  },
-  resolveReference: (version, reference) => {
-    if (!isInitialized) throw new Error("Bible API not initialized");
-    return bibleInstance.resolveReference(version, reference);
-  },
-  getPassage: (version, reference) => {
-    if (!isInitialized) throw new Error("Bible API not initialized");
-    return bibleInstance.getPassage(version, reference);
-  },
-  getBookMetadata: (version) => {
-    if (!isInitialized) throw new Error("Bible API not initialized");
-    return bibleInstance.getBookMetadata(version);
-  },
-  suggestReferences: (version, input) => {
-    if (!isInitialized) throw new Error("Bible API not initialized");
-    if (input === undefined) {
-      return bibleInstance.suggestReferences(version);
-    }
-    return bibleInstance.suggestReferences(version, input);
-  },
+  getVersions: () => callBible("bible.getVersions"),
+  getText: (version, book, verse) => callBible("bible.getText", [version, book, verse]),
+  getBookInfo: (version, name) => callBible("bible.getBookInfo", [version, name]),
+  getChapterInfo: (version, name, chapterNumber) =>
+    callBible("bible.getChapterInfo", [version, name, chapterNumber]),
+  resolveReference: (version, reference) =>
+    callBible("bible.resolveReference", [version, reference]),
+  getPassage: (version, reference) => callBible("bible.getPassage", [version, reference]),
+  getBookMetadata: (version) => callBible("bible.getBookMetadata", [version]),
+  suggestReferences: (version, input) =>
+    input === undefined
+      ? callBible("bible.suggestReferences", [version])
+      : callBible("bible.suggestReferences", [version, input]),
 };
 
 contextBridge.exposeInMainWorld("electron", {

@@ -17,28 +17,22 @@ along with this library. If not, see <https://www.gnu.org/licenses/>.
 package main
 
 import (
+	"bufio"
 	"database/sql"
+	stdjson "encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"log"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall/js"
 	"unicode"
-
-	_ "embed"
-
-	jsoniter "github.com/json-iterator/go"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
-	"github.com/ncruces/go-sqlite3/vfs/memdb"
 )
-
-var json = jsoniter.ConfigFastest
-
-//go:embed bible-sqlite.db
-var bibleDB []byte
 
 type Version struct {
 	Abbreviation string `json:"abbreviation"`
@@ -136,44 +130,36 @@ var cachedAliases map[string]string
 var cachedAliasKeys []string
 var cachedBookMetadataByVersion map[string]BookMetadataResponse
 
-func init() {
-	memdb.Create("bible-sqlite.db", bibleDB)
-
+func initBibleDatabase(dbPath string) error {
+	if strings.TrimSpace(dbPath) == "" {
+		return fmt.Errorf("Bible database path is required")
+	}
 	var err error
-	db, err = sql.Open("sqlite3", "file:/bible-sqlite.db?vfs=memdb")
+	db, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	cachedVersions, err = fetchVersions(db)
 	if err != nil {
-		log.Fatal("Failed to cache versions and tables:", err)
+		return fmt.Errorf("failed to cache versions and tables: %w", err)
 	}
 
 	cachedBooks, err = fetchBooksMap(db)
 	if err != nil {
-		log.Fatal("Failed to cache books:", err)
+		return fmt.Errorf("failed to cache books: %w", err)
 	}
 
 	cachedBookOrder, cachedBookDetails, err = fetchBookDetails(db)
 	if err != nil {
-		log.Fatal("Failed to cache book details:", err)
+		return fmt.Errorf("failed to cache book details: %w", err)
 	}
 	cachedAliases, cachedAliasKeys, err = buildBookAliasCache(db, cachedBookOrder)
 	if err != nil {
-		log.Fatal("Failed to cache book aliases:", err)
+		return fmt.Errorf("failed to cache book aliases: %w", err)
 	}
 	cachedBookMetadataByVersion = make(map[string]BookMetadataResponse)
-
-	js.Global().Set("_getVersions", js.FuncOf(getVersions))
-	js.Global().Set("_getText", js.FuncOf(getText))
-	js.Global().Set("_getBookInfo", js.FuncOf(getBookInfo))
-	js.Global().Set("_getChapterInfo", js.FuncOf(getChapterInfo))
-	js.Global().Set("_resolveReference", js.FuncOf(resolveReference))
-	js.Global().Set("_getPassage", js.FuncOf(getPassage))
-	js.Global().Set("_getBookMetadata", js.FuncOf(getBookMetadata))
-	js.Global().Set("_suggestReferences", js.FuncOf(suggestReferences))
-
+	return nil
 }
 
 func fetchVersions(db *sql.DB) (map[string]Version, error) {
@@ -440,18 +426,8 @@ func buildBookAliasCache(db *sql.DB, books []BookMetadata) (map[string]string, [
 	return aliasMap, keys, nil
 }
 
-func getVersions(this js.Value, p []js.Value) interface{} {
-	stream := jsoniter.ConfigFastest.BorrowStream(nil)
-	defer jsoniter.ConfigFastest.ReturnStream(stream)
-	stream.WriteVal(cachedVersions)
-	return string(stream.Buffer())
-}
-
-func writeJSON(value interface{}) string {
-	stream := jsoniter.ConfigFastest.BorrowStream(nil)
-	defer jsoniter.ConfigFastest.ReturnStream(stream)
-	stream.WriteVal(value)
-	return string(stream.Buffer())
+func getVersionsData() map[string]Version {
+	return cachedVersions
 }
 
 func defaultVersion(version string) string {
@@ -873,46 +849,39 @@ func passageText(verses []PassageVerse) string {
 	return strings.Join(lines, "\n")
 }
 
-func resolveReference(this js.Value, p []js.Value) interface{} {
-	if len(p) < 2 {
-		return writeJSON(ReferenceResponse{Error: "Invalid arguments: Requires version and reference"})
-	}
-	resolved, err := resolveReferenceData(db, p[0].String(), p[1].String())
+func resolveReferenceResult(version, reference string) ReferenceResponse {
+	resolved, err := resolveReferenceData(db, version, reference)
 	if err != nil {
-		return writeJSON(ReferenceResponse{
-			Version: defaultVersion(p[0].String()),
-			Input:   p[1].String(),
+		return ReferenceResponse{
+			Version: defaultVersion(version),
+			Input:   reference,
 			Error:   err.Error(),
-		})
+		}
 	}
-	return writeJSON(resolved)
+	return resolved
 }
 
-func getPassage(this js.Value, p []js.Value) interface{} {
-	if len(p) < 2 {
-		return writeJSON(PassageResponse{Error: "Invalid arguments: Requires version and reference"})
-	}
-
-	versionInfo, err := versionInfoFor(p[0].String())
+func getPassageResult(version, reference string) PassageResponse {
+	versionInfo, err := versionInfoFor(version)
 	if err != nil {
-		return writeJSON(PassageResponse{Version: defaultVersion(p[0].String()), Error: err.Error()})
+		return PassageResponse{Version: defaultVersion(version), Error: err.Error()}
 	}
-	resolved, err := resolveReferenceData(db, versionInfo.Abbreviation, p[1].String())
+	resolved, err := resolveReferenceData(db, versionInfo.Abbreviation, reference)
 	if err != nil {
-		return writeJSON(PassageResponse{
+		return PassageResponse{
 			Version:   versionInfo.Abbreviation,
-			Reference: p[1].String(),
+			Reference: reference,
 			Error:     err.Error(),
-		})
+		}
 	}
 
 	chapterVerses, err := fetchChapterVerses(db, versionInfo.TableName, resolved.BookID, resolved.Chapter)
 	if err != nil {
-		return writeJSON(PassageResponse{
+		return PassageResponse{
 			Version:   versionInfo.Abbreviation,
 			Reference: resolved.Reference,
 			Error:     err.Error(),
-		})
+		}
 	}
 
 	selectedVerseSet := make(map[int]bool)
@@ -930,7 +899,7 @@ func getPassage(this js.Value, p []js.Value) interface{} {
 		}
 	}
 
-	return writeJSON(PassageResponse{
+	return PassageResponse{
 		Version:        resolved.Version,
 		Reference:      resolved.Reference,
 		Book:           resolved.Book,
@@ -942,28 +911,25 @@ func getPassage(this js.Value, p []js.Value) interface{} {
 		SelectedVerses: resolved.SelectedVerses,
 		Verses:         verses,
 		Text:           passageText(verses),
-	})
+	}
 }
 
-func getBookMetadata(this js.Value, p []js.Value) interface{} {
-	if len(p) < 1 {
-		return writeJSON(BookMetadataResponse{Error: "Invalid arguments: Requires version"})
-	}
-	versionInfo, err := versionInfoFor(p[0].String())
+func getBookMetadataResult(version string) BookMetadataResponse {
+	versionInfo, err := versionInfoFor(version)
 	if err != nil {
-		return writeJSON(BookMetadataResponse{Version: defaultVersion(p[0].String()), Error: err.Error()})
+		return BookMetadataResponse{Version: defaultVersion(version), Error: err.Error()}
 	}
 	if cached, ok := cachedBookMetadataByVersion[versionInfo.Abbreviation]; ok {
-		return writeJSON(cached)
+		return cached
 	}
 	tableName, err := safeTableName(versionInfo.TableName)
 	if err != nil {
-		return writeJSON(BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()})
+		return BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()}
 	}
 
 	rows, err := db.Query(fmt.Sprintf("SELECT b, c, COUNT(v) FROM %s GROUP BY b, c ORDER BY b, c", tableName))
 	if err != nil {
-		return writeJSON(BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()})
+		return BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()}
 	}
 	defer rows.Close()
 
@@ -971,7 +937,7 @@ func getBookMetadata(this js.Value, p []js.Value) interface{} {
 	for rows.Next() {
 		var bookID, chapter, verseCount int
 		if err := rows.Scan(&bookID, &chapter, &verseCount); err != nil {
-			return writeJSON(BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()})
+			return BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()}
 		}
 		counts := verseCountsByBook[bookID]
 		for len(counts) < chapter {
@@ -981,7 +947,7 @@ func getBookMetadata(this js.Value, p []js.Value) interface{} {
 		verseCountsByBook[bookID] = counts
 	}
 	if err := rows.Err(); err != nil {
-		return writeJSON(BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()})
+		return BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()}
 	}
 
 	aliasesByBook := make(map[string][]string)
@@ -1004,7 +970,7 @@ func getBookMetadata(this js.Value, p []js.Value) interface{} {
 		Books:   books,
 	}
 	cachedBookMetadataByVersion[versionInfo.Abbreviation] = response
-	return writeJSON(response)
+	return response
 }
 
 func suggestionExists(suggestions []ReferenceSuggestion, reference string, suggestionType string) bool {
@@ -1280,23 +1246,14 @@ func addFuzzyReferenceSuggestions(db *sql.DB, suggestions []ReferenceSuggestion,
 	return suggestions
 }
 
-func suggestReferences(this js.Value, p []js.Value) interface{} {
-	if len(p) < 1 {
-		return writeJSON(SuggestReferencesResponse{Error: "Invalid arguments: Requires input"})
-	}
-	version := "KJV"
-	input := p[0].String()
-	if len(p) >= 2 {
-		version = p[0].String()
-		input = p[1].String()
-	}
+func suggestReferencesResult(version string, input string) SuggestReferencesResponse {
 	versionInfo, err := versionInfoFor(version)
 	if err != nil {
-		return writeJSON(SuggestReferencesResponse{
+		return SuggestReferencesResponse{
 			Input:   input,
 			Version: defaultVersion(version),
 			Error:   err.Error(),
-		})
+		}
 	}
 
 	suggestions := []ReferenceSuggestion{}
@@ -1354,111 +1311,87 @@ func suggestReferences(this js.Value, p []js.Value) interface{} {
 		suggestions = addFuzzyReferenceSuggestions(db, suggestions, versionInfo.Abbreviation, input, 12)
 	}
 
-	return writeJSON(SuggestReferencesResponse{
+	return SuggestReferencesResponse{
 		Input:       input,
 		Version:     versionInfo.Abbreviation,
 		Suggestions: suggestions,
-	})
+	}
 }
 
-func getText(this js.Value, p []js.Value) interface{} {
-	if len(p) < 3 {
-		return returnError("Invalid arguments: Requires version, book, and chapter")
-	}
-
-	version := p[0].String()
-	bookName := p[1].String()
-	chapterVerse := p[2].String()
-
+func getTextResult(version, bookName, chapterVerse string) TextResponse {
 	bookID, ok := cachedBooks[bookName]
 	if !ok {
-		return returnError("Book not found")
+		return TextResponse{Error: "Book not found"}
 	}
 
 	text, err := fetchText(db, version, bookName, bookID, chapterVerse)
 	if err != nil {
-		return returnError(err.Error())
+		return TextResponse{Error: err.Error()}
 	}
 
 	return text
 }
 
-func getChapterInfo(this js.Value, p []js.Value) interface{} {
-	if len(p) < 2 {
-		return returnError("Invalid arguments: Requires version abbreviation and chapter reference (e.g., 'Acts 1')")
-	}
-
-	versionKey := p[0].String() // Version abbreviation
-	chapterRef := p[1].String() // Chapter reference, e.g., "Acts 1"
-
-	parts := strings.SplitN(chapterRef, " ", 2)
-	if len(parts) != 2 {
-		return returnError("Invalid chapter reference format. Expected format: 'BookName ChapterNumber'")
-	}
-
-	bookName := parts[0]
-	chapterNumber, err := strconv.Atoi(parts[1])
+func getChapterInfoResult(versionKey, bookName string, chapterNumber int) (int, error) {
+	versionInfo, err := versionInfoFor(versionKey)
 	if err != nil {
-		return returnError("Invalid chapter number: " + err.Error())
-	}
-
-	// Retrieve version info using the version key
-	versionInfo, ok := cachedVersions[versionKey]
-	if !ok {
-		return returnError("Version key not found")
+		return 0, err
 	}
 
 	bookID, ok := cachedBooks[bookName]
 	if !ok {
-		return returnError("Book not found")
+		return 0, fmt.Errorf("book not found")
 	}
 
-	query := fmt.Sprintf("SELECT COUNT(v) FROM %s WHERE b = ? AND c = ?", versionInfo.TableName)
+	tableName, err := safeTableName(versionInfo.TableName)
+	if err != nil {
+		return 0, err
+	}
+	query := fmt.Sprintf("SELECT COUNT(v) FROM %s WHERE b = ? AND c = ?", tableName)
 	row := db.QueryRow(query, bookID, chapterNumber)
 	var verseCount int
 	if err := row.Scan(&verseCount); err != nil {
-		return returnError("Failed to fetch verse count: " + err.Error())
+		return 0, fmt.Errorf("failed to fetch verse count: %w", err)
 	}
 
-	return js.ValueOf(verseCount)
+	return verseCount, nil
 }
 
-func getBookInfo(this js.Value, p []js.Value) interface{} {
-	if len(p) < 2 {
-		return returnError("Invalid arguments: Requires version abbreviation and book name")
-	}
-
-	versionKey := p[0].String() // Use versionKey to align with your context
-	bookName := p[1].String()
-
-	// Retrieve version info using the version key
-	versionInfo, ok := cachedVersions[versionKey] // Make sure 'cachedVersions' is the map containing version info
-	if !ok {
-		return returnError("Version key not found")
+func getBookInfoResult(versionKey, bookName string) (int, error) {
+	versionInfo, err := versionInfoFor(versionKey)
+	if err != nil {
+		return 0, err
 	}
 
 	bookID, ok := cachedBooks[bookName]
 	if !ok {
-		return returnError("Book not found")
+		return 0, fmt.Errorf("book not found")
 	}
 
-	query := fmt.Sprintf("SELECT COUNT(DISTINCT c) FROM %s WHERE b = ?", versionInfo.TableName)
+	tableName, err := safeTableName(versionInfo.TableName)
+	if err != nil {
+		return 0, err
+	}
+	query := fmt.Sprintf("SELECT COUNT(DISTINCT c) FROM %s WHERE b = ?", tableName)
 	row := db.QueryRow(query, bookID)
 	var chapterCount int
 	if err := row.Scan(&chapterCount); err != nil {
-		return returnError("Failed to fetch chapter count: " + err.Error())
+		return 0, fmt.Errorf("failed to fetch chapter count: %w", err)
 	}
 
-	return js.ValueOf(chapterCount)
+	return chapterCount, nil
 }
 
-func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterVerse string) (string, error) {
+func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterVerse string) (TextResponse, error) {
 	versionInfo, ok := cachedVersions[version]
 	if !ok {
-		return "", fmt.Errorf("version not found: %s", version)
+		return TextResponse{}, fmt.Errorf("version not found: %s", version)
 	}
 
-	tableName := versionInfo.TableName
+	tableName, err := safeTableName(versionInfo.TableName)
+	if err != nil {
+		return TextResponse{}, err
+	}
 
 	colonIndex := strings.Index(chapterVerse, ":")
 	var chapter, verse string
@@ -1481,7 +1414,7 @@ func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterV
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		return "", fmt.Errorf("database query error: %v", err)
+		return TextResponse{}, fmt.Errorf("database query error: %v", err)
 	}
 	defer rows.Close()
 
@@ -1495,7 +1428,7 @@ func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterV
 			var verseNum int
 			var verseText string
 			if err := rows.Scan(&verseNum, &verseText); err != nil {
-				return "", fmt.Errorf("error scanning verse text: %v", err)
+				return TextResponse{}, fmt.Errorf("error scanning verse text: %v", err)
 			}
 			verses = append(verses, verseText)
 		}
@@ -1504,36 +1437,243 @@ func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterV
 		if rows.Next() {
 			var verseText string
 			if err := rows.Scan(&verseText); err != nil {
-				return "", fmt.Errorf("error scanning verse text: %v", err)
+				return TextResponse{}, fmt.Errorf("error scanning verse text: %v", err)
 			}
 			response.Text = verseText
 			response.Verse = verse
 		} else {
-			return "", fmt.Errorf("no verse found for the given reference")
+			return TextResponse{}, fmt.Errorf("no verse found for the given reference")
 		}
 	}
 
 	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("error during rows iteration: %v", err)
+		return TextResponse{}, fmt.Errorf("error during rows iteration: %v", err)
 	}
 
-	stream := jsoniter.ConfigFastest.BorrowStream(nil)
-	defer jsoniter.ConfigFastest.ReturnStream(stream)
-	stream.WriteVal(response)
-	return string(stream.Buffer()), nil
+	return response, nil
 }
 
-func returnError(errMsg string) string {
-	errorResponse := TextResponse{
-		Error: errMsg,
+type rpcRequest struct {
+	JSONRPC string             `json:"jsonrpc"`
+	ID      stdjson.RawMessage `json:"id,omitempty"`
+	Method  string             `json:"method"`
+	Params  stdjson.RawMessage `json:"params,omitempty"`
+}
+
+type rpcResponse struct {
+	JSONRPC string             `json:"jsonrpc"`
+	ID      stdjson.RawMessage `json:"id,omitempty"`
+	Result  interface{}        `json:"result,omitempty"`
+	Error   *rpcError          `json:"error,omitempty"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func decodeParamArray(params stdjson.RawMessage) ([]stdjson.RawMessage, error) {
+	if len(params) == 0 || string(params) == "null" {
+		return []stdjson.RawMessage{}, nil
 	}
-	stream := jsoniter.ConfigFastest.BorrowStream(nil)
-	defer jsoniter.ConfigFastest.ReturnStream(stream)
-	stream.WriteVal(errorResponse)
-	return string(stream.Buffer())
+	var values []stdjson.RawMessage
+	if err := stdjson.Unmarshal(params, &values); err != nil {
+		return nil, fmt.Errorf("params must be an array: %w", err)
+	}
+	return values, nil
+}
+
+func paramString(params []stdjson.RawMessage, index int, name string) (string, error) {
+	if index >= len(params) {
+		return "", fmt.Errorf("missing %s", name)
+	}
+	var value string
+	if err := stdjson.Unmarshal(params[index], &value); err == nil {
+		return value, nil
+	}
+	var number stdjson.Number
+	decoder := stdjson.NewDecoder(strings.NewReader(string(params[index])))
+	decoder.UseNumber()
+	if err := decoder.Decode(&number); err == nil {
+		return number.String(), nil
+	}
+	return "", fmt.Errorf("%s must be a string", name)
+}
+
+func paramInt(params []stdjson.RawMessage, index int, name string) (int, error) {
+	value, err := paramString(params, index, name)
+	if err != nil {
+		return 0, err
+	}
+	number, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer", name)
+	}
+	return number, nil
+}
+
+func handleRPC(method string, params []stdjson.RawMessage) (interface{}, *rpcError) {
+	badParams := func(err error) (interface{}, *rpcError) {
+		return nil, &rpcError{Code: -32602, Message: err.Error()}
+	}
+
+	switch method {
+	case "bible.ready":
+		return map[string]bool{"ready": true}, nil
+	case "bible.getVersions":
+		return getVersionsData(), nil
+	case "bible.getText":
+		version, err := paramString(params, 0, "version")
+		if err != nil {
+			return badParams(err)
+		}
+		book, err := paramString(params, 1, "book")
+		if err != nil {
+			return badParams(err)
+		}
+		chapter, err := paramString(params, 2, "chapter")
+		if err != nil {
+			return badParams(err)
+		}
+		return getTextResult(version, book, chapter), nil
+	case "bible.getBookInfo":
+		version, err := paramString(params, 0, "version")
+		if err != nil {
+			return badParams(err)
+		}
+		book, err := paramString(params, 1, "book")
+		if err != nil {
+			return badParams(err)
+		}
+		count, err := getBookInfoResult(version, book)
+		if err != nil {
+			return nil, &rpcError{Code: -32000, Message: err.Error()}
+		}
+		return count, nil
+	case "bible.getChapterInfo":
+		version, err := paramString(params, 0, "version")
+		if err != nil {
+			return badParams(err)
+		}
+		book, err := paramString(params, 1, "book")
+		if err != nil {
+			return badParams(err)
+		}
+		chapter, err := paramInt(params, 2, "chapter")
+		if err != nil {
+			return badParams(err)
+		}
+		count, err := getChapterInfoResult(version, book, chapter)
+		if err != nil {
+			return nil, &rpcError{Code: -32000, Message: err.Error()}
+		}
+		return count, nil
+	case "bible.resolveReference":
+		version, err := paramString(params, 0, "version")
+		if err != nil {
+			return badParams(err)
+		}
+		reference, err := paramString(params, 1, "reference")
+		if err != nil {
+			return badParams(err)
+		}
+		return resolveReferenceResult(version, reference), nil
+	case "bible.getPassage":
+		version, err := paramString(params, 0, "version")
+		if err != nil {
+			return badParams(err)
+		}
+		reference, err := paramString(params, 1, "reference")
+		if err != nil {
+			return badParams(err)
+		}
+		return getPassageResult(version, reference), nil
+	case "bible.getBookMetadata":
+		version, err := paramString(params, 0, "version")
+		if err != nil {
+			return badParams(err)
+		}
+		return getBookMetadataResult(version), nil
+	case "bible.suggestReferences":
+		version := "KJV"
+		inputIndex := 0
+		if len(params) > 1 {
+			var err error
+			version, err = paramString(params, 0, "version")
+			if err != nil {
+				return badParams(err)
+			}
+			inputIndex = 1
+		}
+		input, err := paramString(params, inputIndex, "input")
+		if err != nil {
+			return badParams(err)
+		}
+		return suggestReferencesResult(version, input), nil
+	default:
+		return nil, &rpcError{Code: -32601, Message: "method not found"}
+	}
+}
+
+func serveJSONRPC(input io.Reader, output io.Writer) error {
+	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	writer := bufio.NewWriter(output)
+	defer writer.Flush()
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var request rpcRequest
+		response := rpcResponse{JSONRPC: "2.0"}
+		if err := stdjson.Unmarshal([]byte(line), &request); err != nil {
+			response.Error = &rpcError{Code: -32700, Message: err.Error()}
+		} else {
+			response.ID = request.ID
+			params, err := decodeParamArray(request.Params)
+			if err != nil {
+				response.Error = &rpcError{Code: -32602, Message: err.Error()}
+			} else {
+				result, rpcErr := handleRPC(request.Method, params)
+				if rpcErr != nil {
+					response.Error = rpcErr
+				} else {
+					response.Result = result
+				}
+			}
+		}
+
+		payload, err := stdjson.Marshal(response)
+		if err != nil {
+			return err
+		}
+		if _, err := writer.Write(payload); err != nil {
+			return err
+		}
+		if err := writer.WriteByte('\n'); err != nil {
+			return err
+		}
+		if err := writer.Flush(); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
 }
 
 func main() {
-	// Keep the program running
-	select {}
+	dbPath := flag.String("db", os.Getenv("EMS_BIBLE_DB"), "Path to the Bible SQLite database")
+	flag.Parse()
+	log.SetOutput(os.Stderr)
+
+	if err := initBibleDatabase(*dbPath); err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := serveJSONRPC(os.Stdin, os.Stdout); err != nil {
+		log.Fatal(err)
+	}
 }

@@ -1,7 +1,7 @@
 # Copyright (C) 2025 Christian Lockley
 # Licensed under GNU General Public License v3
 #TODO: Add derived file path fixups for css, html, js and mjs files. This is needed to prevent refrencing the derived files in the source code.
-.PHONY: all check-deps clean help js-minify rebuild status
+.PHONY: all all-paid check-deps clean help js-minify rebuild status
 
 # If any recipe step fails, remove the target instead of leaving a half-written (or empty) file.
 .DELETE_ON_ERROR:
@@ -76,17 +76,16 @@ else
 endif
 
 JS_FILES := $(patsubst ./%,%,$(JS_FILES))
-JS_FILES := $(filter-out src/app.js,$(JS_FILES))
+JS_FILES := $(filter-out src/app.js src/Bible.mjs src/wasm_exec.js,$(JS_FILES))
 APP_BUNDLE_SRC = src/app.js
 APP_BUNDLE_OUT = $(DERIVED_DIR)/src/app.min.js
-WASM_DEST = $(DERIVED_DIR)/src/main.wasm
-BIBLE_WASM_BUILDER = bibleBackend/build-bible-wasm.mjs
+BIBLE_ASSET_BUILDER = bibleBackend/build-bible-assets.mjs
 BIBLE_NKJV_IMPORTER = bibleBackend/import-nkjv.mjs
 BIBLE_NKJV_JSON = bibleBackend/NEW\ KING\ JAMES\ VERSION.json
 BIBLE_BACKEND_FILES = bibleBackend/main.go bibleBackend/go.mod bibleBackend/go.sum bibleBackend/bible-sqlite.db
 BUILD_ARTIFACTS_DIR = build-artifacts
-BIBLE_PUBLIC_STAMP = $(BUILD_ARTIFACTS_DIR)/.main.public.wasm.stamp
-BIBLE_PAID_STAMP = $(BUILD_ARTIFACTS_DIR)/.main.paid.wasm.stamp
+BIBLE_PUBLIC_STAMP = $(BUILD_ARTIFACTS_DIR)/.bible.public.assets.stamp
+BIBLE_PAID_STAMP = $(BUILD_ARTIFACTS_DIR)/.bible.paid.assets.stamp
 
 # Corresponding destination files in derived directory.
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
@@ -170,33 +169,31 @@ endif
 	@cp "$<" "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Copied $@$(COLOR_RESET)"
 
-$(BIBLE_PUBLIC_STAMP): $(BIBLE_WASM_BUILDER) $(BIBLE_BACKEND_FILES) src/wasm_exec.js | $(DERIVED_DIR)
+$(BIBLE_PUBLIC_STAMP): $(BIBLE_ASSET_BUILDER) $(BIBLE_BACKEND_FILES) | $(DERIVED_DIR)
 	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
 ifeq ($(WINDOWS), 1)
-	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $(WASM_DEST))'" >nul 2>&1
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 else
-	@mkdir -p $(dir $(WASM_DEST))
+	@mkdir -p $(dir $@)
 endif
-	@echo "$(COLOR_YELLOW)Building public-domain Bible WASM → $(WASM_DEST)$(COLOR_RESET)"
-	@node "$(BIBLE_WASM_BUILDER)" public "$(WASM_DEST)"
+	@echo "$(COLOR_YELLOW)Building public-domain Bible assets$(COLOR_RESET)"
+	@node "$(BIBLE_ASSET_BUILDER)" public "$(DERIVED_DIR)"
 	@rm -f "$(BIBLE_PAID_STAMP)"
 	@touch "$@"
-	@echo "$(COLOR_GREEN)$(TICK) Built public-domain Bible WASM$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)$(TICK) Built public-domain Bible assets$(COLOR_RESET)"
 
-$(BIBLE_PAID_STAMP): $(BIBLE_WASM_BUILDER) $(BIBLE_NKJV_IMPORTER) $(BIBLE_NKJV_JSON) $(BIBLE_BACKEND_FILES) src/wasm_exec.js | $(DERIVED_DIR)
+$(BIBLE_PAID_STAMP): $(BIBLE_ASSET_BUILDER) $(BIBLE_NKJV_IMPORTER) $(BIBLE_NKJV_JSON) $(BIBLE_BACKEND_FILES) | $(DERIVED_DIR)
 	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
 ifeq ($(WINDOWS), 1)
-	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $(WASM_DEST))'" >nul 2>&1
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 else
-	@mkdir -p $(dir $(WASM_DEST))
+	@mkdir -p $(dir $@)
 endif
-	@echo "$(COLOR_YELLOW)Building paid Bible WASM with NKJV → $(WASM_DEST)$(COLOR_RESET)"
-	@node "$(BIBLE_WASM_BUILDER)" paid "$(WASM_DEST)"
+	@echo "$(COLOR_YELLOW)Building paid Bible assets with NKJV$(COLOR_RESET)"
+	@node "$(BIBLE_ASSET_BUILDER)" paid "$(DERIVED_DIR)"
 	@rm -f "$(BIBLE_PUBLIC_STAMP)"
 	@touch "$@"
-	@echo "$(COLOR_GREEN)$(TICK) Built paid Bible WASM$(COLOR_RESET)"
-
-$(WASM_DEST): $(BIBLE_PUBLIC_STAMP)
+	@echo "$(COLOR_GREEN)$(TICK) Built paid Bible assets$(COLOR_RESET)"
 
 # --- Other Rules (Unchanged) ---
 
@@ -210,6 +207,8 @@ check-deps:
 	@$(NODE) -e "require('csso')" 2>/dev/null || { echo "$(COLOR_RED)Error: csso module required. Run: npm install csso$(COLOR_RESET)" >&2; exit 1; }
 	@$(HTML_MINIFIER) --version >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: html-minifier-terser required. Run: npm install html-minifier-terser$(COLOR_RESET)" >&2; exit 1; }
 	@$(TERSER) --version >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: terser required. Run: npm install terser$(COLOR_RESET)" >&2; exit 1; }
+	@command -v sqlite3 >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: sqlite3 is required$(COLOR_RESET)" >&2; exit 1; }
+	@$(NODE) -e "const {spawnSync}=require('node:child_process'); const supported=(out)=>{const m=String(out||'').match(/go(\\d+)\\.(\\d+)/); return !!m && (Number(m[1])>1 || Number(m[2])>=22);}; for (const c of [process.env.GO,'/usr/local/go/bin/go','go'].filter(Boolean)) { const r=spawnSync(c,['version'],{encoding:'utf8'}); if (r.status===0 && supported(r.stdout)) process.exit(0); } process.exit(1);" || { echo "$(COLOR_RED)Error: Go 1.22+ is required$(COLOR_RESET)" >&2; exit 1; }
 
 # Rule: Generate CSS source map
 $(CSS_MIN_MAP): $(CSS_SRC)
