@@ -48,6 +48,8 @@ const bibleAPI = {
     callBible("bible.resolveReference", [version, reference]),
   getPassage: (version, reference) => callBible("bible.getPassage", [version, reference]),
   getBookMetadata: (version) => callBible("bible.getBookMetadata", [version]),
+  searchText: (version, query, options = {}) =>
+    callBible("bible.searchText", [version, query, options]),
   suggestReferences: (version, input) =>
     input === undefined
       ? callBible("bible.suggestReferences", [version])

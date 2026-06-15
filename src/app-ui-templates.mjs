@@ -214,9 +214,49 @@ export function generateMediaFormHTML() {
               hidden
             ></div>
           </div>
+          <div class="bible-navigator-switch" role="tablist" aria-label="Bible navigator mode">
+            <button type="button" id="bibleBrowseModeBtn" class="bible-navigator-switch__button is-active" role="tab" aria-selected="true" aria-controls="bibleVerseList">Browse</button>
+            <button type="button" id="bibleSearchModeBtn" class="bible-navigator-switch__button" role="tab" aria-selected="false" aria-controls="bibleSearchPanel">Search</button>
+          </div>
+          <div id="bibleSearchPanel" class="bible-search-panel" hidden>
+            <div class="bible-search-field">
+              <input
+                type="search"
+                class="url-input"
+                id="bibleSearchInput"
+                autocomplete="off"
+                placeholder="Search text"
+                aria-label="Search Bible text"
+              >
+              <button type="button" id="bibleSearchButton" class="bible-search-button" aria-label="Search Bible text">
+                <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                  <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" d="M11.3 11.3l3 3"/>
+                  <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+                </svg>
+              </button>
+            </div>
+            <div class="bible-search-options">
+              <select id="bibleSearchScopeSelect" class="display-select" aria-label="Search scope">
+                <option value="current">This Version</option>
+                <option value="all">All Versions</option>
+              </select>
+              <div class="bible-search-mode-switch" role="group" aria-label="Match type">
+                <button type="button" class="bible-search-mode-button is-active" data-search-mode="all" aria-pressed="true">All</button>
+                <button type="button" class="bible-search-mode-button" data-search-mode="phrase" aria-pressed="false">Phrase</button>
+                <button type="button" class="bible-search-mode-button" data-search-mode="any" aria-pressed="false">Any</button>
+              </div>
+            </div>
+            <div id="bibleSearchStatus" class="bible-search-status" role="status"></div>
+          </div>
           <div id="bibleVerseList" class="bible-verse-list" role="listbox" aria-label="Chapter verses">
             <div class="list-placeholder">
               <span class="list-placeholder-title">Loading Bible…</span>
+            </div>
+          </div>
+          <div id="bibleSearchResults" class="bible-search-results" role="listbox" aria-label="Bible search results" hidden>
+            <div class="list-placeholder">
+              <span class="list-placeholder-title">Search Bible text</span>
+              <span class="list-placeholder-hint">Choose words or an exact phrase</span>
             </div>
           </div>
         </aside>
