@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"database/sql"
 	stdjson "encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -29,6 +30,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"goBibleBackend/internal/biblestore"
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
@@ -121,6 +124,30 @@ type TextResponse struct {
 	Error   string   `json:"error,omitempty"`
 }
 
+type SearchResult struct {
+	Version   string  `json:"version"`
+	Reference string  `json:"reference"`
+	Book      string  `json:"book"`
+	BookID    int     `json:"bookId"`
+	Chapter   int     `json:"chapter"`
+	Verse     int     `json:"verse"`
+	Text      string  `json:"text"`
+	Rank      float64 `json:"rank"`
+}
+
+type SearchTextResponse struct {
+	Version string         `json:"version"`
+	Query   string         `json:"query"`
+	Mode    string         `json:"mode"`
+	Results []SearchResult `json:"results"`
+	Error   string         `json:"error,omitempty"`
+}
+
+type SearchOptions struct {
+	Limit int    `json:"limit,omitempty"`
+	Mode  string `json:"mode,omitempty"`
+}
+
 var db *sql.DB
 var cachedVersions map[string]Version
 var cachedBooks map[string]int // Mapping from book name to ID
@@ -137,6 +164,10 @@ func initBibleDatabase(dbPath string) error {
 	var err error
 	db, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
+		return err
+	}
+
+	if err := requireOptimizedBibleDatabase(db); err != nil {
 		return err
 	}
 
@@ -160,6 +191,65 @@ func initBibleDatabase(dbPath string) error {
 	}
 	cachedBookMetadataByVersion = make(map[string]BookMetadataResponse)
 	return nil
+}
+
+func bibleTableExists(db *sql.DB, tableName string) (bool, error) {
+	row := db.QueryRow(`SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ? LIMIT 1`, tableName)
+	var value int
+	if err := row.Scan(&value); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func requireOptimizedBibleDatabase(db *sql.DB) error {
+	for _, tableName := range []string{
+		biblestore.MetadataTable,
+		biblestore.LookupTable,
+		biblestore.FTSTable,
+		biblestore.ChapterTable,
+	} {
+		exists, err := bibleTableExists(db, tableName)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("Bible database is missing optimized table: %s", tableName)
+		}
+	}
+
+	encoding, err := fetchBibleMetadataValue(db, biblestore.TextEncodingKey)
+	if err != nil {
+		return err
+	}
+	if encoding != biblestore.TextEncodingLZFSE {
+		return fmt.Errorf("Bible database text encoding is %q, expected %q", encoding, biblestore.TextEncodingLZFSE)
+	}
+
+	storage, err := fetchBibleMetadataValue(db, biblestore.TextStorageKey)
+	if err != nil {
+		return err
+	}
+	if storage != biblestore.TextStorageChapterLZFSEJSON {
+		return fmt.Errorf("Bible database text storage is %q, expected %q", storage, biblestore.TextStorageChapterLZFSEJSON)
+	}
+
+	return nil
+}
+
+func fetchBibleMetadataValue(db *sql.DB, key string) (string, error) {
+	row := db.QueryRow(
+		fmt.Sprintf(`SELECT value FROM %s WHERE key = ?`, biblestore.MetadataTable),
+		key,
+	)
+	var value string
+	if err := row.Scan(&value); err != nil {
+		return "", err
+	}
+	return value, nil
 }
 
 func fetchVersions(db *sql.DB) (map[string]Version, error) {
@@ -811,28 +901,39 @@ func fetchChapterVerses(db *sql.DB, tableName string, bookID int, chapter int) (
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(
-		fmt.Sprintf("SELECT v, t FROM %s WHERE b = ? AND c = ? ORDER BY v", tableName),
+	row := db.QueryRow(
+		fmt.Sprintf("SELECT t FROM %s WHERE table_name = ? AND b = ? AND c = ?", biblestore.ChapterTable),
+		tableName,
 		bookID,
 		chapter,
 	)
+	var rawText []byte
+	if err := row.Scan(&rawText); err != nil {
+		return nil, err
+	}
+	chapterVerses, err := biblestore.DecompressChapterVerses(rawText)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	verses := []PassageVerse{}
-	for rows.Next() {
-		var verse PassageVerse
-		if err := rows.Scan(&verse.Verse, &verse.Text); err != nil {
-			return nil, err
-		}
-		verses = append(verses, verse)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	verses := make([]PassageVerse, 0, len(chapterVerses))
+	for _, verse := range chapterVerses {
+		verses = append(verses, PassageVerse{Verse: verse.Verse, Text: verse.Text})
 	}
 	return verses, nil
+}
+
+func fetchVerseTextByLocation(db *sql.DB, tableName string, bookID int, chapter int, verse int) (string, error) {
+	verses, err := fetchChapterVerses(db, tableName, bookID, chapter)
+	if err != nil {
+		return "", err
+	}
+	for _, candidate := range verses {
+		if candidate.Verse == verse {
+			return candidate.Text, nil
+		}
+	}
+	return "", fmt.Errorf("verse not found")
 }
 
 func passageText(verses []PassageVerse) string {
@@ -1402,55 +1503,226 @@ func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterV
 		verse = chapterVerse[colonIndex+1:]
 	}
 
-	var query string
-	var args []interface{}
-	if verse == "" {
-		query = fmt.Sprintf("SELECT v, t FROM %s WHERE b = ? AND c = ?", tableName)
-		args = append(args, bookID, chapter)
-	} else {
-		query = fmt.Sprintf("SELECT t FROM %s WHERE b = ? AND c = ? AND v = ?", tableName)
-		args = append(args, bookID, chapter, verse)
+	chapterNumber, err := strconv.Atoi(chapter)
+	if err != nil {
+		return TextResponse{}, fmt.Errorf("invalid chapter")
 	}
-
-	rows, err := db.Query(query, args...)
+	chapterVerses, err := fetchChapterVerses(db, tableName, bookID, chapterNumber)
 	if err != nil {
 		return TextResponse{}, fmt.Errorf("database query error: %v", err)
 	}
-	defer rows.Close()
 
-	response := TextResponse{
-		Chapter: chapter,
-	}
+	response := TextResponse{Chapter: chapter}
 
 	if verse == "" {
-		var verses []string
-		for rows.Next() {
-			var verseNum int
-			var verseText string
-			if err := rows.Scan(&verseNum, &verseText); err != nil {
-				return TextResponse{}, fmt.Errorf("error scanning verse text: %v", err)
-			}
-			verses = append(verses, verseText)
+		verses := make([]string, 0, len(chapterVerses))
+		for _, chapterVerse := range chapterVerses {
+			verses = append(verses, chapterVerse.Text)
 		}
 		response.Verses = verses
 	} else {
-		if rows.Next() {
-			var verseText string
-			if err := rows.Scan(&verseText); err != nil {
-				return TextResponse{}, fmt.Errorf("error scanning verse text: %v", err)
-			}
-			response.Text = verseText
-			response.Verse = verse
-		} else {
-			return TextResponse{}, fmt.Errorf("no verse found for the given reference")
+		verseNumber, err := strconv.Atoi(verse)
+		if err != nil {
+			return TextResponse{}, fmt.Errorf("invalid verse")
 		}
-	}
-
-	if err := rows.Err(); err != nil {
-		return TextResponse{}, fmt.Errorf("error during rows iteration: %v", err)
+		for _, chapterVerse := range chapterVerses {
+			if chapterVerse.Verse == verseNumber {
+				response.Text = chapterVerse.Text
+				response.Verse = verse
+				return response, nil
+			}
+		}
+		return TextResponse{}, fmt.Errorf("no verse found for the given reference")
 	}
 
 	return response, nil
+}
+
+func normalizedSearchLimit(limit int) int {
+	if limit <= 0 {
+		return 12
+	}
+	if limit > 50 {
+		return 50
+	}
+	return limit
+}
+
+func normalizedSearchMode(mode string, input string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "phrase", "exact":
+		return "phrase"
+	case "any", "or":
+		return "any"
+	case "word", "words", "all", "and", "":
+		if looksLikeQuotedPhrase(input) {
+			return "phrase"
+		}
+		return "all"
+	default:
+		return "all"
+	}
+}
+
+func looksLikeQuotedPhrase(input string) bool {
+	input = strings.TrimSpace(input)
+	return len(input) >= 2 && strings.HasPrefix(input, `"`) && strings.HasSuffix(input, `"`)
+}
+
+func unquoteSearchPhrase(input string) string {
+	input = strings.TrimSpace(input)
+	if looksLikeQuotedPhrase(input) {
+		input = strings.TrimSpace(input[1 : len(input)-1])
+	}
+	return input
+}
+
+func ftsQuotedPhrase(input string) string {
+	return `"` + strings.ReplaceAll(input, `"`, `""`) + `"`
+}
+
+func ftsPrefixPhrase(input string) (string, error) {
+	terms := strings.Fields(normalizeBibleAlias(input))
+	if len(terms) == 0 {
+		return "", fmt.Errorf("search phrase is empty")
+	}
+	quotedTerms := make([]string, 0, len(terms))
+	for index, term := range terms {
+		quotedTerm := ftsQuotedPhrase(term)
+		if index == len(terms)-1 {
+			quotedTerm += "*"
+		}
+		quotedTerms = append(quotedTerms, quotedTerm)
+	}
+	return strings.Join(quotedTerms, " + "), nil
+}
+
+func ftsSearchQuery(input string, mode string) (string, error) {
+	switch mode {
+	case "phrase":
+		phrase := unquoteSearchPhrase(input)
+		if looksLikeQuotedPhrase(input) {
+			if normalizeBibleAlias(phrase) == "" {
+				return "", fmt.Errorf("search phrase is empty")
+			}
+			return ftsQuotedPhrase(phrase), nil
+		}
+		return ftsPrefixPhrase(phrase)
+	case "any", "all":
+		terms := strings.Fields(normalizeBibleAlias(input))
+		if len(terms) == 0 {
+			return "", fmt.Errorf("search query is empty")
+		}
+		quotedTerms := make([]string, 0, len(terms))
+		for _, term := range terms {
+			quotedTerms = append(quotedTerms, ftsQuotedPhrase(term))
+		}
+		operator := " AND "
+		if mode == "any" {
+			operator = " OR "
+		}
+		return strings.Join(quotedTerms, operator), nil
+	default:
+		return "", fmt.Errorf("unsupported search mode: %s", mode)
+	}
+}
+
+func isAllVersionSearch(version string) bool {
+	version = strings.TrimSpace(strings.ToUpper(version))
+	return version == "" || version == "*" || version == "ALL"
+}
+
+func searchTextResult(version, input string, options SearchOptions) SearchTextResponse {
+	mode := normalizedSearchMode(options.Mode, input)
+	query, err := ftsSearchQuery(input, mode)
+	if err != nil {
+		return SearchTextResponse{Version: defaultVersion(version), Query: input, Mode: mode, Error: err.Error()}
+	}
+
+	versionFilter := ""
+	args := []interface{}{query}
+	responseVersion := "ALL"
+	if !isAllVersionSearch(version) {
+		versionInfo, err := versionInfoFor(version)
+		if err != nil {
+			return SearchTextResponse{Version: defaultVersion(version), Query: input, Mode: mode, Error: err.Error()}
+		}
+		responseVersion = versionInfo.Abbreviation
+		versionFilter = " AND l.version = ?"
+		args = append(args, versionInfo.Abbreviation)
+	}
+
+	limit := normalizedSearchLimit(options.Limit)
+	args = append(args, limit)
+	rows, err := db.Query(
+		fmt.Sprintf(`
+			SELECT
+				l.version,
+				l.table_name,
+				l.b,
+				l.c,
+				l.v,
+				bm25(%s) AS rank
+			FROM %s
+			JOIN %s l ON l.rowid = %s.rowid
+			WHERE %s MATCH ?%s
+			ORDER BY rank
+			LIMIT ?`,
+			biblestore.FTSTable,
+			biblestore.FTSTable,
+			biblestore.LookupTable,
+			biblestore.FTSTable,
+			biblestore.FTSTable,
+			versionFilter,
+		),
+		args...,
+	)
+	if err != nil {
+		return SearchTextResponse{Version: responseVersion, Query: input, Mode: mode, Error: err.Error()}
+	}
+	defer rows.Close()
+
+	results := []SearchResult{}
+	for rows.Next() {
+		var result SearchResult
+		var tableName string
+		if err := rows.Scan(
+			&result.Version,
+			&tableName,
+			&result.BookID,
+			&result.Chapter,
+			&result.Verse,
+			&result.Rank,
+		); err != nil {
+			return SearchTextResponse{Version: responseVersion, Query: input, Mode: mode, Error: err.Error()}
+		}
+
+		book, ok := cachedBookDetails[result.BookID]
+		if ok {
+			result.Book = book.Name
+			result.Reference = fmt.Sprintf("%s %d:%d", book.Name, result.Chapter, result.Verse)
+		} else {
+			result.Book = fmt.Sprintf("Book %d", result.BookID)
+			result.Reference = fmt.Sprintf("%s %d:%d", result.Book, result.Chapter, result.Verse)
+		}
+
+		result.Text, err = fetchVerseTextByLocation(db, tableName, result.BookID, result.Chapter, result.Verse)
+		if err != nil {
+			return SearchTextResponse{Version: responseVersion, Query: input, Mode: mode, Error: err.Error()}
+		}
+		results = append(results, result)
+	}
+	if err := rows.Err(); err != nil {
+		return SearchTextResponse{Version: responseVersion, Query: input, Mode: mode, Error: err.Error()}
+	}
+
+	return SearchTextResponse{
+		Version: responseVersion,
+		Query:   input,
+		Mode:    mode,
+		Results: results,
+	}
 }
 
 type rpcRequest struct {
@@ -1510,6 +1782,31 @@ func paramInt(params []stdjson.RawMessage, index int, name string) (int, error) 
 		return 0, fmt.Errorf("%s must be an integer", name)
 	}
 	return number, nil
+}
+
+func paramSearchOptions(params []stdjson.RawMessage, index int) (SearchOptions, error) {
+	options := SearchOptions{Limit: 12, Mode: "all"}
+	if index >= len(params) {
+		return options, nil
+	}
+
+	var parsed SearchOptions
+	if err := stdjson.Unmarshal(params[index], &parsed); err == nil {
+		if parsed.Limit != 0 {
+			options.Limit = parsed.Limit
+		}
+		if strings.TrimSpace(parsed.Mode) != "" {
+			options.Mode = parsed.Mode
+		}
+		return options, nil
+	}
+
+	limit, err := paramInt(params, index, "limit")
+	if err != nil {
+		return SearchOptions{}, err
+	}
+	options.Limit = limit
+	return options, nil
 }
 
 func handleRPC(method string, params []stdjson.RawMessage) (interface{}, *rpcError) {
@@ -1610,6 +1907,20 @@ func handleRPC(method string, params []stdjson.RawMessage) (interface{}, *rpcErr
 			return badParams(err)
 		}
 		return suggestReferencesResult(version, input), nil
+	case "bible.searchText":
+		version, err := paramString(params, 0, "version")
+		if err != nil {
+			return badParams(err)
+		}
+		query, err := paramString(params, 1, "query")
+		if err != nil {
+			return badParams(err)
+		}
+		options, err := paramSearchOptions(params, 2)
+		if err != nil {
+			return badParams(err)
+		}
+		return searchTextResult(version, query, options), nil
 	default:
 		return nil, &rpcError{Code: -32601, Message: "method not found"}
 	}

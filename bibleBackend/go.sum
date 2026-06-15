@@ -1,3 +1,5 @@
+github.com/go-compressions/lzfse v0.1.0 h1:Hldd2H46hCxJcIPZuCk6QGQGCBj16wYkPLhOarJFhSA=
+github.com/go-compressions/lzfse v0.1.0/go.mod h1:geg9IRFbMNHPgbm8xNwF3AnYTsldTX9YptJ0DOWzYv8=
 github.com/ncruces/go-sqlite3 v0.17.0 h1:tbrmwAF9Iq6O6i8NX+pO7rQYIwIJ4cZ/nZFQyw7GB18=
 github.com/ncruces/go-sqlite3 v0.17.0/go.mod h1:Ik98tXgiGdF2HgHYZlEkh84RAC3U3eqgS7PYsmLwLxY=
 github.com/ncruces/julianday v1.0.0 h1:fH0OKwa7NWvniGQtxdJRxAgkBMolni2BjDHaWTxqt7M=
