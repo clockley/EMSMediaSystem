@@ -4,5 +4,7 @@ dist/
 .yarn/
 derived/
 build-artifacts/
-bibleBackend/NEW KING JAMES VERSION.json
-bibleBackend/bible-sqlite.db.old
+private-bibles/
+sidecars/bible-rpc/*.old
+sidecars/bible-rpc/*.json
+sidecars/bible-rpc/*autobackup*.tsv

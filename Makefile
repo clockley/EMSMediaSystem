@@ -79,11 +79,13 @@ JS_FILES := $(patsubst ./%,%,$(JS_FILES))
 JS_FILES := $(filter-out src/app.js src/Bible.mjs src/wasm_exec.js,$(JS_FILES))
 APP_BUNDLE_SRC = src/app.js
 APP_BUNDLE_OUT = $(DERIVED_DIR)/src/app.min.js
-BIBLE_ASSET_BUILDER = bibleBackend/build-bible-assets.mjs
-BIBLE_IMPORTER = bibleBackend/import-bibles.mjs
-BIBLE_PAID_METADATA = bibleBackend/bible-imports.json
-BIBLE_PAID_JSONS = bibleBackend/NEW\ KING\ JAMES\ VERSION.json bibleBackend/NEW\ INTERNATIONAL\ VERSION.json bibleBackend/NASB\ 1995.json
-BIBLE_BACKEND_FILES = bibleBackend/main.go bibleBackend/internal/biblestore/text.go bibleBackend/cmd/bible-db-optimize/main.go bibleBackend/go.mod bibleBackend/go.sum bibleBackend/bible-sqlite.db
+BIBLE_RPC_ROOT = sidecars/bible-rpc
+BIBLE_PRIVATE_ROOT = private-bibles
+BIBLE_RPC_ASSET_BUILDER = $(BIBLE_RPC_ROOT)/build-bible-assets.mjs
+BIBLE_RPC_IMPORTER = $(BIBLE_RPC_ROOT)/import-bibles.mjs
+BIBLE_PAID_METADATA = $(BIBLE_PRIVATE_ROOT)/bible-imports.json
+BIBLE_PAID_JSONS = $(shell find "$(BIBLE_PRIVATE_ROOT)" -maxdepth 1 -type f -name "*.json" -print 2>/dev/null | sed 's/ /\\ /g')
+BIBLE_RPC_SOURCE_FILES = $(BIBLE_RPC_ROOT)/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/cmd/bible-db-optimize/main.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum $(BIBLE_RPC_ROOT)/bible-sqlite.db
 BUILD_ARTIFACTS_DIR = build-artifacts
 BIBLE_PUBLIC_STAMP = $(BUILD_ARTIFACTS_DIR)/.bible.public.assets.stamp
 BIBLE_PAID_STAMP = $(BUILD_ARTIFACTS_DIR)/.bible.paid.assets.stamp
@@ -170,7 +172,7 @@ endif
 	@cp "$<" "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Copied $@$(COLOR_RESET)"
 
-$(BIBLE_PUBLIC_STAMP): $(BIBLE_ASSET_BUILDER) $(BIBLE_BACKEND_FILES) | $(DERIVED_DIR)
+$(BIBLE_PUBLIC_STAMP): $(BIBLE_RPC_ASSET_BUILDER) $(BIBLE_RPC_SOURCE_FILES) | $(DERIVED_DIR)
 	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
@@ -178,12 +180,12 @@ else
 	@mkdir -p $(dir $@)
 endif
 	@echo "$(COLOR_YELLOW)Building public-domain Bible assets$(COLOR_RESET)"
-	@node "$(BIBLE_ASSET_BUILDER)" public "$(DERIVED_DIR)"
+	@BIBLE_PRIVATE_ROOT="$(BIBLE_PRIVATE_ROOT)" node "$(BIBLE_RPC_ASSET_BUILDER)" public "$(DERIVED_DIR)"
 	@rm -f "$(BIBLE_PAID_STAMP)"
 	@touch "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Built public-domain Bible assets$(COLOR_RESET)"
 
-$(BIBLE_PAID_STAMP): $(BIBLE_ASSET_BUILDER) $(BIBLE_IMPORTER) $(BIBLE_PAID_METADATA) $(BIBLE_PAID_JSONS) $(BIBLE_BACKEND_FILES) | $(DERIVED_DIR)
+$(BIBLE_PAID_STAMP): $(BIBLE_RPC_ASSET_BUILDER) $(BIBLE_RPC_IMPORTER) $(BIBLE_PAID_METADATA) $(BIBLE_PAID_JSONS) $(BIBLE_RPC_SOURCE_FILES) | $(DERIVED_DIR)
 	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
@@ -191,7 +193,7 @@ else
 	@mkdir -p $(dir $@)
 endif
 	@echo "$(COLOR_YELLOW)Building paid Bible assets$(COLOR_RESET)"
-	@node "$(BIBLE_ASSET_BUILDER)" paid "$(DERIVED_DIR)"
+	@BIBLE_PRIVATE_ROOT="$(BIBLE_PRIVATE_ROOT)" node "$(BIBLE_RPC_ASSET_BUILDER)" paid "$(DERIVED_DIR)"
 	@rm -f "$(BIBLE_PUBLIC_STAMP)"
 	@touch "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Built paid Bible assets$(COLOR_RESET)"

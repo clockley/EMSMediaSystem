@@ -1,4 +1,4 @@
-module goBibleBackend
+module emsmediasystem/bible-rpc
 
 go 1.22.5
 
