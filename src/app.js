@@ -269,6 +269,7 @@ let biblePreviewActiveMediaWindowSize = null;
 let biblePreviewMediaWindowSizePromise = null;
 const bibleDesignerState = {
   version: "KJV",
+  attribution: null,
   reference: "",
   text: "",
   book: "John",
@@ -287,6 +288,7 @@ const bibleDesignerState = {
   lowerThirdSegmentIndex: 0,
   lowerThirdSourceText: "",
 };
+const bibleVersionMetadataByKey = new Map();
 const projectScriptureOverrides = {
   fontFamily: "",
   fontSize: undefined,
@@ -2943,6 +2945,7 @@ function lowerThirdMeasureElements() {
       <div class="scripture-render__box">
         <div class="scripture-render__body"></div>
         <div class="scripture-render__reference"></div>
+        <div class="scripture-render__attribution"></div>
       </div>
     `;
     document.body.appendChild(root);
@@ -2964,12 +2967,14 @@ function applyScriptureRenderVariables(el, message) {
     14,
     Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
   );
+  const attributionFontSize = Math.max(12, Math.round(referenceFontSize * 0.42));
   el.style.setProperty("--scripture-font-size", `${bodyFontSize}px`);
   el.style.setProperty(
     "--scripture-lower-third-font-size",
     `${scriptureLowerThirdFontSize(bodyFontSize)}px`,
   );
   el.style.setProperty("--scripture-reference-font-size", `${referenceFontSize}px`);
+  el.style.setProperty("--scripture-attribution-font-size", `${attributionFontSize}px`);
   el.style.setProperty("--scripture-line-height", `${message.lineHeight || SCRIPTURE_LINE_HEIGHT}`);
   el.style.setProperty("--scripture-font-weight", `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`);
   el.style.setProperty("--scripture-color", message.color || "#ffffff");
@@ -3123,6 +3128,11 @@ function applyScriptureRenderToPreview(render, bodyEl, referenceEl, message) {
   bodyEl.textContent = message.bodyText || "No verse loaded";
   referenceEl.textContent = message.referenceText || "";
   referenceEl.hidden = !message.referenceText;
+  const attributionEl = render.querySelector(".scripture-render__attribution");
+  if (attributionEl) {
+    attributionEl.textContent = message.attributionText || "";
+    attributionEl.hidden = !message.attributionText;
+  }
   fitFullscreenScriptureRender(render, message);
 }
 
@@ -3304,6 +3314,8 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     ? backgroundUrl
     : "";
   const fullBodyText = entry.text || "";
+  const attribution = entry.attribution || bibleAttributionForVersion(entry.version || "KJV");
+  const attributionText = bibleAttributionText(attribution, entry.version || "KJV");
   const referencePresentation = scriptureReferencePresentationForBackground(
     style.backgroundColor,
     { forceLight: isLowerThird || Boolean(style.backgroundPath) },
@@ -3325,6 +3337,8 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     backgroundVideoSync: backgroundVideo ? currentBibleBackgroundVideoSync() : null,
     chromaKeyColor: style.lowerThirdChromaKeyColor,
     referenceText: `${entry.reference || ""} ${entry.version || ""}`.trim(),
+    attribution,
+    attributionText,
     referenceColor: referencePresentation.color,
     referenceTextShadow: referencePresentation.shadow,
     referenceFontSize: SCRIPTURE_REFERENCE_FONT_SIZE,
@@ -3564,6 +3578,7 @@ async function nextBibleVerseEntryFromDesigner() {
   return {
     ...bibleDesignerState,
     ...getBibleDesignerStyle(),
+    attribution: textData.attribution || bibleAttributionForVersion(bibleDesignerState.version),
     book,
     chapter,
     reference: `${book} ${chapter}:${nextVerse}`,
@@ -3792,6 +3807,7 @@ async function lookupBibleReference(reference, version) {
     if (passage && !passage.error && passage.reference && passage.text) {
       return {
         version: passage.version || version || "KJV",
+        attribution: passage.attribution || bibleAttributionForVersion(passage.version || version || "KJV"),
         reference: passage.reference,
         text: passage.text,
         selectedVerses: Array.isArray(passage.selectedVerses)
@@ -3866,6 +3882,8 @@ async function syncBibleStateFromControls() {
       referenceInput?.value || bibleDesignerState.reference,
     );
   }
+  bibleDesignerState.attribution = bibleAttributionForVersion(bibleDesignerState.version);
+  syncBibleVersionAttributionDisplay();
   Object.assign(bibleDesignerState, getBibleDesignerStyle());
 }
 
@@ -3975,6 +3993,7 @@ async function bibleEntryFromSelectedVerses() {
   return {
     ...bibleDesignerState,
     ...getBibleDesignerStyle(),
+    attribution: textData.attribution || bibleAttributionForVersion(bibleDesignerState.version),
     reference,
     text: selectedText,
     verse: verseStart,
@@ -4002,6 +4021,7 @@ async function bibleEntryForSingleVerse(verseNumber) {
   return {
     ...bibleDesignerState,
     ...getBibleDesignerStyle(),
+    attribution: textData.attribution || bibleAttributionForVersion(bibleDesignerState.version),
     reference: `${bibleDesignerState.book} ${bibleDesignerState.chapter}:${verseNumber}`,
     text,
     verse: verseNumber,
@@ -4388,6 +4408,7 @@ function hydrateBibleEntryStyle(entry = {}) {
   return {
     ...defaults,
     ...entry,
+    attribution: entry?.attribution || bibleAttributionForVersion(entry?.version || "KJV"),
     fontFamily:
       typeof entry?.fontFamily === "string" && entry.fontFamily.trim()
         ? entry.fontFamily
@@ -5161,11 +5182,93 @@ function showBibleTextContextMenu(event) {
   menu.style.top = `${Math.round(top)}px`;
 }
 
+function normalizeBibleVersionMetadata(version) {
+  if (typeof version === "string") {
+    return {
+      abbreviation: version,
+      version,
+      attribution: {
+        abbreviation: version,
+        version,
+        shortText: version,
+        text: version,
+        publicDomain: false,
+      },
+    };
+  }
+  const abbreviation = bibleVersionValue(version);
+  const fullName = String(version?.version || version?.name || abbreviation);
+  const attribution = version?.attribution && typeof version.attribution === "object"
+    ? version.attribution
+    : {};
+  return {
+    ...version,
+    abbreviation,
+    version: fullName,
+    attribution: {
+      abbreviation,
+      version: fullName,
+      shortText: String(attribution.shortText || abbreviation),
+      text: String(attribution.text || fullName || abbreviation),
+      publicDomain: Boolean(attribution.publicDomain),
+      ...attribution,
+    },
+  };
+}
+
+function setBibleVersionMetadata(versions) {
+  bibleVersionMetadataByKey.clear();
+  normalizedBibleVersions(versions).forEach((version) => {
+    const metadata = normalizeBibleVersionMetadata(version);
+    bibleVersionMetadataByKey.set(metadata.abbreviation, metadata);
+  });
+}
+
+function bibleVersionMetadata(version = bibleDesignerState.version) {
+  const key = bibleVersionValue(version || bibleDesignerState.version || "KJV");
+  return bibleVersionMetadataByKey.get(key) || normalizeBibleVersionMetadata(key);
+}
+
+function bibleAttributionForVersion(version = bibleDesignerState.version) {
+  return bibleVersionMetadata(version).attribution || null;
+}
+
+function bibleAttributionText(attribution, fallbackVersion = "") {
+  if (typeof attribution === "string") return attribution.trim();
+  if (attribution && typeof attribution === "object") {
+    return String(
+      attribution.text ||
+        attribution.copyrightInfo ||
+        attribution.copyright ||
+        attribution.shortText ||
+        fallbackVersion ||
+        "",
+    ).trim();
+  }
+  return String(fallbackVersion || "").trim();
+}
+
+function bibleAttributionForResult(result) {
+  return result?.attribution || bibleAttributionForVersion(result?.version);
+}
+
+function syncBibleVersionAttributionDisplay() {
+  const attributionEl = document.getElementById("bibleVersionAttribution");
+  if (!attributionEl) return;
+  const attribution = bibleAttributionForVersion(bibleDesignerState.version);
+  const text = bibleAttributionText(attribution, bibleDesignerState.version);
+  attributionEl.textContent = text;
+  attributionEl.title = text;
+  attributionEl.hidden = !text;
+  bibleDesignerState.attribution = attribution;
+}
+
 function syncBibleSelectorsFromState() {
   const versionSelect = document.getElementById("bibleVersionSelect");
   const referenceInput = document.getElementById("bibleReferenceInput");
   if (versionSelect) versionSelect.value = bibleDesignerState.version;
   if (referenceInput) referenceInput.value = bibleDesignerState.reference;
+  syncBibleVersionAttributionDisplay();
 }
 
 function syncBibleStyleControlsFromState() {
@@ -5340,10 +5443,15 @@ function renderBibleSearchResults(response) {
     const version = String(result?.version || "");
     const reference = String(result?.reference || "");
     const text = String(result?.text || "");
+    const attributionText = bibleAttributionText(bibleAttributionForResult(result), version);
+    button.title = attributionText;
     button.innerHTML =
       `<span class="bible-search-result-reference">${escapeHtml(reference)}</span>` +
       `<span class="bible-search-result-version">${escapeHtml(version)}</span>` +
-      `<span class="bible-search-result-text">${escapeHtml(text)}</span>`;
+      `<span class="bible-search-result-text">${escapeHtml(text)}</span>` +
+      (attributionText
+        ? `<span class="bible-search-result-attribution">${escapeHtml(attributionText)}</span>`
+        : "");
     button.addEventListener("click", () => {
       void applyBibleSearchResult(index).catch(console.error);
     });
@@ -5395,6 +5503,7 @@ async function applyBibleSearchResult(index) {
   const verse = Number(result.verse);
 
   bibleDesignerState.version = version;
+  bibleDesignerState.attribution = bibleAttributionForResult(result);
   bibleDesignerState.book = String(result.book || bibleDesignerState.book || "");
   bibleDesignerState.chapter = Number(result.chapter) || bibleDesignerState.chapter;
   bibleDesignerState.verse = Number.isFinite(verse) && verse > 0 ? verse : 0;
@@ -5635,6 +5744,7 @@ function installBibleMediaControls() {
   syncBibleStyleControlsFromState();
   syncBibleBackgroundLabel();
   syncBibleSearchControlsFromState();
+  syncBibleVersionAttributionDisplay();
 
   document.getElementById("openBibleWorkspaceBtn")?.addEventListener("click", () => {
     void openBibleWorkspaceFromButton().catch(console.error);
@@ -5644,6 +5754,8 @@ function installBibleMediaControls() {
   });
   versionSelect.addEventListener("change", () => {
     bibleDesignerState.version = versionSelect.value;
+    bibleDesignerState.attribution = bibleAttributionForVersion(bibleDesignerState.version);
+    syncBibleVersionAttributionDisplay();
     bibleVerseSelection.verses.clear();
     bibleVerseSelection.anchor = 0;
     void refreshBibleBrowser().catch(console.error);
@@ -5866,13 +5978,20 @@ function installBibleMediaControls() {
   bibleAPI
     .waitForReady()
     .then(async () => {
-      const versions = normalizedBibleVersions(await bibleAPI.getVersions());
+      const rawVersions = await bibleAPI.getVersions();
+      const versions = normalizedBibleVersions(rawVersions)
+        .map(normalizeBibleVersionMetadata)
+        .sort((left, right) => left.abbreviation.localeCompare(right.abbreviation));
+      setBibleVersionMetadata(versions);
       versionSelect.innerHTML = "";
       (versions.length ? versions : ["KJV"]).forEach((version) => {
-        const value = bibleVersionValue(version);
+        const metadata = normalizeBibleVersionMetadata(version);
+        const value = metadata.abbreviation;
+        const attributionText = bibleAttributionText(metadata.attribution, value);
         const option = document.createElement("option");
         option.value = value;
         option.textContent = value;
+        option.title = attributionText;
         versionSelect.appendChild(option);
       });
       if (referenceSuggestions) {

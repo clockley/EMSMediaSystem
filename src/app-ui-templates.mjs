@@ -182,6 +182,7 @@ export function generateMediaFormHTML() {
           <div class="bible-workspace__selectors">
             <select id="bibleVersionSelect" class="display-select" aria-label="Bible version"></select>
           </div>
+          <div id="bibleVersionAttribution" class="bible-version-attribution" role="note"></div>
           <div class="bible-reference-field">
             <input
               type="text"
@@ -276,6 +277,7 @@ export function generateMediaFormHTML() {
                 <div class="scripture-render__box">
                   <div id="biblePreviewText" class="bible-preview-text scripture-render__body"></div>
                   <div id="biblePreviewReference" class="bible-preview-reference scripture-render__reference"></div>
+                  <div id="biblePreviewAttribution" class="bible-preview-attribution scripture-render__attribution"></div>
                 </div>
               </div>
             </section>
@@ -285,6 +287,7 @@ export function generateMediaFormHTML() {
                 <div class="scripture-render__box">
                   <div id="bibleLowerThirdPreviewText" class="bible-preview-text scripture-render__body"></div>
                   <div id="bibleLowerThirdPreviewReference" class="bible-preview-reference scripture-render__reference"></div>
+                  <div id="bibleLowerThirdPreviewAttribution" class="bible-preview-attribution scripture-render__attribution"></div>
                 </div>
               </div>
             </section>

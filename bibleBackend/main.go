@@ -33,14 +33,33 @@ import (
 
 	"goBibleBackend/internal/biblestore"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	_ "modernc.org/sqlite"
 )
 
 type Version struct {
-	Abbreviation string `json:"abbreviation"`
-	Version      string `json:"version"`
-	TableName    string `json:"tableName"`
+	Abbreviation  string           `json:"abbreviation"`
+	Version       string           `json:"version"`
+	TableName     string           `json:"tableName"`
+	Language      string           `json:"language,omitempty"`
+	InfoText      string           `json:"infoText,omitempty"`
+	InfoURL       string           `json:"infoUrl,omitempty"`
+	Publisher     string           `json:"publisher,omitempty"`
+	Copyright     string           `json:"copyright,omitempty"`
+	CopyrightInfo string           `json:"copyrightInfo,omitempty"`
+	Attribution   BibleAttribution `json:"attribution"`
+}
+
+type BibleAttribution struct {
+	Abbreviation  string `json:"abbreviation"`
+	Version       string `json:"version"`
+	Text          string `json:"text"`
+	ShortText     string `json:"shortText"`
+	PublicDomain  bool   `json:"publicDomain"`
+	Publisher     string `json:"publisher,omitempty"`
+	Copyright     string `json:"copyright,omitempty"`
+	CopyrightInfo string `json:"copyrightInfo,omitempty"`
+	InfoText      string `json:"infoText,omitempty"`
+	InfoURL       string `json:"infoUrl,omitempty"`
 }
 
 type BookMetadata struct {
@@ -56,9 +75,10 @@ type BookMetadata struct {
 }
 
 type BookMetadataResponse struct {
-	Version string         `json:"version"`
-	Books   []BookMetadata `json:"books"`
-	Error   string         `json:"error,omitempty"`
+	Version     string           `json:"version"`
+	Attribution BibleAttribution `json:"attribution"`
+	Books       []BookMetadata   `json:"books"`
+	Error       string           `json:"error,omitempty"`
 }
 
 type PassageVerse struct {
@@ -83,18 +103,19 @@ type ReferenceResponse struct {
 }
 
 type PassageResponse struct {
-	Version        string         `json:"version"`
-	Reference      string         `json:"reference"`
-	Book           string         `json:"book"`
-	BookID         int            `json:"bookId"`
-	Chapter        int            `json:"chapter"`
-	Verse          int            `json:"verse,omitempty"`
-	VerseEnd       int            `json:"verseEnd,omitempty"`
-	VerseSelector  string         `json:"verseSelector,omitempty"`
-	SelectedVerses []int          `json:"selectedVerses"`
-	Verses         []PassageVerse `json:"verses"`
-	Text           string         `json:"text"`
-	Error          string         `json:"error,omitempty"`
+	Version        string           `json:"version"`
+	Attribution    BibleAttribution `json:"attribution"`
+	Reference      string           `json:"reference"`
+	Book           string           `json:"book"`
+	BookID         int              `json:"bookId"`
+	Chapter        int              `json:"chapter"`
+	Verse          int              `json:"verse,omitempty"`
+	VerseEnd       int              `json:"verseEnd,omitempty"`
+	VerseSelector  string           `json:"verseSelector,omitempty"`
+	SelectedVerses []int            `json:"selectedVerses"`
+	Verses         []PassageVerse   `json:"verses"`
+	Text           string           `json:"text"`
+	Error          string           `json:"error,omitempty"`
 }
 
 type ReferenceSuggestion struct {
@@ -117,22 +138,25 @@ type SuggestReferencesResponse struct {
 }
 
 type TextResponse struct {
-	Chapter string   `json:"chapter"`
-	Verse   string   `json:"verse,omitempty"`
-	Text    string   `json:"text,omitempty"`
-	Verses  []string `json:"verses,omitempty"`
-	Error   string   `json:"error,omitempty"`
+	Version     string           `json:"version,omitempty"`
+	Attribution BibleAttribution `json:"attribution"`
+	Chapter     string           `json:"chapter"`
+	Verse       string           `json:"verse,omitempty"`
+	Text        string           `json:"text,omitempty"`
+	Verses      []string         `json:"verses,omitempty"`
+	Error       string           `json:"error,omitempty"`
 }
 
 type SearchResult struct {
-	Version   string  `json:"version"`
-	Reference string  `json:"reference"`
-	Book      string  `json:"book"`
-	BookID    int     `json:"bookId"`
-	Chapter   int     `json:"chapter"`
-	Verse     int     `json:"verse"`
-	Text      string  `json:"text"`
-	Rank      float64 `json:"rank"`
+	Version     string           `json:"version"`
+	Attribution BibleAttribution `json:"attribution"`
+	Reference   string           `json:"reference"`
+	Book        string           `json:"book"`
+	BookID      int              `json:"bookId"`
+	Chapter     int              `json:"chapter"`
+	Verse       int              `json:"verse"`
+	Text        string           `json:"text"`
+	Rank        float64          `json:"rank"`
 }
 
 type SearchTextResponse struct {
@@ -157,12 +181,14 @@ var cachedAliases map[string]string
 var cachedAliasKeys []string
 var cachedBookMetadataByVersion map[string]BookMetadataResponse
 
+const sqliteDriverName = "sqlite"
+
 func initBibleDatabase(dbPath string) error {
 	if strings.TrimSpace(dbPath) == "" {
 		return fmt.Errorf("Bible database path is required")
 	}
 	var err error
-	db, err = sql.Open("sqlite3", dbPath)
+	db, err = sql.Open(sqliteDriverName, dbPath)
 	if err != nil {
 		return err
 	}
@@ -174,6 +200,9 @@ func initBibleDatabase(dbPath string) error {
 	cachedVersions, err = fetchVersions(db)
 	if err != nil {
 		return fmt.Errorf("failed to cache versions and tables: %w", err)
+	}
+	if err := validateVersionAttributions(cachedVersions); err != nil {
+		return err
 	}
 
 	cachedBooks, err = fetchBooksMap(db)
@@ -253,7 +282,18 @@ func fetchBibleMetadataValue(db *sql.DB, key string) (string, error) {
 }
 
 func fetchVersions(db *sql.DB) (map[string]Version, error) {
-	query := `SELECT abbreviation, version, "table" FROM bible_version_key`
+	query := `
+		SELECT
+			abbreviation,
+			version,
+			"table",
+			language,
+			info_text,
+			info_url,
+			publisher,
+			copyright,
+			copyright_info
+		FROM bible_version_key`
 	rows, err := db.Query(query)
 	if err != nil {
 		return nil, err
@@ -263,12 +303,106 @@ func fetchVersions(db *sql.DB) (map[string]Version, error) {
 	versions := make(map[string]Version)
 	for rows.Next() {
 		var v Version
-		if err := rows.Scan(&v.Abbreviation, &v.Version, &v.TableName); err != nil {
+		if err := rows.Scan(
+			&v.Abbreviation,
+			&v.Version,
+			&v.TableName,
+			&v.Language,
+			&v.InfoText,
+			&v.InfoURL,
+			&v.Publisher,
+			&v.Copyright,
+			&v.CopyrightInfo,
+		); err != nil {
 			return nil, err
 		}
+		v.Attribution = attributionForVersion(v)
 		versions[v.Abbreviation] = v
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return versions, nil
+}
+
+func attributionForVersion(version Version) BibleAttribution {
+	copyright := strings.TrimSpace(version.Copyright)
+	copyrightInfo := strings.TrimSpace(version.CopyrightInfo)
+	publisher := strings.TrimSpace(version.Publisher)
+	infoText := strings.TrimSpace(version.InfoText)
+	infoURL := strings.TrimSpace(version.InfoURL)
+	publicDomain := strings.EqualFold(copyright, "public domain") ||
+		strings.EqualFold(copyrightInfo, "public domain") ||
+		strings.Contains(strings.ToLower(copyrightInfo), "public domain")
+
+	displayName := strings.TrimSpace(version.Version)
+	if displayName == "" {
+		displayName = strings.TrimSpace(version.Abbreviation)
+	}
+	shortText := strings.TrimSpace(version.Abbreviation)
+	if shortText == "" {
+		shortText = displayName
+	}
+
+	namePart := displayName
+	if shortText != "" && displayName != "" && !strings.EqualFold(displayName, shortText) {
+		namePart = fmt.Sprintf("%s (%s)", displayName, shortText)
+	}
+
+	copyrightNotice := copyright
+	if copyrightInfo != "" {
+		copyrightNotice = copyrightInfo
+	}
+	noticeAlreadyNamesVersion := false
+	if copyrightNotice != "" {
+		normalizedNotice := strings.ToLower(copyrightNotice)
+		noticeAlreadyNamesVersion =
+			(displayName != "" && strings.Contains(normalizedNotice, strings.ToLower(displayName))) ||
+				(shortText != "" && strings.Contains(normalizedNotice, strings.ToLower(shortText)))
+	}
+
+	noticeParts := []string{}
+	if namePart != "" && !noticeAlreadyNamesVersion {
+		noticeParts = append(noticeParts, namePart)
+	}
+	if copyrightNotice != "" {
+		noticeParts = append(noticeParts, copyrightNotice)
+	}
+	if publisher != "" {
+		noticeParts = append(noticeParts, "Publisher: "+publisher)
+	}
+	if infoURL != "" {
+		noticeParts = append(noticeParts, infoURL)
+	}
+	notice := strings.Join(noticeParts, ". ")
+
+	return BibleAttribution{
+		Abbreviation:  strings.TrimSpace(version.Abbreviation),
+		Version:       displayName,
+		Text:          notice,
+		ShortText:     shortText,
+		PublicDomain:  publicDomain,
+		Publisher:     publisher,
+		Copyright:     copyright,
+		CopyrightInfo: copyrightInfo,
+		InfoText:      infoText,
+		InfoURL:       infoURL,
+	}
+}
+
+func validateVersionAttributions(versions map[string]Version) error {
+	for key, version := range versions {
+		attribution := version.Attribution
+		if strings.TrimSpace(attribution.Text) == "" {
+			return fmt.Errorf("Bible version %s is missing attribution text", key)
+		}
+		if !attribution.PublicDomain &&
+			strings.TrimSpace(attribution.Copyright) == "" &&
+			strings.TrimSpace(attribution.CopyrightInfo) == "" {
+			return fmt.Errorf("Bible version %s is missing copyright attribution metadata", key)
+		}
+	}
+	return nil
 }
 
 func fetchBooksMap(db *sql.DB) (map[string]int, error) {
@@ -970,18 +1104,20 @@ func getPassageResult(version, reference string) PassageResponse {
 	resolved, err := resolveReferenceData(db, versionInfo.Abbreviation, reference)
 	if err != nil {
 		return PassageResponse{
-			Version:   versionInfo.Abbreviation,
-			Reference: reference,
-			Error:     err.Error(),
+			Version:     versionInfo.Abbreviation,
+			Attribution: versionInfo.Attribution,
+			Reference:   reference,
+			Error:       err.Error(),
 		}
 	}
 
 	chapterVerses, err := fetchChapterVerses(db, versionInfo.TableName, resolved.BookID, resolved.Chapter)
 	if err != nil {
 		return PassageResponse{
-			Version:   versionInfo.Abbreviation,
-			Reference: resolved.Reference,
-			Error:     err.Error(),
+			Version:     versionInfo.Abbreviation,
+			Attribution: versionInfo.Attribution,
+			Reference:   resolved.Reference,
+			Error:       err.Error(),
 		}
 	}
 
@@ -1002,6 +1138,7 @@ func getPassageResult(version, reference string) PassageResponse {
 
 	return PassageResponse{
 		Version:        resolved.Version,
+		Attribution:    versionInfo.Attribution,
 		Reference:      resolved.Reference,
 		Book:           resolved.Book,
 		BookID:         resolved.BookID,
@@ -1067,8 +1204,9 @@ func getBookMetadataResult(version string) BookMetadataResponse {
 	}
 
 	response := BookMetadataResponse{
-		Version: versionInfo.Abbreviation,
-		Books:   books,
+		Version:     versionInfo.Abbreviation,
+		Attribution: versionInfo.Attribution,
+		Books:       books,
 	}
 	cachedBookMetadataByVersion[versionInfo.Abbreviation] = response
 	return response
@@ -1512,7 +1650,11 @@ func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterV
 		return TextResponse{}, fmt.Errorf("database query error: %v", err)
 	}
 
-	response := TextResponse{Chapter: chapter}
+	response := TextResponse{
+		Version:     versionInfo.Abbreviation,
+		Attribution: versionInfo.Attribution,
+		Chapter:     chapter,
+	}
 
 	if verse == "" {
 		verses := make([]string, 0, len(chapterVerses))
@@ -1696,6 +1838,9 @@ func searchTextResult(version, input string, options SearchOptions) SearchTextRe
 			&result.Rank,
 		); err != nil {
 			return SearchTextResponse{Version: responseVersion, Query: input, Mode: mode, Error: err.Error()}
+		}
+		if versionInfo, ok := cachedVersions[result.Version]; ok {
+			result.Attribution = versionInfo.Attribution
 		}
 
 		book, ok := cachedBookDetails[result.BookID]

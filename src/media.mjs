@@ -728,6 +728,7 @@ const DEFAULT_TEXT_PRESENTATION = Object.freeze({
   fontWeight: SCRIPTURE_FONT_WEIGHT,
   lineHeight: SCRIPTURE_LINE_HEIGHT,
   referenceFontSize: SCRIPTURE_REFERENCE_FONT_SIZE,
+  attributionText: "",
   backgroundColor: "#000000",
   backgroundImage: "",
   backgroundVideo: "",
@@ -843,12 +844,14 @@ function applyScriptureRenderVariables(el, message) {
     14,
     Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
   );
+  const attributionFontSize = Math.max(12, Math.round(referenceFontSize * 0.42));
   el.style.setProperty("--scripture-font-size", `${bodyFontSize}px`);
   el.style.setProperty(
     "--scripture-lower-third-font-size",
     `${scriptureLowerThirdFontSize(bodyFontSize)}px`,
   );
   el.style.setProperty("--scripture-reference-font-size", `${referenceFontSize}px`);
+  el.style.setProperty("--scripture-attribution-font-size", `${attributionFontSize}px`);
   el.style.setProperty("--scripture-line-height", `${message.lineHeight || SCRIPTURE_LINE_HEIGHT}`);
   el.style.setProperty("--scripture-font-weight", `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`);
   el.style.setProperty("--scripture-color", message.color || "#ffffff");
@@ -931,17 +934,27 @@ function ensureScriptureTextShell(textContent) {
     const reference = document.createElement("div");
     reference.id = "textReference";
     reference.className = "scripture-render__reference";
-    box.append(body, reference);
+    const attribution = document.createElement("div");
+    attribution.id = "textAttribution";
+    attribution.className = "scripture-render__attribution";
+    box.append(body, reference, attribution);
     textContent.appendChild(box);
+  }
+  if (!box.querySelector(".scripture-render__attribution")) {
+    const attribution = document.createElement("div");
+    attribution.id = "textAttribution";
+    attribution.className = "scripture-render__attribution";
+    box.appendChild(attribution);
   }
   return {
     box,
     body: box.querySelector(".scripture-render__body"),
     reference: box.querySelector(".scripture-render__reference"),
+    attribution: box.querySelector(".scripture-render__attribution"),
   };
 }
 
-function textPresentationSignature(message, bodyText, referenceText) {
+function textPresentationSignature(message, bodyText, referenceText, attributionText) {
   const position =
     message && typeof message.position === "object"
       ? message.position
@@ -950,6 +963,7 @@ function textPresentationSignature(message, bodyText, referenceText) {
     text: message.text || "",
     bodyText,
     referenceText,
+    attributionText,
     reference: message.reference || "",
     version: message.version || "",
     book: message.book || "",
@@ -1103,7 +1117,13 @@ function applyTextMessage(message) {
     safeMessage.text ||
     "";
   const referenceText = safeMessage.referenceText || "";
-  const signature = textPresentationSignature(safeMessage, bodyText, referenceText);
+  const attributionText = safeMessage.attributionText || "";
+  const signature = textPresentationSignature(
+    safeMessage,
+    bodyText,
+    referenceText,
+    attributionText,
+  );
   const look = lowerThirdOutput
     ? SCRIPTURE_LOOK_LOWER_THIRD
     : normalizeScriptureLook(safeMessage.look);
@@ -1128,6 +1148,10 @@ function applyTextMessage(message) {
   if (shell.reference) {
     shell.reference.textContent = referenceText;
     shell.reference.hidden = !referenceText;
+  }
+  if (shell.attribution) {
+    shell.attribution.textContent = attributionText;
+    shell.attribution.hidden = !attributionText;
   }
   textPresentationState.lastMessage = { ...safeMessage, look };
   refitCurrentTextPresentation();

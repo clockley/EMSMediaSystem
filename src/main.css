@@ -2805,6 +2805,24 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     color: rgba(244, 244, 246, 0.62);
 }
 
+.bible-version-attribution {
+    min-width: 0;
+    margin-top: -2px;
+    padding: 0 2px;
+    color: rgba(244, 244, 246, 0.62);
+    font-size: 11px;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+.bible-version-attribution[hidden] {
+    display: none;
+}
+
 .bible-reference-field {
     position: relative;
     min-width: 0;
@@ -3152,6 +3170,17 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     overflow: hidden;
 }
 
+.bible-search-result-attribution {
+    grid-column: 1 / -1;
+    min-width: 0;
+    color: rgba(244, 244, 246, 0.56);
+    font-size: 11px;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .bible-verse-row {
     width: 100%;
     display: grid;
@@ -3289,6 +3318,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .scripture-render {
     --scripture-font-size: 66px;
     --scripture-reference-font-size: 38px;
+    --scripture-attribution-font-size: 16px;
     --scripture-lower-third-font-size: 52px;
     --scripture-line-height: 1.32;
     --scripture-font-weight: 700;
@@ -3306,7 +3336,8 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .scripture-render__body,
-.scripture-render__reference {
+.scripture-render__reference,
+.scripture-render__attribution {
     font-family: inherit;
     font-weight: var(--scripture-font-weight);
     overflow-wrap: anywhere;
@@ -3330,6 +3361,14 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     text-shadow: var(--scripture-reference-shadow);
 }
 
+.scripture-render__attribution {
+    color: var(--scripture-reference-color);
+    font-size: var(--scripture-attribution-font-size);
+    line-height: 1.2;
+    margin-top: 0.42em;
+    text-shadow: var(--scripture-reference-shadow);
+}
+
 .scripture-render--fullscreen {
     display: flex;
     align-items: center;
@@ -3350,6 +3389,10 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .scripture-render--fullscreen .scripture-render__reference {
+    margin-top: 0;
+}
+
+.scripture-render--fullscreen .scripture-render__attribution {
     margin-top: 0;
 }
 
@@ -3377,6 +3420,11 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .scripture-render--lower-third .scripture-render__reference {
     font-size: clamp(18px, calc(var(--scripture-lower-third-font-size) * 0.42), 30px);
     margin-top: 0.48em;
+}
+
+.scripture-render--lower-third .scripture-render__attribution {
+    font-size: clamp(12px, calc(var(--scripture-lower-third-font-size) * 0.24), 18px);
+    margin-top: 0.38em;
 }
 
 .scripture-render-measure {

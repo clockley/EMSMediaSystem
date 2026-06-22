@@ -121,6 +121,7 @@
         .scripture-render {
             --scripture-font-size: 66px;
             --scripture-reference-font-size: 38px;
+            --scripture-attribution-font-size: 16px;
             --scripture-lower-third-font-size: 52px;
             --scripture-line-height: 1.32;
             --scripture-font-weight: 700;
@@ -138,7 +139,8 @@
         }
 
         .scripture-render__body,
-        .scripture-render__reference {
+        .scripture-render__reference,
+        .scripture-render__attribution {
             font-family: inherit;
             font-weight: var(--scripture-font-weight);
             overflow-wrap: anywhere;
@@ -162,6 +164,14 @@
             text-shadow: var(--scripture-reference-shadow);
         }
 
+        .scripture-render__attribution {
+            color: var(--scripture-reference-color);
+            font-size: var(--scripture-attribution-font-size);
+            line-height: 1.2;
+            margin-top: 0.42em;
+            text-shadow: var(--scripture-reference-shadow);
+        }
+
         .scripture-render--fullscreen {
             display: flex;
             align-items: center;
@@ -182,6 +192,10 @@
         }
 
         .scripture-render--fullscreen .scripture-render__reference {
+            margin-top: 0;
+        }
+
+        .scripture-render--fullscreen .scripture-render__attribution {
             margin-top: 0;
         }
 
@@ -209,6 +223,11 @@
         .scripture-render--lower-third .scripture-render__reference {
             font-size: clamp(18px, calc(var(--scripture-lower-third-font-size) * 0.42), 30px);
             margin-top: 0.48em;
+        }
+
+        .scripture-render--lower-third .scripture-render__attribution {
+            font-size: clamp(12px, calc(var(--scripture-lower-third-font-size) * 0.24), 18px);
+            margin-top: 0.38em;
         }
 
         #streamStatusOverlay {
@@ -296,6 +315,7 @@
             <div class="scripture-render__box">
                 <div id="textBody" class="scripture-render__body"></div>
                 <div id="textReference" class="scripture-render__reference"></div>
+                <div id="textAttribution" class="scripture-render__attribution"></div>
             </div>
         </div>
     </div>

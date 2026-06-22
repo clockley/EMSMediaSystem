@@ -19,12 +19,29 @@ import { spawn } from "child_process";
 import { existsSync } from "fs";
 import path from "path";
 
-const RPC_TIMEOUT_MS = 15000;
+const RPC_TIMEOUT_MS = 120000;
 
-function platformBinaryName(platform = process.platform, arch = process.arch) {
-  const normalizedArch = arch === "x64" ? "x64" : arch;
-  const extension = platform === "win32" ? ".exe" : "";
-  return `bible-rpc-${platform}-${normalizedArch}${extension}`;
+const BIBLE_RPC_BINARIES = Object.freeze({
+  linux: Object.freeze({
+    x64: "bible-rpc-linux-x64",
+    arm64: "bible-rpc-linux-arm64",
+  }),
+  win32: Object.freeze({
+    x64: "bible-rpc-win32-x64.exe",
+    arm64: "bible-rpc-win32-arm64.exe",
+  }),
+});
+
+export function platformBinaryName(platform = process.platform, arch = process.arch) {
+  const platformBinaries = BIBLE_RPC_BINARIES[platform];
+  if (!platformBinaries) {
+    throw new Error(`Unsupported Bible sidecar platform: ${platform}`);
+  }
+  const binaryName = platformBinaries[arch];
+  if (!binaryName) {
+    throw new Error(`Unsupported Bible sidecar architecture: ${platform}/${arch}`);
+  }
+  return binaryName;
 }
 
 export class BibleRpcClient {
