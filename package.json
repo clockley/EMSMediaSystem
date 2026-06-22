@@ -5,6 +5,7 @@
   "main": "derived/src/main.min.mjs",
   "scripts": {
     "start": "make -j all && electron .",
+    "start-paid": "make -j all-paid && electron .",
     "build": "make -j all",
     "build-paid": "make -j all-paid",
     "dist": "make -j all && electron-builder",
@@ -38,6 +39,7 @@
   "build": {
     "appId": "com.ejaxmediasystem.app",
     "productName": "EMS Media System",
+    "afterPack": "scripts/verify-packaged-bible-assets.cjs",
     "files": [
       "!src/**/*",
       "!derived/src/*.map",
@@ -53,7 +55,10 @@
       "!bibleBackend/**/*",
       "!build-artifacts/**/*",
       "!**/NEW KING JAMES VERSION.json",
-      "!**/import-nkjv.mjs",
+      "!**/NEW INTERNATIONAL VERSION.json",
+      "!**/NASB 1995.json",
+      "!**/bible-imports.json",
+      "!**/import-bibles.mjs",
       "!index.html",
       "!**/*.map",
       "!build-artifacts",

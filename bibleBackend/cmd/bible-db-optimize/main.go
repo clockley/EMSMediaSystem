@@ -12,8 +12,7 @@ import (
 
 	"goBibleBackend/internal/biblestore"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
-	_ "github.com/ncruces/go-sqlite3/embed"
+	_ "modernc.org/sqlite"
 )
 
 type versionRow struct {
@@ -21,6 +20,8 @@ type versionRow struct {
 	Abbreviation string
 	TableName    string
 }
+
+const sqliteDriverName = "sqlite"
 
 func main() {
 	dbPath := flag.String("db", "", "Path to the Bible SQLite database")
@@ -31,7 +32,7 @@ func main() {
 		log.Fatal("Bible database path is required")
 	}
 
-	db, err := sql.Open("sqlite3", *dbPath)
+	db, err := sql.Open(sqliteDriverName, *dbPath)
 	if err != nil {
 		log.Fatal(err)
 	}

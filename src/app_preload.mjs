@@ -25,8 +25,13 @@ async function initialize() {
   if (isInitialized) return;
   if (!initPromise) {
     initPromise = (async () => {
-      await ipcRenderer.invoke("bible-rpc", "bible.ready", []);
-      isInitialized = true;
+      try {
+        await ipcRenderer.invoke("bible-rpc", "bible.ready", []);
+        isInitialized = true;
+      } catch (err) {
+        initPromise = null;
+        throw err;
+      }
     })();
   }
   return initPromise;

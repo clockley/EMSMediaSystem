@@ -80,8 +80,9 @@ JS_FILES := $(filter-out src/app.js src/Bible.mjs src/wasm_exec.js,$(JS_FILES))
 APP_BUNDLE_SRC = src/app.js
 APP_BUNDLE_OUT = $(DERIVED_DIR)/src/app.min.js
 BIBLE_ASSET_BUILDER = bibleBackend/build-bible-assets.mjs
-BIBLE_NKJV_IMPORTER = bibleBackend/import-nkjv.mjs
-BIBLE_NKJV_JSON = bibleBackend/NEW\ KING\ JAMES\ VERSION.json
+BIBLE_IMPORTER = bibleBackend/import-bibles.mjs
+BIBLE_PAID_METADATA = bibleBackend/bible-imports.json
+BIBLE_PAID_JSONS = bibleBackend/NEW\ KING\ JAMES\ VERSION.json bibleBackend/NEW\ INTERNATIONAL\ VERSION.json bibleBackend/NASB\ 1995.json
 BIBLE_BACKEND_FILES = bibleBackend/main.go bibleBackend/internal/biblestore/text.go bibleBackend/cmd/bible-db-optimize/main.go bibleBackend/go.mod bibleBackend/go.sum bibleBackend/bible-sqlite.db
 BUILD_ARTIFACTS_DIR = build-artifacts
 BIBLE_PUBLIC_STAMP = $(BUILD_ARTIFACTS_DIR)/.bible.public.assets.stamp
@@ -182,14 +183,14 @@ endif
 	@touch "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Built public-domain Bible assets$(COLOR_RESET)"
 
-$(BIBLE_PAID_STAMP): $(BIBLE_ASSET_BUILDER) $(BIBLE_NKJV_IMPORTER) $(BIBLE_NKJV_JSON) $(BIBLE_BACKEND_FILES) | $(DERIVED_DIR)
+$(BIBLE_PAID_STAMP): $(BIBLE_ASSET_BUILDER) $(BIBLE_IMPORTER) $(BIBLE_PAID_METADATA) $(BIBLE_PAID_JSONS) $(BIBLE_BACKEND_FILES) | $(DERIVED_DIR)
 	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 else
 	@mkdir -p $(dir $@)
 endif
-	@echo "$(COLOR_YELLOW)Building paid Bible assets with NKJV$(COLOR_RESET)"
+	@echo "$(COLOR_YELLOW)Building paid Bible assets$(COLOR_RESET)"
 	@node "$(BIBLE_ASSET_BUILDER)" paid "$(DERIVED_DIR)"
 	@rm -f "$(BIBLE_PUBLIC_STAMP)"
 	@touch "$@"
