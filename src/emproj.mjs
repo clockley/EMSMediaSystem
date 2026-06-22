@@ -16,6 +16,8 @@ import yauzl from "yauzl";
 import yazl from "yazl";
 
 const MIME_TYPE = "application/vnd.ems.project+zip";
+const PROJECT_FILE_SCHEMA_VERSION = 2;
+const BIBLE_URI_PREFIX = "bible://";
 const IMAGE_EXT = new Set([".bmp", ".gif", ".jpg", ".jpeg", ".png", ".webp", ".svg", ".ico"]);
 const VIDEO_EXT = new Set([".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".wmv"]);
 const AUDIO_EXT = new Set([".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma"]);
@@ -34,6 +36,114 @@ function normalizeArchivePath(p) {
 function basenameAny(p) {
   const parts = String(p || "").split(/[/\\]/);
   return parts[parts.length - 1] || String(p || "");
+}
+
+function bibleArchivePath(reference, version) {
+  const safeVersion =
+    typeof version === "string" && version.trim() ? version.trim() : "KJV";
+  const safeReference = typeof reference === "string" ? reference.trim() : "";
+  return `${BIBLE_URI_PREFIX}${encodeURIComponent(`${safeVersion}:${safeReference}`)}`;
+}
+
+function parseBibleArchivePath(filePath) {
+  if (typeof filePath !== "string" || !filePath.startsWith(BIBLE_URI_PREFIX)) {
+    return null;
+  }
+  try {
+    const payload = decodeURIComponent(filePath.slice(BIBLE_URI_PREFIX.length));
+    const separatorIndex = payload.indexOf(":");
+    if (separatorIndex < 0) {
+      return {
+        version: "KJV",
+        reference: payload,
+      };
+    }
+    return {
+      version: payload.slice(0, separatorIndex) || "KJV",
+      reference: payload.slice(separatorIndex + 1),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizedBibleVersion(value, fallback = "KJV") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function normalizedBibleReference(value, fallback = "") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function normalizedPositiveIntArray(values) {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set();
+  const result = [];
+  values.forEach((value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const verse = Math.trunc(n);
+    if (verse <= 0 || seen.has(verse)) return;
+    seen.add(verse);
+    result.push(verse);
+  });
+  return result;
+}
+
+function bibleProjectReferenceOnly(scripture = {}, opts = {}) {
+  const source = scripture && typeof scripture === "object" ? scripture : {};
+  const pathEntry = opts?.pathEntry && typeof opts.pathEntry === "object"
+    ? opts.pathEntry
+    : {};
+  const selectedVerses = normalizedPositiveIntArray(source.selectedVerses);
+  const result = {
+    version: normalizedBibleVersion(source.version, normalizedBibleVersion(pathEntry.version)),
+    reference: normalizedBibleReference(
+      source.reference,
+      normalizedBibleReference(pathEntry.reference),
+    ),
+    book: typeof source.book === "string" ? source.book : "",
+    chapter: Number.isFinite(source.chapter) ? source.chapter : 1,
+    verse: Number.isFinite(source.verse) ? source.verse : 0,
+    verseEnd: Number.isFinite(source.verseEnd) ? source.verseEnd : 0,
+    verseSelector: typeof source.verseSelector === "string" ? source.verseSelector : "",
+    fontFamily:
+      typeof source.fontFamily === "string" && source.fontFamily
+        ? source.fontFamily
+        : SCRIPTURE_FONT_FAMILY,
+    fontSize: Number.isFinite(source.fontSize) ? source.fontSize : undefined,
+    color: typeof source.color === "string" && source.color ? source.color : "#ffffff",
+    lowerThirdColor:
+      typeof source.lowerThirdColor === "string" && source.lowerThirdColor
+        ? source.lowerThirdColor
+        : "#ffffff",
+    lowerThirdChromaKeyColor:
+      typeof source.lowerThirdChromaKeyColor === "string" && source.lowerThirdChromaKeyColor
+        ? source.lowerThirdChromaKeyColor
+        : "#00ff00",
+    backgroundColor:
+      typeof source.backgroundColor === "string" && source.backgroundColor
+        ? source.backgroundColor
+        : "#000000",
+    backgroundPath:
+      typeof opts.backgroundPath === "string"
+        ? opts.backgroundPath
+        : typeof source.backgroundPath === "string"
+          ? source.backgroundPath
+          : "",
+    look:
+      source.look === "lower-third" || source.look === "fullscreen"
+        ? source.look
+        : "fullscreen",
+    lowerThirdSegmentIndex: Number.isFinite(source.lowerThirdSegmentIndex)
+      ? Math.max(0, Math.trunc(source.lowerThirdSegmentIndex))
+      : 0,
+  };
+  if (selectedVerses.length > 0) result.selectedVerses = selectedVerses;
+  if (typeof opts.backgroundAssetId === "string" && opts.backgroundAssetId) {
+    result.backgroundAssetId = opts.backgroundAssetId;
+  }
+  return result;
 }
 
 function normalizeProjectScriptureOverrides(overrides = {}) {
@@ -265,14 +375,15 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
       : typeof scripture.backgroundPath === "string"
         ? scripture.backgroundPath
         : "";
-  const reference = typeof scripture.reference === "string" ? scripture.reference : "";
-  const version = typeof scripture.version === "string" ? scripture.version : "KJV";
+  const scriptureReference = bibleProjectReferenceOnly(scripture, {
+    pathEntry: parseBibleArchivePath(item?.source?.path),
+    backgroundPath,
+  });
+  const reference = scriptureReference.reference;
+  const version = scriptureReference.version;
   return {
-    path:
-      typeof item?.source?.path === "string" && item.source.path.length > 0
-        ? item.source.path
-        : `bible://${encodeURIComponent(`${version}:${reference}`)}`,
-    name: item?.label || `${reference} ${version}`.trim(),
+    path: bibleArchivePath(reference, version),
+    name: `${reference} ${version}`.trim() || "Bible",
     type: "bible",
     missing: false,
     originalPath: undefined,
@@ -280,57 +391,7 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
     autoAdvance: item?.playback?.autoAdvance !== false,
     cueStartTime: 0,
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
-    bible: {
-      version,
-      reference,
-      text: typeof scripture.text === "string" ? scripture.text : "",
-      book: typeof scripture.book === "string" ? scripture.book : "",
-      chapter: Number.isFinite(scripture.chapter) ? scripture.chapter : 1,
-      verse: Number.isFinite(scripture.verse) ? scripture.verse : 0,
-      verseEnd: Number.isFinite(scripture.verseEnd) ? scripture.verseEnd : 0,
-      fontFamily:
-        typeof scripture.fontFamily === "string"
-          ? scripture.fontFamily
-          : SCRIPTURE_FONT_FAMILY,
-      fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : undefined,
-      color: typeof scripture.color === "string" ? scripture.color : "#ffffff",
-      lowerThirdColor:
-        typeof scripture.lowerThirdColor === "string"
-          ? scripture.lowerThirdColor
-          : "#ffffff",
-      lowerThirdChromaKeyColor:
-        typeof scripture.lowerThirdChromaKeyColor === "string"
-          ? scripture.lowerThirdChromaKeyColor
-          : "#00ff00",
-      backgroundColor:
-        typeof scripture.backgroundColor === "string"
-          ? scripture.backgroundColor
-          : "#000000",
-      backgroundPath,
-      look:
-        scripture.look === "lower-third" || scripture.look === "fullscreen"
-          ? scripture.look
-          : "fullscreen",
-      lowerThirdSegments: Array.isArray(scripture.lowerThirdSegments)
-        ? scripture.lowerThirdSegments
-            .map((segment) => ({
-              text:
-                typeof segment === "string"
-                  ? segment
-                  : typeof segment?.text === "string"
-                    ? segment.text
-                    : "",
-            }))
-            .filter((segment) => segment.text.length > 0)
-        : [],
-      lowerThirdSegmentIndex: Number.isFinite(scripture.lowerThirdSegmentIndex)
-        ? scripture.lowerThirdSegmentIndex
-        : 0,
-      lowerThirdSourceText:
-        typeof scripture.lowerThirdSourceText === "string"
-          ? scripture.lowerThirdSourceText
-          : "",
-    },
+    bible: scriptureReference,
   };
 }
 
@@ -499,7 +560,7 @@ export async function loadEmprojSnapshot(projectPath) {
   ).filter(Boolean);
 
   return {
-    schemaVersion: 1,
+    schemaVersion: PROJECT_FILE_SCHEMA_VERSION,
     projectPath,
     currentMode: 0,
     currentQueueIndex: -1,
@@ -647,61 +708,32 @@ export async function saveEmprojSnapshot(
 
   for (const item of queue) {
     if (!item || typeof item.path !== "string" || item.path.length === 0) continue;
-    if (item.type === "bible" && item.bible && typeof item.bible === "object") {
+    if (
+      item.type === "bible" ||
+      (typeof item.path === "string" && item.path.startsWith(BIBLE_URI_PREFIX))
+    ) {
       itemCounter += 1;
-      const scripture = item.bible;
+      const scripture = bibleProjectReferenceOnly(item.bible || {}, {
+        pathEntry: parseBibleArchivePath(item.path),
+      });
       const backgroundAsset = await registerAssetForPath(scripture.backgroundPath, {
         originalPath: scripture.backgroundPath,
         originalName: basenameAny(scripture.backgroundPath || ""),
       });
+      const scripturePath = bibleArchivePath(scripture.reference, scripture.version);
+      const projectScripture = {
+        ...scripture,
+        backgroundAssetId: backgroundAsset?.assetId,
+      };
       queueSequence.push({
         id: makeId("item", itemCounter),
-        label: item.name || `${scripture.reference || ""} ${scripture.version || "KJV"}`.trim(),
+        label: `${scripture.reference || ""} ${scripture.version || "KJV"}`.trim() || "Bible",
         type: "scripture",
         source: {
           kind: "generated",
-          path: item.path,
+          path: scripturePath,
         },
-        scripture: {
-          version: scripture.version || "KJV",
-          reference: scripture.reference || "",
-          text: scripture.text || "",
-          book: scripture.book || "",
-          chapter: Number.isFinite(scripture.chapter) ? scripture.chapter : 1,
-          verse: Number.isFinite(scripture.verse) ? scripture.verse : 0,
-          verseEnd: Number.isFinite(scripture.verseEnd) ? scripture.verseEnd : 0,
-          fontFamily: scripture.fontFamily || SCRIPTURE_FONT_FAMILY,
-          fontSize: Number.isFinite(scripture.fontSize) ? scripture.fontSize : undefined,
-          color: scripture.color || "#ffffff",
-          lowerThirdColor: scripture.lowerThirdColor || "#ffffff",
-          lowerThirdChromaKeyColor: scripture.lowerThirdChromaKeyColor || "#00ff00",
-          backgroundColor: scripture.backgroundColor || "#000000",
-          backgroundAssetId: backgroundAsset?.assetId,
-          backgroundPath: scripture.backgroundPath || "",
-          look:
-            scripture.look === "lower-third" || scripture.look === "fullscreen"
-              ? scripture.look
-              : "fullscreen",
-          lowerThirdSegments: Array.isArray(scripture.lowerThirdSegments)
-            ? scripture.lowerThirdSegments
-                .map((segment) => ({
-                  text:
-                    typeof segment === "string"
-                      ? segment
-                      : typeof segment?.text === "string"
-                        ? segment.text
-                        : "",
-                }))
-                .filter((segment) => segment.text.length > 0)
-            : [],
-          lowerThirdSegmentIndex: Number.isFinite(scripture.lowerThirdSegmentIndex)
-            ? scripture.lowerThirdSegmentIndex
-            : 0,
-          lowerThirdSourceText:
-            typeof scripture.lowerThirdSourceText === "string"
-              ? scripture.lowerThirdSourceText
-              : "",
-        },
+        scripture: projectScripture,
         playback: {
           startTime: 0,
           volume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
@@ -907,7 +939,7 @@ export async function saveEmprojSnapshot(
   }
 
   const manifestJson = {
-    schemaVersion: 1,
+    schemaVersion: PROJECT_FILE_SCHEMA_VERSION,
     format: "EMS Project",
     formatExtension: "emproj",
     application: {
@@ -937,7 +969,7 @@ export async function saveEmprojSnapshot(
       hashes,
     },
     compatibility: {
-      minimumReaderSchemaVersion: 1,
+      minimumReaderSchemaVersion: PROJECT_FILE_SCHEMA_VERSION,
       unknownFields: "preserve",
       unknownCueTypes: "showPlaceholder",
     },

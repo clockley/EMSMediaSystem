@@ -257,7 +257,7 @@ const mediaPlayerInputState = {
     this.urlInpt = null;
   },
 };
-const PROJECT_SCHEMA_VERSION = 1;
+const PROJECT_SCHEMA_VERSION = 2;
 const AUTOSAVE_WRITE_DEBOUNCE_MS = 300;
 let autosaveWriteTimer = null;
 let currentProjectPath = "";
@@ -3315,7 +3315,6 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     : "";
   const fullBodyText = entry.text || "";
   const attribution = entry.attribution || bibleAttributionForVersion(entry.version || "KJV");
-  const attributionText = bibleAttributionText(attribution, entry.version || "KJV");
   const referencePresentation = scriptureReferencePresentationForBackground(
     style.backgroundColor,
     { forceLight: isLowerThird || Boolean(style.backgroundPath) },
@@ -3338,7 +3337,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     chromaKeyColor: style.lowerThirdChromaKeyColor,
     referenceText: `${entry.reference || ""} ${entry.version || ""}`.trim(),
     attribution,
-    attributionText,
+    attributionText: "",
     referenceColor: referencePresentation.color,
     referenceTextShadow: referencePresentation.shadow,
     referenceFontSize: SCRIPTURE_REFERENCE_FONT_SIZE,
@@ -4403,6 +4402,90 @@ function resolvedBibleStyleDefaults() {
   };
 }
 
+function normalizedProjectBibleVersion(value, fallback = "KJV") {
+  const version = bibleVersionValue(value || fallback || "KJV");
+  return typeof version === "string" && version.trim() ? version.trim() : "KJV";
+}
+
+function normalizedProjectBibleSelectedVerses(values) {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set();
+  const result = [];
+  values.forEach((value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const verseNumber = Math.trunc(n);
+    if (verseNumber <= 0 || seen.has(verseNumber)) return;
+    seen.add(verseNumber);
+    result.push(verseNumber);
+  });
+  return result;
+}
+
+function projectBibleReferenceOnlyEntry(entry = {}, opts = {}) {
+  const source = entry && typeof entry === "object" ? entry : {};
+  const pathEntry = opts?.pathEntry && typeof opts.pathEntry === "object"
+    ? opts.pathEntry
+    : {};
+  const defaults = resolvedBibleStyleDefaults();
+  const selectedVerses = normalizedProjectBibleSelectedVerses(source.selectedVerses);
+  const reference = normalizeScriptureReference(
+    source.reference || pathEntry.reference || "",
+  );
+  const result = {
+    version: normalizedProjectBibleVersion(source.version, pathEntry.version || "KJV"),
+    reference,
+    book: typeof source.book === "string" ? source.book : "",
+    chapter: Number.isFinite(source.chapter) ? source.chapter : 1,
+    verse: Number.isFinite(source.verse) ? source.verse : 0,
+    verseEnd: Number.isFinite(source.verseEnd) ? source.verseEnd : 0,
+    verseSelector: typeof source.verseSelector === "string" ? source.verseSelector : "",
+    fontFamily:
+      typeof source.fontFamily === "string" && source.fontFamily
+        ? source.fontFamily
+        : defaults.fontFamily,
+    fontSize: Number.isFinite(source.fontSize) ? source.fontSize : defaults.fontSize,
+    color:
+      typeof source.color === "string" && source.color
+        ? source.color
+        : defaults.color,
+    backgroundColor:
+      typeof source.backgroundColor === "string" && source.backgroundColor
+        ? source.backgroundColor
+        : defaults.backgroundColor,
+    backgroundPath:
+      typeof source.backgroundPath === "string"
+        ? source.backgroundPath
+        : defaults.backgroundPath,
+    lowerThirdColor:
+      typeof source.lowerThirdColor === "string" && source.lowerThirdColor
+        ? source.lowerThirdColor
+        : defaults.lowerThirdColor,
+    lowerThirdChromaKeyColor:
+      typeof source.lowerThirdChromaKeyColor === "string" && source.lowerThirdChromaKeyColor
+        ? source.lowerThirdChromaKeyColor
+        : defaults.lowerThirdChromaKeyColor,
+    look: normalizeScriptureLook(source.look || defaults.look),
+    lowerThirdSegmentIndex: Number.isFinite(source.lowerThirdSegmentIndex)
+      ? Math.max(0, Math.trunc(source.lowerThirdSegmentIndex))
+      : 0,
+  };
+  if (selectedVerses.length > 0) result.selectedVerses = selectedVerses;
+  return result;
+}
+
+function projectBibleReferenceEntryForQueueItem(item) {
+  const pathEntry = parseBibleQueuePath(item?.path);
+  return projectBibleReferenceOnlyEntry(
+    item?.bible && typeof item.bible === "object" ? item.bible : {},
+    { pathEntry },
+  );
+}
+
+function projectBibleQueueName(entry) {
+  return `${entry?.reference || ""} ${entry?.version || "KJV"}`.trim() || "Bible";
+}
+
 function hydrateBibleEntryStyle(entry = {}) {
   const defaults = resolvedBibleStyleDefaults();
   return {
@@ -5224,6 +5307,15 @@ function setBibleVersionMetadata(versions) {
   });
 }
 
+async function loadBibleVersionMetadataFromSidecar() {
+  const rawVersions = await bibleAPI.getVersions();
+  const versions = normalizedBibleVersions(rawVersions)
+    .map(normalizeBibleVersionMetadata)
+    .sort((left, right) => left.abbreviation.localeCompare(right.abbreviation));
+  setBibleVersionMetadata(versions);
+  return versions;
+}
+
 function bibleVersionMetadata(version = bibleDesignerState.version) {
   const key = bibleVersionValue(version || bibleDesignerState.version || "KJV");
   return bibleVersionMetadataByKey.get(key) || normalizeBibleVersionMetadata(key);
@@ -5443,15 +5535,11 @@ function renderBibleSearchResults(response) {
     const version = String(result?.version || "");
     const reference = String(result?.reference || "");
     const text = String(result?.text || "");
-    const attributionText = bibleAttributionText(bibleAttributionForResult(result), version);
-    button.title = attributionText;
+    button.title = `${reference} ${version}`.trim();
     button.innerHTML =
       `<span class="bible-search-result-reference">${escapeHtml(reference)}</span>` +
       `<span class="bible-search-result-version">${escapeHtml(version)}</span>` +
-      `<span class="bible-search-result-text">${escapeHtml(text)}</span>` +
-      (attributionText
-        ? `<span class="bible-search-result-attribution">${escapeHtml(attributionText)}</span>`
-        : "");
+      `<span class="bible-search-result-text">${escapeHtml(text)}</span>`;
     button.addEventListener("click", () => {
       void applyBibleSearchResult(index).catch(console.error);
     });
@@ -5978,20 +6066,15 @@ function installBibleMediaControls() {
   bibleAPI
     .waitForReady()
     .then(async () => {
-      const rawVersions = await bibleAPI.getVersions();
-      const versions = normalizedBibleVersions(rawVersions)
-        .map(normalizeBibleVersionMetadata)
-        .sort((left, right) => left.abbreviation.localeCompare(right.abbreviation));
-      setBibleVersionMetadata(versions);
+      const versions = await loadBibleVersionMetadataFromSidecar();
       versionSelect.innerHTML = "";
       (versions.length ? versions : ["KJV"]).forEach((version) => {
         const metadata = normalizeBibleVersionMetadata(version);
         const value = metadata.abbreviation;
-        const attributionText = bibleAttributionText(metadata.attribution, value);
         const option = document.createElement("option");
         option.value = value;
         option.textContent = value;
-        option.title = attributionText;
+        option.title = metadata.version || value;
         versionSelect.appendChild(option);
       });
       if (referenceSuggestions) {
@@ -6009,6 +6092,42 @@ function installBibleMediaControls() {
     });
 }
 
+function buildProjectQueueItemSnapshot(item) {
+  const bibleEntry = isQueueItemBible(item)
+    ? projectBibleReferenceEntryForQueueItem(item)
+    : null;
+  const itemPath = bibleEntry
+    ? bibleQueuePath(bibleEntry.reference, bibleEntry.version)
+    : item.path;
+  const itemName = bibleEntry ? projectBibleQueueName(bibleEntry) : item.name;
+  return {
+    path: itemPath,
+    name: itemName,
+    type: bibleEntry ? "bible" : item.type,
+    missing: bibleEntry ? false : item.missing === true,
+    originalPath:
+      typeof item.originalPath === "string" && item.originalPath.length > 0 && !bibleEntry
+        ? item.originalPath
+        : itemPath,
+    originalName:
+      typeof item.originalName === "string" && item.originalName.length > 0 && !bibleEntry
+        ? item.originalName
+        : itemName || queueBasename(itemPath),
+    sha256: typeof item.sha256 === "string" && !bibleEntry ? item.sha256 : undefined,
+    sizeBytes: Number.isFinite(item.sizeBytes) && !bibleEntry ? item.sizeBytes : undefined,
+    modifiedTime:
+      typeof item.modifiedTime === "string" && !bibleEntry ? item.modifiedTime : undefined,
+    autoAdvance: item.autoAdvance !== false,
+    cueStartTime: bibleEntry ? 0 : queueItemCueStartTime(item),
+    cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
+    loop: bibleEntry ? false : loopEnabledForQueueItem(item),
+    pptxSlideIndex: Number.isFinite(item.pptxSlideIndex) && !bibleEntry
+      ? item.pptxSlideIndex
+      : undefined,
+    bible: bibleEntry || undefined,
+  };
+}
+
 function buildProjectStateSnapshot() {
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
@@ -6018,32 +6137,7 @@ function buildProjectStateSnapshot() {
     currentMode,
     currentQueueIndex,
     previewCueIndex,
-    mediaQueue: mediaQueue.map((item) => ({
-      path: item.path,
-      name: item.name,
-      type: item.type,
-      missing: item.missing === true,
-      originalPath:
-        typeof item.originalPath === "string" && item.originalPath.length > 0
-          ? item.originalPath
-          : item.path,
-      originalName:
-        typeof item.originalName === "string" && item.originalName.length > 0
-          ? item.originalName
-          : queueBasename(item.path),
-      sha256: typeof item.sha256 === "string" ? item.sha256 : undefined,
-      sizeBytes: Number.isFinite(item.sizeBytes) ? item.sizeBytes : undefined,
-      modifiedTime:
-        typeof item.modifiedTime === "string" ? item.modifiedTime : undefined,
-      autoAdvance: item.autoAdvance !== false,
-      cueStartTime: queueItemCueStartTime(item),
-      cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
-      loop: loopEnabledForQueueItem(item),
-      pptxSlideIndex: Number.isFinite(item.pptxSlideIndex)
-        ? item.pptxSlideIndex
-        : undefined,
-      bible: item.bible && typeof item.bible === "object" ? { ...item.bible } : undefined,
-    })),
+    mediaQueue: mediaQueue.map(buildProjectQueueItemSnapshot),
   };
 }
 
@@ -6063,38 +6157,55 @@ function applyProjectStateSnapshot(state) {
   bibleStyleDirtyState.lowerThirdColor = false;
   bibleStyleDirtyState.lowerThirdChromaKeyColor = false;
   mediaQueue = state.mediaQueue
-    .filter((x) => x && typeof x.path === "string" && x.path.length > 0)
     .map((x) => {
+      if (!x || typeof x !== "object") return null;
+      const rawPath = typeof x.path === "string" ? x.path : "";
+      const isBibleItem =
+        x.type === "bible" ||
+        isBiblePath(rawPath) ||
+        (x.bible && typeof x.bible === "object");
+      const bibleEntry = isBibleItem
+        ? projectBibleReferenceOnlyEntry(x.bible || {}, {
+            pathEntry: parseBibleQueuePath(rawPath),
+          })
+        : null;
+      const itemPath = bibleEntry
+        ? bibleQueuePath(bibleEntry.reference, bibleEntry.version)
+        : rawPath;
+      if (!itemPath) return null;
+      const itemName = bibleEntry
+        ? projectBibleQueueName(bibleEntry)
+        : typeof x.name === "string" && x.name.length > 0
+          ? x.name
+          : queueBasename(itemPath);
       const item = {
-        path: x.path,
-        name:
-          typeof x.name === "string" && x.name.length > 0
-            ? x.name
-            : queueBasename(x.path),
-        type: x.type === "bible" ? "bible" : classifyQueueMediaType(x.path),
-        missing: x.type === "bible" ? false : x.missing === true,
+        path: itemPath,
+        name: itemName,
+        type: bibleEntry ? "bible" : classifyQueueMediaType(itemPath),
+        missing: bibleEntry ? false : x.missing === true,
         originalPath:
-          typeof x.originalPath === "string" && x.originalPath.length > 0
+          typeof x.originalPath === "string" && x.originalPath.length > 0 && !bibleEntry
             ? x.originalPath
-            : x.path,
+            : itemPath,
         originalName:
-          typeof x.originalName === "string" && x.originalName.length > 0
+          typeof x.originalName === "string" && x.originalName.length > 0 && !bibleEntry
             ? x.originalName
-            : queueBasename(x.originalPath || x.path),
-        sha256: typeof x.sha256 === "string" ? x.sha256 : undefined,
-        sizeBytes: Number.isFinite(x.sizeBytes) ? x.sizeBytes : undefined,
+            : itemName || queueBasename(itemPath),
+        sha256: typeof x.sha256 === "string" && !bibleEntry ? x.sha256 : undefined,
+        sizeBytes: Number.isFinite(x.sizeBytes) && !bibleEntry ? x.sizeBytes : undefined,
         modifiedTime:
-          typeof x.modifiedTime === "string" ? x.modifiedTime : undefined,
+          typeof x.modifiedTime === "string" && !bibleEntry ? x.modifiedTime : undefined,
         autoAdvance: x.autoAdvance !== false,
-        cueStartTime: Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
+        cueStartTime: bibleEntry ? 0 : Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
         cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
-        loop: x.loop === true && mediaPathSupportsLoop(x.path),
-        pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : -1,
-        bible: x.bible && typeof x.bible === "object" ? { ...x.bible } : undefined,
+        loop: bibleEntry ? false : x.loop === true && mediaPathSupportsLoop(itemPath),
+        pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) && !bibleEntry ? x.pptxSlideIndex : -1,
+        bible: bibleEntry || undefined,
       };
       item.cueStartTime = queueItemCueStartTime(item);
       return item;
-    });
+    })
+    .filter(Boolean);
   Object.assign(bibleDesignerState, resolvedBibleStyleDefaults());
   currentQueueIndex =
     Number.isInteger(state.currentQueueIndex) &&
@@ -6180,6 +6291,77 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
       (err) => console.error("Failed to show missing-files dialog:", err),
     );
   }
+}
+
+async function fallbackUnavailableBibleTranslationsOnLoad() {
+  const bibleItems = mediaQueue.filter((item) => isQueueItemBible(item));
+  if (bibleItems.length === 0) return false;
+
+  let availableVersions = new Set();
+  let versionLookupFailed = false;
+  try {
+    await bibleAPI.waitForReady();
+    const versions = await loadBibleVersionMetadataFromSidecar();
+    availableVersions = new Set(
+      versions.map((version) => normalizedProjectBibleVersion(version.abbreviation)),
+    );
+  } catch (err) {
+    versionLookupFailed = true;
+    console.error("Failed to check installed Bible translations:", err);
+  }
+
+  const unavailableVersions = new Set();
+  let changed = false;
+  bibleItems.forEach((item) => {
+    const entry = projectBibleReferenceEntryForQueueItem(item);
+    if (!entry.reference) return;
+    const version = normalizedProjectBibleVersion(entry.version);
+    const hasInstalledVersion =
+      !versionLookupFailed && availableVersions.size > 0 && availableVersions.has(version);
+    if (hasInstalledVersion) {
+      item.path = bibleQueuePath(entry.reference, version);
+      item.name = projectBibleQueueName(entry);
+      item.type = "bible";
+      item.missing = false;
+      item.bible = projectBibleReferenceOnlyEntry({ ...entry, version });
+      return;
+    }
+
+    unavailableVersions.add(version);
+    const fallbackEntry = projectBibleReferenceOnlyEntry({
+      ...entry,
+      version: "KJV",
+    });
+    item.path = bibleQueuePath(fallbackEntry.reference, fallbackEntry.version);
+    item.name = projectBibleQueueName(fallbackEntry);
+    item.type = "bible";
+    item.missing = false;
+    item.bible = fallbackEntry;
+    changed = true;
+  });
+
+  const shouldWarn = versionLookupFailed || unavailableVersions.size > 0;
+  if (changed) {
+    renderQueue();
+    updatePreviewCueUI();
+    updateDynUI();
+    scheduleAutosaveProjectState();
+    if (currentMode === MEDIAPLAYER && mediaQueue.length > 0) {
+      const previewIndex =
+        currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+          ? currentQueueIndex
+          : previewCueIndex >= 0 && previewCueIndex < mediaQueue.length
+            ? previewCueIndex
+            : 0;
+      void loadQueueItemIntoControlWindow(mediaQueue[previewIndex], {
+        previewLoadToken: nextPreviewLoadToken(),
+      }).catch((err) => console.error(err));
+    }
+  }
+  if (shouldWarn) {
+    showGnomeToast("Some Bible translations are not available. Falling back to KJV.", 5000);
+  }
+  return shouldWarn;
 }
 
 async function relinkMissingFilesDialog() {
@@ -6272,11 +6454,14 @@ async function openProjectByPath(filePath) {
   if (!applyProjectStateSnapshot(parsed)) {
     throw new Error("Project does not contain a valid queue.");
   }
+  const bibleTranslationWarningShown = await fallbackUnavailableBibleTranslationsOnLoad();
   await refreshMissingFlagsAndWarn();
   currentProjectPath = filePath;
   currentProjectStorageMode = parsed.projectStorageMode === "packed" ? "packed" : "working";
   scheduleAutosaveProjectState();
-  showGnomeToast("Project opened");
+  if (!bibleTranslationWarningShown) {
+    showGnomeToast("Project opened");
+  }
   return true;
 }
 
@@ -6337,6 +6522,7 @@ async function restoreAutosavedProjectState() {
     const state = await invoke("load-autosave-project-state");
     if (!state) return;
     if (applyProjectStateSnapshot(state)) {
+      await fallbackUnavailableBibleTranslationsOnLoad();
       await refreshMissingFlagsAndWarn();
       currentProjectPath =
         typeof state.projectPath === "string" ? state.projectPath : "";

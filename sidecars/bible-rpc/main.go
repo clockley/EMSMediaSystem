@@ -31,7 +31,7 @@ import (
 	"strings"
 	"unicode"
 
-	"goBibleBackend/internal/biblestore"
+	"emsmediasystem/bible-rpc/internal/biblestore"
 
 	_ "modernc.org/sqlite"
 )
