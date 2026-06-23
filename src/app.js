@@ -234,11 +234,17 @@ const SCRIPTURE_REFERENCE_DARK_COLOR = "rgba(24, 24, 28, 0.84)";
 const SCRIPTURE_REFERENCE_LIGHT_SHADOW = "0 2px 14px rgba(0, 0, 0, 0.72)";
 const SCRIPTURE_REFERENCE_DARK_SHADOW = "0 2px 12px rgba(255, 255, 255, 0.62)";
 const SCRIPTURE_REFERENCE_LIGHT_BACKGROUND_LUMINANCE = 0.58;
-const SCRIPTURE_MIN_BODY_FONT_SIZE = 34;
+const SCRIPTURE_MIN_BODY_FONT_SIZE = 38;
+const SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE = 20;
 const SCRIPTURE_MIN_REFERENCE_FONT_SIZE = 20;
 const SCRIPTURE_FIT_HEIGHT_RATIO = 0.86;
+const SCRIPTURE_AUTOSIZE_NONE = "none";
+const SCRIPTURE_AUTOSIZE_FIT = "fit";
+const SCRIPTURE_AUTOSIZE_NORMALIZE = "normalize";
+const SCRIPTURE_DEFAULT_AUTOSIZE_MODE = SCRIPTURE_AUTOSIZE_FIT;
 const LOWER_THIRD_MAX_LINES = 2;
 const LOWER_THIRD_MEASURE_ID = "bibleLowerThirdMeasure";
+const FULLSCREEN_SCRIPTURE_MEASURE_ID = "bibleFullscreenScriptureMeasure";
 const BIBLE_PREVIEW_DEFAULT_OUTPUT_WIDTH = 1920;
 const BIBLE_PREVIEW_DEFAULT_OUTPUT_HEIGHT = 1080;
 let isActiveMediaWindowCache = false;
@@ -278,6 +284,9 @@ const bibleDesignerState = {
   verseEnd: 0,
   fontFamily: SCRIPTURE_FONT_FAMILY,
   fontSize: SCRIPTURE_BODY_FONT_SIZE,
+  autosizeMode: SCRIPTURE_DEFAULT_AUTOSIZE_MODE,
+  minFontSize: SCRIPTURE_MIN_BODY_FONT_SIZE,
+  autoSplit: true,
   color: "#ffffff",
   backgroundColor: "#000000",
   backgroundPath: "",
@@ -292,6 +301,9 @@ const bibleVersionMetadataByKey = new Map();
 const projectScriptureOverrides = {
   fontFamily: "",
   fontSize: undefined,
+  autosizeMode: "",
+  minFontSize: undefined,
+  autoSplit: undefined,
   color: "",
   backgroundColor: "",
   backgroundPath: "",
@@ -301,6 +313,9 @@ const projectScriptureOverrides = {
 const bibleStyleDirtyState = {
   fontFamily: false,
   fontSize: false,
+  autosizeMode: false,
+  minFontSize: false,
+  autoSplit: false,
   color: false,
   backgroundColor: false,
   backgroundPath: false,
@@ -327,6 +342,7 @@ let bibleSearchTimer = null;
 let mediaQueue = [];
 let currentQueueIndex = -1;
 let previewCueIndex = -1;
+let selectedQueueAnchorIndex = -1;
 let isQueuePlaying = false;
 let manualBoundaryPauseIndex = -1;
 let pptxViewer = null;
@@ -2474,11 +2490,7 @@ function renderQueue() {
     // state, plus an optional start-offset label for non-zero cue starts.
     const presentationLive = isQueuePresentationActive();
     const separatePreviewCue = isPreparingSeparateCue();
-    const selectedQueueIndex = separatePreviewCue
-      ? previewCueIndex
-      : currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
-        ? currentQueueIndex
-        : -1;
+    const selectedQueueIndex = selectedQueueIndexForDisplay();
 
     listContainer.innerHTML = mediaQueue
       .map((item, index) => {
@@ -2527,15 +2539,29 @@ function renderQueue() {
   updatePreviewCueUI();
 }
 
-function selectedQueueIndexForInsertion() {
+function queueIndexInRange(index) {
+  return Number.isInteger(index) && index >= 0 && index < mediaQueue.length;
+}
+
+function fallbackSelectedQueueIndex() {
   const separatePreviewCue = isPreparingSeparateCue();
-  if (separatePreviewCue && previewCueIndex >= 0 && previewCueIndex < mediaQueue.length) {
+  if (separatePreviewCue && queueIndexInRange(previewCueIndex)) {
     return previewCueIndex;
   }
-  if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
+  if (queueIndexInRange(currentQueueIndex)) {
     return currentQueueIndex;
   }
   return -1;
+}
+
+function selectedQueueIndexForDisplay() {
+  return queueIndexInRange(selectedQueueAnchorIndex)
+    ? selectedQueueAnchorIndex
+    : fallbackSelectedQueueIndex();
+}
+
+function selectedQueueIndexForInsertion() {
+  return selectedQueueIndexForDisplay();
 }
 
 function queueInsertionIndexAfterSelection() {
@@ -2543,10 +2569,29 @@ function queueInsertionIndexAfterSelection() {
   return selectedIndex >= 0 ? Math.min(selectedIndex + 1, mediaQueue.length) : mediaQueue.length;
 }
 
+function setSelectedQueueAnchor(index) {
+  selectedQueueAnchorIndex = queueIndexInRange(index) ? index : -1;
+}
+
+function updateQueueSelectionVisual() {
+  const selectedIndex = selectedQueueIndexForDisplay();
+  document.querySelectorAll(".queue-item[data-queue-index]").forEach((row) => {
+    const index = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+    const isSelected = Number.isFinite(index) && index === selectedIndex;
+    row.classList.toggle("is-selected", isSelected);
+    if (isSelected) {
+      row.dataset.selected = "true";
+    } else {
+      delete row.dataset.selected;
+    }
+  });
+}
+
 function shiftQueueIndexesForInsertion(insertIndex, count) {
   if (count <= 0) return;
   if (currentQueueIndex >= insertIndex) currentQueueIndex += count;
   if (previewCueIndex >= insertIndex) previewCueIndex += count;
+  if (selectedQueueAnchorIndex >= insertIndex) selectedQueueAnchorIndex += count;
   if (previewAudioCueIndex >= insertIndex) previewAudioCueIndex += count;
   if (previewCueVideoIndex >= insertIndex) previewCueVideoIndex += count;
   if (liveAudioQueueIndex >= insertIndex) liveAudioQueueIndex += count;
@@ -2640,6 +2685,9 @@ function reorderMediaQueue(fromIndex, toIndex) {
     previewCueIndex >= 0 && previewCueIndex < mediaQueue.length
       ? mediaQueue[previewCueIndex].path
       : null;
+  const selectedItem = queueIndexInRange(selectedQueueAnchorIndex)
+    ? mediaQueue[selectedQueueAnchorIndex]
+    : null;
 
   const [item] = mediaQueue.splice(fromIndex, 1);
   mediaQueue.splice(toIndex, 0, item);
@@ -2657,6 +2705,9 @@ function reorderMediaQueue(fromIndex, toIndex) {
     if (previewCueVideoIndex >= 0) {
       previewCueVideoIndex = previewCueIndex;
     }
+  }
+  if (selectedItem) {
+    selectedQueueAnchorIndex = mediaQueue.findIndex((q) => q === selectedItem);
   }
 
   ignoreNextQueueItemClick = true;
@@ -2744,14 +2795,27 @@ function classifyPresentationType(item, opts = {}) {
 function getBibleDesignerStyle() {
   const fontInput = document.getElementById("bibleFontInput");
   const sizeInput = document.getElementById("bibleFontSizeInput");
+  const autosizeModeInput = document.getElementById("bibleAutosizeModeInput");
+  const minFontSizeInput = document.getElementById("bibleMinFontSizeInput");
   const colorInput = document.getElementById("bibleTextColorInput");
   const backgroundInput = document.getElementById("bibleBackgroundColorInput");
   const lowerThirdColorInput = document.getElementById("bibleLowerThirdTextColorInput");
   const lowerThirdChromaKeyInput = document.getElementById("bibleLowerThirdChromaKeyInput");
-  const fontSize = Number.parseInt(sizeInput?.value, 10);
+  const fontSize = normalizeScriptureFontSize(
+    Number.parseInt(sizeInput?.value, 10),
+    bibleDesignerState.fontSize,
+  );
   return {
     fontFamily: fontInput?.value || bibleDesignerState.fontFamily,
-    fontSize: Number.isFinite(fontSize) ? Math.max(24, Math.min(160, fontSize)) : 64,
+    fontSize,
+    autosizeMode: normalizeScriptureAutosizeMode(
+      autosizeModeInput?.value || bibleDesignerState.autosizeMode,
+    ),
+    minFontSize: normalizeScriptureMinFontSize(
+      Number.parseInt(minFontSizeInput?.value, 10),
+      fontSize,
+    ),
+    autoSplit: true,
     color: colorInput?.value || bibleDesignerState.color,
     backgroundColor: backgroundInput?.value || bibleDesignerState.backgroundColor,
     backgroundPath: bibleDesignerState.backgroundPath || "",
@@ -2768,6 +2832,15 @@ function bibleStyleSnapshot(entry = {}) {
   }
   if (Number.isFinite(entry.fontSize)) {
     style.fontSize = entry.fontSize;
+  }
+  if (typeof entry.autosizeMode === "string") {
+    style.autosizeMode = normalizeScriptureAutosizeMode(entry.autosizeMode);
+  }
+  if (Number.isFinite(entry.minFontSize)) {
+    style.minFontSize = normalizeScriptureMinFontSize(entry.minFontSize, entry.fontSize);
+  }
+  if (typeof entry.autoSplit === "boolean") {
+    style.autoSplit = entry.autoSplit;
   }
   if (typeof entry.color === "string" && entry.color) {
     style.color = entry.color;
@@ -2817,6 +2890,31 @@ function normalizeScriptureLook(value) {
   return value === SCRIPTURE_LOOK_LOWER_THIRD
     ? SCRIPTURE_LOOK_LOWER_THIRD
     : SCRIPTURE_LOOK_FULLSCREEN;
+}
+
+function normalizeScriptureAutosizeMode(value) {
+  if (value === SCRIPTURE_AUTOSIZE_NONE) return SCRIPTURE_AUTOSIZE_NONE;
+  if (value === SCRIPTURE_AUTOSIZE_NORMALIZE) return SCRIPTURE_AUTOSIZE_NORMALIZE;
+  return SCRIPTURE_AUTOSIZE_FIT;
+}
+
+function normalizeScriptureFontSize(value, fallback = SCRIPTURE_BODY_FONT_SIZE) {
+  const numeric = Number(value);
+  const resolved = Number.isFinite(numeric) ? numeric : fallback;
+  return Math.max(
+    SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE,
+    Math.min(160, Math.round(resolved)),
+  );
+}
+
+function normalizeScriptureMinFontSize(value, preferredFontSize = SCRIPTURE_BODY_FONT_SIZE) {
+  const preferred = normalizeScriptureFontSize(preferredFontSize);
+  const numeric = Number(value);
+  const resolved = Number.isFinite(numeric) ? numeric : SCRIPTURE_MIN_BODY_FONT_SIZE;
+  return Math.max(
+    SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE,
+    Math.min(preferred, Math.round(resolved)),
+  );
 }
 
 function scriptureLowerThirdFontSize(fontSize) {
@@ -2957,24 +3055,44 @@ function lowerThirdMeasureElements() {
   };
 }
 
+function scriptureRenderScale(el) {
+  if (!el?.classList?.contains("bible-preview-copy")) return 1;
+  const rawScale = window
+    .getComputedStyle(el)
+    .getPropertyValue("--bible-preview-output-scale")
+    .trim();
+  const scale = Number.parseFloat(rawScale);
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+function scaledScripturePx(el, value) {
+  return Math.max(1, value * scriptureRenderScale(el));
+}
+
 function applyScriptureRenderVariables(el, message) {
   if (!el) return;
-  const bodyFontSize = Math.max(
-    24,
-    Math.round(message.fontSize || SCRIPTURE_BODY_FONT_SIZE),
+  const bodyFontSize = normalizeScriptureFontSize(
+    message.fontSize,
+    SCRIPTURE_BODY_FONT_SIZE,
   );
   const referenceFontSize = Math.max(
     14,
     Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
   );
   const attributionFontSize = Math.max(12, Math.round(referenceFontSize * 0.42));
-  el.style.setProperty("--scripture-font-size", `${bodyFontSize}px`);
+  el.style.setProperty("--scripture-font-size", `${scaledScripturePx(el, bodyFontSize)}px`);
   el.style.setProperty(
     "--scripture-lower-third-font-size",
-    `${scriptureLowerThirdFontSize(bodyFontSize)}px`,
+    `${scaledScripturePx(el, scriptureLowerThirdFontSize(bodyFontSize))}px`,
   );
-  el.style.setProperty("--scripture-reference-font-size", `${referenceFontSize}px`);
-  el.style.setProperty("--scripture-attribution-font-size", `${attributionFontSize}px`);
+  el.style.setProperty(
+    "--scripture-reference-font-size",
+    `${scaledScripturePx(el, referenceFontSize)}px`,
+  );
+  el.style.setProperty(
+    "--scripture-attribution-font-size",
+    `${scaledScripturePx(el, attributionFontSize)}px`,
+  );
   el.style.setProperty("--scripture-line-height", `${message.lineHeight || SCRIPTURE_LINE_HEIGHT}`);
   el.style.setProperty("--scripture-font-weight", `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`);
   el.style.setProperty("--scripture-color", message.color || "#ffffff");
@@ -2997,44 +3115,325 @@ function applyScriptureRenderVariables(el, message) {
   el.style.fontFamily = message.fontFamily || SCRIPTURE_FONT_FAMILY;
 }
 
+function scriptureReferenceSizeForBody(bodyFontSize, baseReferenceSize, baseBodySize) {
+  const referenceScale = baseReferenceSize / Math.max(1, baseBodySize);
+  return Math.max(
+    SCRIPTURE_MIN_REFERENCE_FONT_SIZE,
+    Math.round(bodyFontSize * referenceScale),
+  );
+}
+
+function setFullscreenScriptureRenderFontSize(
+  render,
+  bodyFontSize,
+  baseReferenceSize,
+  baseBodySize,
+) {
+  const referenceFontSize = scriptureReferenceSizeForBody(
+    bodyFontSize,
+    baseReferenceSize,
+    baseBodySize,
+  );
+  render.style.setProperty("--scripture-font-size", `${scaledScripturePx(render, bodyFontSize)}px`);
+  render.style.setProperty(
+    "--scripture-reference-font-size",
+    `${scaledScripturePx(render, referenceFontSize)}px`,
+  );
+  render.style.setProperty(
+    "--scripture-attribution-font-size",
+    `${scaledScripturePx(render, Math.max(12, Math.round(referenceFontSize * 0.42)))}px`,
+  );
+  return referenceFontSize;
+}
+
+function visibleElementRect(element) {
+  const sourceRect = element?.getBoundingClientRect?.();
+  if (!sourceRect) return { width: 0, height: 0 };
+  let left = sourceRect.left;
+  let top = sourceRect.top;
+  let right = sourceRect.right;
+  let bottom = sourceRect.bottom;
+
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const style = window.getComputedStyle(ancestor);
+    const clips =
+      /hidden|clip|auto|scroll/.test(style.overflow) ||
+      /hidden|clip|auto|scroll/.test(style.overflowX) ||
+      /hidden|clip|auto|scroll/.test(style.overflowY);
+    if (!clips) continue;
+    const ancestorRect = ancestor.getBoundingClientRect();
+    left = Math.max(left, ancestorRect.left);
+    top = Math.max(top, ancestorRect.top);
+    right = Math.min(right, ancestorRect.right);
+    bottom = Math.min(bottom, ancestorRect.bottom);
+  }
+
+  left = Math.max(left, 0);
+  top = Math.max(top, 0);
+  right = Math.min(right, window.innerWidth || right);
+  bottom = Math.min(bottom, window.innerHeight || bottom);
+  return {
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  };
+}
+
+function scriptureRenderFitBounds(render) {
+  const renderBounds = render.getBoundingClientRect();
+  const renderWidth = render.clientWidth || renderBounds.width || BIBLE_PREVIEW_DEFAULT_OUTPUT_WIDTH;
+  const renderHeight = render.clientHeight || renderBounds.height || BIBLE_PREVIEW_DEFAULT_OUTPUT_HEIGHT;
+  if (render.classList?.contains("bible-preview-copy")) {
+    const surface = render.closest(".bible-preview-surface");
+    const surfaceBounds = surface?.getBoundingClientRect?.();
+    const surfaceWidth = surface?.clientWidth || surfaceBounds?.width || renderWidth;
+    const surfaceHeight = surface?.clientHeight || surfaceBounds?.height || renderHeight;
+    const visibleRender = visibleElementRect(render);
+    const visibleSurface = surface ? visibleElementRect(surface) : visibleRender;
+    return {
+      maxWidth: Math.max(
+        1,
+        Math.min(
+          renderWidth,
+          surfaceWidth,
+          visibleRender.width || renderWidth,
+          visibleSurface.width || surfaceWidth,
+        ),
+      ),
+      maxHeight:
+        Math.max(
+          1,
+          Math.min(
+            renderHeight,
+            surfaceHeight,
+            visibleRender.height || renderHeight,
+            visibleSurface.height || surfaceHeight,
+          ),
+        ) * SCRIPTURE_FIT_HEIGHT_RATIO,
+    };
+  }
+  return {
+    maxWidth: Math.max(1, renderWidth),
+    maxHeight: Math.max(180, renderHeight) * SCRIPTURE_FIT_HEIGHT_RATIO,
+  };
+}
+
+function scriptureRenderBoxFits(render, box, fitBounds) {
+  const boxBounds = box.getBoundingClientRect();
+  const renderBounds = render.getBoundingClientRect();
+  const maxWidth =
+    typeof fitBounds === "number" ? undefined : Number(fitBounds?.maxWidth);
+  const maxHeight =
+    typeof fitBounds === "number" ? fitBounds : Number(fitBounds?.maxHeight);
+  const widthCandidates = [
+    box.clientWidth,
+    boxBounds.width,
+    render.clientWidth,
+    renderBounds.width,
+  ].filter((value) => Number.isFinite(value) && value > 0);
+  const heightCandidates = [
+    box.clientHeight,
+    boxBounds.height,
+    render.clientHeight,
+    renderBounds.height,
+  ].filter((value) => Number.isFinite(value) && value > 0);
+  const naturalAvailableWidth = Math.max(
+    1,
+    Math.min(...(widthCandidates.length ? widthCandidates : [1])),
+  );
+  const availableWidth = Number.isFinite(maxWidth)
+    ? Math.max(1, Math.min(naturalAvailableWidth, maxWidth))
+    : naturalAvailableWidth;
+  const availableHeight = Number.isFinite(maxHeight)
+    ? Math.max(1, maxHeight)
+    : Math.max(1, Math.min(...(heightCandidates.length ? heightCandidates : [1])));
+  return (
+    box.scrollHeight <= Math.ceil(availableHeight) + 1 &&
+    box.scrollWidth <= Math.ceil(availableWidth) + 1
+  );
+}
+
+function scriptureRenderLineCount(render, bodyFontSize) {
+  const body = render.querySelector(".scripture-render__body");
+  if (!body) return 0;
+  const style = window.getComputedStyle(body);
+  const measuredLineHeight = Number.parseFloat(style.lineHeight);
+  const lineHeight =
+    Number.isFinite(measuredLineHeight) && measuredLineHeight > 0
+      ? measuredLineHeight
+      : bodyFontSize * SCRIPTURE_LINE_HEIGHT;
+  return Math.max(1, Math.round(body.scrollHeight / Math.max(1, lineHeight)));
+}
+
+function findLargestFittingScriptureFontSize(
+  render,
+  box,
+  fitBounds,
+  minBodySize,
+  maxBodySize,
+  applyCandidate,
+) {
+  const highLimit = Math.max(minBodySize, Math.round(maxBodySize));
+  applyCandidate(highLimit);
+  if (scriptureRenderBoxFits(render, box, fitBounds)) return highLimit;
+
+  let low = minBodySize;
+  let high = highLimit;
+  let best = minBodySize;
+  while (low <= high) {
+    const candidate = Math.floor((low + high) / 2);
+    applyCandidate(candidate);
+    if (scriptureRenderBoxFits(render, box, fitBounds)) {
+      best = candidate;
+      low = candidate + 1;
+    } else {
+      high = candidate - 1;
+    }
+  }
+  applyCandidate(best);
+  return best;
+}
+
 function fitFullscreenScriptureRender(render, message) {
   if (!render || normalizeScriptureLook(message?.look) !== SCRIPTURE_LOOK_FULLSCREEN) return;
   const box = render.querySelector(".scripture-render__box");
   if (!box) return;
-  const baseBodySize = Math.max(
-    24,
-    Math.round(message.fontSize || SCRIPTURE_BODY_FONT_SIZE),
+  const autosizeMode = normalizeScriptureAutosizeMode(message.autosizeMode);
+  const baseBodySize = normalizeScriptureFontSize(
+    message.fontSize,
+    SCRIPTURE_BODY_FONT_SIZE,
   );
   const baseReferenceSize = Math.max(
     14,
     Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
   );
-  const minBodySize = Math.min(baseBodySize, SCRIPTURE_MIN_BODY_FONT_SIZE);
-  const renderBounds = render.getBoundingClientRect();
-  const maxHeight =
-    Math.max(180, render.clientHeight || renderBounds.height || BIBLE_PREVIEW_DEFAULT_OUTPUT_HEIGHT) *
-    SCRIPTURE_FIT_HEIGHT_RATIO;
-  const referenceScale = baseReferenceSize / baseBodySize;
-  let fittedBodySize = baseBodySize;
+  const minBodySize = normalizeScriptureMinFontSize(message.minFontSize, baseBodySize);
+  const fitBounds = scriptureRenderFitBounds(render);
+  const groupFontSize = Number.isFinite(message.autosizeGroupFontSize)
+    ? Math.max(
+        minBodySize,
+        Math.min(baseBodySize, normalizeScriptureFontSize(message.autosizeGroupFontSize)),
+      )
+    : null;
 
-  while (true) {
-    const fittedReferenceSize = Math.max(
-      SCRIPTURE_MIN_REFERENCE_FONT_SIZE,
-      Math.round(fittedBodySize * referenceScale),
+  const applyCandidate = (fontSize) =>
+    setFullscreenScriptureRenderFontSize(
+      render,
+      fontSize,
+      baseReferenceSize,
+      baseBodySize,
     );
-    render.style.setProperty("--scripture-font-size", `${fittedBodySize}px`);
-    render.style.setProperty("--scripture-reference-font-size", `${fittedReferenceSize}px`);
-    if (box.scrollHeight <= maxHeight || fittedBodySize <= minBodySize) break;
-    fittedBodySize -= 2;
+
+  let fittedBodySize = baseBodySize;
+  let normalized = false;
+  let normalizedClamped = false;
+
+  if (autosizeMode === SCRIPTURE_AUTOSIZE_NONE) {
+    applyCandidate(fittedBodySize);
+  } else if (groupFontSize !== null) {
+    fittedBodySize = groupFontSize;
+    normalized = true;
+    applyCandidate(fittedBodySize);
+    if (!scriptureRenderBoxFits(render, box, fitBounds)) {
+      fittedBodySize = findLargestFittingScriptureFontSize(
+        render,
+        box,
+        fitBounds,
+        minBodySize,
+        groupFontSize,
+        applyCandidate,
+      );
+      normalizedClamped = fittedBodySize < groupFontSize;
+    }
+  } else {
+    fittedBodySize = findLargestFittingScriptureFontSize(
+      render,
+      box,
+      fitBounds,
+      minBodySize,
+      baseBodySize,
+      applyCandidate,
+    );
   }
+
+  const fittedReferenceSize = scriptureReferenceSizeForBody(
+    fittedBodySize,
+    baseReferenceSize,
+    baseBodySize,
+  );
+  const fits = scriptureRenderBoxFits(render, box, fitBounds);
+  return {
+    mode: autosizeMode,
+    preferredFontSize: baseBodySize,
+    minFontSize: minBodySize,
+    resolvedFontSize: fittedBodySize,
+    referenceFontSize: fittedReferenceSize,
+    lineCount: scriptureRenderLineCount(render, fittedBodySize),
+    fits,
+    overflow: !fits,
+    normalized,
+    normalizedClamped,
+    splitNeeded:
+      autosizeMode !== SCRIPTURE_AUTOSIZE_NONE &&
+      !fits &&
+      fittedBodySize <= minBodySize,
+  };
+}
+
+function fullscreenScriptureMeasureElements() {
+  if (!document?.body) return null;
+  let root = document.getElementById(FULLSCREEN_SCRIPTURE_MEASURE_ID);
+  if (!root) {
+    root = document.createElement("div");
+    root.id = FULLSCREEN_SCRIPTURE_MEASURE_ID;
+    root.className = "scripture-render scripture-render--fullscreen scripture-render-measure";
+    root.innerHTML = `
+      <div class="scripture-render__box">
+        <div class="scripture-render__body"></div>
+        <div class="scripture-render__reference"></div>
+        <div class="scripture-render__attribution"></div>
+      </div>
+    `;
+    document.body.appendChild(root);
+  }
+  return {
+    root,
+    body: root.querySelector(".scripture-render__body"),
+    reference: root.querySelector(".scripture-render__reference"),
+    attribution: root.querySelector(".scripture-render__attribution"),
+  };
+}
+
+function measureFullscreenScriptureMessage(message, outputSize = null) {
+  const elements = fullscreenScriptureMeasureElements();
+  if (!elements?.root || !elements.body || !elements.reference) return null;
+  const size = normalizeBiblePreviewOutputSize(outputSize) || selectedBiblePreviewOutputSize("dspSelct");
+  elements.root.style.width = `${Math.max(360, Math.round(size.width))}px`;
+  elements.root.style.height = `${Math.max(220, Math.round(size.height))}px`;
+  elements.root.classList.toggle("scripture-render--fullscreen", true);
+  elements.root.classList.toggle("scripture-render--lower-third", false);
+  applyScriptureRenderVariables(elements.root, message);
+  elements.body.textContent = message.bodyText || " ";
+  elements.reference.textContent = message.referenceText || "";
+  elements.reference.hidden = !message.referenceText;
+  if (elements.attribution) {
+    elements.attribution.textContent = message.attributionText || "";
+    elements.attribution.hidden = !message.attributionText;
+  }
+  return fitFullscreenScriptureRender(elements.root, message);
+}
+
+function measureBibleEntryAutofit(entry, outputSize = null) {
+  const message = buildBibleTextMessage(entry, { look: SCRIPTURE_LOOK_FULLSCREEN });
+  return measureFullscreenScriptureMessage(message, outputSize);
 }
 
 function refitBiblePreviewScripture() {
   const audienceRender = document.getElementById("biblePreviewRender");
   if (!audienceRender) return;
+  const message = buildBibleTextMessage(bibleDesignerState, { look: SCRIPTURE_LOOK_FULLSCREEN });
   fitFullscreenScriptureRender(
     audienceRender,
-    buildBibleTextMessage(bibleDesignerState, { look: SCRIPTURE_LOOK_FULLSCREEN }),
+    message,
   );
 }
 
@@ -3250,10 +3649,21 @@ function applyBiblePreviewOutputScale(surface, outputSize) {
     rect.width > 0 && rect.height > 0
       ? Math.min(rect.width / width, rect.height / height)
       : 1;
+  const safeScale = Math.max(0.01, scale);
+  const offsetX = Math.max(0, (rect.width - width * safeScale) / 2);
+  const offsetY = Math.max(0, (rect.height - height * safeScale) / 2);
   surface.style.setProperty(
     "--bible-preview-output-scale",
-    `${Math.max(0.01, scale)}`,
+    `${safeScale}`,
   );
+  surface.style.setProperty("--bible-preview-scaled-width", `${width * safeScale}px`);
+  surface.style.setProperty("--bible-preview-scaled-height", `${height * safeScale}px`);
+  surface.style.setProperty(
+    "--bible-preview-scripture-gap",
+    `${Math.max(1, Math.round(24 * safeScale))}px`,
+  );
+  surface.style.setProperty("--bible-preview-output-offset-x", `${offsetX}px`);
+  surface.style.setProperty("--bible-preview-output-offset-y", `${offsetY}px`);
 }
 
 function syncBiblePreviewOutputScale() {
@@ -3291,6 +3701,22 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
   const style = {
     fontFamily: entry.fontFamily || bibleDesignerState.fontFamily,
     fontSize: Number.isFinite(entry.fontSize) ? entry.fontSize : bibleDesignerState.fontSize,
+    autosizeMode: normalizeScriptureAutosizeMode(
+      entry.autosizeMode || bibleDesignerState.autosizeMode,
+    ),
+    minFontSize: normalizeScriptureMinFontSize(
+      Number.isFinite(entry.minFontSize) ? entry.minFontSize : bibleDesignerState.minFontSize,
+      Number.isFinite(entry.fontSize) ? entry.fontSize : bibleDesignerState.fontSize,
+    ),
+    autoSplit:
+      typeof entry.autoSplit === "boolean"
+        ? entry.autoSplit
+        : bibleDesignerState.autoSplit !== false,
+    autosizeGroupFontSize: Number.isFinite(entry.autosizeGroupFontSize)
+      ? normalizeScriptureFontSize(entry.autosizeGroupFontSize)
+      : undefined,
+    autosizeGroupScope:
+      typeof entry.autosizeGroupScope === "string" ? entry.autosizeGroupScope : "",
     color: entry.color || bibleDesignerState.color,
     backgroundColor: entry.backgroundColor || bibleDesignerState.backgroundColor,
     backgroundPath: entry.backgroundPath || "",
@@ -4039,6 +4465,172 @@ function queueEntryFromBibleEntry(entry) {
   };
 }
 
+function bibleEntryTextForVerseRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return "";
+  return rows.length === 1
+    ? rows[0].text
+    : rows.map(({ verseNumber, text }) => `${verseNumber}. ${text}`).join("\n");
+}
+
+function bibleSelectedVersesForEntry(entry = {}) {
+  const explicit = normalizedProjectBibleSelectedVerses(entry.selectedVerses);
+  if (explicit.length > 0) return explicit;
+  const start = Number.isFinite(entry.verse) && entry.verse > 0 ? Math.trunc(entry.verse) : 0;
+  const end =
+    Number.isFinite(entry.verseEnd) && entry.verseEnd > start
+      ? Math.trunc(entry.verseEnd)
+      : start;
+  if (start <= 0) return [];
+  const verses = [];
+  for (let verseNumber = start; verseNumber <= end; verseNumber += 1) {
+    verses.push(verseNumber);
+  }
+  return verses;
+}
+
+async function bibleVerseRowsForEntry(entry = {}) {
+  const selectedVerses = bibleSelectedVersesForEntry(entry);
+  if (selectedVerses.length <= 1) return [];
+  const book = entry.book || parseScriptureReference(entry.reference || "").book;
+  const chapter = Number.isFinite(entry.chapter)
+    ? entry.chapter
+    : parseScriptureReference(entry.reference || "").chapter;
+  if (!book || !Number.isFinite(chapter) || chapter < 1) return [];
+  let textData = null;
+  try {
+    textData = await bibleAPI.getText(entry.version || "KJV", book, String(chapter));
+  } catch (err) {
+    console.error("Failed to load Bible verses for autofit split:", err);
+    return [];
+  }
+  const verses = Array.isArray(textData?.verses) ? textData.verses : [];
+  return selectedVerses
+    .map((verseNumber) => ({
+      verseNumber,
+      text: verses[verseNumber - 1],
+    }))
+    .filter((row) => typeof row.text === "string" && row.text.trim());
+}
+
+function bibleEntryForVerseRows(baseEntry, rows) {
+  const selectedVerses = rows.map((row) => row.verseNumber);
+  const verseStart = selectedVerses[0] || 0;
+  const verseEnd = selectedVerses[selectedVerses.length - 1] || 0;
+  const book = baseEntry.book || parseScriptureReference(baseEntry.reference || "").book;
+  const chapter = Number.isFinite(baseEntry.chapter)
+    ? baseEntry.chapter
+    : parseScriptureReference(baseEntry.reference || "").chapter;
+  const reference =
+    book && Number.isFinite(chapter) && chapter > 0
+      ? referenceForBibleVerseNumbers(book, chapter, selectedVerses)
+      : baseEntry.reference;
+  const entry = {
+    ...baseEntry,
+    reference,
+    text: bibleEntryTextForVerseRows(rows),
+    verse: verseStart,
+    verseEnd: verseEnd > verseStart ? verseEnd : 0,
+    selectedVerses,
+    lowerThirdSegments: [],
+    lowerThirdSegmentIndex: 0,
+    lowerThirdSourceText: "",
+  };
+  delete entry.autosizeGroupFontSize;
+  return entry;
+}
+
+function bibleEntryAutofitOverflows(entry, outputSize = null) {
+  const result = measureBibleEntryAutofit(entry, outputSize);
+  return Boolean(result && !result.fits);
+}
+
+async function currentBibleScheduleOutputSize() {
+  if (isActiveMediaWindow()) {
+    const activeWindowSize = await refreshBiblePreviewMediaWindowSize();
+    const normalizedActiveSize = normalizeBiblePreviewOutputSize(activeWindowSize);
+    if (normalizedActiveSize) return normalizedActiveSize;
+  }
+
+  try {
+    await populateDisplaySelect();
+  } catch (err) {
+    console.error("Failed to refresh display list for Bible autofit:", err);
+  }
+  return selectedBiblePreviewOutputSize("dspSelct");
+}
+
+function bibleAutosizeGroupScope(entries) {
+  const references = (Array.isArray(entries) ? entries : [])
+    .map((entry) => String(entry?.reference || "").trim())
+    .filter(Boolean);
+  if (references.length === 0) return "";
+  if (references.length === 1) return `${references[0]} only`;
+  const first = references[0];
+  const last = references[references.length - 1];
+  return `${first} through ${last} (${references.length} slides)`;
+}
+
+function normalizeBibleScheduleEntryGroup(entries, outputSize = null) {
+  if (!Array.isArray(entries) || entries.length <= 1) return entries;
+  const shouldNormalize = entries.some(
+    (entry) => normalizeScriptureAutosizeMode(entry.autosizeMode) === SCRIPTURE_AUTOSIZE_NORMALIZE,
+  );
+  if (!shouldNormalize) return entries;
+  const resolvedSizes = entries
+    .map((entry) => {
+      const measureEntry = { ...entry };
+      delete measureEntry.autosizeGroupFontSize;
+      return measureBibleEntryAutofit(measureEntry, outputSize)?.resolvedFontSize;
+    })
+    .filter((fontSize) => Number.isFinite(fontSize));
+  if (!resolvedSizes.length) return entries;
+  const groupFontSize = Math.min(...resolvedSizes);
+  const autosizeGroupScope = bibleAutosizeGroupScope(entries);
+  return entries.map((entry) => ({
+    ...entry,
+    autosizeMode: SCRIPTURE_AUTOSIZE_NORMALIZE,
+    autosizeGroupFontSize: groupFontSize,
+    autosizeGroupScope,
+  }));
+}
+
+async function bibleEntriesWithAutofitSplits(entry, outputSize = null) {
+  const hydratedEntry = hydrateBibleEntryStyle(entry);
+  const fitOutputSize = normalizeBiblePreviewOutputSize(outputSize) || selectedBiblePreviewOutputSize("dspSelct");
+  if (!bibleEntryAutofitOverflows(hydratedEntry, fitOutputSize)) {
+    return normalizeBibleScheduleEntryGroup([hydratedEntry], fitOutputSize);
+  }
+
+  const rows = await bibleVerseRowsForEntry(hydratedEntry);
+  if (rows.length <= 1) return normalizeBibleScheduleEntryGroup([hydratedEntry], fitOutputSize);
+
+  const chunks = [];
+  let currentRows = [];
+  for (const row of rows) {
+    const candidateRows = [...currentRows, row];
+    const candidateEntry = bibleEntryForVerseRows(hydratedEntry, candidateRows);
+    if (currentRows.length > 0 && bibleEntryAutofitOverflows(candidateEntry, fitOutputSize)) {
+      chunks.push(currentRows);
+      currentRows = [row];
+    } else {
+      currentRows = candidateRows;
+    }
+  }
+  if (currentRows.length > 0) chunks.push(currentRows);
+
+  const splitEntries = chunks.map((chunkRows) => bibleEntryForVerseRows(hydratedEntry, chunkRows));
+  return normalizeBibleScheduleEntryGroup(
+    splitEntries.length ? splitEntries : [hydratedEntry],
+    fitOutputSize,
+  );
+}
+
+async function queueEntriesForBibleScheduleEntry(entry) {
+  const outputSize = await currentBibleScheduleOutputSize();
+  const bibleEntries = await bibleEntriesWithAutofitSplits(entry, outputSize);
+  return bibleEntries.map(queueEntryFromBibleEntry);
+}
+
 async function applySelectedBibleVersePreview() {
   const selectedEntry = await bibleEntryFromSelectedVerses();
   if (!selectedEntry) return false;
@@ -4202,6 +4794,9 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
     return {
       fontFamily: "",
       fontSize: undefined,
+      autosizeMode: "",
+      minFontSize: undefined,
+      autoSplit: undefined,
       color: "",
       backgroundColor: "",
       backgroundPath: "",
@@ -4214,6 +4809,16 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
       typeof overrides.fontFamily === "string" ? overrides.fontFamily : "",
     fontSize:
       Number.isFinite(overrides.fontSize) ? overrides.fontSize : undefined,
+    autosizeMode:
+      typeof overrides.autosizeMode === "string" && overrides.autosizeMode
+        ? normalizeScriptureAutosizeMode(overrides.autosizeMode)
+        : "",
+    minFontSize:
+      Number.isFinite(overrides.minFontSize)
+        ? normalizeScriptureMinFontSize(overrides.minFontSize, overrides.fontSize)
+        : undefined,
+    autoSplit:
+      typeof overrides.autoSplit === "boolean" ? overrides.autoSplit : undefined,
     color:
       typeof overrides.color === "string" ? overrides.color : "",
     backgroundColor:
@@ -4234,6 +4839,9 @@ function projectScriptureTextFromOverrides(overrides = projectScriptureOverrides
   if (
     !normalized.fontFamily &&
     !Number.isFinite(normalized.fontSize) &&
+    !normalized.autosizeMode &&
+    !Number.isFinite(normalized.minFontSize) &&
+    typeof normalized.autoSplit !== "boolean" &&
     !normalized.color &&
     !normalized.backgroundColor &&
     !normalized.backgroundPath &&
@@ -4249,6 +4857,12 @@ function projectScriptureTextFromOverrides(overrides = projectScriptureOverrides
         typography: {
           fontFamily: normalized.fontFamily || undefined,
           fontSize: Number.isFinite(normalized.fontSize) ? normalized.fontSize : undefined,
+          autosizeMode: normalized.autosizeMode || undefined,
+          minFontSize: Number.isFinite(normalized.minFontSize)
+            ? normalized.minFontSize
+            : undefined,
+          autoSplit:
+            typeof normalized.autoSplit === "boolean" ? normalized.autoSplit : undefined,
           fontColor: normalized.color || undefined,
         },
       },
@@ -4259,6 +4873,12 @@ function projectScriptureTextFromOverrides(overrides = projectScriptureOverrides
     presentation: {
       fontFamily: normalized.fontFamily || undefined,
       fontSize: Number.isFinite(normalized.fontSize) ? normalized.fontSize : undefined,
+      autosizeMode: normalized.autosizeMode || undefined,
+      minFontSize: Number.isFinite(normalized.minFontSize)
+        ? normalized.minFontSize
+        : undefined,
+      autoSplit:
+        typeof normalized.autoSplit === "boolean" ? normalized.autoSplit : undefined,
       textColor: normalized.color || undefined,
       backgroundColor: normalized.backgroundColor || undefined,
       backgroundPath: normalized.backgroundPath || "",
@@ -4295,6 +4915,24 @@ function overridesFromProjectScriptureText(projectScriptureText = {}) {
         ? presentation.fontSize
         : Number.isFinite(typography.fontSize)
           ? typography.fontSize
+          : undefined,
+    autosizeMode:
+      typeof presentation.autosizeMode === "string"
+        ? presentation.autosizeMode
+        : typeof typography.autosizeMode === "string"
+          ? typography.autosizeMode
+          : "",
+    minFontSize:
+      Number.isFinite(presentation.minFontSize)
+        ? presentation.minFontSize
+        : Number.isFinite(typography.minFontSize)
+          ? typography.minFontSize
+          : undefined,
+    autoSplit:
+      typeof presentation.autoSplit === "boolean"
+        ? presentation.autoSplit
+        : typeof typography.autoSplit === "boolean"
+          ? typography.autoSplit
           : undefined,
     color:
       typeof presentation.textColor === "string"
@@ -4387,6 +5025,19 @@ function resolvedBibleStyleDefaults() {
     fontSize: Number.isFinite(projectScriptureOverrides.fontSize)
       ? projectScriptureOverrides.fontSize
       : SCRIPTURE_BODY_FONT_SIZE,
+    autosizeMode: normalizeScriptureAutosizeMode(projectScriptureOverrides.autosizeMode),
+    minFontSize: Number.isFinite(projectScriptureOverrides.minFontSize)
+      ? normalizeScriptureMinFontSize(
+          projectScriptureOverrides.minFontSize,
+          Number.isFinite(projectScriptureOverrides.fontSize)
+            ? projectScriptureOverrides.fontSize
+            : SCRIPTURE_BODY_FONT_SIZE,
+        )
+      : SCRIPTURE_MIN_BODY_FONT_SIZE,
+    autoSplit:
+      typeof projectScriptureOverrides.autoSplit === "boolean"
+        ? projectScriptureOverrides.autoSplit
+        : true,
     color: projectScriptureOverrides.color || "#ffffff",
     backgroundColor: projectScriptureOverrides.backgroundColor || "#000000",
     backgroundPath: projectScriptureOverrides.backgroundPath || "",
@@ -4445,6 +5096,20 @@ function projectBibleReferenceOnlyEntry(entry = {}, opts = {}) {
         ? source.fontFamily
         : defaults.fontFamily,
     fontSize: Number.isFinite(source.fontSize) ? source.fontSize : defaults.fontSize,
+    autosizeMode: normalizeScriptureAutosizeMode(source.autosizeMode || defaults.autosizeMode),
+    minFontSize: Number.isFinite(source.minFontSize)
+      ? normalizeScriptureMinFontSize(
+          source.minFontSize,
+          Number.isFinite(source.fontSize) ? source.fontSize : defaults.fontSize,
+        )
+      : defaults.minFontSize,
+    autoSplit:
+      typeof source.autoSplit === "boolean" ? source.autoSplit : defaults.autoSplit,
+    autosizeGroupFontSize: Number.isFinite(source.autosizeGroupFontSize)
+      ? normalizeScriptureFontSize(source.autosizeGroupFontSize)
+      : undefined,
+    autosizeGroupScope:
+      typeof source.autosizeGroupScope === "string" ? source.autosizeGroupScope : "",
     color:
       typeof source.color === "string" && source.color
         ? source.color
@@ -4497,6 +5162,20 @@ function hydrateBibleEntryStyle(entry = {}) {
         ? entry.fontFamily
         : defaults.fontFamily,
     fontSize: Number.isFinite(entry?.fontSize) ? entry.fontSize : defaults.fontSize,
+    autosizeMode: normalizeScriptureAutosizeMode(entry?.autosizeMode || defaults.autosizeMode),
+    minFontSize: Number.isFinite(entry?.minFontSize)
+      ? normalizeScriptureMinFontSize(
+          entry.minFontSize,
+          Number.isFinite(entry?.fontSize) ? entry.fontSize : defaults.fontSize,
+        )
+      : defaults.minFontSize,
+    autoSplit:
+      typeof entry?.autoSplit === "boolean" ? entry.autoSplit : defaults.autoSplit,
+    autosizeGroupFontSize: Number.isFinite(entry?.autosizeGroupFontSize)
+      ? normalizeScriptureFontSize(entry.autosizeGroupFontSize)
+      : undefined,
+    autosizeGroupScope:
+      typeof entry?.autosizeGroupScope === "string" ? entry.autosizeGroupScope : "",
     color:
       typeof entry?.color === "string" && entry.color
         ? entry.color
@@ -4855,6 +5534,9 @@ function bibleCurrentStylePayload() {
   return {
     fontFamily: style.fontFamily,
     fontSize: style.fontSize,
+    autosizeMode: style.autosizeMode,
+    minFontSize: style.minFontSize,
+    autoSplit: style.autoSplit,
     color: style.color,
     backgroundColor: style.backgroundColor,
     backgroundPath: style.backgroundPath,
@@ -4867,6 +5549,8 @@ function applyBibleStylePayloadToEntry(entry, style) {
   return {
     ...(entry || {}),
     ...style,
+    autosizeGroupFontSize: undefined,
+    autosizeGroupScope: "",
     lowerThirdSegments: [],
     lowerThirdSegmentIndex: 0,
     lowerThirdSourceText: "",
@@ -4876,6 +5560,9 @@ function applyBibleStylePayloadToEntry(entry, style) {
 function clearBibleStyleDirtyState() {
   bibleStyleDirtyState.fontFamily = false;
   bibleStyleDirtyState.fontSize = false;
+  bibleStyleDirtyState.autosizeMode = false;
+  bibleStyleDirtyState.minFontSize = false;
+  bibleStyleDirtyState.autoSplit = false;
   bibleStyleDirtyState.color = false;
   bibleStyleDirtyState.backgroundColor = false;
   bibleStyleDirtyState.backgroundPath = false;
@@ -5131,11 +5818,16 @@ async function syncLiveBiblePresentation() {
 async function insertBibleInSchedule() {
   const entry = await currentBibleQueueEntry();
   if (!entry) return;
+  const entries = await queueEntriesForBibleScheduleEntry(entry.bible);
   invalidateQueueUndoToastAfterMutation();
-  insertQueueEntriesAfterSelection([entry]);
+  insertQueueEntriesAfterSelection(entries);
   renderQueue();
   saveMediaFile();
-  showGnomeToast(`Scheduled ${entry.name}`);
+  showGnomeToast(
+    entries.length > 1
+      ? `Scheduled ${entries.length} Bible slides`
+      : `Scheduled ${entries[0]?.name || entry.name}`,
+  );
 }
 
 async function addSelectedBibleVersesToSchedule() {
@@ -5144,11 +5836,16 @@ async function addSelectedBibleVersesToSchedule() {
     showGnomeToast("Choose Bible text to schedule");
     return false;
   }
+  const entries = await queueEntriesForBibleScheduleEntry(entry.bible);
   invalidateQueueUndoToastAfterMutation();
-  insertQueueEntriesAfterSelection([entry]);
+  insertQueueEntriesAfterSelection(entries);
   renderQueue();
   saveMediaFile();
-  showGnomeToast(`Scheduled ${entry.name}`);
+  showGnomeToast(
+    entries.length > 1
+      ? `Scheduled ${entries.length} Bible slides`
+      : `Scheduled ${entries[0]?.name || entry.name}`,
+  );
   return true;
 }
 
@@ -5168,19 +5865,19 @@ async function addEachSelectedBibleVerseToSchedule() {
   const entries = (await Promise.all(
     versesToSchedule.map((verseNumber) => bibleEntryForSingleVerse(verseNumber)),
   ))
-    .filter(Boolean)
-    .map(queueEntryFromBibleEntry);
-  if (!entries.length) {
+    .filter(Boolean);
+  const queueEntries = normalizeBibleScheduleEntryGroup(entries).map(queueEntryFromBibleEntry);
+  if (!queueEntries.length) {
     showGnomeToast("No Bible verses found");
     return false;
   }
 
   invalidateQueueUndoToastAfterMutation();
-  insertQueueEntriesAfterSelection(entries);
+  insertQueueEntriesAfterSelection(queueEntries);
   renderQueue();
   saveMediaFile();
   showGnomeToast(
-    `Scheduled ${entries.length} Bible verse${entries.length === 1 ? "" : "s"}`,
+    `Scheduled ${queueEntries.length} Bible verse${queueEntries.length === 1 ? "" : "s"}`,
   );
   return true;
 }
@@ -5340,6 +6037,13 @@ function bibleAttributionText(attribution, fallbackVersion = "") {
   return String(fallbackVersion || "").trim();
 }
 
+function bibleAttributionFooterText(attribution, fallbackVersion = "") {
+  if (attribution && typeof attribution === "object" && attribution.publicDomain === true) {
+    return "";
+  }
+  return bibleAttributionText(attribution, fallbackVersion);
+}
+
 function bibleAttributionForResult(result) {
   return result?.attribution || bibleAttributionForVersion(result?.version);
 }
@@ -5366,6 +6070,8 @@ function syncBibleSelectorsFromState() {
 function syncBibleStyleControlsFromState() {
   const fontInput = document.getElementById("bibleFontInput");
   const fontSizeInput = document.getElementById("bibleFontSizeInput");
+  const autosizeModeInput = document.getElementById("bibleAutosizeModeInput");
+  const minFontSizeInput = document.getElementById("bibleMinFontSizeInput");
   const textColorInput = document.getElementById("bibleTextColorInput");
   const backgroundColorInput = document.getElementById("bibleBackgroundColorInput");
   const lowerThirdColorInput = document.getElementById("bibleLowerThirdTextColorInput");
@@ -5385,6 +6091,15 @@ function syncBibleStyleControlsFromState() {
     fontInput.value = fontValue;
   }
   if (fontSizeInput) fontSizeInput.value = bibleDesignerState.fontSize;
+  if (autosizeModeInput) {
+    autosizeModeInput.value = normalizeScriptureAutosizeMode(bibleDesignerState.autosizeMode);
+  }
+  if (minFontSizeInput) {
+    minFontSizeInput.value = normalizeScriptureMinFontSize(
+      bibleDesignerState.minFontSize,
+      bibleDesignerState.fontSize,
+    );
+  }
   if (textColorInput) textColorInput.value = bibleDesignerState.color;
   if (backgroundColorInput) backgroundColorInput.value = bibleDesignerState.backgroundColor;
   if (lowerThirdColorInput) lowerThirdColorInput.value = bibleDesignerState.lowerThirdColor;
@@ -5984,6 +6699,8 @@ function installBibleMediaControls() {
   [
     "bibleFontInput",
     "bibleFontSizeInput",
+    "bibleAutosizeModeInput",
+    "bibleMinFontSizeInput",
     "bibleTextColorInput",
     "bibleBackgroundColorInput",
     "bibleLowerThirdTextColorInput",
@@ -5994,6 +6711,8 @@ function installBibleMediaControls() {
       void (async () => {
         if (id === "bibleFontInput") bibleStyleDirtyState.fontFamily = true;
         if (id === "bibleFontSizeInput") bibleStyleDirtyState.fontSize = true;
+        if (id === "bibleAutosizeModeInput") bibleStyleDirtyState.autosizeMode = true;
+        if (id === "bibleMinFontSizeInput") bibleStyleDirtyState.minFontSize = true;
         if (id === "bibleTextColorInput") bibleStyleDirtyState.color = true;
         if (id === "bibleBackgroundColorInput") bibleStyleDirtyState.backgroundColor = true;
         if (id === "bibleLowerThirdTextColorInput") bibleStyleDirtyState.lowerThirdColor = true;
@@ -6002,7 +6721,14 @@ function installBibleMediaControls() {
         }
         await syncBibleStateFromControls();
         Object.assign(bibleDesignerState, getBibleDesignerStyle());
-        if (id === "bibleFontInput" || id === "bibleFontSizeInput") {
+        if (
+          id === "bibleFontInput" ||
+          id === "bibleFontSizeInput" ||
+          id === "bibleAutosizeModeInput" ||
+          id === "bibleMinFontSizeInput"
+        ) {
+          delete bibleDesignerState.autosizeGroupFontSize;
+          bibleDesignerState.autosizeGroupScope = "";
           resolveBibleLowerThirdState(bibleDesignerState, {
             rebuild: true,
             panel: bibleLowerThirdMeasurePanel(),
@@ -6151,6 +6877,9 @@ function applyProjectStateSnapshot(state) {
   );
   bibleStyleDirtyState.fontFamily = false;
   bibleStyleDirtyState.fontSize = false;
+  bibleStyleDirtyState.autosizeMode = false;
+  bibleStyleDirtyState.minFontSize = false;
+  bibleStyleDirtyState.autoSplit = false;
   bibleStyleDirtyState.color = false;
   bibleStyleDirtyState.backgroundColor = false;
   bibleStyleDirtyState.backgroundPath = false;
@@ -6207,6 +6936,7 @@ function applyProjectStateSnapshot(state) {
     })
     .filter(Boolean);
   Object.assign(bibleDesignerState, resolvedBibleStyleDefaults());
+  selectedQueueAnchorIndex = -1;
   currentQueueIndex =
     Number.isInteger(state.currentQueueIndex) &&
     state.currentQueueIndex >= 0 &&
@@ -6235,6 +6965,11 @@ function applyProjectStateSnapshot(state) {
   ) {
     previewCueIndex = -1;
   }
+  selectedQueueAnchorIndex = queueIndexInRange(previewCueIndex)
+    ? previewCueIndex
+    : queueIndexInRange(currentQueueIndex)
+      ? currentQueueIndex
+      : -1;
   renderQueue();
   updatePreviewCueUI();
   updateDynUI();
@@ -6586,6 +7321,7 @@ function clearMediaQueue() {
   mediaQueue = [];
   currentQueueIndex = -1;
   previewCueIndex = -1;
+  selectedQueueAnchorIndex = -1;
   isQueuePlaying = false;
   manualBoundaryPauseIndex = -1;
   // Hand the countdown overlay back to the live media (or hide it if the
@@ -6785,6 +7521,11 @@ async function restoreQueueClearUndoSnapshot() {
   } else {
     pendingCueVolume = null;
   }
+  selectedQueueAnchorIndex = queueIndexInRange(previewCueIndex)
+    ? previewCueIndex
+    : queueIndexInRange(currentQueueIndex)
+      ? currentQueueIndex
+      : -1;
   cueVolumeDirty = false;
   syncGtkSliderToCueState();
 
@@ -6842,6 +7583,14 @@ function removeFromQueue(index) {
   }
   invalidateQueueUndoToastAfterMutation();
   mediaQueue.splice(index, 1);
+  if (selectedQueueAnchorIndex === index) {
+    selectedQueueAnchorIndex =
+      mediaQueue.length > 0 ? Math.min(index, mediaQueue.length - 1) : -1;
+  } else if (selectedQueueAnchorIndex > index) {
+    selectedQueueAnchorIndex--;
+  } else if (selectedQueueAnchorIndex >= mediaQueue.length) {
+    selectedQueueAnchorIndex = -1;
+  }
   if (currentQueueIndex > index) currentQueueIndex--;
   else if (removedCurrentItem) {
     if (mediaQueue.length === 0) {
@@ -6964,6 +7713,8 @@ function installMediaQueueListDelegation() {
     if (!row || !list.contains(row)) return;
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
+    setSelectedQueueAnchor(idx);
+    updateQueueSelectionVisual();
     if (e.detail > 1) return;
     if (queueItemClickTimer !== null) {
       window.clearTimeout(queueItemClickTimer);
@@ -6988,6 +7739,8 @@ function installMediaQueueListDelegation() {
     if (!row || !list.contains(row)) return;
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
+    setSelectedQueueAnchor(idx);
+    updateQueueSelectionVisual();
     void switchQueueItemLiveWithConfirmation(idx).catch((err) => console.error(err));
   });
 
@@ -7001,6 +7754,8 @@ function installMediaQueueListDelegation() {
     e.stopPropagation();
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
+    setSelectedQueueAnchor(idx);
+    updateQueueSelectionVisual();
     queueDragFromIndex = idx;
     e.dataTransfer.setData("application/x-queue-index", String(idx));
     e.dataTransfer.setData("text/plain", String(idx));
@@ -7399,6 +8154,7 @@ function clearVideoPreviewCueOverlay() {
 
 async function loadQueueItemIntoPreviewCue(index) {
   if (index < 0 || index >= mediaQueue.length) return;
+  setSelectedQueueAnchor(index);
   if (queueIndexIsCurrentLivePresentation(index)) {
     await restorePreviewToLiveOutput(index);
     return;
@@ -7525,6 +8281,7 @@ async function loadQueueItemIntoPreviewCue(index) {
 async function takeQueueItemLive(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
   if (pendingQueueSwitchIndex !== null) return;
+  setSelectedQueueAnchor(index);
 
   const item = mediaQueue[index];
   const safeStart =
@@ -7666,6 +8423,7 @@ async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
 
 async function onQueueItemActivate(index) {
   if (index < 0 || index >= mediaQueue.length) return;
+  setSelectedQueueAnchor(index);
 
   // Audio-only items play locally without a media window, but they're still
   // an active presentation: prompt before swapping them out.

@@ -949,6 +949,14 @@ footer {
     height: 26px;
 }
 
+.switch input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    opacity: 0;
+}
+
 
 .switch-track {
     cursor: pointer;
@@ -2607,12 +2615,23 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .bible-action-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(118px, 100%), 1fr));
     gap: 8px;
+    min-width: 0;
 }
 
 .bible-action-row > button {
-    flex: 1 1 0;
+    width: 100%;
+    min-width: 0;
+    min-height: 34px;
+    line-height: 1.2;
+    text-align: center;
+    white-space: normal;
+}
+
+.bible-navigator-actions {
+    margin-top: -2px;
 }
 
 .bible-field {
@@ -2637,7 +2656,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 #bibleFontSizeInput {
-    min-width: 96px;
+    min-width: 0;
     padding-right: 24px;
     box-sizing: border-box;
 }
@@ -2658,7 +2677,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     width: 100%;
     justify-content: center;
     white-space: nowrap;
-    min-width: 190px;
+    min-width: 0;
     max-width: none;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -3172,6 +3191,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 
 .bible-verse-row {
     width: 100%;
+    box-sizing: border-box;
     display: grid;
     grid-template-columns: 32px minmax(0, 1fr);
     gap: 10px;
@@ -3203,6 +3223,9 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .bible-workspace__main {
+    container-type: inline-size;
+    width: 100%;
+    max-width: 100%;
     min-width: 0;
     min-height: 0;
     display: grid;
@@ -3215,6 +3238,9 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     position: sticky;
     top: 0;
     z-index: 2;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -3228,6 +3254,8 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .bible-preview-panel {
     position: relative;
     container-type: size;
+    width: 100%;
+    max-width: 100%;
     min-height: 0;
     block-size: 100%;
     display: grid;
@@ -3251,7 +3279,12 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .bible-preview-surface {
     --bible-preview-output-width: 1920px;
     --bible-preview-output-height: 1080px;
-    --bible-preview-output-scale: 1;
+    --bible-preview-output-scale: 0.16;
+    --bible-preview-scaled-width: 100%;
+    --bible-preview-scaled-height: 100%;
+    --bible-preview-scripture-gap: 24px;
+    --bible-preview-output-offset-x: 0px;
+    --bible-preview-output-offset-y: 0px;
     position: relative;
     container-type: size;
     min-width: 0;
@@ -3292,15 +3325,19 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     pointer-events: none;
 }
 
+@container (max-height: 220px) {
+    .bible-preview-surface-label {
+        display: none;
+    }
+}
+
 .bible-preview-background-video {
     position: absolute;
-    top: 50%;
-    left: 50%;
-    width: var(--bible-preview-output-width);
-    height: var(--bible-preview-output-height);
+    top: var(--bible-preview-output-offset-y);
+    left: var(--bible-preview-output-offset-x);
+    width: var(--bible-preview-scaled-width);
+    height: var(--bible-preview-scaled-height);
     object-fit: cover;
-    transform: translate(-50%, -50%) scale(var(--bible-preview-output-scale));
-    transform-origin: center;
     z-index: 0;
 }
 
@@ -3427,18 +3464,20 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 
 .bible-preview-copy {
     position: absolute;
-    top: 50%;
-    left: 50%;
+    top: var(--bible-preview-output-offset-y);
+    left: var(--bible-preview-output-offset-x);
     z-index: 1;
-    width: var(--bible-preview-output-width) !important;
-    height: var(--bible-preview-output-height);
+    width: var(--bible-preview-scaled-width) !important;
+    height: var(--bible-preview-scaled-height);
     max-width: none !important;
     min-width: 0;
     max-inline-size: none;
     box-sizing: border-box;
     overflow: hidden;
-    transform: translate(-50%, -50%) scale(var(--bible-preview-output-scale));
-    transform-origin: center;
+}
+
+.bible-preview-copy.scripture-render--fullscreen .scripture-render__box {
+    gap: var(--bible-preview-scripture-gap);
 }
 
 .bible-preview-surface--lower-third .scripture-render--lower-third {
@@ -3471,9 +3510,16 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     bottom: 0;
     z-index: 2;
     display: flex;
+    width: 100%;
+    max-width: 100%;
+    block-size: clamp(164px, 34vh, 220px);
+    box-sizing: border-box;
     padding: 12px 16px;
     border-top: 1px solid color-mix(in srgb, white 16%, transparent);
     background: color-mix(in srgb, #1d1d20 94%, white);
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
 }
 
 .bible-editor-controls {
@@ -3548,14 +3594,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 
 .bible-editor-fields {
     display: grid;
-    grid-template-columns:
-        minmax(190px, 1.35fr)
-        minmax(96px, 108px)
-        minmax(132px, 0.85fr)
-        minmax(150px, 0.95fr)
-        minmax(118px, 0.75fr)
-        minmax(110px, 0.72fr)
-        minmax(220px, 1.35fr);
+    grid-template-columns: repeat(auto-fit, minmax(min(142px, 100%), 1fr));
     gap: 10px;
     align-items: end;
     min-width: 0;
@@ -3565,27 +3604,42 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     min-width: 0;
 }
 
+.bible-autofit-panel {
+    display: grid;
+    grid-template-columns:
+        minmax(min(132px, 100%), 1fr)
+        minmax(68px, 92px);
+    gap: 10px;
+    align-items: end;
+    min-width: 0;
+}
+
+.bible-field--autosize,
+.bible-field--min-size {
+    min-width: 0;
+}
+
 .bible-editor-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     align-items: center;
-    padding-top: 2px;
+    padding-top: 8px;
+    padding-bottom: 2px;
 }
 
 .bible-editor-actions > .pill-button {
-    flex: 0 1 auto;
+    flex: 1 1 150px;
     min-width: 0;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 @media (max-width: 1240px) {
     .bible-editor-fields {
-        grid-template-columns:
-            minmax(220px, 1.6fr)
-            minmax(96px, 104px)
-            minmax(104px, 0.72fr)
-            minmax(120px, 0.85fr)
-            minmax(150px, 1fr);
+        grid-template-columns: repeat(auto-fit, minmax(min(138px, 100%), 1fr));
     }
 }
 
@@ -3603,7 +3657,11 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     }
 
     .bible-editor-fields {
-        grid-template-columns: minmax(180px, 1fr) 96px 88px 96px;
+        grid-template-columns: repeat(auto-fit, minmax(min(128px, 100%), 1fr));
+    }
+
+    .bible-autofit-panel {
+        grid-template-columns: minmax(132px, 1fr) 92px;
     }
 
     .bible-background-picker {
@@ -3624,37 +3682,63 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     .bible-background-picker {
         grid-column: span 2;
     }
+
+    .bible-autofit-panel {
+        grid-template-columns: minmax(0, 1fr) 72px;
+    }
+
+}
+
+@container (max-width: 420px) {
+    .bible-editor-actions {
+        order: -1;
+        padding-top: 0;
+    }
+
+    .bible-editor-actions > .pill-button {
+        flex-basis: 140px;
+    }
+
+    .bible-editor-fields {
+        grid-template-columns: minmax(0, 1fr) 86px;
+    }
+
+    .bible-field:nth-child(n + 3),
+    .bible-background-picker {
+        grid-column: span 2;
+    }
+
+    .bible-autofit-panel {
+        grid-template-columns: minmax(0, 1fr) 86px;
+    }
+
 }
 
 .bible-editor-fields--audience-only {
-    grid-template-columns:
-        minmax(190px, 1.35fr)
-        minmax(96px, 108px)
-        minmax(132px, 0.85fr)
-        minmax(150px, 0.95fr)
-        minmax(220px, 1.35fr);
+    grid-template-columns: repeat(auto-fit, minmax(min(142px, 100%), 1fr));
 }
 
 @media (max-width: 1240px) {
     .bible-editor-fields--audience-only {
-        grid-template-columns:
-            minmax(220px, 1.6fr)
-            minmax(96px, 104px)
-            minmax(104px, 0.72fr)
-            minmax(120px, 0.85fr)
-            minmax(150px, 1fr);
+        grid-template-columns: repeat(auto-fit, minmax(min(138px, 100%), 1fr));
     }
 }
 
 @media (max-width: 900px) {
     .bible-editor-fields--audience-only {
-        grid-template-columns: minmax(180px, 1fr) 96px 88px 96px;
+        grid-template-columns: repeat(auto-fit, minmax(min(128px, 100%), 1fr));
     }
 }
 
 @media (max-width: 680px) {
     .bible-editor-fields--audience-only {
         grid-template-columns: minmax(0, 1fr) 60px;
+    }
+}
+
+@container (max-width: 420px) {
+    .bible-editor-fields--audience-only {
+        grid-template-columns: minmax(0, 1fr) 86px;
     }
 }
 

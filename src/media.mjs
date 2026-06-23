@@ -48,9 +48,14 @@ const SCRIPTURE_REFERENCE_DARK_COLOR = "rgba(24, 24, 28, 0.84)";
 const SCRIPTURE_REFERENCE_LIGHT_SHADOW = "0 2px 14px rgba(0, 0, 0, 0.72)";
 const SCRIPTURE_REFERENCE_DARK_SHADOW = "0 2px 12px rgba(255, 255, 255, 0.62)";
 const SCRIPTURE_REFERENCE_LIGHT_BACKGROUND_LUMINANCE = 0.58;
-const SCRIPTURE_MIN_BODY_FONT_SIZE = 34;
+const SCRIPTURE_MIN_BODY_FONT_SIZE = 38;
+const SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE = 20;
 const SCRIPTURE_MIN_REFERENCE_FONT_SIZE = 20;
 const SCRIPTURE_FIT_HEIGHT_RATIO = 0.86;
+const SCRIPTURE_AUTOSIZE_NONE = "none";
+const SCRIPTURE_AUTOSIZE_FIT = "fit";
+const SCRIPTURE_AUTOSIZE_NORMALIZE = "normalize";
+const SCRIPTURE_DEFAULT_AUTOSIZE_MODE = SCRIPTURE_AUTOSIZE_FIT;
 const TEXT_BACKGROUND_VIDEO_LOAD_COMPENSATION_SEC = 0.15;
 /** Live edge: true HLS-style live (no sync/duration UI); false for YouTube VOD in stream mode. */
 var streamActsAsLiveEdge = false;
@@ -724,6 +729,10 @@ const DEFAULT_TEXT_PRESENTATION = Object.freeze({
   text: "",
   color: "#ffffff",
   fontSize: SCRIPTURE_BODY_FONT_SIZE,
+  autosizeMode: SCRIPTURE_DEFAULT_AUTOSIZE_MODE,
+  minFontSize: SCRIPTURE_MIN_BODY_FONT_SIZE,
+  autoSplit: true,
+  autosizeGroupFontSize: undefined,
   fontFamily: SCRIPTURE_FONT_FAMILY,
   fontWeight: SCRIPTURE_FONT_WEIGHT,
   lineHeight: SCRIPTURE_LINE_HEIGHT,
@@ -761,6 +770,31 @@ function normalizeScriptureLook(value) {
   return value === SCRIPTURE_LOOK_LOWER_THIRD
     ? SCRIPTURE_LOOK_LOWER_THIRD
     : SCRIPTURE_LOOK_FULLSCREEN;
+}
+
+function normalizeScriptureAutosizeMode(value) {
+  if (value === SCRIPTURE_AUTOSIZE_NONE) return SCRIPTURE_AUTOSIZE_NONE;
+  if (value === SCRIPTURE_AUTOSIZE_NORMALIZE) return SCRIPTURE_AUTOSIZE_NORMALIZE;
+  return SCRIPTURE_AUTOSIZE_FIT;
+}
+
+function normalizeScriptureFontSize(value, fallback = SCRIPTURE_BODY_FONT_SIZE) {
+  const numeric = Number(value);
+  const resolved = Number.isFinite(numeric) ? numeric : fallback;
+  return Math.max(
+    SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE,
+    Math.min(160, Math.round(resolved)),
+  );
+}
+
+function normalizeScriptureMinFontSize(value, preferredFontSize = SCRIPTURE_BODY_FONT_SIZE) {
+  const preferred = normalizeScriptureFontSize(preferredFontSize);
+  const numeric = Number(value);
+  const resolved = Number.isFinite(numeric) ? numeric : SCRIPTURE_MIN_BODY_FONT_SIZE;
+  return Math.max(
+    SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE,
+    Math.min(preferred, Math.round(resolved)),
+  );
 }
 
 function scriptureLowerThirdFontSize(fontSize) {
@@ -836,9 +870,9 @@ function scriptureReferencePresentationForBackground(backgroundColor, options = 
 
 function applyScriptureRenderVariables(el, message) {
   if (!el) return;
-  const bodyFontSize = Math.max(
-    24,
-    Math.round(message.fontSize || SCRIPTURE_BODY_FONT_SIZE),
+  const bodyFontSize = normalizeScriptureFontSize(
+    message.fontSize,
+    SCRIPTURE_BODY_FONT_SIZE,
   );
   const referenceFontSize = Math.max(
     14,
@@ -874,36 +908,133 @@ function applyScriptureRenderVariables(el, message) {
   el.style.fontFamily = message.fontFamily || SCRIPTURE_FONT_FAMILY;
 }
 
+function scriptureReferenceSizeForBody(bodyFontSize, baseReferenceSize, baseBodySize) {
+  const referenceScale = baseReferenceSize / Math.max(1, baseBodySize);
+  return Math.max(
+    SCRIPTURE_MIN_REFERENCE_FONT_SIZE,
+    Math.round(bodyFontSize * referenceScale),
+  );
+}
+
+function setFullscreenScriptureRenderFontSize(
+  render,
+  bodyFontSize,
+  baseReferenceSize,
+  baseBodySize,
+) {
+  const referenceFontSize = scriptureReferenceSizeForBody(
+    bodyFontSize,
+    baseReferenceSize,
+    baseBodySize,
+  );
+  render.style.setProperty("--scripture-font-size", `${bodyFontSize}px`);
+  render.style.setProperty("--scripture-reference-font-size", `${referenceFontSize}px`);
+  render.style.setProperty(
+    "--scripture-attribution-font-size",
+    `${Math.max(12, Math.round(referenceFontSize * 0.42))}px`,
+  );
+  return referenceFontSize;
+}
+
+function scriptureRenderBoxFits(render, box, maxHeight) {
+  const boxBounds = box.getBoundingClientRect();
+  const availableWidth = Math.max(1, box.clientWidth || boxBounds.width || render.clientWidth);
+  return (
+    box.scrollHeight <= Math.ceil(maxHeight) + 1 &&
+    box.scrollWidth <= Math.ceil(availableWidth) + 1
+  );
+}
+
+function findLargestFittingScriptureFontSize(
+  render,
+  box,
+  maxHeight,
+  minBodySize,
+  maxBodySize,
+  applyCandidate,
+) {
+  const highLimit = Math.max(minBodySize, Math.round(maxBodySize));
+  applyCandidate(highLimit);
+  if (scriptureRenderBoxFits(render, box, maxHeight)) return highLimit;
+
+  let low = minBodySize;
+  let high = highLimit;
+  let best = minBodySize;
+  while (low <= high) {
+    const candidate = Math.floor((low + high) / 2);
+    applyCandidate(candidate);
+    if (scriptureRenderBoxFits(render, box, maxHeight)) {
+      best = candidate;
+      low = candidate + 1;
+    } else {
+      high = candidate - 1;
+    }
+  }
+  applyCandidate(best);
+  return best;
+}
+
 function fitFullscreenScriptureRender(render, message) {
   if (!render || normalizeScriptureLook(message?.look) !== SCRIPTURE_LOOK_FULLSCREEN) return;
   const box = render.querySelector(".scripture-render__box");
   if (!box) return;
-  const baseBodySize = Math.max(
-    24,
-    Math.round(message.fontSize || SCRIPTURE_BODY_FONT_SIZE),
+  const autosizeMode = normalizeScriptureAutosizeMode(message.autosizeMode);
+  const baseBodySize = normalizeScriptureFontSize(
+    message.fontSize,
+    SCRIPTURE_BODY_FONT_SIZE,
   );
   const baseReferenceSize = Math.max(
     14,
     Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
   );
-  const minBodySize = Math.min(baseBodySize, SCRIPTURE_MIN_BODY_FONT_SIZE);
+  const minBodySize = normalizeScriptureMinFontSize(message.minFontSize, baseBodySize);
   const renderBounds = render.getBoundingClientRect();
   const maxHeight =
     Math.max(180, render.clientHeight || renderBounds.height || window.innerHeight || 720) *
     SCRIPTURE_FIT_HEIGHT_RATIO;
-  const referenceScale = baseReferenceSize / baseBodySize;
-  let fittedBodySize = baseBodySize;
+  const groupFontSize = Number.isFinite(message.autosizeGroupFontSize)
+    ? Math.max(
+        minBodySize,
+        Math.min(baseBodySize, normalizeScriptureFontSize(message.autosizeGroupFontSize)),
+      )
+    : null;
 
-  while (true) {
-    const fittedReferenceSize = Math.max(
-      SCRIPTURE_MIN_REFERENCE_FONT_SIZE,
-      Math.round(fittedBodySize * referenceScale),
+  const applyCandidate = (fontSize) =>
+    setFullscreenScriptureRenderFontSize(
+      render,
+      fontSize,
+      baseReferenceSize,
+      baseBodySize,
     );
-    render.style.setProperty("--scripture-font-size", `${fittedBodySize}px`);
-    render.style.setProperty("--scripture-reference-font-size", `${fittedReferenceSize}px`);
-    if (box.scrollHeight <= maxHeight || fittedBodySize <= minBodySize) break;
-    fittedBodySize -= 2;
+
+  if (autosizeMode === SCRIPTURE_AUTOSIZE_NONE) {
+    applyCandidate(baseBodySize);
+    return;
   }
+
+  if (groupFontSize !== null) {
+    applyCandidate(groupFontSize);
+    if (!scriptureRenderBoxFits(render, box, maxHeight)) {
+      findLargestFittingScriptureFontSize(
+        render,
+        box,
+        maxHeight,
+        minBodySize,
+        groupFontSize,
+        applyCandidate,
+      );
+    }
+    return;
+  }
+
+  findLargestFittingScriptureFontSize(
+    render,
+    box,
+    maxHeight,
+    minBodySize,
+    baseBodySize,
+    applyCandidate,
+  );
 }
 
 function refitCurrentTextPresentation() {
@@ -972,6 +1103,17 @@ function textPresentationSignature(message, bodyText, referenceText, attribution
     verseEnd: Number.isFinite(message.verseEnd) ? message.verseEnd : 0,
     color: message.color || "",
     fontSize: Number.isFinite(message.fontSize) ? message.fontSize : DEFAULT_TEXT_PRESENTATION.fontSize,
+    autosizeMode: normalizeScriptureAutosizeMode(message.autosizeMode),
+    minFontSize: Number.isFinite(message.minFontSize)
+      ? message.minFontSize
+      : DEFAULT_TEXT_PRESENTATION.minFontSize,
+    autoSplit:
+      typeof message.autoSplit === "boolean"
+        ? message.autoSplit
+        : DEFAULT_TEXT_PRESENTATION.autoSplit,
+    autosizeGroupFontSize: Number.isFinite(message.autosizeGroupFontSize)
+      ? message.autosizeGroupFontSize
+      : 0,
     fontFamily: message.fontFamily || "",
     fontWeight: Number.isFinite(message.fontWeight)
       ? message.fontWeight

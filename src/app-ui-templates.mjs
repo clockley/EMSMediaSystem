@@ -249,6 +249,10 @@ export function generateMediaFormHTML() {
             </div>
             <div id="bibleSearchStatus" class="bible-search-status" role="status"></div>
           </div>
+          <div class="bible-action-row bible-navigator-actions" aria-label="Bible text actions">
+            <button type="button" id="bibleShowNowBtn" class="pill-button suggested-action">Show Now</button>
+            <button type="button" id="bibleInsertQueueBtn" class="pill-button secondary">Add to Schedule</button>
+          </div>
           <div id="bibleVerseList" class="bible-verse-list" role="listbox" aria-label="Chapter verses">
             <div class="list-placeholder">
               <span class="list-placeholder-title">Loading Bible…</span>
@@ -264,10 +268,6 @@ export function generateMediaFormHTML() {
         <section class="bible-workspace__main" aria-label="Bible text preview editor">
           <div class="bible-workspace__toolbar">
             <span id="bibleWorkspaceTitle" class="bible-workspace__title">Bible</span>
-            <div class="bible-action-row">
-              <button type="button" id="bibleShowNowBtn" class="pill-button suggested-action">Show Now</button>
-              <button type="button" id="bibleInsertQueueBtn" class="pill-button secondary">Add to Schedule</button>
-            </div>
           </div>
           <div id="biblePreviewPanel" class="bible-preview-panel">
             <section id="bibleAudiencePreviewShell" class="bible-preview-surface bible-preview-surface--audience" aria-label="Audience output preview">
@@ -328,6 +328,18 @@ export function generateMediaFormHTML() {
                 <label class="file-input-label bible-background-picker">
                   <input id="bibleBackgroundInput" type="file" accept="image/*,video/*" hidden>
                   <span id="bibleBackgroundLabel">Choose Background…</span>
+                </label>
+              </div>
+              <div class="bible-autofit-panel" aria-label="Bible text autofit">
+                <label class="bible-field bible-field--autosize">Autofit
+                  <select id="bibleAutosizeModeInput" class="display-select">
+                    <option value="fit">Fit</option>
+                    <option value="normalize">Normalize</option>
+                    <option value="none">Off</option>
+                  </select>
+                </label>
+                <label class="bible-field bible-field--min-size">Min
+                  <input id="bibleMinFontSizeInput" type="number" min="20" max="160" value="38" class="url-input">
                 </label>
               </div>
               <div class="bible-editor-actions">
