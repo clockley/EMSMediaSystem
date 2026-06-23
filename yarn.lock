@@ -12,9 +12,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@aiden0z/pptx-renderer@npm:^1.1.0":
-  version: 1.1.0
-  resolution: "@aiden0z/pptx-renderer@npm:1.1.0"
+"@aiden0z/pptx-renderer@npm:^1.2.0":
+  version: 1.2.0
+  resolution: "@aiden0z/pptx-renderer@npm:1.2.0"
   dependencies:
     echarts: "npm:^6.0.0"
     jszip: "npm:^3.10.1"
@@ -23,7 +23,7 @@ __metadata:
   peerDependenciesMeta:
     pdfjs-dist:
       optional: true
-  checksum: 10c0/e8e59a46abadb24060e4bf0a0a8a60a9e22917f8af44e4d6a9b6cbaabf014ace13df8910b249fd5805ab15c3638b6f3ce1b48bf607994c64085429ac93bb0bb9
+  checksum: 10c0/b580bb75c1a152701b087cede400b6cd4b62dc50d15c1ac5192b72fc7b6c586dc3d403650122402217ff07b4fdd56d41c91e007e5f818adb55c2bb2a1323051a
   languageName: node
   linkType: hard
 
@@ -1600,7 +1600,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "emsmediasystem@workspace:."
   dependencies:
-    "@aiden0z/pptx-renderer": "npm:^1.1.0"
+    "@aiden0z/pptx-renderer": "npm:^1.2.0"
     concurrently: "npm:^9.1.0"
     csso: "npm:^5.0.5"
     dashjs: "npm:^5.1.1"
