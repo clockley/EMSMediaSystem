@@ -27,7 +27,7 @@
     "terser": "^5.43.1"
   },
   "dependencies": {
-    "@aiden0z/pptx-renderer": "^1.1.0",
+    "@aiden0z/pptx-renderer": "^1.2.0",
     "dashjs": "^5.1.1",
     "fflate": "^0.8.3",
     "hls.js": "^1.6.15",
