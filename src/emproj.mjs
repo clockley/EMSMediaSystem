@@ -24,6 +24,11 @@ const AUDIO_EXT = new Set([".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".op
 const PRESENTATION_EXT = new Set([".pptx"]);
 const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
 const SCRIPTURE_BODY_FONT_SIZE = 66;
+const SCRIPTURE_MIN_BODY_FONT_SIZE = 38;
+const SCRIPTURE_AUTOSIZE_NONE = "none";
+const SCRIPTURE_AUTOSIZE_FIT = "fit";
+const SCRIPTURE_AUTOSIZE_NORMALIZE = "normalize";
+const SCRIPTURE_DEFAULT_AUTOSIZE_MODE = SCRIPTURE_AUTOSIZE_FIT;
 
 function canonicalJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -90,6 +95,21 @@ function normalizedPositiveIntArray(values) {
   return result;
 }
 
+function normalizeScriptureAutosizeMode(value) {
+  if (value === SCRIPTURE_AUTOSIZE_NONE) return SCRIPTURE_AUTOSIZE_NONE;
+  if (value === SCRIPTURE_AUTOSIZE_NORMALIZE) return SCRIPTURE_AUTOSIZE_NORMALIZE;
+  return SCRIPTURE_AUTOSIZE_FIT;
+}
+
+function normalizeScriptureMinFontSize(value, preferredFontSize = SCRIPTURE_BODY_FONT_SIZE) {
+  const preferred = Number.isFinite(preferredFontSize)
+    ? Math.max(20, Math.min(160, Math.round(preferredFontSize)))
+    : SCRIPTURE_BODY_FONT_SIZE;
+  const numeric = Number(value);
+  const resolved = Number.isFinite(numeric) ? numeric : SCRIPTURE_MIN_BODY_FONT_SIZE;
+  return Math.max(20, Math.min(preferred, Math.round(resolved)));
+}
+
 function bibleProjectReferenceOnly(scripture = {}, opts = {}) {
   const source = scripture && typeof scripture === "object" ? scripture : {};
   const pathEntry = opts?.pathEntry && typeof opts.pathEntry === "object"
@@ -112,6 +132,16 @@ function bibleProjectReferenceOnly(scripture = {}, opts = {}) {
         ? source.fontFamily
         : SCRIPTURE_FONT_FAMILY,
     fontSize: Number.isFinite(source.fontSize) ? source.fontSize : undefined,
+    autosizeMode: normalizeScriptureAutosizeMode(source.autosizeMode),
+    minFontSize: Number.isFinite(source.minFontSize)
+      ? normalizeScriptureMinFontSize(source.minFontSize, source.fontSize)
+      : SCRIPTURE_MIN_BODY_FONT_SIZE,
+    autoSplit: typeof source.autoSplit === "boolean" ? source.autoSplit : true,
+    autosizeGroupFontSize: Number.isFinite(source.autosizeGroupFontSize)
+      ? Math.max(20, Math.min(160, Math.round(source.autosizeGroupFontSize)))
+      : undefined,
+    autosizeGroupScope:
+      typeof source.autosizeGroupScope === "string" ? source.autosizeGroupScope : "",
     color: typeof source.color === "string" && source.color ? source.color : "#ffffff",
     lowerThirdColor:
       typeof source.lowerThirdColor === "string" && source.lowerThirdColor
@@ -151,6 +181,9 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
     return {
       fontFamily: "",
       fontSize: undefined,
+      autosizeMode: "",
+      minFontSize: undefined,
+      autoSplit: undefined,
       color: "",
       backgroundColor: "",
       backgroundPath: "",
@@ -163,6 +196,16 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
       typeof overrides.fontFamily === "string" ? overrides.fontFamily : "",
     fontSize:
       Number.isFinite(overrides.fontSize) ? overrides.fontSize : undefined,
+    autosizeMode:
+      typeof overrides.autosizeMode === "string" && overrides.autosizeMode
+        ? normalizeScriptureAutosizeMode(overrides.autosizeMode)
+        : "",
+    minFontSize:
+      Number.isFinite(overrides.minFontSize)
+        ? normalizeScriptureMinFontSize(overrides.minFontSize, overrides.fontSize)
+        : undefined,
+    autoSplit:
+      typeof overrides.autoSplit === "boolean" ? overrides.autoSplit : undefined,
     color:
       typeof overrides.color === "string" ? overrides.color : "",
     backgroundColor:
@@ -183,6 +226,9 @@ function projectScriptureTextFromOverrides(overrides = {}) {
   if (
     !normalized.fontFamily &&
     !Number.isFinite(normalized.fontSize) &&
+    !normalized.autosizeMode &&
+    !Number.isFinite(normalized.minFontSize) &&
+    typeof normalized.autoSplit !== "boolean" &&
     !normalized.color &&
     !normalized.backgroundColor &&
     !normalized.backgroundPath &&
@@ -198,6 +244,12 @@ function projectScriptureTextFromOverrides(overrides = {}) {
         typography: {
           fontFamily: normalized.fontFamily || undefined,
           fontSize: Number.isFinite(normalized.fontSize) ? normalized.fontSize : undefined,
+          autosizeMode: normalized.autosizeMode || undefined,
+          minFontSize: Number.isFinite(normalized.minFontSize)
+            ? normalized.minFontSize
+            : undefined,
+          autoSplit:
+            typeof normalized.autoSplit === "boolean" ? normalized.autoSplit : undefined,
           fontColor: normalized.color || undefined,
         },
       },
@@ -208,6 +260,12 @@ function projectScriptureTextFromOverrides(overrides = {}) {
     presentation: {
       fontFamily: normalized.fontFamily || undefined,
       fontSize: Number.isFinite(normalized.fontSize) ? normalized.fontSize : undefined,
+      autosizeMode: normalized.autosizeMode || undefined,
+      minFontSize: Number.isFinite(normalized.minFontSize)
+        ? normalized.minFontSize
+        : undefined,
+      autoSplit:
+        typeof normalized.autoSplit === "boolean" ? normalized.autoSplit : undefined,
       textColor: normalized.color || undefined,
       backgroundColor: normalized.backgroundColor || undefined,
       backgroundPath: normalized.backgroundPath || "",
@@ -504,6 +562,26 @@ export async function loadEmprojSnapshot(projectPath) {
         : Number.isFinite(projectScriptureText.themeOverrides?.textContainer?.typography?.fontSize)
           ? projectScriptureText.themeOverrides.textContainer.typography.fontSize
           : undefined,
+    autosizeMode:
+      typeof projectScripturePresentation.autosizeMode === "string"
+        ? projectScripturePresentation.autosizeMode
+        : typeof projectScriptureText.themeOverrides?.textContainer?.typography?.autosizeMode ===
+            "string"
+          ? projectScriptureText.themeOverrides.textContainer.typography.autosizeMode
+          : "",
+    minFontSize:
+      Number.isFinite(projectScripturePresentation.minFontSize)
+        ? projectScripturePresentation.minFontSize
+        : Number.isFinite(projectScriptureText.themeOverrides?.textContainer?.typography?.minFontSize)
+          ? projectScriptureText.themeOverrides.textContainer.typography.minFontSize
+          : undefined,
+    autoSplit:
+      typeof projectScripturePresentation.autoSplit === "boolean"
+        ? projectScripturePresentation.autoSplit
+        : typeof projectScriptureText.themeOverrides?.textContainer?.typography?.autoSplit ===
+            "boolean"
+          ? projectScriptureText.themeOverrides.textContainer.typography.autoSplit
+          : undefined,
     color:
       typeof projectScripturePresentation.textColor === "string"
         ? projectScripturePresentation.textColor
@@ -604,6 +682,9 @@ export async function saveEmprojSnapshot(
       ? {
           fontFamily: snapshot.projectScriptureText.presentation.fontFamily,
           fontSize: snapshot.projectScriptureText.presentation.fontSize,
+          autosizeMode: snapshot.projectScriptureText.presentation.autosizeMode,
+          minFontSize: snapshot.projectScriptureText.presentation.minFontSize,
+          autoSplit: snapshot.projectScriptureText.presentation.autoSplit,
           color: snapshot.projectScriptureText.presentation.textColor,
           backgroundColor: snapshot.projectScriptureText.presentation.backgroundColor,
           backgroundPath: snapshot.projectScriptureText.presentation.backgroundPath,
