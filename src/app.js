@@ -2077,6 +2077,42 @@ function isBiblePresentationActive() {
   return isActiveMediaWindow() && activeMediaWindowContentType === "bible";
 }
 
+// True when the current live output (audience window, lower third, or the live
+// queue item) is already a scripture. Used to decide whether switching the live
+// presentation to a different verse needs an interrupt confirmation.
+function isScripturePresentationLive() {
+  if (isBiblePresentationActive()) return true;
+  if (bibleShowNowModeActive) return true;
+  if (isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive) return true;
+  const liveItem = currentLiveQueueItemForSwitchPrompt();
+  return Boolean(liveItem && isQueueItemBible(liveItem));
+}
+
+// True when the live scripture output is already mirroring the current bible
+// selection through one of the preview-sync paths, so editing/selecting it pushes
+// straight to the output without a separate show-now. This is only the case for
+// show-now mode (audience or lower third) and for editing the live queue
+// scripture in place while the selection still resolves to that same queue item.
+// Selecting a different verse than the one that is live falls through to false so
+// the caller can take the new selection live explicitly.
+function biblePreviewMirrorsLiveOutput() {
+  if (isBibleShowNowLiveMode()) return true;
+  if (
+    bibleShowNowModeActive &&
+    (bibleLowerThirdOutputActive || hasLowerThirdOutputSelected())
+  ) {
+    return true;
+  }
+  if (
+    isQueuePlaying &&
+    isBibleEditorTargetLiveItem() &&
+    bibleEntryMatchesQueueItemShallow(bibleDesignerState, mediaQueue[currentQueueIndex])
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function isPreparingSeparateCue() {
   const presentationActive =
     isQueuePresentationActive() || isActiveMediaWindow() || isLocalAppWindowPresentationActive();
@@ -4329,6 +4365,62 @@ async function setBiblePreviewText(reference, text, opts = {}) {
   return Boolean(bibleDesignerState.text);
 }
 
+// Double-clicking a verse (or verses) updates the preview as before. When
+// another presentation is already live, it also behaves like a "show now"
+// request: scripture-to-scripture swaps go live in place without interrupting
+// the operator, while interrupting any other kind of live content first asks for
+// confirmation using the same prompt the media queue uses.
+async function presentBibleSelectionFromDoubleClick(verseNumber, fallbackText) {
+  const selectedVerses = selectedBibleVerseNumbers();
+  const isMultiSelection = selectedVerses.length > 1;
+  const entry = isMultiSelection ? await bibleEntryFromSelectedVerses() : null;
+  const reference = entry
+    ? entry.reference
+    : `${bibleDesignerState.book} ${bibleDesignerState.chapter}:${verseNumber}`;
+  const referenceInput = document.getElementById("bibleReferenceInput");
+  if (referenceInput) referenceInput.value = reference;
+
+  if (entry) {
+    await setBiblePreviewText(entry.reference, entry.text, {
+      verse: entry.verse,
+      verseEnd: entry.verseEnd,
+    });
+  } else {
+    await setBiblePreviewText(reference, fallbackText, { verse: verseNumber, verseEnd: 0 });
+  }
+
+  const presentationActive =
+    isQueuePresentationActive() ||
+    isActiveMediaWindow() ||
+    isLocalAppWindowPresentationActive() ||
+    Boolean(isPlaying);
+  // Nothing else is on screen: leave the verse as a preview (existing behavior).
+  if (!presentationActive) return;
+  // The live output already mirrors this selection (show-now mode, or editing the
+  // live queue scripture in place); setBiblePreviewText() handled the update.
+  if (biblePreviewMirrorsLiveOutput()) return;
+
+  // A scripture is live but it isn't this selection (e.g. an unrelated live queue
+  // verse): take the new selection live in place. No prompt for scripture swaps.
+  if (isScripturePresentationLive()) {
+    await showBibleTextNow();
+    return;
+  }
+
+  // Something other than a scripture is live: confirm before interrupting it.
+  const liveItem = currentLiveQueueItemForSwitchPrompt();
+  const liveLabel = liveItem
+    ? liveItem.name
+    : activeLiveStream || isLiveStream(mediaFile)
+      ? "the current live stream"
+      : "the current presentation";
+  const accepted = window.confirm(
+    `Switch the live presentation from "${liveLabel}" to "${reference}"?`,
+  );
+  if (!accepted) return;
+  await showBibleTextNow();
+}
+
 function selectedBibleVerseNumbers() {
   return [...bibleVerseSelection.verses].sort((a, b) => a - b);
 }
@@ -6429,15 +6521,21 @@ async function renderBibleVerseList() {
     });
     button.addEventListener("dblclick", () => {
       cancelBibleVersePreviewSync();
-      bibleVerseSelection.verses.clear();
-      bibleVerseSelection.verses.add(verseNumber);
-      bibleVerseSelection.anchor = verseNumber;
-      const reference = `${bibleDesignerState.book} ${bibleDesignerState.chapter}:${verseNumber}`;
-      document.getElementById("bibleReferenceInput").value = reference;
+      // Honor an existing multi-verse selection when the double-clicked verse is
+      // part of it; otherwise collapse the selection to just this verse.
+      const keepMultiSelection =
+        bibleVerseSelection.verses.size > 1 && bibleVerseSelection.verses.has(verseNumber);
+      if (!keepMultiSelection) {
+        bibleVerseSelection.verses.clear();
+        bibleVerseSelection.verses.add(verseNumber);
+        bibleVerseSelection.anchor = verseNumber;
+      }
+      const selectedVerses = selectedBibleVerseNumbers();
+      bibleDesignerState.verse = selectedVerses[0] || verseNumber;
+      bibleDesignerState.verseEnd =
+        selectedVerses.length > 1 ? selectedVerses[selectedVerses.length - 1] : 0;
       syncBibleVerseListSelection();
-      void setBiblePreviewText(reference, verseText, { verse: verseNumber, verseEnd: 0 }).catch(
-        console.error,
-      );
+      void presentBibleSelectionFromDoubleClick(verseNumber, verseText).catch(console.error);
     });
     list.appendChild(button);
   });
