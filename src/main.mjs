@@ -34,7 +34,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { BibleRpcClient } from "./bible_rpc_client.min.mjs";
 import settings from "./settings.min.mjs";
-import { loadEmprojSnapshot, saveEmprojSnapshot } from "./emproj.min.mjs";
+import {
+  loadEmprojSnapshot,
+  saveEmprojSnapshot,
+  cleanupExtractedProjectMedia,
+} from "./emproj.min.mjs";
 let sessionID = 0;
 let innertubePromise = null;
 const youtubePathNTransformCache = new Map();
@@ -2003,11 +2007,18 @@ async function handleShowRelinkSummaryDialog(event, opts = {}) {
   return true;
 }
 
+let activeProjectSnapshot = null;
+
 async function handleReadProjectFile(_, filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) {
     throw new Error("Invalid project path");
   }
   const snapshot = await loadEmprojSnapshot(filePath);
+  const previousSnapshot = activeProjectSnapshot;
+  activeProjectSnapshot = snapshot;
+  if (previousSnapshot) {
+    await cleanupExtractedProjectMedia(previousSnapshot).catch(() => {});
+  }
   await writeSettings({ lastOpenedProjectPath: filePath });
   return { filePath, data: JSON.stringify(snapshot) };
 }
@@ -2301,6 +2312,11 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   bibleRpcClient.stop();
+  if (activeProjectSnapshot) {
+    const snapshotToClean = activeProjectSnapshot;
+    activeProjectSnapshot = null;
+    void cleanupExtractedProjectMedia(snapshotToClean).catch(() => {});
+  }
 });
 
 app.on("activate", () => {

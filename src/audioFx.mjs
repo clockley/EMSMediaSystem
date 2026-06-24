@@ -119,6 +119,7 @@ function makeCubicCurve(length = 32768) {
  */
 export class FadeOut {
   #mediaElements = new WeakMap();
+  #trackedElements = new Set();
   #duration;
   #interval = 50;
   #debug = false;
@@ -134,6 +135,7 @@ export class FadeOut {
     }
     if (!this.#mediaElements.has(mediaEl)) {
       this.#mediaElements.set(mediaEl, { intervalId: null });
+      this.#trackedElements.add(mediaEl);
     }
   }
 
@@ -194,10 +196,11 @@ export class FadeOut {
   detach(mediaEl) {
     this.cancel(mediaEl);
     this.#mediaElements.delete(mediaEl);
+    this.#trackedElements.delete(mediaEl);
   }
 
   detachAll() {
-    for (const mediaEl of this.#mediaElements.keys()) {
+    for (const mediaEl of [...this.#trackedElements]) {
       this.detach(mediaEl);
     }
   }

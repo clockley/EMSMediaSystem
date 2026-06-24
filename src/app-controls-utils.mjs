@@ -84,6 +84,11 @@ export class PIDController {
     this.maxHistoryLength = 32;
     this.isFirstAdjustment = true;
 
+    this.integral = 0;
+    this.lastError = 0;
+    this.lastTimeDifference = 0;
+    this.lastUpdateTime = performance.now();
+
     this.timeArray = new Float64Array(this.maxHistoryLength);
     this.diffArray = new Float64Array(this.maxHistoryLength);
     this.responseArray = new Float64Array(this.maxHistoryLength);
@@ -240,7 +245,7 @@ export class PIDController {
       this.integral = 0;
     }
 
-    if (playbackRate >= 0 || playbackRate <= 0) {
+    if (Number.isFinite(playbackRate)) {
       this.video.playbackRate = playbackRate;
     }
 

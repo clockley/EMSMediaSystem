@@ -1039,6 +1039,8 @@ function fitFullscreenScriptureRender(render, message) {
 
 function refitCurrentTextPresentation() {
   if (!textPresentationState.lastMessage) return;
+  const textContent = document.getElementById("textContent");
+  if (!textContent) return;
   fitFullscreenScriptureRender(textContent, textPresentationState.lastMessage);
 }
 
@@ -1340,15 +1342,18 @@ async function loadMedia() {
   let dashPlayer = null;
   hideStreamStatus();
 
+  const textCanvas = document.getElementById("textCanvas");
+
   if (isText) {
     installICPHandlers();
-    document.querySelector("video").style.display = "none";
-    textCanvas.style.display = "flex";
+    const videoEl = document.querySelector("video");
+    if (videoEl) videoEl.style.display = "none";
+    if (textCanvas) textCanvas.style.display = "flex";
     installTextHandlers();
     return;
   }
 
-  textCanvas.style.display = "none";
+  if (textCanvas) textCanvas.style.display = "none";
   const pptxCanvas = document.getElementById("pptxCanvas");
   if (pptxCanvas) pptxCanvas.style.display = "none";
 

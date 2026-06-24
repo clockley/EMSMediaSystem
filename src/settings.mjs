@@ -34,7 +34,7 @@ const cache = {
 
 function init(settingsDirPath) {
     cache.dirPath = settingsDirPath;
-    cache.filePath = `${settingsDirPath}/settings.json}`;
+    cache.filePath = `${settingsDirPath}/settings.json`;
     loadSettings();
 }
 

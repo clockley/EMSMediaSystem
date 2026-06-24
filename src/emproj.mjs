@@ -454,8 +454,17 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
 }
 
 export async function loadEmprojSnapshot(projectPath) {
-  const zipfile = await openZip(projectPath);
   const extractRoot = await mkdtemp(path.join(os.tmpdir(), "ems-emproj-"));
+  try {
+    return await readEmprojSnapshotInto(projectPath, extractRoot);
+  } catch (err) {
+    await rm(extractRoot, { recursive: true, force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+async function readEmprojSnapshotInto(projectPath, extractRoot) {
+  const zipfile = await openZip(projectPath);
   const extractedMediaPaths = new Map();
   const rootFiles = new Map();
 
@@ -511,7 +520,12 @@ export async function loadEmprojSnapshot(projectPath) {
 
   const queueJsonRaw = rootFiles.get("queue.json");
   if (!queueJsonRaw) throw new Error("Project missing queue.json");
-  const queueJson = JSON.parse(queueJsonRaw.toString("utf8"));
+  let queueJson;
+  try {
+    queueJson = JSON.parse(queueJsonRaw.toString("utf8"));
+  } catch (err) {
+    throw new Error(`Project queue.json is corrupt: ${err.message}`);
+  }
   const sequence = Array.isArray(queueJson.sequence) ? queueJson.sequence : [];
   let assetsJson = { assets: [] };
   const assetsJsonRaw = rootFiles.get("assets.json");
@@ -1083,12 +1097,17 @@ export async function saveEmprojSnapshot(
 export async function cleanupExtractedProjectMedia(snapshot) {
   const queue = snapshot?.mediaQueue;
   if (!Array.isArray(queue) || queue.length === 0) return;
-  const firstPath = queue[0]?.path;
-  if (typeof firstPath !== "string") return;
   const marker = `${path.sep}ems-emproj-`;
-  const idx = firstPath.indexOf(marker);
-  if (idx < 0) return;
-  const root = firstPath.slice(0, firstPath.indexOf(path.sep, idx + marker.length));
+  let root = "";
+  for (const entry of queue) {
+    const entryPath = entry?.path;
+    if (typeof entryPath !== "string") continue;
+    const idx = entryPath.indexOf(marker);
+    if (idx < 0) continue;
+    const sepIdx = entryPath.indexOf(path.sep, idx + marker.length);
+    root = sepIdx >= 0 ? entryPath.slice(0, sepIdx) : entryPath;
+    break;
+  }
   if (!root || root.length < marker.length) return;
   try {
     await rm(root, { recursive: true, force: true });
