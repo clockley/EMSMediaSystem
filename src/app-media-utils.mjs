@@ -36,16 +36,22 @@ export function isPlayInterruptedError(error) {
   );
 }
 
-export function pathToMediaUrl(filePath) {
+export function pathToMediaUrl(filePath, cacheBust) {
   if (!filePath || typeof filePath !== "string") return "";
   if (isBiblePath(filePath)) return "";
   if (/^(file|https?|blob):/i.test(filePath)) return filePath;
 
   const normalized = filePath.replace(/\\/g, "/");
+  let url;
   if (normalized.startsWith("/")) {
-    return `file://${encodeURI(normalized)}`;
+    url = `file://${encodeURI(normalized)}`;
+  } else {
+    url = `file:///${encodeURI(normalized)}`;
   }
-  return `file:///${encodeURI(normalized)}`;
+  if (typeof cacheBust === "string" && cacheBust.length > 0) {
+    url += `${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(cacheBust)}`;
+  }
+  return url;
 }
 
 export function clampMediaTime(time, duration) {
@@ -78,6 +84,67 @@ export function queueBasename(filePath) {
   return parts[parts.length - 1] || filePath;
 }
 
+export function isRemoteMediaPath(filePath) {
+  return (
+    typeof filePath === "string" &&
+    /^(https?|m3u8|mpd|blob):/i.test(filePath)
+  );
+}
+
+export function isFileBackedMediaPath(filePath) {
+  return (
+    typeof filePath === "string" &&
+    filePath.length > 0 &&
+    !isBiblePath(filePath) &&
+    !isRemoteMediaPath(filePath)
+  );
+}
+
+export function defaultLiveSourceStrategy(filePath, _type = classifyQueueMediaType(filePath)) {
+  return isFileBackedMediaPath(filePath) ? "snapshot" : "reference";
+}
+
+export function createLiveSource(filePath, opts = {}) {
+  if (!isFileBackedMediaPath(filePath)) return undefined;
+  const type = opts.type || classifyQueueMediaType(filePath);
+  return {
+    mode: opts.mode === "packaged" ? "packaged" : "linked",
+    strategy: opts.strategy || defaultLiveSourceStrategy(filePath, type),
+    stagingTier: opts.stagingTier === "full" ? "full" : "warn-only",
+    originalPath:
+      typeof opts.originalPath === "string" && opts.originalPath.length > 0
+        ? opts.originalPath
+        : filePath,
+    snapshotId: typeof opts.snapshotId === "string" ? opts.snapshotId : null,
+    pinnedMtimeMs: Number.isFinite(opts.pinnedMtimeMs) ? opts.pinnedMtimeMs : null,
+    pinnedSizeBytes: Number.isFinite(opts.pinnedSizeBytes) ? opts.pinnedSizeBytes : null,
+    pinnedFileHash:
+      typeof opts.pinnedFileHash === "string" ? opts.pinnedFileHash : null,
+    previousSnapshotId:
+      typeof opts.previousSnapshotId === "string" ? opts.previousSnapshotId : null,
+    reason: typeof opts.reason === "string" ? opts.reason : null,
+  };
+}
+
+export function normalizeLiveSource(filePath, liveSource, opts = {}) {
+  if (!isFileBackedMediaPath(filePath)) return undefined;
+  const type = opts.type || classifyQueueMediaType(filePath);
+  const source = liveSource && typeof liveSource === "object" ? liveSource : {};
+  return createLiveSource(filePath, {
+    type,
+    mode: source.mode || opts.mode,
+    strategy: source.strategy,
+    stagingTier: source.stagingTier,
+    originalPath: source.originalPath || opts.originalPath || filePath,
+    snapshotId: source.snapshotId,
+    pinnedMtimeMs: source.pinnedMtimeMs,
+    pinnedSizeBytes: source.pinnedSizeBytes,
+    pinnedFileHash: source.pinnedFileHash,
+    previousSnapshotId: source.previousSnapshotId,
+    reason: source.reason,
+  });
+}
+
 export function createQueueEntry(filePath) {
   const type = classifyQueueMediaType(filePath);
   return {
@@ -91,6 +158,7 @@ export function createQueueEntry(filePath) {
     cueStartTime: 0,
     loop: false,
     pptxSlideIndex: type === "pptx" ? -1 : undefined,
+    liveSource: createLiveSource(filePath, { type }),
   };
 }
 

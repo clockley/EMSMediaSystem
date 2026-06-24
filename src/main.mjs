@@ -27,11 +27,26 @@ import {
   session,
   shell,
 } from "electron/main";
-import { createHash } from "crypto";
-import { createReadStream } from "fs";
-import { readdir, readFile, stat } from "fs/promises";
+import { constants as fsConstants } from "fs";
+import {
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import {
+  baselineFileHashFields,
+  hashMediaFile,
+  isValidMediaFileHash,
+  MEDIA_FILE_HASH_ALG,
+  storedFileHashFromRecord,
+} from "./media-file-hash.min.mjs";
 import { BibleRpcClient } from "./bible_rpc_client.min.mjs";
 import settings from "./settings.min.mjs";
 import {
@@ -39,6 +54,7 @@ import {
   saveEmprojSnapshot,
   cleanupExtractedProjectMedia,
 } from "./emproj.min.mjs";
+import { MediaWatcher } from "./media-watcher.min.mjs";
 let sessionID = 0;
 let innertubePromise = null;
 const youtubePathNTransformCache = new Map();
@@ -52,15 +68,19 @@ let queueSwitchDialogWindow = null;
 /** IPC channel for queue-switch modal responses. */
 const QUEUE_SWITCH_DIALOG_IPC_CHANNEL = "queue-switch-dialog-response";
 let queueSwitchDialogResponseListener = null;
+let preflightDialogWindow = null;
+const PREFLIGHT_DIALOG_IPC_CHANNEL = "preflight-dialog-response";
+let preflightDialogResponseListener = null;
+let allowMainWindowClose = false;
 let pendingProjectOpenPath = null;
 const bibleRpcClient = new BibleRpcClient({
   app,
   devRoot: path.dirname(import.meta.dirname),
 });
 
-app.commandLine.appendSwitch("js-flags", "--maglev --no-use-osr");
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
-
+app.commandLine.appendSwitch('disable-features', 'MultiBufferNeverDefer');
+app.commandLine.appendSwitch('disable-background-networking');
 // Force IPv4 for all outbound connections. YouTube signs HLS/DASH segment
 // URLs against the *exact* client IP that requested the manifest (the URL
 // embeds the IP in its path, e.g. `.../ip/<ipv6>/...`). When the host has
@@ -122,8 +142,16 @@ function getHelpWindowBounds() {
 
 let mediaWindow = null;
 let lowerThirdWindow = null;
+let mediaWindowCreatePromise = null;
 let windowBounds = measurePerformance("Getting window bounds", getWindowBounds);
 let win = null;
+const mediaWatcher = new MediaWatcher({
+  sendToRenderer(channel, payload) {
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
+  },
+});
 
 function isProjectFilePath(filePath) {
   return (
@@ -261,6 +289,7 @@ function createWindow() {
   });
   win.on("maximize", handleMaximizeChange.bind(null, true));
   win.on("unmaximize", handleMaximizeChange.bind(null, false));
+  wireMainWindowCloseAutosave(win);
 
   win.on("closed", async () => {
     win = null;
@@ -427,7 +456,16 @@ function handleGetMediaWindowBounds() {
 }
 
 async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
-  return measurePerformance("Creating media window", async () => {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+    const targetDisplay = displayForExplicitIndex(displayIndex);
+    if (!targetDisplay) return null;
+    mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetDisplay));
+    mediaWindow.setFullScreen(true);
+    return mediaWindow.id;
+  }
+  if (mediaWindowCreatePromise) return mediaWindowCreatePromise;
+
+  mediaWindowCreatePromise = measurePerformance("Creating media window", async () => {
     const targetDisplay = displayForExplicitIndex(displayIndex);
     if (!targetDisplay) return null;
 
@@ -473,6 +511,12 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
 
     return createdMediaWindow.id;
   });
+
+  try {
+    return await mediaWindowCreatePromise;
+  } finally {
+    mediaWindowCreatePromise = null;
+  }
 }
 
 async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) {
@@ -1814,15 +1858,55 @@ function relinkOriginalName(item) {
   return "";
 }
 
-async function sha256FileForRelink(filePath) {
-  const hash = createHash("sha256");
-  const input = createReadStream(filePath);
-  input.on("data", (chunk) => hash.update(chunk));
-  await new Promise((resolve, reject) => {
-    input.on("end", resolve);
-    input.on("error", reject);
-  });
-  return hash.digest("hex");
+async function scoreRelinkCandidate(item, candidatePath, expectedName) {
+  let info;
+  try {
+    info = await stat(candidatePath);
+    if (!info.isFile()) return null;
+  } catch {
+    return null;
+  }
+
+  const expectedSize = Number.isFinite(item?.sizeBytes) ? item.sizeBytes : null;
+  if (expectedSize !== null && info.size !== expectedSize) {
+    return null;
+  }
+
+  let score = 100;
+  if (path.basename(candidatePath) === expectedName) score += 20;
+  if (expectedSize !== null) score += 80;
+
+  const storedHash = storedFileHashFromRecord(item);
+  if (storedHash) {
+    let computedHash = "";
+    try {
+      computedHash = await hashMediaFile(candidatePath);
+    } catch {
+      return null;
+    }
+    if (computedHash !== storedHash) return null;
+    score += 500;
+    return {
+      path: candidatePath,
+      score,
+      sizeBytes: info.size,
+      modifiedTime:
+        info.mtime instanceof Date && Number.isFinite(info.mtime.getTime())
+          ? info.mtime.toISOString()
+          : undefined,
+      ...baselineFileHashFields(computedHash),
+    };
+  }
+
+  return {
+    path: candidatePath,
+    score,
+    sizeBytes: info.size,
+    modifiedTime:
+      info.mtime instanceof Date && Number.isFinite(info.mtime.getTime())
+        ? info.mtime.toISOString()
+        : undefined,
+  };
 }
 
 async function findRelinkCandidateFiles(searchRoot, wantedNames) {
@@ -1864,51 +1948,6 @@ async function findRelinkCandidateFiles(searchRoot, wantedNames) {
   }
 
   return { candidatesByName, scannedFiles };
-}
-
-async function scoreRelinkCandidate(item, candidatePath, expectedName) {
-  let info;
-  try {
-    info = await stat(candidatePath);
-    if (!info.isFile()) return null;
-  } catch {
-    return null;
-  }
-
-  const expectedSize = Number.isFinite(item?.sizeBytes) ? item.sizeBytes : null;
-  if (expectedSize !== null && info.size !== expectedSize) {
-    return null;
-  }
-
-  let score = 100;
-  if (path.basename(candidatePath) === expectedName) score += 20;
-  if (expectedSize !== null) score += 80;
-
-  const expectedSha =
-    typeof item?.sha256 === "string" && /^[a-f0-9]{64}$/i.test(item.sha256)
-      ? item.sha256.toLowerCase()
-      : "";
-  let sha256 = "";
-  if (expectedSha) {
-    try {
-      sha256 = await sha256FileForRelink(candidatePath);
-    } catch {
-      return null;
-    }
-    if (sha256 !== expectedSha) return null;
-    score += 500;
-  }
-
-  return {
-    path: candidatePath,
-    score,
-    sizeBytes: info.size,
-    modifiedTime:
-      info.mtime instanceof Date && Number.isFinite(info.mtime.getTime())
-        ? info.mtime.toISOString()
-        : undefined,
-    sha256: sha256 || undefined,
-  };
 }
 
 async function handleRelinkMissingMedia(_, payload = {}) {
@@ -1975,7 +2014,8 @@ async function handleRelinkMissingMedia(_, payload = {}) {
       originalPath: item.originalPath,
       sizeBytes: scored[0].sizeBytes,
       modifiedTime: scored[0].modifiedTime,
-      sha256: scored[0].sha256 || item.sha256,
+      fileHash: scored[0].fileHash,
+      fileHashAlg: scored[0].fileHashAlg,
     });
   }
 
@@ -2045,7 +2085,16 @@ async function handleWriteProjectFile(_, payload) {
 
 async function handleSaveAutosaveProjectState(_, state) {
   if (!state || typeof state !== "object") return { ok: false };
+  if (typeof state.projectPath === "string") {
+    activeProjectPath = state.projectPath;
+  }
   await writeSettings({ autosaveProjectState: state });
+  return { ok: true };
+}
+
+async function handleSetActiveProjectPath(_, payload = {}) {
+  activeProjectPath =
+    payload && typeof payload.projectPath === "string" ? payload.projectPath : "";
   return { ok: true };
 }
 
@@ -2082,7 +2131,11 @@ function handleFilterMediaDropPaths(_, paths) {
 }
 
 async function handleReadFileAsArrayBuffer(_, filePath) {
-  const buf = await readFile(localFileSystemPathFromMediaPath(filePath));
+  const resolvedPath =
+    filePath && typeof filePath === "object"
+      ? await resolveStagedMediaPath(filePath)
+      : localFileSystemPathFromMediaPath(filePath);
+  const buf = await readFile(resolvedPath);
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
 }
 
@@ -2092,6 +2145,858 @@ function localFileSystemPathFromMediaPath(filePath) {
   }
   const trimmed = filePath.trim();
   return /^file:\/\//i.test(trimmed) ? fileURLToPath(trimmed) : trimmed;
+}
+
+const COW_FSTYPES_BY_PLATFORM = Object.freeze({
+  linux: new Set(["btrfs", "xfs", "zfs"]),
+  darwin: new Set(["apfs"]),
+});
+const stagingCapabilityCache = new Map();
+/** projectPath (empty string = unsaved) -> Set<snapshotId> staged this app session */
+const sessionStagingByProject = new Map();
+let activeProjectPath = "";
+
+function normalizeProjectKey(projectPath) {
+  return typeof projectPath === "string" ? projectPath : "";
+}
+
+function registerSessionStagedSnapshot(projectPath, snapshotId) {
+  const id = normalizeSnapshotId(snapshotId);
+  if (!id) return;
+  const key = normalizeProjectKey(
+    typeof projectPath === "string" ? projectPath : activeProjectPath,
+  );
+  let ids = sessionStagingByProject.get(key);
+  if (!ids) {
+    ids = new Set();
+    sessionStagingByProject.set(key, ids);
+  }
+  ids.add(id);
+}
+
+function collectSnapshotIdsFromQueue(queue) {
+  const ids = new Set();
+  if (!Array.isArray(queue)) return ids;
+  for (const item of queue) {
+    const liveSource = item?.liveSource;
+    if (
+      !liveSource ||
+      liveSource.mode !== "linked" ||
+      liveSource.strategy !== "snapshot" ||
+      liveSource.stagingTier !== "full"
+    ) {
+      continue;
+    }
+    const snapshotId = normalizeSnapshotId(liveSource.snapshotId || liveSource.pinnedFileHash);
+    const previousSnapshotId = normalizeSnapshotId(liveSource.previousSnapshotId);
+    if (snapshotId) ids.add(snapshotId);
+    if (previousSnapshotId) ids.add(previousSnapshotId);
+  }
+  return ids;
+}
+
+async function deleteStagedSnapshotsById(stagingDir, snapshotId) {
+  const normalizedId = normalizeSnapshotId(snapshotId);
+  if (!normalizedId) return;
+  let entries = [];
+  try {
+    entries = await readdir(stagingDir);
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      console.error("Failed to read media staging dir:", err);
+    }
+    return;
+  }
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (snapshotIdFromStagedFilename(entry) !== normalizedId) return;
+      try {
+        await rm(path.join(stagingDir, entry), { force: true });
+      } catch (err) {
+        if (err?.code !== "ENOENT") {
+          console.error(`Failed to remove staged media file ${entry}:`, err);
+        }
+      }
+    }),
+  );
+}
+
+async function removeReflinkProbeFiles(stagingDir) {
+  let entries = [];
+  try {
+    entries = await readdir(stagingDir);
+  } catch {
+    return;
+  }
+  await Promise.all(
+    entries
+      .filter((entry) => entry.startsWith(".ems-reflink-probe"))
+      .map((entry) => rm(path.join(stagingDir, entry), { force: true }).catch(() => {})),
+  );
+}
+
+function mediaStagingDir() {
+  return path.join(app.getPath("userData"), "media-staging");
+}
+
+const STAGED_SNAPSHOT_FILENAME_RE = /^([a-f0-9]{16})(\.[^.]+)?$/i;
+
+function normalizeSnapshotId(value) {
+  const id = typeof value === "string" ? value.toLowerCase() : "";
+  return isValidMediaFileHash(id) ? id : "";
+}
+
+function snapshotIdFromStagedFilename(filename) {
+  const match = STAGED_SNAPSHOT_FILENAME_RE.exec(String(filename || ""));
+  return match ? normalizeSnapshotId(match[1]) : "";
+}
+
+function queueItemOriginalPathForStaging(item) {
+  const liveSource = item?.liveSource;
+  if (typeof liveSource?.originalPath === "string" && liveSource.originalPath.length > 0) {
+    return liveSource.originalPath;
+  }
+  if (typeof item?.originalPath === "string" && item.originalPath.length > 0) {
+    return item.originalPath;
+  }
+  return typeof item?.path === "string" ? item.path : "";
+}
+
+/** Staged pins to keep when the linked source on disk differs from the active snapshot. */
+async function collectProtectedStagingSnapshotIds(queue) {
+  const protectedIds = new Set();
+  let mediaQueue = queue;
+  if (!Array.isArray(mediaQueue)) {
+    const { autosaveProjectState } = readSettings();
+    mediaQueue = autosaveProjectState?.mediaQueue;
+  }
+  if (!Array.isArray(mediaQueue)) return protectedIds;
+
+  for (const item of mediaQueue) {
+    const liveSource = item?.liveSource;
+    if (
+      !liveSource ||
+      liveSource.mode !== "linked" ||
+      liveSource.strategy !== "snapshot" ||
+      liveSource.stagingTier !== "full"
+    ) {
+      continue;
+    }
+    const pinnedSnapshotId = normalizeSnapshotId(
+      liveSource.pinnedFileHash || liveSource.snapshotId,
+    );
+    if (!pinnedSnapshotId) continue;
+
+    const rawPath = queueItemOriginalPathForStaging(item);
+    if (!rawPath || isRemoteMediaPath(rawPath)) continue;
+
+    const sourcePath = localFileSystemPathFromMediaPath(rawPath);
+    try {
+      const version = await computeMediaVersion(sourcePath);
+      if (version.fileHash.toLowerCase() !== pinnedSnapshotId) {
+        protectedIds.add(pinnedSnapshotId);
+        const previousSnapshotId = normalizeSnapshotId(liveSource.previousSnapshotId);
+        if (previousSnapshotId) {
+          protectedIds.add(previousSnapshotId);
+        }
+      }
+    } catch {
+      // Source missing or unreadable — retain the staged pin referenced by autosave.
+      protectedIds.add(pinnedSnapshotId);
+      const previousSnapshotId = normalizeSnapshotId(liveSource.previousSnapshotId);
+      if (previousSnapshotId) {
+        protectedIds.add(previousSnapshotId);
+      }
+    }
+  }
+  return protectedIds;
+}
+
+/**
+ * Remove resolved staged clones for one project. Keeps snapshots that still
+ * need operator action (linked source on disk differs from the active pin).
+ */
+async function cleanupResolvedStagingForProject(projectPath, queue) {
+  const projectKey = normalizeProjectKey(projectPath);
+  const protectedIds = await collectProtectedStagingSnapshotIds(queue);
+  const stagingDir = mediaStagingDir();
+  const idsToEvaluate = new Set(collectSnapshotIdsFromQueue(queue));
+  const sessionIds = sessionStagingByProject.get(projectKey);
+  if (sessionIds) {
+    for (const id of sessionIds) idsToEvaluate.add(id);
+  }
+  if (idsToEvaluate.size === 0) {
+    await removeReflinkProbeFiles(stagingDir);
+    return;
+  }
+
+  for (const snapshotId of idsToEvaluate) {
+    if (protectedIds.has(snapshotId)) continue;
+    await deleteStagedSnapshotsById(stagingDir, snapshotId);
+    sessionIds?.delete(snapshotId);
+  }
+  if (sessionIds && sessionIds.size === 0) {
+    sessionStagingByProject.delete(projectKey);
+  }
+  await removeReflinkProbeFiles(stagingDir);
+}
+
+/** Drop resolved staging for the active project; keep unresolved keep-old pins. */
+async function cleanupMediaStagingDir() {
+  const { autosaveProjectState } = readSettings();
+  const projectPath =
+    typeof autosaveProjectState?.projectPath === "string"
+      ? autosaveProjectState.projectPath
+      : activeProjectPath;
+  const queue = autosaveProjectState?.mediaQueue;
+  try {
+    await cleanupResolvedStagingForProject(projectPath, queue);
+  } catch (err) {
+    console.error("Failed to clean resolved media staging files:", err);
+  }
+
+  // Other projects touched this session no longer have autosave context — remove
+  // their resolved session staging so the shared folder stays tidy.
+  const currentKey = normalizeProjectKey(projectPath);
+  for (const [projectKey, sessionIds] of [...sessionStagingByProject.entries()]) {
+    if (projectKey === currentKey) continue;
+    for (const snapshotId of [...sessionIds]) {
+      await deleteStagedSnapshotsById(mediaStagingDir(), snapshotId);
+      sessionIds.delete(snapshotId);
+    }
+    if (sessionIds.size === 0) {
+      sessionStagingByProject.delete(projectKey);
+    }
+  }
+
+  stagingCapabilityCache.clear();
+}
+
+async function handleCleanupProjectStaging(_, payload = {}) {
+  const projectPath =
+    typeof payload?.projectPath === "string" ? payload.projectPath : activeProjectPath;
+  const queue = Array.isArray(payload?.mediaQueue) ? payload.mediaQueue : [];
+  await cleanupResolvedStagingForProject(projectPath, queue);
+  return { ok: true };
+}
+
+function decodeMountPath(value) {
+  return String(value || "").replace(/\\([0-7]{3})/g, (_match, octal) =>
+    String.fromCharCode(Number.parseInt(octal, 8)),
+  );
+}
+
+function pathWithinMount(filePath, mountPoint) {
+  const normalizedPath = path.resolve(filePath);
+  const normalizedMount = path.resolve(mountPoint);
+  if (normalizedMount === path.parse(normalizedMount).root) return true;
+  return (
+    normalizedPath === normalizedMount ||
+    normalizedPath.startsWith(`${normalizedMount}${path.sep}`)
+  );
+}
+
+async function linuxFilesystemTypeForPath(filePath) {
+  let mountinfo = "";
+  try {
+    mountinfo = await readFile("/proc/self/mountinfo", "utf8");
+  } catch {
+    return null;
+  }
+  const resolvedPath = path.resolve(filePath);
+  let best = null;
+  for (const line of mountinfo.split("\n")) {
+    if (!line.trim()) continue;
+    const parts = line.split(" ");
+    const separatorIndex = parts.indexOf("-");
+    if (separatorIndex < 0 || separatorIndex + 1 >= parts.length) continue;
+    const mountPoint = decodeMountPath(parts[4]);
+    if (!pathWithinMount(resolvedPath, mountPoint)) continue;
+    if (!best || mountPoint.length > best.mountPoint.length) {
+      best = {
+        mountPoint,
+        filesystem: parts[separatorIndex + 1],
+      };
+    }
+  }
+  return best?.filesystem || null;
+}
+
+async function filesystemTypeForPath(filePath) {
+  if (process.platform === "linux") {
+    return linuxFilesystemTypeForPath(filePath);
+  }
+  return null;
+}
+
+function stagingCapabilityPayload(tier, reason, filesystem, stagingDir) {
+  return {
+    tier,
+    reason,
+    filesystem: filesystem || null,
+    stagingDir,
+  };
+}
+
+async function canReflinkOnMount(stagingDir) {
+  const probeSrc = path.join(stagingDir, ".ems-reflink-probe-src");
+  const probeDst = path.join(stagingDir, ".ems-reflink-probe-dst");
+  await writeFile(probeSrc, "x");
+  try {
+    // Match ensureStagedMediaFile: FICLONE works on ZFS/XFS/Btrfs/APFS but
+    // FICLONE_FORCE returns ENOTSUP on some CoW filesystems (notably ZFS).
+    await copyFile(
+      probeSrc,
+      probeDst,
+      fsConstants.COPYFILE_EXCL | fsConstants.COPYFILE_FICLONE,
+    );
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await rm(probeSrc, { force: true }).catch(() => {});
+    await rm(probeDst, { force: true }).catch(() => {});
+  }
+}
+
+async function getSessionMediaStagingCapability() {
+  const stagingDir = mediaStagingDir();
+  if (process.platform === "win32") {
+    return stagingCapabilityPayload("warn-only", "windows", null, stagingDir);
+  }
+  await mkdir(stagingDir, { recursive: true });
+  const stagingRealPath = await realpath(stagingDir).catch(() => stagingDir);
+  const stagingInfo = await stat(stagingRealPath);
+  const filesystem = await filesystemTypeForPath(stagingRealPath);
+  const supported = COW_FSTYPES_BY_PLATFORM[process.platform];
+  if (!supported || !supported.has(filesystem)) {
+    return stagingCapabilityPayload(
+      "warn-only",
+      "unsupported-filesystem",
+      filesystem,
+      stagingDir,
+    );
+  }
+  const cacheKey = `${stagingInfo.dev}:${filesystem}`;
+  if (!stagingCapabilityCache.has(cacheKey)) {
+    stagingCapabilityCache.set(cacheKey, await canReflinkOnMount(stagingDir));
+  }
+  if (!stagingCapabilityCache.get(cacheKey)) {
+    return stagingCapabilityPayload(
+      "warn-only",
+      "reflink-unsupported",
+      filesystem,
+      stagingDir,
+    );
+  }
+  return stagingCapabilityPayload("full", null, filesystem, stagingDir);
+}
+
+async function getItemMediaStagingCapability(sourcePath) {
+  const sessionCapability = await getSessionMediaStagingCapability();
+  if (sessionCapability.tier !== "full") return sessionCapability;
+  let sourceRealPath;
+  let stagingRealPath;
+  try {
+    sourceRealPath = await realpath(sourcePath);
+    stagingRealPath = await realpath(sessionCapability.stagingDir);
+  } catch {
+    return stagingCapabilityPayload(
+      "warn-only",
+      "unsupported-filesystem",
+      sessionCapability.filesystem,
+      sessionCapability.stagingDir,
+    );
+  }
+  const [sourceInfo, stagingInfo] = await Promise.all([
+    stat(sourceRealPath),
+    stat(stagingRealPath),
+  ]);
+  const sourceFilesystem = await filesystemTypeForPath(sourceRealPath);
+  const supported = COW_FSTYPES_BY_PLATFORM[process.platform];
+  if (!supported || !supported.has(sourceFilesystem)) {
+    return stagingCapabilityPayload(
+      "warn-only",
+      "unsupported-filesystem",
+      sourceFilesystem,
+      sessionCapability.stagingDir,
+    );
+  }
+  if (sourceInfo.dev !== stagingInfo.dev) {
+    return stagingCapabilityPayload(
+      "warn-only",
+      "cross-device",
+      sourceFilesystem,
+      sessionCapability.stagingDir,
+    );
+  }
+  return stagingCapabilityPayload(
+    "full",
+    null,
+    sourceFilesystem,
+    sessionCapability.stagingDir,
+  );
+}
+
+function mediaFileMtimeIso(info) {
+  return info.mtime instanceof Date && Number.isFinite(info.mtime.getTime())
+    ? info.mtime.toISOString()
+    : undefined;
+}
+
+async function computeMediaVersion(fsPath) {
+  const info = await stat(fsPath);
+  if (!info.isFile()) throw new Error("Media source is not a file");
+  const fileHash = await hashMediaFile(fsPath);
+  return {
+    fileHash,
+    fileHashAlg: MEDIA_FILE_HASH_ALG,
+    sizeBytes: info.size,
+    modifiedTime: mediaFileMtimeIso(info),
+    mtimeMs: info.mtimeMs,
+  };
+}
+
+function stagedMediaPathForSnapshot(stagingDir, sourcePath, snapshotId) {
+  const ext = path.extname(sourcePath || "").toLowerCase();
+  return path.join(stagingDir, `${snapshotId}${ext}`);
+}
+
+async function ensureStagedMediaFile(
+  sourcePath,
+  snapshotId,
+  capability,
+  projectPath = activeProjectPath,
+) {
+  const stagedPath = stagedMediaPathForSnapshot(
+    capability.stagingDir,
+    sourcePath,
+    snapshotId,
+  );
+  try {
+    const existing = await stat(stagedPath);
+    if (existing.isFile()) {
+      registerSessionStagedSnapshot(projectPath, snapshotId);
+      return stagedPath;
+    }
+  } catch {}
+  await mkdir(path.dirname(stagedPath), { recursive: true });
+  await copyFile(
+    sourcePath,
+    stagedPath,
+    fsConstants.COPYFILE_EXCL | fsConstants.COPYFILE_FICLONE,
+  ).catch(async (err) => {
+    if (err?.code === "EEXIST") return;
+    throw err;
+  });
+  registerSessionStagedSnapshot(projectPath, snapshotId);
+  return stagedPath;
+}
+
+function requestedLiveSourceStrategy(filePath, type, liveSource) {
+  if (liveSource?.mode === "packaged") return "reference";
+  return filePath || type ? "snapshot" : "reference";
+}
+
+function liveSourceModeForPin(liveSource) {
+  return liveSource?.mode === "packaged" ? "packaged" : "linked";
+}
+
+function activePinnedSnapshotId(liveSource) {
+  return normalizeSnapshotId(liveSource?.snapshotId || liveSource?.pinnedFileHash);
+}
+
+function pinnedModifiedTimeIso(liveSource, stagedStat = null) {
+  if (Number.isFinite(liveSource?.pinnedMtimeMs)) {
+    return new Date(liveSource.pinnedMtimeMs).toISOString();
+  }
+  if (stagedStat) return mediaFileMtimeIso(stagedStat);
+  return undefined;
+}
+
+async function stagedSnapshotFileExists(stagingDir, sourcePath, snapshotId) {
+  const stagedPath = stagedMediaPathForSnapshot(stagingDir, sourcePath, snapshotId);
+  try {
+    const info = await stat(stagedPath);
+    return info.isFile() ? { stagedPath, info } : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildLinkedSnapshotPinResult(
+  rawPath,
+  sourcePath,
+  snapshotId,
+  capability,
+  opts = {},
+) {
+  const previousLiveSource =
+    opts.previousLiveSource && typeof opts.previousLiveSource === "object"
+      ? opts.previousLiveSource
+      : {};
+  const stagedStat = opts.stagedStat || null;
+  const pinnedMtimeMs = Number.isFinite(opts.pinnedMtimeMs)
+    ? opts.pinnedMtimeMs
+    : stagedStat?.mtimeMs ?? null;
+  const pinnedSizeBytes = Number.isFinite(opts.pinnedSizeBytes)
+    ? opts.pinnedSizeBytes
+    : stagedStat?.size ?? null;
+  const resolvedPath =
+    typeof opts.resolvedPath === "string" && opts.resolvedPath.length > 0
+      ? opts.resolvedPath
+      : stagedMediaPathForSnapshot(capability.stagingDir, sourcePath, snapshotId);
+  return {
+    path: rawPath,
+    ...baselineFileHashFields(snapshotId),
+    sizeBytes: pinnedSizeBytes,
+    modifiedTime: pinnedModifiedTimeIso({ pinnedMtimeMs }, stagedStat),
+    liveSource: {
+      mode: "linked",
+      strategy: "snapshot",
+      stagingTier: capability.tier,
+      originalPath: previousLiveSource.originalPath || rawPath,
+      snapshotId,
+      pinnedMtimeMs,
+      pinnedSizeBytes,
+      pinnedFileHash: snapshotId,
+      previousSnapshotId:
+        normalizeSnapshotId(opts.previousSnapshotId) ||
+        normalizeSnapshotId(previousLiveSource.previousSnapshotId) ||
+        null,
+      reason: typeof opts.reason === "string" ? opts.reason : null,
+    },
+    resolvedPath,
+  };
+}
+
+/** Reuse an existing staged clone when the operator kept an older pinned version. */
+async function tryResolvePreservedStagedPin({
+  sourcePath,
+  rawPath,
+  previousLiveSource,
+  capability,
+  diskVersion,
+  forceRefresh,
+  projectPath = activeProjectPath,
+}) {
+  if (forceRefresh) return null;
+  const pinnedSnapshotId = activePinnedSnapshotId(previousLiveSource);
+  if (!pinnedSnapshotId || capability.tier !== "full") return null;
+  if (diskVersion.fileHash.toLowerCase() === pinnedSnapshotId) return null;
+
+  const staged = await stagedSnapshotFileExists(
+    capability.stagingDir,
+    sourcePath,
+    pinnedSnapshotId,
+  );
+  if (!staged) return null;
+
+  registerSessionStagedSnapshot(projectPath, pinnedSnapshotId);
+
+  return buildLinkedSnapshotPinResult(rawPath, sourcePath, pinnedSnapshotId, capability, {
+    previousLiveSource,
+    stagedStat: staged.info,
+    resolvedPath: staged.stagedPath,
+    pinnedMtimeMs: Number.isFinite(previousLiveSource.pinnedMtimeMs)
+      ? previousLiveSource.pinnedMtimeMs
+      : staged.info.mtimeMs,
+    pinnedSizeBytes: Number.isFinite(previousLiveSource.pinnedSizeBytes)
+      ? previousLiveSource.pinnedSizeBytes
+      : staged.info.size,
+  });
+}
+
+async function pinMediaSource(payload = {}) {
+  const rawPath =
+    typeof payload?.path === "string"
+      ? payload.path
+      : typeof payload?.originalPath === "string"
+        ? payload.originalPath
+        : "";
+  if (!rawPath || isRemoteMediaPath(rawPath)) {
+    return null;
+  }
+  const sourcePath = localFileSystemPathFromMediaPath(rawPath);
+  const type = typeof payload?.type === "string" ? payload.type : "";
+  const previousLiveSource =
+    payload?.liveSource && typeof payload.liveSource === "object"
+      ? payload.liveSource
+      : {};
+  const mode = liveSourceModeForPin(previousLiveSource);
+  const requestedStrategy = requestedLiveSourceStrategy(
+    sourcePath,
+    type,
+    previousLiveSource,
+  );
+  const version = await computeMediaVersion(sourcePath);
+  let forceRefresh = payload?.forceRefresh === true;
+  const verifyStagedPin = payload?.verifyStagedPin === true;
+  const projectPath =
+    typeof payload?.projectPath === "string" ? payload.projectPath : activeProjectPath;
+
+  if (mode === "packaged") {
+    return {
+      path: rawPath,
+      ...baselineFileHashFields(version.fileHash),
+      sizeBytes: version.sizeBytes,
+      modifiedTime: version.modifiedTime,
+      liveSource: {
+        mode: "packaged",
+        strategy: "reference",
+        stagingTier: "full",
+        originalPath: previousLiveSource.originalPath || rawPath,
+        snapshotId: null,
+        pinnedMtimeMs: version.mtimeMs,
+        pinnedSizeBytes: version.sizeBytes,
+        pinnedFileHash: version.fileHash,
+        previousSnapshotId: null,
+        reason: null,
+      },
+      resolvedPath: sourcePath,
+    };
+  }
+
+  let capability = await getItemMediaStagingCapability(sourcePath);
+  let strategy = requestedStrategy;
+  let snapshotId = null;
+  let resolvedPath = sourcePath;
+  let previousSnapshotId =
+    typeof previousLiveSource.previousSnapshotId === "string"
+      ? previousLiveSource.previousSnapshotId
+      : null;
+
+  if (requestedStrategy === "snapshot" && capability.tier === "full") {
+    const preservedPin = await tryResolvePreservedStagedPin({
+      sourcePath,
+      rawPath,
+      previousLiveSource,
+      capability,
+      diskVersion: version,
+      forceRefresh,
+      projectPath,
+    });
+    if (preservedPin) {
+      return preservedPin;
+    }
+
+    const pinnedSnapshotId = activePinnedSnapshotId(previousLiveSource);
+    if (!forceRefresh && pinnedSnapshotId) {
+      const staged = await stagedSnapshotFileExists(
+        capability.stagingDir,
+        sourcePath,
+        pinnedSnapshotId,
+      );
+      if (!staged) {
+        if (pinnedSnapshotId === version.fileHash.toLowerCase()) {
+          resolvedPath = await ensureStagedMediaFile(
+            sourcePath,
+            pinnedSnapshotId,
+            capability,
+            projectPath,
+          );
+          return buildLinkedSnapshotPinResult(
+            rawPath,
+            sourcePath,
+            pinnedSnapshotId,
+            capability,
+            {
+              previousLiveSource,
+              resolvedPath,
+              pinnedMtimeMs: version.mtimeMs,
+              pinnedSizeBytes: version.sizeBytes,
+            },
+          );
+        }
+        if (verifyStagedPin) {
+          console.warn(
+            "Staged keep-old pin missing on restore; reloading linked source:",
+            rawPath,
+          );
+          forceRefresh = true;
+          previousSnapshotId = pinnedSnapshotId;
+        }
+      }
+    }
+
+    try {
+      resolvedPath = await ensureStagedMediaFile(
+        sourcePath,
+        version.fileHash,
+        capability,
+        projectPath,
+      );
+      snapshotId = version.fileHash;
+      if (
+        typeof previousLiveSource.snapshotId === "string" &&
+        previousLiveSource.snapshotId.length > 0 &&
+        previousLiveSource.snapshotId !== snapshotId
+      ) {
+        previousSnapshotId = previousLiveSource.snapshotId;
+        registerSessionStagedSnapshot(projectPath, previousSnapshotId);
+      }
+    } catch (err) {
+      console.error("Failed to stage media source; falling back to warn-only:", err);
+      capability = {
+        ...capability,
+        tier: "warn-only",
+        reason: err?.code || "reflink-unsupported",
+      };
+      strategy = "reference";
+      snapshotId = null;
+      resolvedPath = sourcePath;
+    }
+  } else if (capability.tier !== "full") {
+    strategy = "reference";
+  }
+
+  return {
+    path: rawPath,
+    ...baselineFileHashFields(version.fileHash),
+    sizeBytes: version.sizeBytes,
+    modifiedTime: version.modifiedTime,
+    liveSource: {
+      mode: "linked",
+      strategy,
+      stagingTier: capability.tier,
+      originalPath: previousLiveSource.originalPath || rawPath,
+      snapshotId,
+      pinnedMtimeMs: version.mtimeMs,
+      pinnedSizeBytes: version.sizeBytes,
+      pinnedFileHash: version.fileHash,
+      previousSnapshotId,
+      reason: capability.reason,
+    },
+    resolvedPath,
+  };
+}
+
+async function resolveStagedMediaPath(payload = {}) {
+  if (typeof payload === "string") {
+    return localFileSystemPathFromMediaPath(payload);
+  }
+  const liveSource =
+    payload?.liveSource && typeof payload.liveSource === "object"
+      ? payload.liveSource
+      : {};
+  const rawPath =
+    typeof payload?.path === "string"
+      ? payload.path
+      : typeof liveSource.originalPath === "string"
+        ? liveSource.originalPath
+        : "";
+  if (!rawPath || isRemoteMediaPath(rawPath)) return rawPath;
+  const sourcePath = localFileSystemPathFromMediaPath(rawPath);
+  if (
+    liveSource.mode === "linked" &&
+    liveSource.strategy === "snapshot" &&
+    liveSource.stagingTier === "full" &&
+    typeof liveSource.snapshotId === "string" &&
+    liveSource.snapshotId.length > 0
+  ) {
+    const capability = await getSessionMediaStagingCapability();
+    const pinnedSnapshotId = activePinnedSnapshotId(liveSource);
+    if (!pinnedSnapshotId) return sourcePath;
+    const staged = await stagedSnapshotFileExists(
+      capability.stagingDir,
+      sourcePath,
+      pinnedSnapshotId,
+    );
+    if (staged) {
+      registerSessionStagedSnapshot(activeProjectPath, pinnedSnapshotId);
+      return staged.stagedPath;
+    }
+
+    let diskVersion = null;
+    try {
+      diskVersion = await computeMediaVersion(sourcePath);
+    } catch {
+      return sourcePath;
+    }
+    if (diskVersion.fileHash.toLowerCase() === pinnedSnapshotId) {
+      try {
+        return await ensureStagedMediaFile(
+          sourcePath,
+          pinnedSnapshotId,
+          capability,
+          activeProjectPath,
+        );
+      } catch {
+        return sourcePath;
+      }
+    }
+
+    // Staged keep-old bytes are gone — read from the linked source instead of ENOENT.
+    return sourcePath;
+  }
+  return sourcePath;
+}
+
+async function handleGetMediaStagingCapability(_, payload = {}) {
+  const sourceCandidate =
+    typeof payload === "string"
+      ? payload
+      : typeof payload?.path === "string"
+        ? payload.path
+        : "";
+  const sourcePath = sourceCandidate
+    ? localFileSystemPathFromMediaPath(sourceCandidate)
+    : "";
+  if (sourcePath) return getItemMediaStagingCapability(sourcePath);
+  return getSessionMediaStagingCapability();
+}
+
+async function handlePinMediaSource(_, payload) {
+  return pinMediaSource(payload);
+}
+
+async function handleResolveStagedMediaPath(_, payload) {
+  return resolveStagedMediaPath(payload);
+}
+
+async function handleApproveMediaRefresh(_, payload) {
+  return pinMediaSource({ ...(payload || {}), forceRefresh: true });
+}
+
+async function handleRollbackMediaRefresh(_, payload = {}) {
+  const liveSource =
+    payload?.liveSource && typeof payload.liveSource === "object"
+      ? payload.liveSource
+      : null;
+  if (
+    !liveSource ||
+    liveSource.strategy !== "snapshot" ||
+    typeof liveSource.previousSnapshotId !== "string" ||
+    liveSource.previousSnapshotId.length === 0
+  ) {
+    return null;
+  }
+  return {
+    liveSource: {
+      ...liveSource,
+      snapshotId: liveSource.previousSnapshotId,
+      previousSnapshotId:
+        typeof liveSource.snapshotId === "string" ? liveSource.snapshotId : null,
+      pinnedFileHash: liveSource.previousSnapshotId,
+    },
+  };
+}
+
+async function handleReadMediaOriginalBytes(_, payload = {}) {
+  const rawPath =
+    typeof payload === "string"
+      ? payload
+      : typeof payload?.originalPath === "string"
+        ? payload.originalPath
+        : typeof payload?.path === "string"
+          ? payload.path
+          : "";
+  const buf = await readFile(localFileSystemPathFromMediaPath(rawPath));
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
+function handleRegisterMediaWatches(_, items) {
+  return mediaWatcher.sync(items);
 }
 
 async function handleCheckMediaPathsExist(_, paths) {
@@ -2123,6 +3028,346 @@ async function handleCheckMediaPathsExist(_, paths) {
   return out;
 }
 
+function isRemoteMediaPath(p) {
+  return typeof p === "string" && /^(https?|m3u8|mpd|blob):/i.test(p);
+}
+
+async function computeMediaBaseline(p) {
+  if (isRemoteMediaPath(p)) return null;
+  let fsPath;
+  let info;
+  try {
+    fsPath = localFileSystemPathFromMediaPath(p);
+    info = await stat(fsPath);
+    if (!info.isFile()) return null;
+  } catch {
+    return null;
+  }
+  let fileHash;
+  try {
+    fileHash = await hashMediaFile(fsPath);
+  } catch {
+    return {
+      sizeBytes: info.size,
+      modifiedTime: mediaFileMtimeIso(info),
+    };
+  }
+  return {
+    sizeBytes: info.size,
+    modifiedTime: mediaFileMtimeIso(info),
+    ...baselineFileHashFields(fileHash),
+  };
+}
+
+async function handleComputeMediaBaselines(_, paths) {
+  if (!Array.isArray(paths)) return [];
+  const out = [];
+  for (const p of paths) {
+    const baseline = await computeMediaBaseline(p);
+    out.push({ path: p, baseline: baseline?.fileHash ? baseline : null });
+  }
+  return out;
+}
+
+// Classify each item against its stored baseline {sizeBytes, modifiedTime, fileHash}.
+// Status is one of: ok | missing | changed | unverifiable.
+// Strategy: compare size+mtime first (cheap); hash with XXH3 only when metadata
+// drifted and a baseline fingerprint exists.
+async function handlePreflightCheckMedia(_, items) {
+  if (!Array.isArray(items)) return [];
+  const out = [];
+  for (const raw of items) {
+    const p = typeof raw?.path === "string" ? raw.path : "";
+    if (!p) {
+      out.push({ path: p, status: "missing" });
+      continue;
+    }
+    if (isRemoteMediaPath(p)) {
+      out.push({ path: p, status: "ok" });
+      continue;
+    }
+    let fsPath;
+    let info;
+    try {
+      fsPath = localFileSystemPathFromMediaPath(p);
+      info = await stat(fsPath);
+      if (!info.isFile()) throw new Error("Not a file");
+    } catch {
+      out.push({ path: p, status: "missing" });
+      continue;
+    }
+    const currentSizeBytes = info.size;
+    const currentModifiedTime = mediaFileMtimeIso(info);
+    const currentMtimeMs = info.mtimeMs;
+    const baseSize = Number.isFinite(raw?.sizeBytes) ? raw.sizeBytes : null;
+    const baseMtime = typeof raw?.modifiedTime === "string" ? raw.modifiedTime : "";
+    const storedHash = storedFileHashFromRecord(raw);
+    const hasBaseline =
+      baseSize !== null || Boolean(baseMtime) || storedHash !== null;
+    if (!hasBaseline) {
+      out.push({
+        path: p,
+        status: "unverifiable",
+        currentSizeBytes,
+        currentModifiedTime,
+        currentMtimeMs,
+      });
+      continue;
+    }
+    if (baseSize !== null && currentSizeBytes !== baseSize) {
+      out.push({
+        path: p,
+        status: "changed",
+        confirmedByHash: false,
+        currentSizeBytes,
+        currentModifiedTime,
+        currentMtimeMs,
+      });
+      continue;
+    }
+    let needConfirm;
+    if (baseMtime) {
+      if (currentModifiedTime === baseMtime) {
+        out.push({ path: p, status: "ok", currentSizeBytes, currentModifiedTime, currentMtimeMs });
+        continue;
+      }
+      needConfirm = true;
+    } else {
+      needConfirm = storedHash !== null;
+    }
+    if (!needConfirm) {
+      out.push({ path: p, status: "ok", currentSizeBytes, currentModifiedTime, currentMtimeMs });
+      continue;
+    }
+    if (storedHash) {
+      let computedHash = "";
+      try {
+        computedHash = await hashMediaFile(fsPath);
+      } catch {
+        computedHash = "";
+      }
+      if (computedHash && computedHash === storedHash) {
+        out.push({
+          path: p,
+          status: "ok",
+          currentSizeBytes,
+          currentModifiedTime,
+          currentMtimeMs,
+          currentFileHash: computedHash,
+          currentFileHashAlg: MEDIA_FILE_HASH_ALG,
+        });
+      } else {
+        out.push({
+          path: p,
+          status: "changed",
+          confirmedByHash: true,
+          currentSizeBytes,
+          currentModifiedTime,
+          currentMtimeMs,
+          currentFileHash: computedHash || undefined,
+          currentFileHashAlg: computedHash ? MEDIA_FILE_HASH_ALG : undefined,
+        });
+      }
+      continue;
+    }
+    out.push({
+      path: p,
+      status: "changed",
+      confirmedByHash: false,
+      currentSizeBytes,
+      currentModifiedTime,
+      currentMtimeMs,
+    });
+  }
+  return out;
+}
+
+function wireMainWindowCloseAutosave(mainWindow) {
+  allowMainWindowClose = false;
+  mainWindow.on("close", (event) => {
+    if (allowMainWindowClose) return;
+    if (!mainWindow.webContents || mainWindow.webContents.isDestroyed()) return;
+    event.preventDefault();
+    let finished = false;
+    const finishClose = () => {
+      if (finished) return;
+      finished = true;
+      ipcMain.removeListener("app-close-autosave-complete", onAutosaveComplete);
+      allowMainWindowClose = true;
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.close();
+      }
+    };
+    const onAutosaveComplete = () => finishClose();
+    ipcMain.once("app-close-autosave-complete", onAutosaveComplete);
+    mainWindow.webContents.send("app-close-autosave-requested");
+    setTimeout(finishClose, 30000);
+  });
+}
+
+function createPreflightDialogWindow(parentWindow, payload) {
+  return new Promise((resolve) => {
+    if (preflightDialogWindow && !preflightDialogWindow.isDestroyed()) {
+      if (!preflightDialogWindow.webContents.isDestroyed()) {
+        preflightDialogWindow.focus();
+        preflightDialogWindow.webContents.focus();
+        resolve("dismiss");
+        return;
+      }
+      preflightDialogWindow = null;
+    }
+
+    let resolved = false;
+    const finish = (action = "dismiss") => {
+      if (resolved) return;
+      resolved = true;
+      if (preflightDialogResponseListener) {
+        ipcMain.removeListener(
+          PREFLIGHT_DIALOG_IPC_CHANNEL,
+          preflightDialogResponseListener,
+        );
+        preflightDialogResponseListener = null;
+      }
+      resolve(action);
+    };
+
+    const onResponse = (_event, action) => {
+      const dlg = preflightDialogWindow;
+      if (!dlg || dlg.isDestroyed()) {
+        return false;
+      }
+      const normalizedAction =
+        action === "reload" || action === "keep" || action === "ok"
+          ? action
+          : "dismiss";
+      finish(normalizedAction);
+      if (!preflightDialogWindow.isDestroyed()) {
+        preflightDialogWindow.close();
+      }
+      return true;
+    };
+
+    if (preflightDialogResponseListener) {
+      ipcMain.removeListener(
+        PREFLIGHT_DIALOG_IPC_CHANNEL,
+        preflightDialogResponseListener,
+      );
+    }
+    preflightDialogResponseListener = onResponse;
+    ipcMain.on(PREFLIGHT_DIALOG_IPC_CHANNEL, onResponse);
+
+    const changedCount = Array.isArray(payload?.changedItems)
+      ? payload.changedItems.length
+      : 0;
+    const missingCount = Array.isArray(payload?.missingItems)
+      ? payload.missingItems.length
+      : 0;
+    const rowCount = changedCount + missingCount;
+    const sectionCount =
+      (changedCount > 0 ? 1 : 0) + (missingCount > 0 ? 1 : 0);
+    // Base height fits header + intro + one section title + one row + OK without scrolling.
+    const dialogHeight = Math.min(
+      680,
+      Math.max(420, 340 + sectionCount * 36 + rowCount * 58),
+    );
+
+    preflightDialogWindow = new BrowserWindow({
+      parent: parentWindow,
+      modal: true,
+      width: 520,
+      height: dialogHeight,
+      minWidth: 420,
+      minHeight: 420,
+      resizable: true,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      frame: false,
+      transparent: true,
+      acceptFirstMouse: true,
+      show: false,
+      skipTaskbar: true,
+      title: "Media Preflight",
+      backgroundColor: "#00000000",
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: false,
+        webviewTag: false,
+        navigateOnDragDrop: false,
+        spellcheck: false,
+        devTools: isDevMode,
+        preload: path.join(import.meta.dirname, "preflight_dialog_preload.min.mjs"),
+      },
+    });
+
+    preflightDialogWindow.once("closed", () => {
+      if (preflightDialogResponseListener) {
+        ipcMain.removeListener(
+          PREFLIGHT_DIALOG_IPC_CHANNEL,
+          preflightDialogResponseListener,
+        );
+        preflightDialogResponseListener = null;
+      }
+      preflightDialogWindow = null;
+      finish();
+    });
+
+    preflightDialogWindow.loadFile("derived/src/preflight_dialog.prod.html");
+
+    preflightDialogWindow.webContents.once("did-finish-load", () => {
+      if (!preflightDialogWindow || preflightDialogWindow.isDestroyed()) {
+        return;
+      }
+      const literal = JSON.stringify(payload ?? {});
+      preflightDialogWindow.webContents
+        .executeJavaScript(
+          `window.preflightDialog?.render?.(${literal});`,
+        )
+        .catch(() => {});
+    });
+
+    preflightDialogWindow.once("ready-to-show", () => {
+      if (!preflightDialogWindow || preflightDialogWindow.isDestroyed()) {
+        return;
+      }
+      const parentBounds = parentWindow.getBounds();
+      const w = 520;
+      const h = dialogHeight;
+      const x = parentBounds.x + (parentBounds.width - w) / 2;
+      const y = parentBounds.y + (parentBounds.height - h) / 2;
+      preflightDialogWindow.setBounds({ x, y, width: w, height: h });
+      preflightDialogWindow.show();
+      preflightDialogWindow.focus();
+      if (!preflightDialogWindow.webContents.isDestroyed()) {
+        preflightDialogWindow.webContents.focus();
+      }
+    });
+
+    preflightDialogWindow.webContents.setWindowOpenHandler(({ url }) => {
+      shell.openExternal(url);
+      return { action: "deny" };
+    });
+  });
+}
+
+async function handleShowPreflightSummaryDialog(event, opts = {}) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) return "dismiss";
+  const changedItems = Array.isArray(opts?.changedItems) ? opts.changedItems : [];
+  const missingItems = Array.isArray(opts?.missingItems) ? opts.missingItems : [];
+  const actionMode =
+    opts?.actionMode === "choice" || opts?.actionMode === "reload-only"
+      ? opts.actionMode
+      : "ok";
+  if (changedItems.length === 0 && missingItems.length === 0) return "ok";
+  return createPreflightDialogWindow(mainWindow, {
+    changedItems,
+    missingItems,
+    actionMode,
+  });
+}
+
 async function handleBibleRPC(_event, method, params = []) {
   if (typeof method !== "string" || !method.startsWith("bible.")) {
     throw new Error("Invalid Bible RPC method");
@@ -2151,11 +3396,23 @@ function setIPC() {
   ipcMain.handle("read-project-file", handleReadProjectFile);
   ipcMain.handle("write-project-file", handleWriteProjectFile);
   ipcMain.handle("save-autosave-project-state", handleSaveAutosaveProjectState);
+  ipcMain.handle("set-active-project-path", handleSetActiveProjectPath);
   ipcMain.handle("load-autosave-project-state", handleLoadAutosaveProjectState);
   ipcMain.handle("remember-media-folder", handleRememberMediaFolder);
   ipcMain.handle("filter-media-drop-paths", handleFilterMediaDropPaths);
   ipcMain.handle("read-file-as-arraybuffer", handleReadFileAsArrayBuffer);
   ipcMain.handle("check-media-paths-exist", handleCheckMediaPathsExist);
+  ipcMain.handle("compute-media-baselines", handleComputeMediaBaselines);
+  ipcMain.handle("preflight-check-media", handlePreflightCheckMedia);
+  ipcMain.handle("get-media-staging-capability", handleGetMediaStagingCapability);
+  ipcMain.handle("pin-media-source", handlePinMediaSource);
+  ipcMain.handle("cleanup-project-staging", handleCleanupProjectStaging);
+  ipcMain.handle("resolve-staged-media-path", handleResolveStagedMediaPath);
+  ipcMain.handle("approve-media-refresh", handleApproveMediaRefresh);
+  ipcMain.handle("rollback-media-refresh", handleRollbackMediaRefresh);
+  ipcMain.handle("read-media-original-bytes", handleReadMediaOriginalBytes);
+  ipcMain.handle("register-media-watches", handleRegisterMediaWatches);
+  ipcMain.handle("show-preflight-summary-dialog", handleShowPreflightSummaryDialog);
   ipcMain.handle("bible-rpc", handleBibleRPC);
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);
@@ -2312,6 +3569,8 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   bibleRpcClient.stop();
+  mediaWatcher.closeAll();
+  void cleanupMediaStagingDir().catch(() => {});
   if (activeProjectSnapshot) {
     const snapshotToClean = activeProjectSnapshot;
     activeProjectSnapshot = null;

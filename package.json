@@ -8,6 +8,7 @@
     "start-paid": "make -j all-paid && electron .",
     "build": "make -j all",
     "build-paid": "make -j all-paid",
+    "postinstall": "node scripts/fix-cross-platform-native-bindings.cjs",
     "dist": "make -j all && electron-builder",
     "dist-win": "make -j all && electron-builder --win --publish=never",
     "dist-linux": "make -j all && electron-builder --linux --publish=never",
@@ -28,6 +29,7 @@
   },
   "dependencies": {
     "@aiden0z/pptx-renderer": "^1.2.0",
+    "@node-rs/xxhash": "^1.7.6",
     "dashjs": "^5.1.1",
     "fflate": "^0.8.3",
     "hls.js": "^1.6.15",
@@ -40,6 +42,10 @@
     "appId": "com.ejaxmediasystem.app",
     "productName": "EMS Media System",
     "afterPack": "scripts/verify-packaged-bible-assets.cjs",
+    "beforePack": "scripts/fix-cross-platform-native-bindings.cjs",
+    "asarUnpack": [
+      "**/*.node"
+    ],
     "files": [
       "!src/**/*",
       "!derived/src/*.map",
