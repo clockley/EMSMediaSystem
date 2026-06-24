@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
-  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -29,8 +28,6 @@ const buildRoot = path.join(repoRoot, "build-artifacts", `bible-assets-${edition
 const buildDbPath = path.join(buildRoot, "bible-sqlite.db");
 const outputDbDir = path.join(derivedRoot, "bible");
 const outputDbPath = path.join(outputDbDir, "bible-sqlite.db");
-const outputBinDir = path.join(derivedRoot, "bin");
-const rpcProbeTimeoutMs = Number.parseInt(process.env.BIBLE_RPC_PROBE_TIMEOUT_MS || "", 10) || 60000;
 
 function fail(message) {
   console.error(`build-bible-assets: ${message}`);
@@ -406,300 +403,11 @@ function verifyDb(dbPath) {
 }
 
 function copyDbToDerived() {
-  rmSync(outputDbDir, { recursive: true, force: true });
+  // Only replace the database file. Other files in this directory (e.g. the
+  // Make edition record) must survive so timestamp-based rebuilds stay correct.
   mkdirSync(outputDbDir, { recursive: true });
+  rmSync(outputDbPath, { force: true });
   copyFileSync(buildDbPath, outputDbPath);
-}
-
-function targetBinaryName(target) {
-  const extension = target.platform === "win32" ? ".exe" : "";
-  return `bible-rpc-${target.platform}-${target.arch}${extension}`;
-}
-
-function currentGoTarget() {
-  const goarchByNodeArch = {
-    arm64: "arm64",
-    x64: "amd64",
-  };
-  const goosByNodePlatform = {
-    linux: "linux",
-    win32: "windows",
-  };
-  const goos = goosByNodePlatform[process.platform];
-  const goarch = goarchByNodeArch[process.arch];
-  if (!goos || !goarch) return null;
-  return {
-    platform: process.platform,
-    arch: process.arch,
-    goos,
-    goarch,
-  };
-}
-
-function sidecarTargets() {
-  const targets = [
-    { platform: "linux", arch: "x64", goos: "linux", goarch: "amd64" },
-    { platform: "win32", arch: "x64", goos: "windows", goarch: "amd64" },
-  ];
-  const current = currentGoTarget();
-  if (
-    current &&
-    !targets.some((target) => target.platform === current.platform && target.arch === current.arch)
-  ) {
-    targets.push(current);
-  }
-  return targets;
-}
-
-function buildSidecars() {
-  const goBinary = resolveGoBinary();
-  const targets = sidecarTargets();
-
-  rmSync(outputBinDir, { recursive: true, force: true });
-  mkdirSync(outputBinDir, { recursive: true });
-
-  for (const target of targets) {
-    const outputPath = path.join(outputBinDir, targetBinaryName(target));
-    console.log(`Building Bible RPC sidecar: ${target.platform}/${target.arch}`);
-    run(goBinary, ["build", "-trimpath", "-ldflags", "-s -w", "-o", outputPath, "."], {
-      cwd: scriptDir,
-      env: {
-        ...process.env,
-        CGO_ENABLED: "0",
-        GOOS: target.goos,
-        GOARCH: target.goarch,
-      },
-    });
-    if (target.platform !== "win32") {
-      chmodSync(outputPath, 0o755);
-    }
-  }
-
-  return targets;
-}
-
-function currentSidecarPath(targets) {
-  const current = currentGoTarget();
-  if (!current) return "";
-  const target = targets.find(
-    (candidate) => candidate.platform === current.platform && candidate.arch === current.arch,
-  );
-  return target ? path.join(outputBinDir, targetBinaryName(target)) : "";
-}
-
-function rpcProbe(binaryPath) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(binaryPath, ["--db", outputDbPath], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let buffer = "";
-    let stderr = "";
-    let nextId = 1;
-    const pending = new Map();
-
-    const stop = () => {
-      if (!child.killed) child.kill();
-    };
-
-    const send = (method, params = []) => {
-      const id = nextId;
-      nextId += 1;
-      const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params });
-      return new Promise((requestResolve, requestReject) => {
-        const timer = setTimeout(() => {
-          pending.delete(id);
-          const detail = stderr.trim() ? `: ${stderr.trim()}` : "";
-          requestReject(new Error(`RPC timed out after ${rpcProbeTimeoutMs}ms: ${method}${detail}`));
-        }, rpcProbeTimeoutMs);
-        pending.set(id, { resolve: requestResolve, reject: requestReject, timer });
-        child.stdin.write(`${payload}\n`, "utf8", (err) => {
-          if (!err) return;
-          clearTimeout(timer);
-          pending.delete(id);
-          requestReject(err);
-        });
-      });
-    };
-
-    const rejectPending = (err) => {
-      for (const [id, request] of pending) {
-        clearTimeout(request.timer);
-        request.reject(err);
-        pending.delete(id);
-      }
-    };
-
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      buffer += chunk;
-      let newlineIndex = buffer.indexOf("\n");
-      while (newlineIndex >= 0) {
-        const line = buffer.slice(0, newlineIndex).trim();
-        buffer = buffer.slice(newlineIndex + 1);
-        newlineIndex = buffer.indexOf("\n");
-        if (!line) continue;
-
-        let message;
-        try {
-          message = JSON.parse(line);
-        } catch (err) {
-          reject(err);
-          stop();
-          return;
-        }
-
-        const request = pending.get(message.id);
-        if (!request) continue;
-        clearTimeout(request.timer);
-        pending.delete(message.id);
-        if (message.error) {
-          request.reject(new Error(message.error.message || "RPC error"));
-        } else {
-          request.resolve(message.result);
-        }
-      }
-    });
-
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", (err) => {
-      rejectPending(err);
-      reject(err);
-    });
-    child.on("exit", (code, signal) => {
-      const detail = signal ? `signal ${signal}` : `code ${code}`;
-      const err = new Error(`Bible sidecar exited with ${detail}${stderr ? `: ${stderr}` : ""}`);
-      rejectPending(err);
-    });
-
-    (async () => {
-      try {
-        await send("bible.ready");
-        const versions = await send("bible.getVersions");
-        const versionKeys = Object.keys(versions || {}).sort();
-        const versionRecords = Object.values(versions || {});
-        const missingAttribution = versionRecords
-          .filter((version) => !String(version?.attribution?.text || "").trim())
-          .map((version) => version?.abbreviation || version?.version || "(unknown)");
-        if (missingAttribution.length) {
-          throw new Error(
-            `sidecar version attribution missing for ${missingAttribution.join(", ")}`,
-          );
-        }
-        if (!versions?.KJV?.attribution?.publicDomain) {
-          throw new Error("sidecar KJV attribution is not marked public domain");
-        }
-        const paidTranslations = paidBibleTranslations();
-        const exposedPaidVersions = paidTranslations.filter((translation) =>
-          versionKeys.includes(translation.abbreviation),
-        );
-        if (edition === "public" && exposedPaidVersions.length) {
-          throw new Error(
-            `public sidecar exposes paid version(s): ${exposedPaidVersions
-              .map((translation) => translation.abbreviation)
-              .join(", ")}`,
-          );
-        }
-        if (edition === "paid") {
-          const missingPaidVersions = paidTranslations.filter(
-            (translation) => !versionKeys.includes(translation.abbreviation),
-          );
-          if (missingPaidVersions.length) {
-            throw new Error(
-              `paid sidecar does not expose paid version(s): ${missingPaidVersions
-                .map((translation) => translation.abbreviation)
-                .join(", ")}`,
-            );
-          }
-        }
-
-        const passage = await send("bible.getPassage", ["KJV", "John 3:16"]);
-        if (!passage?.text || !passage.text.includes("God")) {
-          throw new Error("sidecar passage probe returned unexpected text");
-        }
-        if (!String(passage?.attribution?.text || "").includes("King James Version")) {
-          throw new Error("sidecar passage probe returned no KJV attribution");
-        }
-
-        const suggestions = await send("bible.suggestReferences", ["KJV", "jhnn 3 16"]);
-        if (!Array.isArray(suggestions?.suggestions) || suggestions.suggestions.length === 0) {
-          throw new Error("sidecar suggestion probe returned no suggestions");
-        }
-
-        const search = await send("bible.searchText", ["KJV", "God loved world", 5]);
-        const foundJohn316 = search?.results?.some(
-          (result) =>
-            result.reference === "John 3:16" &&
-            result.text?.includes("God") &&
-            result.attribution?.text,
-        );
-        if (!foundJohn316) {
-          throw new Error("sidecar FTS search probe did not find John 3:16");
-        }
-
-        const phraseSearch = await send("bible.searchText", [
-          "KJV",
-          "God so loved",
-          { mode: "phrase", limit: 5 },
-        ]);
-        const foundJohn316Phrase = phraseSearch?.results?.some(
-          (result) => result.reference === "John 3:16" && result.version === "KJV",
-        );
-        if (!foundJohn316Phrase) {
-          throw new Error("sidecar phrase search probe did not find John 3:16");
-        }
-
-        const partialPhraseSearch = await send("bible.searchText", [
-          "KJV",
-          "God so lov",
-          { mode: "phrase", limit: 5 },
-        ]);
-        const foundJohn316PartialPhrase = partialPhraseSearch?.results?.some(
-          (result) => result.reference === "John 3:16" && result.version === "KJV",
-        );
-        if (!foundJohn316PartialPhrase) {
-          throw new Error("sidecar partial phrase search probe did not find John 3:16");
-        }
-
-        const allVersionSearch = await send("bible.searchText", [
-          "*",
-          "God so loved",
-          { mode: "phrase", limit: 12 },
-        ]);
-        const versionMatches = new Set(
-          (Array.isArray(allVersionSearch?.results) ? allVersionSearch.results : []).map(
-            (result) => result.version,
-          ),
-        );
-        if (!versionMatches.has("KJV")) {
-          throw new Error("sidecar all-version search probe did not include KJV");
-        }
-
-        if (edition === "paid") {
-          const paidProbeVersion = paidBibleTranslations()[0]?.abbreviation;
-          if (!paidProbeVersion) {
-            throw new Error("paid sidecar probe has no paid version to check");
-          }
-          const paidPassage = await send("bible.getPassage", [paidProbeVersion, "John 3:16"]);
-          if (
-            !paidPassage?.text ||
-            paidPassage.version !== paidProbeVersion ||
-            !String(paidPassage.attribution?.text || "").trim()
-          ) {
-            throw new Error("paid sidecar passage probe returned unexpected text or attribution");
-          }
-        }
-
-        stop();
-        resolve(versionKeys);
-      } catch (err) {
-        stop();
-        reject(err);
-      }
-    })();
-  });
 }
 
 if (!["public", "paid"].includes(edition)) {
@@ -722,13 +430,6 @@ rmSync(path.join(derivedRoot, "src", "main.wasm"), { force: true });
 rmSync(path.join(derivedRoot, "src", "Bible.min.mjs"), { force: true });
 rmSync(path.join(derivedRoot, "src", "wasm_exec.min.js"), { force: true });
 
-const targets = buildSidecars();
-const probePath = currentSidecarPath(targets);
-if (probePath) {
-  const versionKeys = await rpcProbe(probePath);
-  console.log(`Verified ${edition} Bible RPC sidecar with versions: ${versionKeys.join(", ")}`);
-} else {
-  console.log("Skipped local sidecar probe for unsupported host platform");
-}
+console.log(`Prepared ${edition} Bible database at ${outputDbPath}`);
 
 process.exit(0);
