@@ -1,7 +1,7 @@
 # Copyright (C) 2025 Christian Lockley
 # Licensed under GNU General Public License v3
 #TODO: Add derived file path fixups for css, html, js and mjs files. This is needed to prevent refrencing the derived files in the source code.
-.PHONY: all all-paid check-deps clean help js-minify rebuild status
+.PHONY: all all-paid check-deps clean help js-minify rebuild status FORCE
 
 # If any recipe step fails, remove the target instead of leaving a half-written (or empty) file.
 .DELETE_ON_ERROR:
@@ -85,17 +85,69 @@ BIBLE_RPC_ASSET_BUILDER = $(BIBLE_RPC_ROOT)/build-bible-assets.mjs
 BIBLE_RPC_IMPORTER = $(BIBLE_RPC_ROOT)/import-bibles.mjs
 BIBLE_PAID_METADATA = $(BIBLE_PRIVATE_ROOT)/bible-imports.json
 BIBLE_PAID_JSONS = $(shell find "$(BIBLE_PRIVATE_ROOT)" -maxdepth 1 -type f -name "*.json" -print 2>/dev/null | sed 's/ /\\ /g')
-BIBLE_RPC_SOURCE_FILES = $(BIBLE_RPC_ROOT)/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/cmd/bible-db-optimize/main.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum $(BIBLE_RPC_ROOT)/bible-sqlite.db
+BIBLE_SOURCE_DB = $(BIBLE_RPC_ROOT)/bible-sqlite.db
 BUILD_ARTIFACTS_DIR = build-artifacts
-BIBLE_PUBLIC_STAMP = $(BUILD_ARTIFACTS_DIR)/.bible.public.assets.stamp
-BIBLE_PAID_STAMP = $(BUILD_ARTIFACTS_DIR)/.bible.paid.assets.stamp
+
+# --- Go toolchain + Bible sidecar/database targets ---
+#
+# The Bible database and the Go sidecar are ordinary Make targets keyed off
+# real file timestamps. No stamp files: Make rebuilds a target only when one of
+# its prerequisites is newer (changed source JSONs, changed Go source, or an
+# edition switch tracked by $(BIBLE_EDITION_RECORD)).
+
+# Resolve a usable Go (>=1.22). Override with `make GO=/path/to/go`.
+ifeq ($(WINDOWS), 1)
+  GO ?= go
+else
+  GO ?= $(shell for c in /usr/local/go/bin/go go; do command -v "$$c" >/dev/null 2>&1 && { echo "$$c"; break; }; done)
+endif
+
+# Go source that produces the sidecar binary (edition independent).
+BIBLE_RPC_GO_SOURCES = $(BIBLE_RPC_ROOT)/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
+# Go source for the DB optimizer the asset builder runs via `go run`.
+BIBLE_OPTIMIZE_GO_SOURCES = $(BIBLE_RPC_ROOT)/cmd/bible-db-optimize/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
+
+# Final Bible artifacts the app loads at runtime.
+BIBLE_DB_OUT = $(DERIVED_DIR)/bible/bible-sqlite.db
+BIBLE_EDITION_RECORD = $(DERIVED_DIR)/bible/.edition
+
+# Pick the edition from the requested goal (free/public by default).
+BIBLE_EDITION := public
+ifneq (,$(filter all-paid build-paid dist-all-paid,$(MAKECMDGOALS)))
+  BIBLE_EDITION := paid
+endif
+
+# Prerequisites that, when changed, must rebuild the database for each edition.
+BIBLE_DB_DEPS_public = $(BIBLE_RPC_ASSET_BUILDER) $(BIBLE_SOURCE_DB) $(BIBLE_OPTIMIZE_GO_SOURCES)
+BIBLE_DB_DEPS_paid = $(BIBLE_DB_DEPS_public) $(BIBLE_RPC_IMPORTER) $(BIBLE_PAID_METADATA) $(BIBLE_PAID_JSONS)
+BIBLE_DB_DEPS = $(BIBLE_DB_DEPS_$(BIBLE_EDITION))
+
+# Sidecar binaries to produce. Cross-compile the shipped x64 targets and, when
+# the host differs, also the host-native binary so dev (`yarn start`) can run.
+BIBLE_SIDECAR_BINS := $(DERIVED_DIR)/bin/bible-rpc-linux-x64 $(DERIVED_DIR)/bin/bible-rpc-win32-x64.exe
+$(DERIVED_DIR)/bin/bible-rpc-linux-x64: GOOS_T := linux
+$(DERIVED_DIR)/bin/bible-rpc-linux-x64: GOARCH_T := amd64
+$(DERIVED_DIR)/bin/bible-rpc-win32-x64.exe: GOOS_T := windows
+$(DERIVED_DIR)/bin/bible-rpc-win32-x64.exe: GOARCH_T := amd64
+
+ifneq ($(WINDOWS), 1)
+  HOST_GOOS := $(shell $(GO) env GOOS 2>/dev/null)
+  HOST_GOARCH := $(shell $(GO) env GOARCH 2>/dev/null)
+  HOST_BIN_PLATFORM := $(if $(filter windows,$(HOST_GOOS)),win32,$(HOST_GOOS))
+  HOST_BIN_ARCH := $(if $(filter amd64,$(HOST_GOARCH)),x64,$(HOST_GOARCH))
+  HOST_BIN := $(DERIVED_DIR)/bin/bible-rpc-$(HOST_BIN_PLATFORM)-$(HOST_BIN_ARCH)$(if $(filter windows,$(HOST_GOOS)),.exe,)
+  ifeq ($(filter $(HOST_BIN),$(BIBLE_SIDECAR_BINS)),)
+    BIBLE_SIDECAR_BINS += $(HOST_BIN)
+    $(HOST_BIN): GOOS_T := $(HOST_GOOS)
+    $(HOST_BIN): GOARCH_T := $(HOST_GOARCH)
+  endif
+endif
 
 # Corresponding destination files in derived directory.
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
 IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
 DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all copied binary/static resources
-PUBLIC_DERIVED_RESOURCES = $(DERIVED_RESOURCES) $(BIBLE_PUBLIC_STAMP)
-PAID_DERIVED_RESOURCES = $(DERIVED_RESOURCES) $(BIBLE_PAID_STAMP)
+BIBLE_RESOURCES = $(BIBLE_SIDECAR_BINS) $(BIBLE_DB_OUT)
 
 ifeq ($(NO_COLOR), 1)
   COLOR_GREEN =
@@ -120,10 +172,10 @@ HTML_PROD_FILES := $(patsubst %.html,$(DERIVED_DIR)/%.prod.html,$(HTML_FILES))
 MINIFIED_JS_FILES := $(patsubst %.js,$(DERIVED_DIR)/%.min.js,$(patsubst %.mjs,$(DERIVED_DIR)/%.min.mjs,$(JS_FILES))) $(APP_BUNDLE_OUT)
 
 # Default target
-all: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(PUBLIC_DERIVED_RESOURCES)
+all: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_RESOURCES)
 	@echo "$(COLOR_GREEN)$($(TICK)) Build complete!$(COLOR_RESET)"
 
-all-paid: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(PAID_DERIVED_RESOURCES)
+all-paid: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_RESOURCES)
 	@echo "$(COLOR_GREEN)$($(TICK)) Paid build complete!$(COLOR_RESET)"
 
 # Ensure derived directory exists
@@ -172,33 +224,52 @@ endif
 	@cp "$<" "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Copied $@$(COLOR_RESET)"
 
-$(BIBLE_PUBLIC_STAMP): $(BIBLE_RPC_ASSET_BUILDER) $(BIBLE_RPC_SOURCE_FILES) | $(DERIVED_DIR)
-	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
+# --- Bible RPC Go sidecar (built directly by Make) ---
+#
+# One recipe builds every requested sidecar binary. Each target carries its own
+# GOOS_T/GOARCH_T (set above). The binary depends only on Go source, so an
+# edition switch never rebuilds it — only a Go source change does.
+$(BIBLE_SIDECAR_BINS): $(BIBLE_RPC_GO_SOURCES) | $(DERIVED_DIR)
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+	@echo "$(COLOR_YELLOW)Building Bible RPC sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
+	@powershell -NoProfile -c "$$env:CGO_ENABLED='0'; $$env:GOOS='$(GOOS_T)'; $$env:GOARCH='$(GOARCH_T)'; & '$(GO)' build -C '$(BIBLE_RPC_ROOT)' -trimpath -ldflags '-s -w' -o '$(CURDIR)/$@' '.'"
+else
+	@mkdir -p $(dir $@)
+	@echo "$(COLOR_YELLOW)Building Bible RPC sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
+	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) "$(GO)" build -C "$(BIBLE_RPC_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
+	@[ "$(GOOS_T)" = "windows" ] || chmod 755 "$@"
+endif
+	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
+
+# --- Bible database ---
+#
+# The database is rebuilt only when its source inputs change or when the edition
+# changes. $(BIBLE_EDITION_RECORD) holds the last-built edition; its mtime moves
+# only on an actual public<->paid switch, which is what forces a rebuild then.
+# FORCE is an always-out-of-date prerequisite so the record is re-evaluated every
+# run, but it is only rewritten (mtime bumped) when the edition actually changes.
+FORCE:
+
+$(BIBLE_EDITION_RECORD): FORCE | $(DERIVED_DIR)
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+	@powershell -NoProfile -c "if (-not (Test-Path '$@') -or ((Get-Content -Raw '$@') -ne '$(BIBLE_EDITION)')) { Set-Content -NoNewline -Path '$@' -Value '$(BIBLE_EDITION)' }"
+else
+	@mkdir -p $(dir $@)
+	@printf '%s' "$(BIBLE_EDITION)" | cmp -s - "$@" 2>/dev/null || printf '%s' "$(BIBLE_EDITION)" > "$@"
+endif
+
+$(BIBLE_DB_OUT): $(BIBLE_DB_DEPS) $(BIBLE_EDITION_RECORD) | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 else
 	@mkdir -p $(dir $@)
 endif
-	@echo "$(COLOR_YELLOW)Building public-domain Bible assets$(COLOR_RESET)"
-	@BIBLE_PRIVATE_ROOT="$(BIBLE_PRIVATE_ROOT)" node "$(BIBLE_RPC_ASSET_BUILDER)" public "$(DERIVED_DIR)"
-	@rm -f "$(BIBLE_PAID_STAMP)"
-	@touch "$@"
-	@echo "$(COLOR_GREEN)$(TICK) Built public-domain Bible assets$(COLOR_RESET)"
+	@echo "$(COLOR_YELLOW)Building $(BIBLE_EDITION) Bible database -> $@$(COLOR_RESET)"
+	@BIBLE_PRIVATE_ROOT="$(BIBLE_PRIVATE_ROOT)" $(NODE) "$(BIBLE_RPC_ASSET_BUILDER)" $(BIBLE_EDITION) "$(DERIVED_DIR)"
+	@echo "$(COLOR_GREEN)$(TICK) Built $(BIBLE_EDITION) Bible database$(COLOR_RESET)"
 
-$(BIBLE_PAID_STAMP): $(BIBLE_RPC_ASSET_BUILDER) $(BIBLE_RPC_IMPORTER) $(BIBLE_PAID_METADATA) $(BIBLE_PAID_JSONS) $(BIBLE_RPC_SOURCE_FILES) | $(DERIVED_DIR)
-	@echo "$(COLOR_BLUE)Preparing directory for $@...$(COLOR_RESET)"
-ifeq ($(WINDOWS), 1)
-	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
-else
-	@mkdir -p $(dir $@)
-endif
-	@echo "$(COLOR_YELLOW)Building paid Bible assets$(COLOR_RESET)"
-	@BIBLE_PRIVATE_ROOT="$(BIBLE_PRIVATE_ROOT)" node "$(BIBLE_RPC_ASSET_BUILDER)" paid "$(DERIVED_DIR)"
-	@rm -f "$(BIBLE_PUBLIC_STAMP)"
-	@touch "$@"
-	@echo "$(COLOR_GREEN)$(TICK) Built paid Bible assets$(COLOR_RESET)"
-
-# --- Other Rules (Unchanged) ---
 
 # Rule: Check dependencies
 check-deps:
