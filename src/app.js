@@ -790,7 +790,7 @@ function nextQueueBoundaryIndex() {
   if (cue && cue.index !== currentQueueIndex) return cue.index;
   const nextIndex = currentQueueIndex + 1;
   if (nextIndex >= 0 && nextIndex < mediaQueue.length) return nextIndex;
-  return mediaQueue.length > 0 ? 0 : -1;
+  return -1;
 }
 
 async function playVideoSafely(mediaEl, context = "") {
@@ -6867,9 +6867,27 @@ function buildProjectStateSnapshot() {
   };
 }
 
+function restoreOperatingMode(mode) {
+  const targetMode = mode === STREAMPLAYER ? STREAMPLAYER : MEDIAPLAYER;
+  if (currentMode === targetMode) return;
+  if (targetMode === STREAMPLAYER) {
+    const radio = document.getElementById("YtPlyrRBtnFrmID");
+    if (radio) radio.checked = true;
+    setSBFormStreamPlayer();
+  } else {
+    const radio = document.getElementById("MdPlyrRBtnFrmID");
+    if (radio) radio.checked = true;
+    setSBFormMediaPlayer();
+    installPreviewEventHandlers();
+  }
+}
+
 function applyProjectStateSnapshot(state) {
   if (!state || typeof state !== "object") return false;
   if (!Array.isArray(state.mediaQueue)) return false;
+  if (Number.isInteger(state.currentMode)) {
+    restoreOperatingMode(state.currentMode);
+  }
   currentProjectStorageMode = state.projectStorageMode === "packed" ? "packed" : "working";
   Object.assign(
     projectScriptureOverrides,
@@ -7374,6 +7392,7 @@ async function captureQueueClearUndoState() {
       cueVolume: x.cueVolume,
       loop: loopEnabledForQueueItem(x),
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
+      bible: x.bible ? { ...x.bible } : undefined,
     })),
     index: currentQueueIndex,
     cueIndex: previewCueIndex,
@@ -7494,6 +7513,7 @@ async function restoreQueueClearUndoSnapshot() {
       cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
       loop: x.loop === true && mediaPathSupportsLoop(x.path),
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
+      bible: x.bible ? { ...x.bible } : undefined,
     };
     item.cueStartTime = queueItemCueStartTime(item);
     return item;
@@ -8544,6 +8564,12 @@ async function pauseQueuePresentationAtBoundary(index) {
       preservePreviewSeek: false,
       startTime: queueItemCueStartTime(item),
     });
+  } else if (queueIndexInRange(currentQueueIndex)) {
+    // End of queue: don't wrap or jump back to the top. Keep the last played
+    // item highlighted (matching EasyWorship/ProPresenter) instead of
+    // deselecting. currentQueueIndex already points at the finished item, so
+    // leave it in place and keep it as the selected row.
+    selectedQueueAnchorIndex = currentQueueIndex;
   } else {
     currentQueueIndex = -1;
   }
@@ -8875,31 +8901,12 @@ async function advanceQueueAfterMediaWindowClosed() {
       });
       return;
     }
-    if (nextIndex < mediaQueue.length) {
-      await pauseQueuePresentationAtBoundary(nextIndex);
-      return;
-    }
-
-    isQueuePlaying = false;
-    currentQueueIndex = -1;
-    renderQueue();
-
-    if (mediaQueue.length > 0) {
-      mediaFile = mediaQueue[0].path;
-      mediaPlayerInputState.filePaths = [mediaFile];
-      const head = mediaQueue[0];
-      updateQueueFileLabel(head.name);
-    }
-
-    const isImgFile = isImg(mediaFile);
-    if (!pptxRegex.test(mediaFile || "")) hidePptxPreviewIfNeeded();
-    handleMediaPlayback(isImgFile);
-    handleImageDisplay(isImgFile, document.querySelector("img#preview"));
-    resetVideoState();
-    updatePlayButtonOnMediaWindow();
-    masterPauseState = false;
-    removeFilenameFromTitlebar();
-    setMediaCountdownText("");
+    // No more auto-advanceable items: stop at the boundary. An in-range index
+    // pauses on that item; otherwise (end of queue) keep the last item
+    // highlighted instead of wrapping back to the top.
+    await pauseQueuePresentationAtBoundary(
+      nextIndex < mediaQueue.length ? nextIndex : -1,
+    );
   } finally {
     isAdvancingQueue = false;
   }
