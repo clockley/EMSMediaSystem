@@ -1928,6 +1928,17 @@ function currentLiveQueueItemForSwitchPrompt() {
     : null;
 }
 
+// Best-effort human name for whatever is currently live: the queue item's name
+// (a Bible reference for scripture, otherwise the file name), or the basename of
+// the live media/stream. Returns "" when nothing identifiable is live so callers
+// can fall back to a generic phrase rather than a quoted placeholder.
+function currentLivePresentationLabel() {
+  const liveItem = currentLiveQueueItemForSwitchPrompt();
+  if (liveItem?.name) return liveItem.name;
+  if (mediaFile) return getHostnameOrBasename(mediaFile);
+  return "";
+}
+
 function findQueueIndexByPath(filePath) {
   const normalized = normalizeMediaPathForCompare(filePath);
   if (!normalized) return -1;
@@ -4408,14 +4419,11 @@ async function presentBibleSelectionFromDoubleClick(verseNumber, fallbackText) {
   }
 
   // Something other than a scripture is live: confirm before interrupting it.
-  const liveItem = currentLiveQueueItemForSwitchPrompt();
-  const liveLabel = liveItem
-    ? liveItem.name
-    : activeLiveStream || isLiveStream(mediaFile)
-      ? "the current live stream"
-      : "the current presentation";
+  const liveLabel = currentLivePresentationLabel();
   const accepted = window.confirm(
-    `Switch the live presentation from "${liveLabel}" to "${reference}"?`,
+    liveLabel
+      ? `Switch the live presentation from "${liveLabel}" to "${reference}"?`
+      : `Switch the current presentation to "${reference}"?`,
   );
   if (!accepted) return;
   await showBibleTextNow();
