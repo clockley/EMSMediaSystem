@@ -9035,7 +9035,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
   if (!isQueuePlaying && !allowBibleInPlaceSwitch) return false;
   if (!isActiveMediaWindow()) return false;
   if (index < 0 || index >= mediaQueue.length) return false;
-  if (activeLiveStream || isLiveStream(mediaFile)) {
+  // Live streams are not slipstreamed. Fall back to the normal close/reopen
+  // cycle whether we're leaving a stream or switching into one.
+  if (activeLiveStream || isLiveStream(mediaFile) || isLiveStream(nextItem.path)) {
     return false;
   }
 

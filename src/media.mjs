@@ -17,6 +17,18 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 const { ipcRenderer, argv, birth, attachCubicWaveShaper } = window.electron;
 let video = null;
+/**
+ * Live-stream player handles are hoisted to module scope so that slipstream
+ * transitions can tear them down when switching away from a stream. Without
+ * this, an hls.js / dash.js instance created in loadMedia would keep feeding
+ * the shared <video> element after we slipstream to a different media type.
+ */
+let hlsInstance = null;
+let dashPlayer = null;
+/** Object URL backing the active dash.js manifest, revoked when the player is torn down. */
+let dashManifestObjectUrl = null;
+/** Guards one-time installation of the <video> playback event wiring. */
+let videoPlaybackWiringInstalled = false;
 var img = null;
 var mediaFile;
 var loopFile = false;
@@ -128,8 +140,27 @@ function showStreamLoading(detail = "Connecting to live stream") {
   }
 }
 
+/**
+ * Tracks the media-element listeners installed for the current live stream so
+ * they can be removed before a new stream attaches. Without this, every
+ * slipstream into a stream would stack another set of buffering/ready
+ * listeners on the persistent <video> element.
+ */
+let liveStreamStatusListeners = null;
+
+function clearLiveStreamStatusHandlers() {
+  if (!liveStreamStatusListeners) return;
+  const { mediaEl, entries } = liveStreamStatusListeners;
+  for (const [type, handler, options] of entries) {
+    mediaEl.removeEventListener(type, handler, options);
+  }
+  liveStreamStatusListeners = null;
+}
+
 function installLiveStreamStatusHandlers(mediaEl, hls = null) {
   if (!liveStreamMode || !mediaEl) return;
+  // Drop any listeners left over from a previous stream before re-attaching.
+  clearLiveStreamStatusHandlers();
   const showBuffering = () => {
     if (
       !mediaEl.error &&
@@ -139,14 +170,23 @@ function installLiveStreamStatusHandlers(mediaEl, hls = null) {
     }
   };
   const hideReady = () => hideStreamStatus();
+  const showLoadingOnce = () => showStreamLoading();
 
-  mediaEl.addEventListener("loadstart", () => showStreamLoading(), {
-    once: true,
-  });
+  mediaEl.addEventListener("loadstart", showLoadingOnce, { once: true });
   mediaEl.addEventListener("waiting", showBuffering);
   mediaEl.addEventListener("stalled", showBuffering);
   mediaEl.addEventListener("canplay", hideReady);
   mediaEl.addEventListener("playing", hideReady);
+  liveStreamStatusListeners = {
+    mediaEl,
+    entries: [
+      ["loadstart", showLoadingOnce, { once: true }],
+      ["waiting", showBuffering, undefined],
+      ["stalled", showBuffering, undefined],
+      ["canplay", hideReady, undefined],
+      ["playing", hideReady, undefined],
+    ],
+  };
 
   const hlsEvents = hls?.constructor?.Events;
   if (hlsEvents?.MANIFEST_PARSED) {
@@ -400,160 +440,316 @@ function ensurePreferredDashAudioTrack(player, maxAttempts = 25) {
   }, 200);
 }
 
-async function applySlipstream(data) {
-  hideStreamStatus();
-  const newIsText = !!data.isText;
-  mediaFile = data.mediaFile ?? mediaFile;
-  setLoopEnabled(!!data.loopFile);
-  isImg = !!data.isImg;
-  const newIsPptx = !!data.isPptx;
+/**
+ * Resolve which kind of content a slipstream payload describes. Every supported
+ * content type is represented here so the transition logic can be expressed as
+ * a single any-to-any state machine instead of a chain of pairwise special
+ * cases.
+ */
+const SLIPSTREAM_TARGET_TEXT = "text";
+const SLIPSTREAM_TARGET_PPTX = "pptx";
+const SLIPSTREAM_TARGET_IMAGE = "image";
+const SLIPSTREAM_TARGET_VIDEO = "video";
 
-  if (newIsText) {
-    isText = true;
-    isPptx = false;
-    streamActsAsLiveEdge = false;
-    liveStreamMode = false;
-    installTextHandlers();
-    const pptxCanvas = document.getElementById("pptxCanvas");
-    if (pptxCanvas) pptxCanvas.style.display = "none";
-    if (window._pptxMediaViewer) {
-      try {
-        window._pptxMediaViewer.destroy();
-      } catch {}
-      window._pptxMediaViewer = null;
-    }
-    document.querySelector("video").style.display = "none";
+function resolveSlipstreamTargetType(data) {
+  if (data?.isText) return SLIPSTREAM_TARGET_TEXT;
+  if (data?.isPptx) return SLIPSTREAM_TARGET_PPTX;
+  if (data?.isImg) return SLIPSTREAM_TARGET_IMAGE;
+  return SLIPSTREAM_TARGET_VIDEO;
+}
+
+function ensurePptxProcessEnv() {
+  if (!globalThis.process) {
+    globalThis.process = { env: {} };
+  } else if (!globalThis.process.env) {
+    globalThis.process.env = {};
+  }
+}
+
+/** Destroy any live-stream player attached to the shared <video> element. */
+function teardownStreamingPlayers() {
+  clearLiveStreamStatusHandlers();
+  if (hlsInstance) {
     try {
-      video.pause();
+      hlsInstance.destroy();
     } catch {}
-    video.removeAttribute("src");
-    video.load();
-    if (img) img.style.display = "none";
-    const textCanvas = document.getElementById("textCanvas");
-    textCanvas.style.display = "flex";
-    if (data.textPayload) {
-      applyTextMessage(data.textPayload);
-    }
-    return;
+    hlsInstance = null;
   }
-
-  if (isText && !newIsText) {
-    isText = false;
-    textPresentationState.signature = "";
-    const textCanvas = document.getElementById("textCanvas");
-    if (textCanvas) {
-      textCanvas.style.display = "none";
-      textCanvas.style.backgroundImage = "";
-      textCanvas.style.backgroundSize = "";
-      textCanvas.style.backgroundPosition = "";
-    }
-    const backgroundVideo = document.getElementById("textBackgroundVideo");
-    if (backgroundVideo) {
-      resetTextBackgroundVideo(backgroundVideo);
-    }
-  }
-
-  if (newIsPptx) {
-    isPptx = true;
-    streamActsAsLiveEdge = false;
-    liveStreamMode = false;
-    installPptxIpcHandlers();
-    if (!globalThis.process) {
-      globalThis.process = { env: {} };
-    } else if (!globalThis.process.env) {
-      globalThis.process.env = {};
-    }
-    const pptxCanvas = document.getElementById("pptxCanvas");
+  if (dashPlayer) {
     try {
-      video.pause();
+      dashPlayer.reset();
     } catch {}
-    video.removeAttribute("src");
-    video.load();
-    pptxCanvas.style.display = "flex";
-    document.querySelector("video").style.display = "none";
-    if (img) img.style.display = "none";
-    if (window._pptxMediaViewer) {
-      try {
-        window._pptxMediaViewer.destroy();
-      } catch {}
-      window._pptxMediaViewer = null;
-    }
-    pptxCanvas.innerHTML = "";
-    const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
-      "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
-    );
-    const arrayBuffer = await ipcRenderer.invoke(
-      "read-file-as-arraybuffer",
-      mediaFile
-    );
-    window._pptxMediaViewer = await PptxViewer.open(arrayBuffer, pptxCanvas, {
-      zipLimits: RECOMMENDED_ZIP_LIMITS,
-      fitMode: "contain",
-      renderMode: "slide",
-      // Single-slide mode is already cheap; list renders use windowed mounting.
-      listOptions: getPptxListRenderOptions(),
-    });
-    await applyPptxContainPolicyMedia();
-    await showPptxSlideInMediaWindow(data.pptxStartSlide || 0);
-    return;
-  }
-
-  if (isPptx && !newIsPptx) {
-    isPptx = false;
-    const pptxCanvas = document.getElementById("pptxCanvas");
-    if (pptxCanvas) pptxCanvas.style.display = "none";
-    if (window._pptxMediaViewer) {
-      try {
-        window._pptxMediaViewer.destroy();
-      } catch {}
-      window._pptxMediaViewer = null;
-    }
-  }
-
-  if (isImg) {
-    streamActsAsLiveEdge = false;
-    liveStreamMode = false;
     try {
-      video.pause();
-    } catch {
-      /* element may already be paused-at-end */
-    }
-    video.removeAttribute("src");
-    video.load();
-    document.querySelector("video").style.display = "none";
-
-    if (!img) {
-      img = document.createElement("img");
-      img.setAttribute("id", "bigPlayer");
-      document.body.appendChild(img);
-    }
-    img.src = mediaFile;
-    img.style.display = "block";
-    return;
+      dashPlayer.destroy?.();
+    } catch {}
+    dashPlayer = null;
   }
-
-  if (img) {
-    img.style.display = "none";
+  if (dashManifestObjectUrl) {
+    try {
+      URL.revokeObjectURL(dashManifestObjectUrl);
+    } catch {}
+    dashManifestObjectUrl = null;
   }
+}
 
+/** Stop the <video> element and fully detach its current source. */
+function teardownVideoElement() {
+  teardownStreamingPlayers();
   const videoEl = document.querySelector("video");
-  streamActsAsLiveEdge = false;
-  liveStreamMode = false;
+  try {
+    video?.pause();
+  } catch {
+    /* element may already be paused-at-end */
+  }
+  if (video) {
+    video.removeAttribute("src");
+    video.load();
+  }
+  if (videoEl) videoEl.style.display = "none";
+}
+
+function teardownImageElement() {
+  if (img) img.style.display = "none";
+}
+
+function teardownTextPresentation() {
+  textPresentationState.signature = "";
+  const textCanvas = document.getElementById("textCanvas");
+  if (textCanvas) {
+    textCanvas.style.display = "none";
+    textCanvas.style.backgroundImage = "";
+    textCanvas.style.backgroundSize = "";
+    textCanvas.style.backgroundPosition = "";
+  }
+  const backgroundVideo = document.getElementById("textBackgroundVideo");
+  if (backgroundVideo) {
+    resetTextBackgroundVideo(backgroundVideo);
+  }
+}
+
+function teardownPptxViewer() {
+  const pptxCanvas = document.getElementById("pptxCanvas");
+  if (pptxCanvas) pptxCanvas.style.display = "none";
+  if (window._pptxMediaViewer) {
+    try {
+      window._pptxMediaViewer.destroy();
+    } catch {}
+    window._pptxMediaViewer = null;
+  }
+}
+
+function activateTextTarget(data) {
+  installTextHandlers();
+  const textCanvas = document.getElementById("textCanvas");
+  if (textCanvas) textCanvas.style.display = "flex";
+  if (data.textPayload) {
+    applyTextMessage(data.textPayload);
+  }
+}
+
+async function activatePptxTarget(data) {
+  installPptxIpcHandlers();
+  ensurePptxProcessEnv();
+  // teardownPptxViewer only runs when switching away from PPTX; for a
+  // PPTX -> PPTX swap we still need a fresh viewer for the new deck.
+  if (window._pptxMediaViewer) {
+    try {
+      window._pptxMediaViewer.destroy();
+    } catch {}
+    window._pptxMediaViewer = null;
+  }
+  const pptxCanvas = document.getElementById("pptxCanvas");
+  pptxCanvas.style.display = "flex";
+  pptxCanvas.innerHTML = "";
+  const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
+    "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
+  );
+  const arrayBuffer = await ipcRenderer.invoke(
+    "read-file-as-arraybuffer",
+    mediaFile
+  );
+  window._pptxMediaViewer = await PptxViewer.open(arrayBuffer, pptxCanvas, {
+    zipLimits: RECOMMENDED_ZIP_LIMITS,
+    fitMode: "contain",
+    renderMode: "slide",
+    // Single-slide mode is already cheap; list renders use windowed mounting.
+    listOptions: getPptxListRenderOptions(),
+  });
+  await applyPptxContainPolicyMedia();
+  await showPptxSlideInMediaWindow(data.pptxStartSlide || 0);
+}
+
+function activateImageTarget() {
+  if (!img) {
+    img = document.createElement("img");
+    img.setAttribute("id", "bigPlayer");
+    document.body.appendChild(img);
+  }
+  img.src = mediaFile;
+  img.style.display = "block";
+}
+
+async function activateVideoTarget(data) {
+  // A previous live stream could still own the <video> element; drop its
+  // player so it can't keep pushing data into the element we're reusing.
+  teardownStreamingPlayers();
+  const videoEl = document.querySelector("video");
   setLoopEnabled(loopFile);
-  if (data.startVolume != null) {
+  if (data.startVolume != null && video) {
     video.volume = data.startVolume;
   }
   // Per HTML5 spec, assigning to .src aborts the current load and resets the
   // media element. Don't call removeAttribute("src") + load() here — that
   // briefly puts the element in NETWORK_EMPTY and races the new src assignment.
   video.src = mediaFile;
-  videoEl.style.display = "block";
+  if (videoEl) videoEl.style.display = "block";
+  // A video reached via slipstream (e.g. image -> video) must behave exactly
+  // like one loaded fresh, including firing media-playback-ended for queue
+  // auto-advance. Install the shared wiring here in case the initial media
+  // type bypassed it.
+  installVideoPlaybackWiring();
   if (Number.isFinite(data.startTime) && data.startTime > 0) {
     try {
       await applyVideoStartTime(video, data.startTime);
     } catch {}
   }
   await video.play().catch(() => {});
+}
+
+/**
+ * Attach a live stream (HLS / DASH / progressive, including resolved YouTube
+ * URLs) to the shared <video> element during the initial window load. Any
+ * previously attached stream player and its status listeners are destroyed
+ * first. Live streams are not slipstreamed; the queue uses a close/reopen cycle
+ * for them.
+ */
+async function startLiveStreamPlayback(url) {
+  teardownStreamingPlayers();
+  try {
+    video.pause();
+  } catch {}
+  liveStreamMode = true;
+
+  let ytResolved = null;
+  streamActsAsLiveEdge = !matchYouTubeUrl(url);
+  if (matchYouTubeUrl(url)) {
+    showStreamLoading("Resolving YouTube stream");
+    ytResolved = await ipcRenderer.invoke("resolve-youtube-stream", url);
+    streamActsAsLiveEdge = ytResolved.type === "hls";
+  }
+
+  showStreamLoading("Connecting to live stream");
+  if (ytResolved) {
+    if (ytResolved.type === "hls") {
+      hlsInstance = await createStreamingHls();
+      installLiveStreamStatusHandlers(video, hlsInstance);
+      hlsInstance.loadSource(ytResolved.url);
+    } else if (ytResolved.type === "progressive") {
+      installLiveStreamStatusHandlers(video);
+      video.src = ytResolved.url;
+    } else if (ytResolved.type === "dash") {
+      installLiveStreamStatusHandlers(video);
+      const { MediaPlayer } = await import(
+        "../../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
+      );
+      dashPlayer = MediaPlayer().create();
+      configureDashAggressiveBuffer(dashPlayer);
+      dashManifestObjectUrl = URL.createObjectURL(
+        new Blob([ytResolved.manifest], { type: "application/dash+xml" }),
+      );
+      dashPlayer.initialize(video, dashManifestObjectUrl, false);
+    }
+  } else {
+    hlsInstance = await createStreamingHls();
+    installLiveStreamStatusHandlers(video, hlsInstance);
+    hlsInstance.loadSource(url);
+  }
+
+  // A non-live-edge stream (e.g. YouTube VOD) behaves like a finite clip, so it
+  // gets the full playback wiring (remaining time, end-of-media). A true live
+  // edge only needs end-of-media handling for unexpected stops.
+  if (!streamActsAsLiveEdge) {
+    installVideoPlaybackWiring();
+  } else {
+    video.onended = () => {
+      if (loopFile || video.loop) return;
+      video.style.display = "none";
+      ipcRenderer.send("media-playback-ended", mediaFile);
+    };
+  }
+
+  if (hlsInstance) {
+    const hlsEvents = hlsInstance.constructor?.Events;
+    if (hlsEvents?.MANIFEST_PARSED) {
+      hlsInstance.on(hlsEvents.MANIFEST_PARSED, () =>
+        selectPreferredHlsAudioTrack(hlsInstance),
+      );
+    }
+    if (hlsEvents?.AUDIO_TRACKS_UPDATED) {
+      hlsInstance.on(hlsEvents.AUDIO_TRACKS_UPDATED, () =>
+        selectPreferredHlsAudioTrack(hlsInstance),
+      );
+    }
+    hlsInstance.attachMedia(video);
+  }
+  // once:true so each stream load installs exactly one track-selection pass and
+  // nothing accumulates on the persistent <video> element across slipstreams.
+  video.addEventListener(
+    "loadedmetadata",
+    () => selectPreferredNativeAudioTrack(video),
+    { once: true },
+  );
+  video
+    .play()
+    .catch((error) =>
+      reportProjectionError("Live stream playback did not start", error),
+    );
+}
+
+/**
+ * Swap the projection window to a new piece of media without tearing the window
+ * down. This is an any-to-any transition between local media files, PPTX decks,
+ * images, and text/scripture: whatever is currently showing is torn down before
+ * the new target is activated, so every combination behaves identically. (Live
+ * streams are not slipstreamed; the queue close/reopens the window for those.)
+ */
+async function applySlipstream(data) {
+  hideStreamStatus();
+  const target = resolveSlipstreamTargetType(data);
+  mediaFile = data.mediaFile ?? mediaFile;
+  setLoopEnabled(!!data.loopFile);
+
+  // Canonical content-type flags are derived solely from the new target so
+  // stale flags from the previous type can never leak through.
+  isText = target === SLIPSTREAM_TARGET_TEXT;
+  isPptx = target === SLIPSTREAM_TARGET_PPTX;
+  isImg = target === SLIPSTREAM_TARGET_IMAGE;
+  streamActsAsLiveEdge = false;
+  liveStreamMode = false;
+
+  // Tear down every subsystem that is not the new target. Each teardown is
+  // idempotent, so it is safe regardless of what was previously showing.
+  if (target !== SLIPSTREAM_TARGET_TEXT) teardownTextPresentation();
+  if (target !== SLIPSTREAM_TARGET_PPTX) teardownPptxViewer();
+  if (target !== SLIPSTREAM_TARGET_IMAGE) teardownImageElement();
+  // The video target reuses the <video> element directly (assigning .src), so
+  // the element must not be detached here; every other target releases it.
+  if (target !== SLIPSTREAM_TARGET_VIDEO) teardownVideoElement();
+
+  switch (target) {
+    case SLIPSTREAM_TARGET_TEXT:
+      activateTextTarget(data);
+      return;
+    case SLIPSTREAM_TARGET_PPTX:
+      await activatePptxTarget(data);
+      return;
+    case SLIPSTREAM_TARGET_IMAGE:
+      activateImageTarget();
+      return;
+    default:
+      await activateVideoTarget(data);
+      return;
+  }
 }
 
 window.emsApplySlipstream = applySlipstream;
@@ -671,8 +867,15 @@ function sendRemainingTime(video) {
 
   const send = () => {
     const currentTime = performance.now();
-    // Update only if at least 33.33 milliseconds have passed
-    if (currentTime - lastTime > interval && !video.paused) {
+    // Update only if at least 33.33 milliseconds have passed. Skip live-edge
+    // streams: this loop is installed once for the window's lifetime, so a
+    // slipstream into a true live stream must not start emitting bogus
+    // (Infinity-duration) remaining-time updates.
+    if (
+      currentTime - lastTime > interval &&
+      !video.paused &&
+      !streamActsAsLiveEdge
+    ) {
       ipcRenderer.send("timeRemaining-message", [
         video.duration,
         video.currentTime,
@@ -714,6 +917,10 @@ function matchYouTubeUrl(url) {
 }
 
 function playbackStateUpdate() {
+  // A true live-edge stream has no meaningful preview mirror; don't forward its
+  // play/pause state (these listeners persist for the window's lifetime and may
+  // still be attached from an earlier non-stream clip).
+  if (streamActsAsLiveEdge) return;
   const playbackState = {
     currentTime: video.currentTime,
     playing: !video.paused,
@@ -723,6 +930,46 @@ function playbackStateUpdate() {
     video.volume = strtvl;
     strtvl = null;
   }
+}
+
+/**
+ * Install the media-session controls, playback-state listeners, remaining-time
+ * reporting and end-of-media handling on the shared <video> element. Safe to
+ * call from any entry point (initial load or a slipstream transition) — the
+ * guard ensures the listeners are only attached once, while the persistent
+ * handlers always read the current `mediaFile` / `loopFile` globals.
+ */
+function installVideoPlaybackWiring() {
+  if (videoPlaybackWiringInstalled || !video) return;
+  videoPlaybackWiringInstalled = true;
+
+  navigator.mediaSession.setActionHandler("play", playMediaSessionHandler);
+  navigator.mediaSession.setActionHandler("pause", pauseMediaSessionHandler);
+  navigator.mediaSession.setActionHandler("seekbackward", () => {
+    ipcRenderer.send("media-seek", -10);
+  });
+  navigator.mediaSession.setActionHandler("seekforward", () => {
+    ipcRenderer.send("media-seek", 10);
+  });
+  navigator.mediaSession.setActionHandler("seekto", (details) => {
+    ipcRenderer.send("media-seekto", details.seekTime);
+  });
+
+  video.addEventListener("play", playbackStateUpdate);
+  video.addEventListener("pause", playbackStateUpdate);
+
+  video.onended = () => {
+    if (loopFile || video.loop) return;
+    video.style.display = "none";
+    ipcRenderer.send("media-playback-ended", mediaFile);
+  };
+
+  sendRemainingTime(video);
+  video.addEventListener("pause", () => {
+    if (video.duration - video.currentTime < 0.1) {
+      video.currentTime = video.duration;
+    }
+  });
 }
 
 const DEFAULT_TEXT_PRESENTATION = Object.freeze({
@@ -1338,8 +1585,9 @@ function installTextHandlers() {
 }
 
 async function loadMedia() {
-  let h = null;
-  let dashPlayer = null;
+  // Reuse the module-level stream handles so slipstream transitions can later
+  // tear these players down when switching to a different media type.
+  teardownStreamingPlayers();
   hideStreamStatus();
 
   const textCanvas = document.getElementById("textCanvas");
@@ -1411,14 +1659,6 @@ async function loadMedia() {
     return;
   }
 
-  let ytResolved = null;
-  streamActsAsLiveEdge = liveStreamMode && !matchYouTubeUrl(mediaFile);
-  if (liveStreamMode && matchYouTubeUrl(mediaFile)) {
-    showStreamLoading("Resolving YouTube stream");
-    ytResolved = await ipcRenderer.invoke("resolve-youtube-stream", mediaFile);
-    streamActsAsLiveEdge = ytResolved.type === "hls";
-  }
-
   installICPHandlers();
 
   video.volume = strtvl;
@@ -1436,108 +1676,31 @@ async function loadMedia() {
       console.error("Failed to get platform, skipping audio setup:", error);
     });
 
+  // Live streams (HLS / DASH / progressive / YouTube) share the same setup as
+  // slipstream transitions so the two code paths cannot drift apart.
   if (liveStreamMode) {
-    showStreamLoading("Connecting to live stream");
-    if (ytResolved) {
-      if (ytResolved.type === "hls") {
-        h = await createStreamingHls();
-        installLiveStreamStatusHandlers(video, h);
-        h.loadSource(ytResolved.url);
-      } else if (ytResolved.type === "progressive") {
-        installLiveStreamStatusHandlers(video);
-        video.src = ytResolved.url;
-      } else if (ytResolved.type === "dash") {
-        installLiveStreamStatusHandlers(video);
-        const { MediaPlayer } = await import(
-          "../../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
-        );
-        dashPlayer = MediaPlayer().create();
-        configureDashAggressiveBuffer(dashPlayer);
-        const blobUrl = URL.createObjectURL(
-          new Blob([ytResolved.manifest], { type: "application/dash+xml" }),
-        );
-        dashPlayer.initialize(video, blobUrl, false);
-      }
-    } else {
-      h = await createStreamingHls();
-      installLiveStreamStatusHandlers(video, h);
-      h.loadSource(mediaFile);
-    }
-  } else {
-    video.src = mediaFile;
+    await startLiveStreamPlayback(mediaFile);
+    return;
   }
 
-  if (!streamActsAsLiveEdge) {
-    navigator.mediaSession.setActionHandler("play", playMediaSessionHandler);
-    navigator.mediaSession.setActionHandler("pause", pauseMediaSessionHandler);
+  video.src = mediaFile;
 
-    navigator.mediaSession.setActionHandler("seekbackward", () => {
-      ipcRenderer.send("media-seek", -10);
-    });
-
-    navigator.mediaSession.setActionHandler("seekforward", () => {
-      ipcRenderer.send("media-seek", 10);
-    });
-    navigator.mediaSession.setActionHandler("seekto", (details) => {
-      ipcRenderer.send("media-seekto", details.seekTime);
-    });
-    let ts = await ipcRenderer.invoke("get-system-time");
-
-    if (strtTm != 0) {
-      let t = seekOnly
-        ? strtTm
-        : strtTm +
-          (ts.systemTime - birth) +
-          (Date.now() - ts.ipcTimestamp) * 0.001;
-      try {
-        await applyVideoStartTime(video, t);
-      } catch {}
-    }
-
-    video.addEventListener("play", playbackStateUpdate);
-    video.addEventListener("pause", playbackStateUpdate);
+  let ts = await ipcRenderer.invoke("get-system-time");
+  if (strtTm != 0) {
+    let t = seekOnly
+      ? strtTm
+      : strtTm +
+        (ts.systemTime - birth) +
+        (Date.now() - ts.ipcTimestamp) * 0.001;
+    try {
+      await applyVideoStartTime(video, t);
+    } catch {}
   }
 
-  if (!liveStreamMode && autoPlay) {
+  installVideoPlaybackWiring();
+
+  if (autoPlay) {
     video.play().catch(() => {});
-  }
-
-  video.onended = () => {
-    if (loopFile || video.loop) return;
-    video.style.display = "none";
-    ipcRenderer.send("media-playback-ended", mediaFile);
-  };
-
-  if (!streamActsAsLiveEdge) {
-    sendRemainingTime(video);
-    video.addEventListener("pause", (event) => {
-      if (video.duration - video.currentTime < 0.1) {
-        video.currentTime = video.duration;
-      }
-    });
-  }
-
-  if (liveStreamMode) {
-    if (h) {
-      const hlsEvents = h.constructor?.Events;
-      if (hlsEvents?.MANIFEST_PARSED) {
-        h.on(hlsEvents.MANIFEST_PARSED, () => {
-          selectPreferredHlsAudioTrack(h);
-        });
-      }
-      if (hlsEvents?.AUDIO_TRACKS_UPDATED) {
-        h.on(hlsEvents.AUDIO_TRACKS_UPDATED, () => selectPreferredHlsAudioTrack(h));
-      }
-      h.attachMedia(video);
-    }
-    video.addEventListener("loadedmetadata", () => {
-      selectPreferredNativeAudioTrack(video);
-    });
-    video
-      .play()
-      .catch((error) =>
-        reportProjectionError("Live stream playback did not start", error),
-      );
   }
 }
 
