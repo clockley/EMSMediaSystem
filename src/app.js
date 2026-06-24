@@ -26,13 +26,16 @@ import {
   clampMediaTime,
   clampQueueStartTime,
   classifyQueueMediaType,
+  createLiveSource,
   createQueueEntry,
   escapeHtml,
   formatCueTime,
   imageRegex,
   isBiblePath,
+  isFileBackedMediaPath,
   isNonVideoPresentationPath,
   isPlayInterruptedError,
+  normalizeLiveSource,
   normalizedBibleVersions,
   pathToMediaUrl,
   pptxRegex,
@@ -198,6 +201,8 @@ var audioOnlyFile = false;
 var currentMode = -1;
 var localTimeStampUpdateIsRunning = false;
 var mediaFile;
+let activeResolvedMediaFile = "";
+let activePreviewResolvedMediaFile = "";
 var fileEnded = false;
 var mediaSessionPause = false;
 let isPlaying = false;
@@ -363,6 +368,7 @@ const PPTX_SIDEBAR_MAX_WIDTH = 360;
 let mediaPlaybackEndedPending = false;
 /** True when the operator pressed Stop, so the close must not advance the queue. */
 let userStopPresentationPending = false;
+let presentationStartInProgress = false;
 let queueSlipstreamTransitionInProgress = false;
 /** When set, closing the media window switches to this queue index instead of advancing/stopping. */
 let pendingQueueSwitchIndex = null;
@@ -1048,7 +1054,8 @@ async function loadPptxPreview(filePath, opts = {}) {
   container.style.display = "flex";
   setPreviewStackSurface(PREVIEW_SURFACE_PPTX);
   ensurePptxPreviewShell(container);
-  const arrayBuffer = await invoke("read-file-as-arraybuffer", filePath);
+  const readPayload = await mediaReadPayloadForPath(filePath);
+  const arrayBuffer = await invoke("read-file-as-arraybuffer", readPayload);
   if (!isCurrentPptxPreviewRequest(requestToken)) return;
   const viewerHost = ensurePptxViewerHost();
   viewerHost.innerHTML = "";
@@ -1947,6 +1954,514 @@ function findQueueIndexByPath(filePath) {
   );
 }
 
+function queueItemForPath(filePath) {
+  const index = findQueueIndexByPath(filePath);
+  return index >= 0 ? mediaQueue[index] : null;
+}
+
+function queueItemLiveSource(item) {
+  if (!item || isQueueItemBible(item) || !isFileBackedMediaPath(item.path)) {
+    return undefined;
+  }
+  const normalized = normalizeLiveSource(item.path, item.liveSource, {
+    type: item.type || classifyQueueMediaType(item.path),
+    originalPath: item.originalPath || item.path,
+    mode: currentProjectStorageMode === "packed" ? "packaged" : undefined,
+  });
+  item.liveSource = normalized;
+  return normalized;
+}
+
+function liveSourceSnapshotFields(liveSource) {
+  if (!liveSource || typeof liveSource !== "object") return undefined;
+  return {
+    mode: liveSource.mode === "packaged" ? "packaged" : "linked",
+    strategy: liveSource.strategy === "snapshot" ? "snapshot" : "reference",
+    stagingTier: liveSource.stagingTier === "full" ? "full" : "warn-only",
+    originalPath:
+      typeof liveSource.originalPath === "string" ? liveSource.originalPath : undefined,
+    snapshotId:
+      typeof liveSource.snapshotId === "string" ? liveSource.snapshotId : undefined,
+    pinnedMtimeMs: Number.isFinite(liveSource.pinnedMtimeMs)
+      ? liveSource.pinnedMtimeMs
+      : undefined,
+    pinnedSizeBytes: Number.isFinite(liveSource.pinnedSizeBytes)
+      ? liveSource.pinnedSizeBytes
+      : undefined,
+    pinnedFileHash:
+      typeof liveSource.pinnedFileHash === "string"
+        ? liveSource.pinnedFileHash
+        : undefined,
+    previousSnapshotId:
+      typeof liveSource.previousSnapshotId === "string"
+        ? liveSource.previousSnapshotId
+        : undefined,
+    reason: typeof liveSource.reason === "string" ? liveSource.reason : undefined,
+  };
+}
+
+function applyPinnedMediaSource(item, pinned) {
+  if (!item || !pinned) return false;
+  let changed = false;
+  if (typeof pinned.fileHash === "string" && item.fileHash !== pinned.fileHash) {
+    item.fileHash = pinned.fileHash;
+    changed = true;
+  }
+  if (typeof pinned.fileHashAlg === "string" && item.fileHashAlg !== pinned.fileHashAlg) {
+    item.fileHashAlg = pinned.fileHashAlg;
+    changed = true;
+  }
+  if (Number.isFinite(pinned.sizeBytes) && item.sizeBytes !== pinned.sizeBytes) {
+    item.sizeBytes = pinned.sizeBytes;
+    changed = true;
+  }
+  if (
+    typeof pinned.modifiedTime === "string" &&
+    item.modifiedTime !== pinned.modifiedTime
+  ) {
+    item.modifiedTime = pinned.modifiedTime;
+    changed = true;
+  }
+  if (pinned.liveSource && typeof pinned.liveSource === "object") {
+    const normalized = normalizeLiveSource(item.path, pinned.liveSource, {
+      type: item.type || classifyQueueMediaType(item.path),
+      originalPath: item.originalPath || item.path,
+    });
+    item.liveSource = normalized;
+    changed = true;
+  }
+  if (item.pendingMediaUpdate) {
+    delete item.pendingMediaUpdate;
+    changed = true;
+  }
+  if (item.changedSinceSave) {
+    item.changedSinceSave = false;
+    changed = true;
+  }
+  if (item.lastPreflightWarningFingerprint) {
+    const previousSnapshotId =
+      typeof item.liveSource?.snapshotId === "string" ? item.liveSource.snapshotId : "";
+    const nextSnapshotId =
+      typeof pinned?.liveSource?.snapshotId === "string"
+        ? pinned.liveSource.snapshotId
+        : "";
+    if (!nextSnapshotId || !previousSnapshotId || nextSnapshotId !== previousSnapshotId) {
+      delete item.lastPreflightWarningFingerprint;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function mediaPinPayloadForItem(item, opts = {}) {
+  if (!item || isQueueItemBible(item) || !isFileBackedMediaPath(item.path)) return null;
+  const liveSource = queueItemLiveSource(item) || createLiveSource(item.path, {
+    type: item.type || classifyQueueMediaType(item.path),
+    originalPath: item.originalPath || item.path,
+  });
+  return {
+    path: item.path,
+    type: item.type || classifyQueueMediaType(item.path),
+    projectPath: currentProjectPath || "",
+    liveSource: {
+      ...liveSource,
+      ...(opts.liveSource || {}),
+    },
+  };
+}
+
+let mediaWatchSyncTimer = null;
+
+function scheduleMediaWatchSync() {
+  if (mediaWatchSyncTimer !== null) {
+    clearTimeout(mediaWatchSyncTimer);
+  }
+  mediaWatchSyncTimer = setTimeout(() => {
+    mediaWatchSyncTimer = null;
+    void syncMediaWatches().catch((err) =>
+      console.error("register-media-watches failed:", err),
+    );
+  }, 250);
+}
+
+async function syncMediaWatches() {
+  const watchItems = mediaQueue
+    .map((item, index) => {
+      const liveSource = queueItemLiveSource(item);
+      if (!liveSource || liveSource.mode !== "linked") return null;
+      return {
+        queueItemId: String(index),
+        originalPath: liveSource.originalPath || item.path,
+        pinnedFileHash: liveSource.pinnedFileHash || item.fileHash,
+        pinnedSizeBytes: Number.isFinite(liveSource.pinnedSizeBytes)
+          ? liveSource.pinnedSizeBytes
+          : item.sizeBytes,
+        pinnedMtimeMs: Number.isFinite(liveSource.pinnedMtimeMs)
+          ? liveSource.pinnedMtimeMs
+          : null,
+        fileHash: item.fileHash,
+        sizeBytes: item.sizeBytes,
+      };
+    })
+    .filter(Boolean);
+  await invoke("register-media-watches", watchItems);
+}
+
+function queueItemNeedsDefaultSnapshotPin(item) {
+  const liveSource = queueItemLiveSource(item);
+  if (!liveSource || liveSource.mode !== "linked") return false;
+  if (
+    liveSource.strategy === "snapshot" &&
+    liveSource.stagingTier === "full" &&
+    typeof liveSource.snapshotId === "string" &&
+    liveSource.snapshotId.length > 0
+  ) {
+    return false;
+  }
+  if (liveSource.strategy !== "snapshot") {
+    return liveSource.stagingTier === "full" || !liveSource.reason;
+  }
+  // createLiveSource defaults strategy to "snapshot" before pin completes.
+  return !liveSource.snapshotId || liveSource.snapshotId.length === 0;
+}
+
+async function pinQueueMediaSources(items, opts = {}) {
+  const targets = (Array.isArray(items) ? items : [])
+    .filter((item) => item && !isQueueItemBible(item) && isFileBackedMediaPath(item.path))
+    .filter(
+      (item) =>
+        opts.force === true ||
+        (opts.repairStaging === true && queueItemHasSafeSnapshotPin(item)) ||
+        !item.liveSource ||
+        !queueItemHasStoredFileHash(item) ||
+        queueItemNeedsDefaultSnapshotPin(item),
+    );
+  if (targets.length === 0) {
+    scheduleMediaWatchSync();
+    return false;
+  }
+  let changed = false;
+  for (const item of targets) {
+    const payload = mediaPinPayloadForItem(item);
+    if (!payload) continue;
+    try {
+      const pinned = await invoke("pin-media-source", {
+        ...payload,
+        verifyStagedPin: opts.repairStaging === true,
+      });
+      changed = applyPinnedMediaSource(item, pinned) || changed;
+    } catch (err) {
+      console.error(`Failed to pin media source ${item.path}:`, err);
+    }
+  }
+  if (changed) {
+    renderQueue();
+    if (opts.skipScheduleAutosave !== true) {
+      scheduleAutosaveProjectState();
+    }
+  }
+  scheduleMediaWatchSync();
+  return changed;
+}
+
+async function resolveQueueItemMediaPath(item) {
+  try {
+    const payload = mediaPinPayloadForItem(item);
+    if (!payload) return item?.path || "";
+    const liveSource = queueItemLiveSource(item);
+    const hasSnapshotId =
+      typeof liveSource?.snapshotId === "string" && liveSource.snapshotId.length > 0;
+    if (
+      queueItemNeedsDefaultSnapshotPin(item) ||
+      (!queueItemHasSafeSnapshotPin(item) && !hasSnapshotId)
+    ) {
+      const pinned = await invoke("pin-media-source", payload);
+      applyPinnedMediaSource(item, pinned);
+      if (typeof pinned?.resolvedPath === "string" && pinned.resolvedPath.length > 0) {
+        return pinned.resolvedPath;
+      }
+    }
+    return await invoke("resolve-staged-media-path", mediaPinPayloadForItem(item));
+  } catch (err) {
+    console.error(`Failed to resolve staged media path ${item.path}:`, err);
+    return item.path;
+  }
+}
+
+async function resolveQueueMediaPathByPath(filePath) {
+  const item = queueItemForPath(filePath);
+  if (item) return resolveQueueItemMediaPath(item);
+  return filePath;
+}
+
+function queueItemMediaCacheBust(item) {
+  if (!item) return undefined;
+  const liveSource = queueItemLiveSource(item);
+  if (
+    liveSource?.strategy === "snapshot" &&
+    typeof liveSource.snapshotId === "string" &&
+    liveSource.snapshotId.length > 0
+  ) {
+    return liveSource.snapshotId;
+  }
+  return typeof item.fileHash === "string" && item.fileHash.length > 0
+    ? item.fileHash
+    : undefined;
+}
+
+async function stagedMediaUrlForItem(item) {
+  if (!item || isQueueItemBible(item)) return "";
+  const resolvedPath = await resolveQueueItemMediaPath(item);
+  return pathToMediaUrl(resolvedPath, queueItemMediaCacheBust(item));
+}
+
+function previewMediaSourcePath() {
+  if (activePreviewResolvedMediaFile) return activePreviewResolvedMediaFile;
+  if (activeResolvedMediaFile) return activeResolvedMediaFile;
+  return mediaFile;
+}
+
+async function mediaReadPayloadForPath(filePath) {
+  const item = queueItemForPath(filePath);
+  if (item) {
+    if (queueItemNeedsDefaultSnapshotPin(item)) {
+      await pinQueueMediaSources([item], {
+        force: true,
+        skipScheduleAutosave: true,
+        repairStaging: true,
+      });
+    } else if (queueItemHasSafeSnapshotPin(item)) {
+      await pinQueueMediaSources([item], {
+        skipScheduleAutosave: true,
+        repairStaging: true,
+      });
+    }
+    const payload = mediaPinPayloadForItem(item);
+    if (payload) return payload;
+  }
+  return resolveQueueMediaPathByPath(filePath);
+}
+
+function queueItemOwnsControlPreview(item) {
+  return (
+    item &&
+    isFileBackedMediaPath(item.path) &&
+    !isQueueItemPptx(item) &&
+    !isQueueItemBible(item)
+  );
+}
+
+function currentQueuePreviewItem() {
+  if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
+    return mediaQueue[currentQueueIndex];
+  }
+  return queueItemForPath(mediaFile);
+}
+
+async function syncQueuePreviewMediaElements(item = null) {
+  const previewItem = item || currentQueuePreviewItem();
+  if (!queueItemOwnsControlPreview(previewItem)) return false;
+  await restoreStagedPreviewPlayback(isQueueItemImage(previewItem), currentQueueIndex);
+  return true;
+}
+
+async function restoreStagedPreviewPlayback(isImgFile, queueIndex = currentQueueIndex) {
+  let previewItem =
+    queueIndex >= 0 && queueIndex < mediaQueue.length ? mediaQueue[queueIndex] : null;
+  if (!previewItem && mediaFile) {
+    previewItem = queueItemForPath(mediaFile);
+  }
+  if (
+    previewItem &&
+    isFileBackedMediaPath(previewItem.path) &&
+    !isQueueItemPptx(previewItem) &&
+    !isQueueItemBible(previewItem)
+  ) {
+    const resolvedPath = await resolveQueueItemMediaPath(previewItem);
+    activePreviewResolvedMediaFile = resolvedPath;
+    const cacheBust = queueItemMediaCacheBust(previewItem);
+    handleMediaPlayback(isImgFile, resolvedPath, cacheBust);
+    handleImageDisplay(isImgFile, document.querySelector("img#preview"), resolvedPath, cacheBust);
+    return;
+  }
+  handleMediaPlayback(isImgFile);
+  handleImageDisplay(isImgFile, document.querySelector("img#preview"));
+}
+
+function mediaUpdateWarningFingerprint(update) {
+  if (!update || typeof update !== "object") return "";
+  const hash =
+    typeof update.currentFileHash === "string" && update.currentFileHash.length > 0
+      ? update.currentFileHash
+      : typeof update.fileHash === "string" && update.fileHash.length > 0
+        ? update.fileHash
+        : "";
+  if (hash) {
+    return `${update.currentFileHashAlg || update.fileHashAlg || "xxh3-64"}:${hash}`;
+  }
+  const size = Number.isFinite(update.currentSizeBytes)
+    ? String(update.currentSizeBytes)
+    : Number.isFinite(update.sizeBytes)
+      ? String(update.sizeBytes)
+      : "";
+  const modified =
+    typeof update.currentModifiedTime === "string" && update.currentModifiedTime.length > 0
+      ? update.currentModifiedTime
+      : typeof update.modifiedTime === "string" && update.modifiedTime.length > 0
+        ? update.modifiedTime
+        : Number.isFinite(update.currentMtimeMs)
+          ? String(update.currentMtimeMs)
+          : Number.isFinite(update.mtimeMs)
+            ? String(update.mtimeMs)
+            : "";
+  return size || modified ? `meta:${size}:${modified}` : "";
+}
+
+function markQueueItemMediaUpdate(payload) {
+  if (!payload || typeof payload !== "object") return;
+  const originalPath = normalizeMediaPathForCompare(payload.originalPath || "");
+  let changed = false;
+  let visibleReadyChange = false;
+  mediaQueue.forEach((item, index) => {
+    const liveSource = queueItemLiveSource(item);
+    if (!liveSource || liveSource.mode !== "linked") return;
+    if (normalizeMediaPathForCompare(liveSource.originalPath || item.path) !== originalPath) {
+      return;
+    }
+    const pendingMediaUpdate = {
+      mtimeMs: payload.mtimeMs,
+      sizeBytes: payload.sizeBytes,
+      fileHash: payload.fileHash,
+      fileHashAlg: payload.fileHashAlg,
+      detectedAt: Date.now(),
+      status: payload.status || "ready",
+      errorReason: payload.errorReason,
+      sourcePath: liveSource.originalPath || item.path,
+      canKeepOld: queueItemCanKeepOldMediaVersion(item),
+    };
+    const warningFingerprint = mediaUpdateWarningFingerprint(pendingMediaUpdate);
+    if (warningFingerprint) {
+      pendingMediaUpdate.warningFingerprint = warningFingerprint;
+    }
+    if (
+      pendingMediaUpdate.status === "ready" &&
+      warningFingerprint &&
+      item.lastPreflightWarningFingerprint === warningFingerprint
+    ) {
+      acknowledgePreflightWarningForItem(item, warningFingerprint);
+      changed = true;
+      return;
+    }
+    item.pendingMediaUpdate = pendingMediaUpdate;
+    item.changedSinceSave = pendingMediaUpdate.status !== "stabilizing";
+    if (payload.status === "missing") item.missing = true;
+    if (pendingMediaUpdate.status === "ready") visibleReadyChange = true;
+    changed = true;
+    if (String(payload.queueItemId || "") === String(index)) {
+      selectedQueueAnchorIndex = queueIndexInRange(selectedQueueAnchorIndex)
+        ? selectedQueueAnchorIndex
+        : index;
+    }
+  });
+  if (changed) {
+    renderQueue();
+    if (visibleReadyChange) {
+      showGnomeToast("A linked media file changed outside EMS");
+    }
+    scheduleAutosaveProjectState();
+  }
+}
+
+async function approvePendingMediaUpdate(index) {
+  if (!queueIndexInRange(index)) return false;
+  const item = mediaQueue[index];
+  if (!item?.pendingMediaUpdate) return false;
+  const payload = mediaPinPayloadForItem(item);
+  if (!payload) return false;
+  try {
+    const pinned = await invoke("approve-media-refresh", payload);
+    if (!applyPinnedMediaSource(item, pinned)) return false;
+    renderQueue();
+    scheduleAutosaveProjectState();
+    scheduleMediaWatchSync();
+    if (index === currentQueueIndex && isQueuePresentationActive()) {
+      await slipstreamQueueItemAtIndex(index, { startTime: queueItemCueStartTime(item) });
+    } else if (index === previewCueIndex || index === selectedQueueIndexForDisplay()) {
+      await loadQueueItemIntoControlWindow(item, {
+        preservePreviewSeek: false,
+        startTime: queueItemCueStartTime(item),
+      });
+    }
+    showGnomeToast("Media file reloaded");
+    return true;
+  } catch (err) {
+    console.error("Failed to approve media refresh:", err);
+    showGnomeToast("Could not reload media file");
+    return false;
+  }
+}
+
+function queueItemHasSafeSnapshotPin(item) {
+  const liveSource = queueItemLiveSource(item);
+  return Boolean(
+    liveSource &&
+      liveSource.mode === "linked" &&
+      liveSource.strategy === "snapshot" &&
+      liveSource.stagingTier === "full" &&
+      typeof liveSource.snapshotId === "string" &&
+      liveSource.snapshotId.length > 0,
+  );
+}
+
+function queueItemCanKeepOldMediaVersion(item) {
+  return queueItemHasSafeSnapshotPin(item);
+}
+
+function keepPendingMediaUpdate(index) {
+  if (!queueIndexInRange(index)) return false;
+  const item = mediaQueue[index];
+  if (!item?.pendingMediaUpdate || !queueItemCanKeepOldMediaVersion(item)) {
+    return false;
+  }
+  const warningFingerprint =
+    item.pendingMediaUpdate.warningFingerprint ||
+    mediaUpdateWarningFingerprint(item.pendingMediaUpdate);
+  let changed = false;
+  if (warningFingerprint) {
+    changed = acknowledgePreflightWarningForItem(item, warningFingerprint);
+  } else {
+    delete item.pendingMediaUpdate;
+    item.changedSinceSave = false;
+    changed = true;
+  }
+  if (changed) {
+    renderQueue();
+    scheduleAutosaveProjectState();
+    scheduleMediaWatchSync();
+  }
+  showGnomeToast("Keeping old media file");
+  return true;
+}
+
+function queueItemNeedsPendingUpdateApproval(item) {
+  return Boolean(
+    item?.pendingMediaUpdate?.status === "ready" &&
+      !queueItemCanKeepOldMediaVersion(item),
+  );
+}
+
+async function ensurePendingMediaUpdateApproved(index) {
+  if (!queueIndexInRange(index)) return false;
+  const item = mediaQueue[index];
+  if (!queueItemNeedsPendingUpdateApproval(item)) return true;
+  const name = item.name || item.path || "This media item";
+  const accepted = window.confirm(
+    `${name} changed outside EMS. EMS cannot keep the old linked version pinned for this item on the current system.\n\nReload the changed file before taking it live?`,
+  );
+  if (!accepted) return false;
+  return approvePendingMediaUpdate(index);
+}
+
 function currentPreviewCue() {
   if (previewCueIndex < 0 || previewCueIndex >= mediaQueue.length) {
     return null;
@@ -2457,7 +2972,7 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
   el.removeAttribute("src");
   el.removeAttribute("poster");
   el.load();
-  el.src = pathToMediaUrl(item.path);
+  el.src = await stagedMediaUrlForItem(item);
   el.load();
   el.hidden = false;
   setPreviewStackSurface(PREVIEW_SURFACE_CUE_VIDEO);
@@ -2553,6 +3068,7 @@ function renderQueue() {
           isSelected ? " is-selected" : "",
           isLive ? " is-live" : "",
           isCued ? " is-cued" : "",
+          item.pendingMediaUpdate?.status === "ready" ? " queue-item--pending-update" : "",
         ].join("");
         const cueStartMarkup = hasCueStart
           ? `<span class="item-cue-start">Start @ ${formatCueTime(cueStartTime)}</span>`
@@ -2564,20 +3080,54 @@ function renderQueue() {
         if (isCued) {
           badges.push('<span class="state-badge state-badge--cued">Cued</span>');
         }
+        if (item.missing) {
+          badges.push(
+            '<span class="state-badge state-badge--missing" title="File could not be found">Missing</span>',
+          );
+        } else if (item.pendingMediaUpdate?.status === "stabilizing") {
+          badges.push(
+            '<span class="state-badge state-badge--changed" title="Source file is still being saved">Updating</span>',
+          );
+        } else if (item.pendingMediaUpdate?.status === "error") {
+          badges.push(
+            '<span class="state-badge state-badge--missing" title="EMS could not inspect the changed source file">Update Error</span>',
+          );
+        } else if (item.pendingMediaUpdate?.status === "ready") {
+          badges.push(
+            '<span class="state-badge state-badge--changed" title="Source file changed outside EMS">Updated</span>',
+          );
+        } else if (item.changedSinceSave) {
+          badges.push(
+            '<span class="state-badge state-badge--changed" title="Source file changed since this project was last saved">Changed</span>',
+          );
+        }
         const statusMarkup =
           badges.length || hasCueStart
             ? `<span class="item-status-row">${badges.join("")}${cueStartMarkup}</span>`
             : "";
         const autoAdvanceEnabled = item.autoAdvance !== false;
+        const canKeepOldUpdate =
+          item.pendingMediaUpdate?.status === "ready" &&
+          queueItemCanKeepOldMediaVersion(item);
+        const updateActionMarkup =
+          item.pendingMediaUpdate?.status === "ready"
+            ? `<span class="item-update-actions">${canKeepOldUpdate ? `<button type="button" class="row-media-update-btn" data-queue-keep-update="${index}" title="Keep using the staged old version and clear this update notice" aria-label="Keep old media file">Keep</button>` : ""}<button type="button" class="row-media-update-btn" data-queue-reload-update="${index}" title="Reload this schedule item from the changed source file" aria-label="Reload media file">Reload</button></span>`
+            : "";
+        const secondaryMarkup =
+          statusMarkup || updateActionMarkup
+            ? `<span class="item-secondary-row">${statusMarkup}${updateActionMarkup}</span>`
+            : "";
         const autoAdvanceMarkup = `<button type="button" class="row-auto-advance-btn" data-queue-auto="${index}" aria-label="${autoAdvanceEnabled ? "Auto: continue to the next scheduled item" : "Stop: pause after this scheduled item"}" title="${autoAdvanceEnabled ? "Auto: continue to next item" : "Stop after this item"}">${autoAdvanceEnabled ? "Auto" : "Stop"}</button>`;
         return `<div class="${classes}" role="listitem" data-queue-index="${index}" draggable="true" ${isSelected ? 'data-selected="true"' : ""} ${isLive ? 'data-live="true"' : ""} ${isCued ? 'data-cued="true"' : ""}>
       <span class="item-icon">${queueTypeIconMarkup(item)}</span>
       <span class="item-text">
         <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
-        ${statusMarkup}
+        ${secondaryMarkup}
       </span>
+      <span class="queue-item-trailing-actions">
       ${autoAdvanceMarkup}
       <button type="button" class="remove-btn" draggable="false" data-queue-remove="${index}" title="Remove from schedule" aria-label="Remove from schedule">✕</button>
+      </span>
     </div>`;
       })
       .join("");
@@ -2781,18 +3331,22 @@ function enqueuePathsFromFilePicker(paths) {
   invalidateQueueUndoToastAfterMutation();
   const biblePresentationLive =
     isActiveMediaWindow() && activeMediaWindowContentType === "bible";
-  const firstNewIndex = insertQueueEntriesAfterSelection(paths.map(createQueueEntry));
+  const newEntries = paths.map(createQueueEntry);
+  const firstNewIndex = insertQueueEntriesAfterSelection(newEntries);
   if (firstNewIndex < 0) return;
   renderQueue();
-  if (
-    ((!isActiveMediaWindow() &&
-      !isLocalAppWindowPresentationActive() &&
-      currentQueueIndex < 0) ||
-      biblePresentationLive) &&
-    mediaQueue[firstNewIndex]
-  ) {
-    void onQueueItemActivate(firstNewIndex).catch((err) => console.error(err));
-  }
+  void (async () => {
+    await stampBaselineForQueueItems(newEntries);
+    if (
+      ((!isActiveMediaWindow() &&
+        !isLocalAppWindowPresentationActive() &&
+        currentQueueIndex < 0) ||
+        biblePresentationLive) &&
+      mediaQueue[firstNewIndex]
+    ) {
+      await onQueueItemActivate(firstNewIndex);
+    }
+  })().catch((err) => console.error(err));
 }
 
 /** Electron open dialog preserves multi-selection order better than <input type="file">. */
@@ -5853,6 +6407,7 @@ async function saveCurrentProjectInStorageMode({ quiet = false } = {}) {
       mode: currentProjectStorageMode === "packed" ? "packed" : "working",
     });
     scheduleAutosaveProjectState();
+    refreshBaselinesAfterSave();
     if (!quiet) showGnomeToast("Project saved");
     return true;
   } catch (err) {
@@ -6924,6 +7479,30 @@ function installBibleMediaControls() {
     });
 }
 
+function queueItemHasStoredFileHash(item) {
+  return (
+    typeof item?.fileHash === "string" &&
+    typeof item?.fileHashAlg === "string" &&
+    item.fileHash.length > 0
+  );
+}
+
+function queueItemFingerprintSnapshotFields(item, bibleEntry) {
+  if (bibleEntry) return {};
+  if (typeof item.fileHash === "string" && typeof item.fileHashAlg === "string") {
+    return { fileHash: item.fileHash, fileHashAlg: item.fileHashAlg };
+  }
+  return {};
+}
+
+function queueItemPreflightWarningSnapshotFields(item, bibleEntry) {
+  if (bibleEntry) return {};
+  return typeof item.lastPreflightWarningFingerprint === "string" &&
+    item.lastPreflightWarningFingerprint.length > 0
+    ? { lastPreflightWarningFingerprint: item.lastPreflightWarningFingerprint }
+    : {};
+}
+
 function buildProjectQueueItemSnapshot(item) {
   const bibleEntry = isQueueItemBible(item)
     ? projectBibleReferenceEntryForQueueItem(item)
@@ -6945,10 +7524,12 @@ function buildProjectQueueItemSnapshot(item) {
       typeof item.originalName === "string" && item.originalName.length > 0 && !bibleEntry
         ? item.originalName
         : itemName || queueBasename(itemPath),
-    sha256: typeof item.sha256 === "string" && !bibleEntry ? item.sha256 : undefined,
+    ...queueItemFingerprintSnapshotFields(item, bibleEntry),
+    ...queueItemPreflightWarningSnapshotFields(item, bibleEntry),
     sizeBytes: Number.isFinite(item.sizeBytes) && !bibleEntry ? item.sizeBytes : undefined,
     modifiedTime:
       typeof item.modifiedTime === "string" && !bibleEntry ? item.modifiedTime : undefined,
+    liveSource: !bibleEntry ? liveSourceSnapshotFields(item.liveSource) : undefined,
     autoAdvance: item.autoAdvance !== false,
     cueStartTime: bibleEntry ? 0 : queueItemCueStartTime(item),
     cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
@@ -6988,13 +7569,52 @@ function restoreOperatingMode(mode) {
   }
 }
 
-function applyProjectStateSnapshot(state) {
-  if (!state || typeof state !== "object") return false;
-  if (!Array.isArray(state.mediaQueue)) return false;
+function projectSessionIsActive() {
+  return Boolean(currentProjectPath) || mediaQueue.length > 0;
+}
+
+async function syncActiveProjectPathToMain(projectPath) {
+  try {
+    await invoke("set-active-project-path", {
+      projectPath: typeof projectPath === "string" ? projectPath : "",
+    });
+  } catch (err) {
+    console.error("set-active-project-path failed:", err);
+  }
+}
+
+async function cleanupStagingForCurrentProjectBeforeSwitch() {
+  if (!projectSessionIsActive()) return;
+  try {
+    await flushAutosaveOnClose();
+    await invoke("cleanup-project-staging", {
+      projectPath: currentProjectPath || "",
+      mediaQueue: mediaQueue.map(buildProjectQueueItemSnapshot),
+    });
+  } catch (err) {
+    console.error("cleanup-project-staging failed:", err);
+  }
+}
+
+function applyProjectStateSnapshot(state, opts = {}) {
+  if (!state || typeof state !== "object") return Promise.resolve(false);
+  if (!Array.isArray(state.mediaQueue)) return Promise.resolve(false);
+
+  const applyState = async () => {
+    const skipStagingCleanup = opts.skipStagingCleanup === true;
+    if (!skipStagingCleanup && projectSessionIsActive()) {
+      await cleanupStagingForCurrentProjectBeforeSwitch();
+    }
+
+    const nextProjectPath =
+      typeof state.projectPath === "string" ? state.projectPath : currentProjectPath || "";
+    currentProjectPath = nextProjectPath;
+    currentProjectStorageMode = state.projectStorageMode === "packed" ? "packed" : "working";
+    await syncActiveProjectPathToMain(nextProjectPath);
+
   if (Number.isInteger(state.currentMode)) {
     restoreOperatingMode(state.currentMode);
   }
-  currentProjectStorageMode = state.projectStorageMode === "packed" ? "packed" : "working";
   Object.assign(
     projectScriptureOverrides,
     overridesFromProjectScriptureText(state.projectScriptureText),
@@ -7044,10 +7664,21 @@ function applyProjectStateSnapshot(state) {
           typeof x.originalName === "string" && x.originalName.length > 0 && !bibleEntry
             ? x.originalName
             : itemName || queueBasename(itemPath),
-        sha256: typeof x.sha256 === "string" && !bibleEntry ? x.sha256 : undefined,
+        ...queueItemFingerprintSnapshotFields(x, bibleEntry),
+        ...queueItemPreflightWarningSnapshotFields(x, bibleEntry),
         sizeBytes: Number.isFinite(x.sizeBytes) && !bibleEntry ? x.sizeBytes : undefined,
         modifiedTime:
           typeof x.modifiedTime === "string" && !bibleEntry ? x.modifiedTime : undefined,
+        liveSource: !bibleEntry
+          ? normalizeLiveSource(itemPath, x.liveSource, {
+              type: classifyQueueMediaType(itemPath),
+              originalPath:
+                typeof x.originalPath === "string" && x.originalPath.length > 0
+                  ? x.originalPath
+                  : itemPath,
+              mode: currentProjectStorageMode === "packed" ? "packaged" : undefined,
+            })
+          : undefined,
         autoAdvance: x.autoAdvance !== false,
         cueStartTime: bibleEntry ? 0 : Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
         cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
@@ -7098,16 +7729,39 @@ function applyProjectStateSnapshot(state) {
   updatePreviewCueUI();
   updateDynUI();
   syncBibleStyleControlsFromState();
-  if (mediaQueue.length > 0 && currentMode === MEDIAPLAYER) {
-    const previewIndex =
-      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
-        ? currentQueueIndex
-        : 0;
-    void loadQueueItemIntoControlWindow(mediaQueue[previewIndex], {
-      previewLoadToken: nextPreviewLoadToken(),
-    }).catch((err) => console.error(err));
-  }
-  return true;
+  const restorePreview = async () => {
+    if (mediaQueue.length > 0 && currentMode === MEDIAPLAYER) {
+      await pinQueueMediaSources(mediaQueue, {
+        skipScheduleAutosave: true,
+        repairStaging: true,
+      });
+      const previewIndex =
+        currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+          ? currentQueueIndex
+          : 0;
+      try {
+        await loadQueueItemIntoControlWindow(mediaQueue[previewIndex], {
+          previewLoadToken: nextPreviewLoadToken(),
+        });
+      } catch (err) {
+        console.error("Failed to load restored preview:", err);
+      }
+    } else {
+      await pinQueueMediaSources(mediaQueue, {
+        skipScheduleAutosave: true,
+        repairStaging: true,
+      });
+    }
+    scheduleMediaWatchSync();
+  };
+    await restorePreview();
+    return true;
+  };
+
+  return applyState().catch((err) => {
+    console.error("Failed to apply project state:", err);
+    return false;
+  });
 }
 
 function scheduleAutosaveProjectState() {
@@ -7122,6 +7776,92 @@ function scheduleAutosaveProjectState() {
   }, AUTOSAVE_WRITE_DEBOUNCE_MS);
 }
 
+/**
+ * Compute and stamp baseline integrity metadata ({fileHash, sizeBytes,
+ * modifiedTime}) onto queue items so the load-time preflight and future change
+ * detection have something to compare against. By default only items missing a
+ * baseline are stamped; pass { force: true } to re-stamp from current disk state
+ * (e.g. right after an explicit project save, so "changed since last saved" resets).
+ */
+async function stampBaselineForQueueItems(items, opts = {}) {
+  const force = opts?.force === true;
+  const skipScheduleAutosave = opts?.skipScheduleAutosave === true;
+  const targets = (Array.isArray(items) ? items : []).filter(
+    (item) =>
+      item &&
+      !isQueueItemBible(item) &&
+      typeof item.path === "string" &&
+      item.path.length > 0 &&
+      (force ||
+        !(queueItemHasStoredFileHash(item) && Number.isFinite(item.sizeBytes))),
+  );
+  if (targets.length === 0) return false;
+  const changed = await pinQueueMediaSources(targets, {
+    force: true,
+    skipScheduleAutosave: true,
+  });
+  if (changed) {
+    renderQueue();
+    if (!skipScheduleAutosave) {
+      scheduleAutosaveProjectState();
+    }
+  }
+  return changed;
+}
+
+/** Persist pending autosave on app close without re-reading baselines from disk. */
+async function flushAutosaveOnClose() {
+  if (autosaveWriteTimer !== null) {
+    clearTimeout(autosaveWriteTimer);
+    autosaveWriteTimer = null;
+  }
+  await invoke("save-autosave-project-state", buildProjectStateSnapshot());
+}
+
+/** Re-stamp baselines for all file items so the preflight resets after a save. */
+function refreshBaselinesAfterSave() {
+  const fileItems = mediaQueue.filter((item) => !isQueueItemBible(item));
+  void stampBaselineForQueueItems(fileItems, { force: true });
+}
+
+function preflightWarningFingerprint(result) {
+  if (!result || typeof result !== "object") return "";
+  if (
+    typeof result.currentFileHash === "string" &&
+    result.currentFileHash.length > 0
+  ) {
+    return `${result.currentFileHashAlg || "xxh3-64"}:${result.currentFileHash}`;
+  }
+  const size = Number.isFinite(result.currentSizeBytes)
+    ? String(result.currentSizeBytes)
+    : "";
+  const modified =
+    typeof result.currentModifiedTime === "string" && result.currentModifiedTime.length > 0
+      ? result.currentModifiedTime
+      : Number.isFinite(result.currentMtimeMs)
+        ? String(result.currentMtimeMs)
+        : "";
+  return size || modified ? `meta:${size}:${modified}` : "";
+}
+
+function acknowledgePreflightWarningForItem(item, warningFingerprint) {
+  if (!item || !warningFingerprint) return false;
+  let changed = false;
+  if (item.lastPreflightWarningFingerprint !== warningFingerprint) {
+    item.lastPreflightWarningFingerprint = warningFingerprint;
+    changed = true;
+  }
+  if (item.pendingMediaUpdate) {
+    delete item.pendingMediaUpdate;
+    changed = true;
+  }
+  if (item.changedSinceSave) {
+    item.changedSinceSave = false;
+    changed = true;
+  }
+  return changed;
+}
+
 async function refreshMissingFlagsAndWarn(opts = {}) {
   const warn = opts?.warn !== false;
   if (!Array.isArray(mediaQueue) || mediaQueue.length === 0) return;
@@ -7129,26 +7869,159 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => !isQueueItemBible(item));
   if (fileItems.length === 0) return;
-  let probe = [];
+  let results = [];
   try {
-    probe = await invoke("check-media-paths-exist", fileItems.map(({ item }) => item.path));
+    results = await invoke(
+      "preflight-check-media",
+      fileItems.map(({ item }) => ({
+        path: item.path,
+        sizeBytes: item.sizeBytes,
+        modifiedTime: item.modifiedTime,
+        fileHash: item.fileHash,
+        fileHashAlg: item.fileHashAlg,
+      })),
+    );
   } catch (err) {
-    console.error("check-media-paths-exist failed:", err);
+    console.error("preflight-check-media failed:", err);
     return;
   }
   const missingFiles = [];
-  fileItems.forEach(({ item }, i) => {
-    const exists = probe?.[i]?.exists === true;
-    item.missing = !exists;
-    if (!exists && typeof item.path === "string") {
-      missingFiles.push(item.path);
+  const changedItems = [];
+  const unverifiableItems = [];
+  let baselineStamped = false;
+  let acknowledgedStateChanged = false;
+  fileItems.forEach(({ item, index }, i) => {
+    const result = results?.[i] || {};
+    const status = result.status;
+    item.missing = status === "missing";
+    item.changedSinceSave = status === "changed";
+    if (status === "missing") {
+      missingFiles.push({
+        name: item.originalName || item.name || item.path,
+        path: item.path,
+      });
+    } else if (status === "changed") {
+      const warningFingerprint = preflightWarningFingerprint(result);
+      const alreadyAcknowledged =
+        warningFingerprint &&
+        item.lastPreflightWarningFingerprint === warningFingerprint;
+      if (alreadyAcknowledged) {
+        acknowledgedStateChanged =
+          acknowledgePreflightWarningForItem(item, warningFingerprint) ||
+          acknowledgedStateChanged;
+        return;
+      }
+      const liveSource = queueItemLiveSource(item);
+      const canKeepOld = queueItemCanKeepOldMediaVersion(item);
+      item.pendingMediaUpdate = {
+        mtimeMs: result.currentMtimeMs,
+        sizeBytes: result.currentSizeBytes,
+        fileHash: result.currentFileHash,
+        fileHashAlg: result.currentFileHashAlg,
+        detectedAt: Date.now(),
+        status: "ready",
+        sourcePath: liveSource?.originalPath || item.path,
+        warningFingerprint,
+        canKeepOld,
+      };
+      if (
+        !warningFingerprint ||
+        item.lastPreflightWarningFingerprint !== warningFingerprint
+      ) {
+        changedItems.push({
+          index,
+          name: item.name || item.path,
+          path: item.path,
+          savedModifiedTime: item.modifiedTime,
+          currentModifiedTime: result.currentModifiedTime,
+          confirmedByHash: result.confirmedByHash === true,
+          warningFingerprint,
+          canKeepOld,
+          stagingTier: liveSource?.stagingTier,
+          reason: liveSource?.reason,
+        });
+      }
+    } else if (status === "unverifiable") {
+      // First sighting with no stored baseline. Adopt the current state as the
+      // baseline so future changes are detectable. This does not assert the
+      // file is unchanged from any prior version.
+      if (Number.isFinite(result.currentSizeBytes)) {
+        item.sizeBytes = result.currentSizeBytes;
+        baselineStamped = true;
+      }
+      if (typeof result.currentModifiedTime === "string") {
+        item.modifiedTime = result.currentModifiedTime;
+      }
+      unverifiableItems.push(item);
+    } else if (status === "ok" && typeof result.currentModifiedTime === "string") {
+      // Hash-confirmed identical despite mtime drift: adopt the new mtime so we
+      // skip re-hashing next time.
+      item.modifiedTime = result.currentModifiedTime;
+      if (item.lastPreflightWarningFingerprint) {
+        delete item.lastPreflightWarningFingerprint;
+        baselineStamped = true;
+      }
+      if (item.pendingMediaUpdate) {
+        delete item.pendingMediaUpdate;
+        baselineStamped = true;
+      }
+      if (item.changedSinceSave) {
+        item.changedSinceSave = false;
+        baselineStamped = true;
+      }
     }
   });
   renderQueue();
-  if (warn && missingFiles.length > 0) {
-    void invoke("show-missing-project-files-dialog", { missingFiles }).catch(
-      (err) => console.error("Failed to show missing-files dialog:", err),
-    );
+  if (unverifiableItems.length > 0) {
+    // Fill in full baselines (including hash) in the background.
+    void stampBaselineForQueueItems(unverifiableItems, { force: true });
+  } else if (baselineStamped || acknowledgedStateChanged) {
+    scheduleAutosaveProjectState();
+  }
+  if (warn && (missingFiles.length > 0 || changedItems.length > 0)) {
+    try {
+      const actionMode =
+        changedItems.length > 0
+          ? changedItems.some((changedItem) => changedItem.canKeepOld)
+            ? "choice"
+            : "reload-only"
+          : "ok";
+      const action = await invoke("show-preflight-summary-dialog", {
+        changedItems,
+        missingItems: missingFiles,
+        actionMode,
+      });
+      let acknowledged = false;
+      for (const changedItem of changedItems) {
+        const index = queueIndexInRange(changedItem.index)
+          ? changedItem.index
+          : findQueueIndexByPath(changedItem.path);
+        if (!queueIndexInRange(index)) continue;
+        if (action === "reload" || !changedItem.canKeepOld) {
+          await approvePendingMediaUpdate(index);
+          continue;
+        }
+        if (action !== "keep" && action !== "ok") continue;
+        const target = mediaQueue[index];
+        if (changedItem.warningFingerprint) {
+          acknowledged =
+            acknowledgePreflightWarningForItem(
+              target,
+              changedItem.warningFingerprint,
+            ) || acknowledged;
+        } else if (target?.pendingMediaUpdate) {
+          delete target.pendingMediaUpdate;
+          target.changedSinceSave = false;
+          acknowledged = true;
+        }
+      }
+      if (acknowledged) {
+        renderQueue();
+        scheduleAutosaveProjectState();
+      }
+    } catch (err) {
+      console.error("Failed to show preflight dialog:", err);
+    }
   }
 }
 
@@ -7243,7 +8116,8 @@ async function relinkMissingFilesDialog() {
         name: item.name,
         originalPath: item.originalPath || item.path,
         originalName: item.originalName || queueBasename(item.originalPath || item.path),
-        sha256: item.sha256,
+        fileHash: item.fileHash,
+        fileHashAlg: item.fileHashAlg,
         sizeBytes: item.sizeBytes,
         modifiedTime: item.modifiedTime,
       })),
@@ -7259,10 +8133,12 @@ async function relinkMissingFilesDialog() {
       item.path = match.path;
       item.type = classifyQueueMediaType(match.path);
       item.missing = false;
-      item.originalPath = item.originalPath || match.originalPath || match.path;
-      item.originalName = item.originalName || queueBasename(item.originalPath || match.path);
+      item.originalPath = match.path;
+      item.originalName = queueBasename(match.path);
+      delete item.liveSource;
       if (Number.isFinite(match.sizeBytes)) item.sizeBytes = match.sizeBytes;
-      if (typeof match.sha256 === "string") item.sha256 = match.sha256;
+      if (typeof match.fileHash === "string") item.fileHash = match.fileHash;
+      if (typeof match.fileHashAlg === "string") item.fileHashAlg = match.fileHashAlg;
       if (typeof match.modifiedTime === "string") {
         item.modifiedTime = match.modifiedTime;
       }
@@ -7272,7 +8148,23 @@ async function relinkMissingFilesDialog() {
     }
 
     if (matches.length > 0) {
+      await pinQueueMediaSources(matches.map((match) => mediaQueue[match.index]), {
+        force: true,
+        skipScheduleAutosave: true,
+      });
       renderQueue();
+      const reloadIndexes = new Set(
+        matches
+          .map((match) => match.index)
+          .filter((index) => index >= 0 && index < mediaQueue.length),
+      );
+      if (reloadIndexes.has(previewCueIndex)) {
+        await loadQueueItemIntoPreviewCue(previewCueIndex);
+      } else if (reloadIndexes.has(currentQueueIndex)) {
+        await loadQueueItemIntoControlWindow(mediaQueue[currentQueueIndex], {
+          previewLoadToken: nextPreviewLoadToken(),
+        });
+      }
       await refreshMissingFlagsAndWarn({ warn: false });
       scheduleAutosaveProjectState();
     }
@@ -7310,13 +8202,11 @@ async function openProjectByPath(filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) return false;
   const project = await invoke("read-project-file", filePath);
   const parsed = JSON.parse(project.data);
-  if (!applyProjectStateSnapshot(parsed)) {
+  if (!(await applyProjectStateSnapshot({ ...parsed, projectPath: filePath }))) {
     throw new Error("Project does not contain a valid queue.");
   }
   const bibleTranslationWarningShown = await fallbackUnavailableBibleTranslationsOnLoad();
   await refreshMissingFlagsAndWarn();
-  currentProjectPath = filePath;
-  currentProjectStorageMode = parsed.projectStorageMode === "packed" ? "packed" : "working";
   scheduleAutosaveProjectState();
   if (!bibleTranslationWarningShown) {
     showGnomeToast("Project opened");
@@ -7339,6 +8229,7 @@ async function saveProjectAsDialog() {
       mode: "working",
     });
     scheduleAutosaveProjectState();
+    refreshBaselinesAfterSave();
     showGnomeToast("Project saved");
     return true;
   } catch (err) {
@@ -7380,12 +8271,9 @@ async function restoreAutosavedProjectState() {
   try {
     const state = await invoke("load-autosave-project-state");
     if (!state) return;
-    if (applyProjectStateSnapshot(state)) {
+    if (await applyProjectStateSnapshot(state, { skipStagingCleanup: true })) {
       await fallbackUnavailableBibleTranslationsOnLoad();
       await refreshMissingFlagsAndWarn();
-      currentProjectPath =
-        typeof state.projectPath === "string" ? state.projectPath : "";
-      currentProjectStorageMode = state.projectStorageMode === "packed" ? "packed" : "working";
     }
   } catch (err) {
     console.error("Failed to restore autosave:", err);
@@ -7815,6 +8703,8 @@ function installMediaQueueListDelegation() {
   const list = document.getElementById("mediaQueueList");
   if (!list || list.dataset.queueDelegation === "1") return;
   list.dataset.queueDelegation = "1";
+  const queueRowActionSelector =
+    "[data-queue-remove], [data-queue-reload-update], [data-queue-keep-update], [data-queue-apply-update]";
   list.addEventListener("click", (e) => {
     const autoBtn = e.target.closest("[data-queue-auto]");
     if (autoBtn && list.contains(autoBtn)) {
@@ -7822,6 +8712,25 @@ function installMediaQueueListDelegation() {
       toggleQueueItemAutoAdvance(
         Number.parseInt(autoBtn.getAttribute("data-queue-auto"), 10),
       );
+      return;
+    }
+    const keepUpdateBtn = e.target.closest("[data-queue-keep-update]");
+    if (keepUpdateBtn && list.contains(keepUpdateBtn)) {
+      e.preventDefault();
+      keepPendingMediaUpdate(
+        Number.parseInt(keepUpdateBtn.getAttribute("data-queue-keep-update"), 10),
+      );
+      return;
+    }
+    const reloadUpdateBtn = e.target.closest(
+      "[data-queue-reload-update], [data-queue-apply-update]",
+    );
+    if (reloadUpdateBtn && list.contains(reloadUpdateBtn)) {
+      e.preventDefault();
+      const rawIndex =
+        reloadUpdateBtn.getAttribute("data-queue-reload-update") ??
+        reloadUpdateBtn.getAttribute("data-queue-apply-update");
+      void approvePendingMediaUpdate(Number.parseInt(rawIndex, 10));
       return;
     }
     const removeBtn = e.target.closest("[data-queue-remove]");
@@ -7852,7 +8761,7 @@ function installMediaQueueListDelegation() {
   });
 
   list.addEventListener("dblclick", (e) => {
-    if (e.target.closest("[data-queue-remove]")) {
+    if (e.target.closest(queueRowActionSelector)) {
       return;
     }
     e.preventDefault();
@@ -7873,7 +8782,7 @@ function installMediaQueueListDelegation() {
   list.addEventListener("dragstart", (e) => {
     const row = e.target.closest(".queue-item[data-queue-index]");
     if (!row || !list.contains(row)) return;
-    if (e.target.closest("[data-queue-remove]")) {
+    if (e.target.closest(queueRowActionSelector)) {
       e.preventDefault();
       return;
     }
@@ -8178,7 +9087,7 @@ async function restorePreviewCueAfterPresentationStopped() {
     stopPreviewAudioCue();
     const cueEl = ensurePreviewCueVideoElement();
     if (cueEl) {
-      cueEl.poster = pathToMediaUrl(cue.item.path);
+      cueEl.poster = await stagedMediaUrlForItem(cue.item);
       cueEl.hidden = false;
     }
     setMediaCountdownOverlayVisible(false);
@@ -8218,7 +9127,7 @@ async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
   audio.volume = 0;
   audio.loop = loopEnabledForQueueItem(item);
   audio.preload = "metadata";
-  audio.src = pathToMediaUrl(item.path);
+  audio.src = await stagedMediaUrlForItem(item);
 
   await waitForLoadedMetadata(audio);
   if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
@@ -8352,7 +9261,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     // this static image display.
     const cueEl = ensurePreviewCueVideoElement();
     if (cueEl) {
-      cueEl.poster = pathToMediaUrl(item.path);
+      cueEl.poster = await stagedMediaUrlForItem(item);
       cueEl.hidden = false;
       setPreviewStackSurface(PREVIEW_SURFACE_CUE_IMAGE);
     }
@@ -8407,6 +9316,7 @@ async function loadQueueItemIntoPreviewCue(index) {
 async function takeQueueItemLive(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
   if (pendingQueueSwitchIndex !== null) return;
+  if (!(await ensurePendingMediaUpdateApproved(index))) return;
   setSelectedQueueAnchor(index);
 
   const item = mediaQueue[index];
@@ -8506,6 +9416,7 @@ function shouldConfirmLiveSwitch(targetItem) {
 async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
   const item = mediaQueue[index];
+  if (!(await ensurePendingMediaUpdateApproved(index))) return;
   if (queueIndexIsCurrentLivePresentation(index) || queueIndexMatchesCurrentLiveOutput(index)) {
     await restorePreviewToLiveOutput(index);
     return;
@@ -8592,6 +9503,8 @@ async function stopQueuePresentationUserClosed() {
   isPlaying = false;
   updateDynUI();
   isActiveMediaWindowCache = false;
+  activeResolvedMediaFile = "";
+  activePreviewResolvedMediaFile = "";
   renderQueue();
 
   if (await restorePreviewCueAfterPresentationStopped()) {
@@ -8620,10 +9533,7 @@ async function stopQueuePresentationUserClosed() {
 
   let isImgFile = isImg(mediaFile);
   if (!pptxRegex.test(mediaFile || "")) hidePptxPreviewIfNeeded();
-  handleMediaPlayback(isImgFile);
-
-  let imgEle = document.querySelector("img#preview");
-  handleImageDisplay(isImgFile, imgEle);
+  await restoreStagedPreviewPlayback(isImgFile);
 
   resetVideoState();
 
@@ -8711,6 +9621,15 @@ function normalizeMediaPathForCompare(filePath) {
   } catch {
     return filePath.replace(/\\/g, "/");
   }
+}
+
+function mediaPathMatchesCurrentLiveMedia(filePath) {
+  if (!filePath) return false;
+  const normalized = normalizeMediaPathForCompare(filePath);
+  return (
+    normalized === normalizeMediaPathForCompare(mediaFile) ||
+    normalized === normalizeMediaPathForCompare(activeResolvedMediaFile)
+  );
 }
 
 /** True when the preview <video> is showing the same local file as `filePath`. */
@@ -8809,6 +9728,9 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     return;
   }
   hideBiblePreview();
+  const resolvedItemPath = await resolveQueueItemMediaPath(item);
+  activePreviewResolvedMediaFile = resolvedItemPath;
+  const cacheBust = queueItemMediaCacheBust(item);
   if (itemIsPptx) {
     await loadPptxPreview(item.path, {
       startSlide: Number.isFinite(opts?.pptxStartSlide) ? opts.pptxStartSlide : undefined,
@@ -8820,8 +9742,8 @@ async function loadQueueItemIntoControlWindow(item, opts) {
 
   restoreNonPptxPreviewSurface({ isImage: isImgFile });
   localVideo = video;
-  handleMediaPlayback(isImgFile);
-  handleImageDisplay(isImgFile, document.querySelector("img#preview"));
+  handleMediaPlayback(isImgFile, resolvedItemPath, cacheBust);
+  handleImageDisplay(isImgFile, document.querySelector("img#preview"), resolvedItemPath, cacheBust);
 
   if (itemIsAudio && !cueOnly) {
     audioOnlyFile = true;
@@ -8897,6 +9819,14 @@ async function playCurrentQueueItem(opts) {
     isQueuePlaying = false;
     currentQueueIndex = -1;
     renderQueue();
+    return;
+  }
+  if (queueItemNeedsPendingUpdateApproval(item)) {
+    showGnomeToast("Reload the changed media file before taking it live");
+    isQueuePlaying = false;
+    isPlaying = false;
+    renderQueue();
+    updateDynUI();
     return;
   }
 
@@ -9040,6 +9970,10 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
   if (activeLiveStream || isLiveStream(mediaFile) || isLiveStream(nextItem.path)) {
     return false;
   }
+  if (queueItemNeedsPendingUpdateApproval(nextItem)) {
+    showGnomeToast("Reload the changed media file before taking it live");
+    return false;
+  }
 
   queueSlipstreamTransitionInProgress = true;
   try {
@@ -9048,6 +9982,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     const isImgFile = isImg(nextItem.path);
     const isPptxFile = isQueueItemPptx(nextItem);
     const isBibleItem = isQueueItemBible(nextItem);
+    const resolvedNextPath = isBibleItem
+      ? nextItem.path
+      : await resolveQueueItemMediaPath(nextItem);
 
     // Load the target into the preview before deciding. Extension checks catch
     // obvious audio files, but metadata is authoritative for "audio-only"
@@ -9083,7 +10020,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
           }),
         }
       : {
-          mediaFile: nextItem.path,
+          mediaFile: resolvedNextPath,
           isImg: isImgFile,
           isPptx: isPptxFile,
           pptxStartSlide: isPptxFile ? pptxStartSlideForItem(nextItem) : 0,
@@ -9095,6 +10032,8 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     const slipstreamSuccess = await invoke("slipstream-media-window", slipstreamData);
     resolveQueuePresentationVideo();
     if (!slipstreamSuccess) return false;
+    activeResolvedMediaFile = resolvedNextPath;
+    activePreviewResolvedMediaFile = resolvedNextPath;
 
     // Window stays alive — advance queue state without the normal close/reopen cycle.
     mediaPlaybackEndedPending = false;
@@ -9420,8 +10359,10 @@ function enableTabFocus() {
 function modeChangeFixups(error) {
   // We should not get here under normal circumstances
   console.error("Error playing media after mode change fixup:", error);
-  if (encodeURI(mediaFile) !== getHostnameOrBasename(video.src)) {
-    video.src = encodeURI(mediaFile);
+  const sourcePath = previewMediaSourcePath();
+  const previewUrl = pathToMediaUrl(sourcePath);
+  if (previewUrl && previewUrl !== video.src) {
+    video.src = previewUrl;
     video
       .play()
       .catch((e) =>
@@ -9431,12 +10372,15 @@ function modeChangeFixups(error) {
 }
 
 function preModeChangeFixups() {
+  const sourcePath = previewMediaSourcePath();
+  const previewUrl = pathToMediaUrl(sourcePath);
   if (
     !isActiveMediaWindow() &&
-    encodeURI(mediaFile) !== getHostnameOrBasename(video.src) &&
+    previewUrl &&
+    previewUrl !== video.src &&
     !(playingMediaAudioOnly || video.paused)
   ) {
-    video.src = encodeURI(mediaFile);
+    video.src = previewUrl;
   }
 }
 
@@ -10834,8 +11778,7 @@ function handleTimeMessage(_, message) {
   if (
     messageMediaFile &&
     mediaFile &&
-    normalizeMediaPathForCompare(messageMediaFile) !==
-      normalizeMediaPathForCompare(mediaFile)
+    !mediaPathMatchesCurrentLiveMedia(messageMediaFile)
   ) {
     return;
   }
@@ -10980,6 +11923,12 @@ function installIPCHandler() {
   on("lower-third-window-closed", () => {
     bibleLowerThirdOutputActive = false;
   });
+  on("media-source-stabilizing", (_event, payload) => {
+    markQueueItemMediaUpdate({ ...payload, status: "stabilizing" });
+  });
+  on("media-source-changed", (_event, payload) => {
+    markQueueItemMediaUpdate(payload);
+  });
   on("media-playback-ended", async (event, endedMediaFile) => {
     if (userStopPresentationPending) {
       mediaPlaybackEndedPending = false;
@@ -10989,6 +11938,7 @@ function installIPCHandler() {
       endedMediaFile &&
       currentQueueIndex >= 0 &&
       currentQueueIndex < mediaQueue.length &&
+      !mediaPathMatchesCurrentLiveMedia(endedMediaFile) &&
       normalizeMediaPathForCompare(endedMediaFile) !==
         normalizeMediaPathForCompare(mediaQueue[currentQueueIndex].path)
     ) {
@@ -11034,6 +11984,8 @@ async function handleMediaWindowClosed(event, id) {
   const localVideo = video;
   stopStreamRendererPreviewCapture();
   activeMediaWindowContentType = null;
+  activeResolvedMediaFile = "";
+  activePreviewResolvedMediaFile = "";
   bibleShowNowModeActive = false;
 
   try {
@@ -11181,10 +12133,7 @@ async function handleMediaWindowClosed(event, id) {
 
   let isImgFile = isImg(mediaFile);
   if (!pptxRegex.test(mediaFile || "")) hidePptxPreviewIfNeeded();
-  handleMediaPlayback(isImgFile);
-
-  let imgEle = document.querySelector("img#preview");
-  handleImageDisplay(isImgFile, imgEle);
+  await restoreStagedPreviewPlayback(isImgFile);
 
   resetVideoState();
 
@@ -11195,11 +12144,11 @@ async function handleMediaWindowClosed(event, id) {
   setMediaCountdownText("");
   syncPreviewMediaAfterPresentationStateChange();
 }
-function handleMediaPlayback(isImgFile) {
+function handleMediaPlayback(isImgFile, sourcePath = mediaFile, cacheBust) {
   if (!video) return;
   if (isNonVideoPresentationItem(mediaFile)) return;
   if (!isImgFile) {
-    video.src = mediaFile;
+    video.src = pathToMediaUrl(sourcePath, cacheBust);
   }
 }
 
@@ -11229,7 +12178,7 @@ function syncMediaCountdownOverlayState() {
   countdownEl.classList.toggle("is-active", isActive);
 }
 
-function handleImageDisplay(isImgFile, imgEle) {
+function handleImageDisplay(isImgFile, imgEle, sourcePath = mediaFile, cacheBust) {
   const previewVideo = document.querySelector("video#preview");
   const previewImg = imgEle?.matches?.("img#preview")
     ? imgEle
@@ -11260,7 +12209,7 @@ function handleImageDisplay(isImgFile, imgEle) {
     document
       .getElementById("customControls")
       ?.style.setProperty("visibility", "hidden");
-    liveImg.src = mediaFile;
+    liveImg.src = pathToMediaUrl(sourcePath, cacheBust);
     liveImg.style.display = "";
     img = liveImg;
   }
@@ -11282,6 +12231,18 @@ function updatePlayButtonOnMediaWindow() {
     document
       .getElementById("MdPlyrRBtnFrmID")
       .addEventListener("click", updateDynUI, { once: true });
+  }
+}
+
+async function runPresentationStart(startOperation) {
+  if (presentationStartInProgress) return undefined;
+  presentationStartInProgress = true;
+  updateDynUI();
+  try {
+    return await startOperation();
+  } finally {
+    presentationStartInProgress = false;
+    updateDynUI();
   }
 }
 
@@ -11415,6 +12376,8 @@ function waitForMetadata(mediaEl = video) {
 }
 
 async function playMedia(e) {
+  if (presentationStartInProgress) return;
+
   if (video) {
     itc = performance.now() * 0.001;
     startTime = video.currentTime;
@@ -11475,11 +12438,12 @@ async function playMedia(e) {
   ) {
     const startIdx = queueStartIndexForPresent();
     if (!isLiveStream(mediaQueue[startIdx].path)) {
-      isQueuePlaying = true;
-      currentQueueIndex = startIdx;
-      await playCurrentQueueItem({ previewSeekTime: startTime });
-      if (previewCueIndex === startIdx) clearCueAfterTake(startIdx);
-      return;
+      return runPresentationStart(async () => {
+        isQueuePlaying = true;
+        currentQueueIndex = startIdx;
+        await playCurrentQueueItem({ previewSeekTime: startTime });
+        if (previewCueIndex === startIdx) clearCueAfterTake(startIdx);
+      });
     }
   }
 
@@ -11492,17 +12456,18 @@ async function playMedia(e) {
     mediaFile.length > 0 &&
     !isLiveStream(mediaFile)
   ) {
-    invalidateQueueUndoToastAfterMutation();
-    mediaQueue = [createQueueEntry(mediaFile)];
-    currentQueueIndex = 0;
-    renderQueue();
-    if (video !== null && !isImg(mediaFile)) {
-      video.pause();
-    }
-    saveMediaFile();
-    isQueuePlaying = true;
-    await playCurrentQueueItem({ previewSeekTime: startTime });
-    return;
+    return runPresentationStart(async () => {
+      invalidateQueueUndoToastAfterMutation();
+      mediaQueue = [createQueueEntry(mediaFile)];
+      currentQueueIndex = 0;
+      renderQueue();
+      if (video !== null && !isImg(mediaFile)) {
+        video.pause();
+      }
+      saveMediaFile();
+      isQueuePlaying = true;
+      await playCurrentQueueItem({ previewSeekTime: startTime });
+    });
   }
 
   if (
@@ -11545,33 +12510,35 @@ async function playMedia(e) {
   }
 
   if (!isPlaying) {
-    if (!audioOnlyFile && !hasAudienceOutputSelected()) {
-      showGnomeToast("Choose an audience output display");
-      return;
-    }
-    isPlaying = true;
-    updateDynUI();
-    if (currentMode === MEDIAPLAYER) {
-      if (iM) {
-        await createMediaWindow();
-        video.currentTime = 0;
-        if (!video.paused) {
-          video.removeAttribute("src");
-          video.load();
-        }
+    return runPresentationStart(async () => {
+      if (!audioOnlyFile && !hasAudienceOutputSelected()) {
+        showGnomeToast("Choose an audience output display");
         return;
       }
-    } else if (currentMode === STREAMPLAYER) {
-      audioOnlyFile = false;
-      await createMediaWindow();
-      return;
-    }
-    if (audioOnlyFile) {
-      await playAudioOnlyLocally();
-      return;
-    }
+      isPlaying = true;
+      updateDynUI();
+      if (currentMode === MEDIAPLAYER) {
+        if (iM) {
+          await createMediaWindow();
+          video.currentTime = 0;
+          if (!video.paused) {
+            video.removeAttribute("src");
+            video.load();
+          }
+          return;
+        }
+      } else if (currentMode === STREAMPLAYER) {
+        audioOnlyFile = false;
+        await createMediaWindow();
+        return;
+      }
+      if (audioOnlyFile) {
+        await playAudioOnlyLocally();
+        return;
+      }
 
-    await createMediaWindow();
+      await createMediaWindow();
+    });
   } else {
     // The header button reads "Stop" while a presentation is live; keep that
     // action terminal even if another queue item is cued.
@@ -11638,6 +12605,11 @@ function updateDynUI() {
     // so the SVG glyphs survive each state change. The `data-playing`
     // attribute drives which icon (▶ vs ■) is visible via CSS.
     playButton.dataset.playing = isPlaying ? "true" : "false";
+    playButton.disabled = presentationStartInProgress;
+    playButton.setAttribute(
+      "aria-busy",
+      presentationStartInProgress ? "true" : "false",
+    );
     const label = document.getElementById("mediaWindowPlayButtonLabel");
     if (label) {
       label.textContent = isPlaying ? "Stop" : "Present";
@@ -12400,6 +13372,16 @@ function setSBFormMediaPlayer() {
   }
 
   if (isImgFile && !document.querySelector("img")) {
+    const previewItem = currentQueuePreviewItem();
+    if (queueItemOwnsControlPreview(previewItem)) {
+      void syncQueuePreviewMediaElements(previewItem);
+      setupCustomMediaControls();
+      setupGtkVolumeControl();
+      void restorePptxPreviewForMediaTab().catch((err) =>
+        console.error("Failed to restore PPTX preview after returning to Media tab:", err),
+      );
+      return;
+    }
     img = document.createElement("img");
     video.removeAttribute("src");
     video.load();
@@ -12437,6 +13419,14 @@ function setSBFormMediaPlayer() {
     if (document.getElementById("preview")) {
       document.getElementById("preview").style.display = "none";
     }
+    const previewItem = currentQueuePreviewItem();
+    if (queueItemOwnsControlPreview(previewItem)) {
+      void syncQueuePreviewMediaElements(previewItem);
+      void restorePptxPreviewForMediaTab().catch((err) =>
+        console.error("Failed to restore PPTX preview after returning to Media tab:", err),
+      );
+      return;
+    }
     img = document.createElement("img");
     video.removeAttribute("src");
     video.load();
@@ -12459,6 +13449,7 @@ function removeFileProtocol(filePath) {
 
 function saveMediaFile() {
   scheduleAutosaveProjectState();
+  scheduleMediaWatchSync();
   resetPreviewWarningState();
   setMediaCountdownText("");
   const mdfileElement = document.getElementById("mdFile");
@@ -12552,6 +13543,13 @@ function saveMediaFile() {
   }
 
   if (iM && !document.querySelector("img") && !isActiveMW) {
+    const previewItem = currentQueuePreviewItem();
+    if (queueItemOwnsControlPreview(previewItem)) {
+      void syncQueuePreviewMediaElements(previewItem).then(() => {
+        showPreviewWarningToast();
+      });
+      return;
+    }
     let imgEle = null;
     if ((imgEle = document.querySelector("img")) !== null) {
       imgEle.remove();
@@ -12590,13 +13588,18 @@ function saveMediaFile() {
         startTime = 0;
       }
       if (!playingMediaAudioOnly && hasLocalSelection) {
+        const previewItem = currentQueuePreviewItem();
+        if (queueItemOwnsControlPreview(previewItem)) {
+          void syncQueuePreviewMediaElements(previewItem);
+          return;
+        }
         let uncachedLoad;
         if (
           (uncachedLoad =
             normalizeMediaPathForCompare(mediaFile) !==
             normalizeMediaPathForCompare(video.src))
         ) {
-          video.setAttribute("src", mediaFile);
+          video.setAttribute("src", pathToMediaUrl(mediaFile));
         }
         video.id = "preview";
         if (
@@ -13403,8 +14406,12 @@ async function loadOpMode(mode) {
           console.warn("No valid media files were dropped.");
         }
       });
-      window.addEventListener("beforeunload", () => {
-        void invoke("save-autosave-project-state", buildProjectStateSnapshot());
+      on("app-close-autosave-requested", () => {
+        void flushAutosaveOnClose()
+          .catch((err) => console.error("Close autosave failed:", err))
+          .finally(() => {
+            send("app-close-autosave-complete");
+          });
       });
 
       console.log("Application initialized successfully");
@@ -13524,7 +14531,15 @@ async function playAudioOnlyLocally(startOverride = null) {
   if (!localVideo) return;
   const token = nextLiveStartToken();
   const audio = ensureLiveAudioElement();
-  const source = mediaFile || removeFileProtocol(decodeURI(localVideo.src || ""));
+  const queueItem =
+    currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+      ? mediaQueue[currentQueueIndex]
+      : null;
+  let source = mediaFile || removeFileProtocol(decodeURI(localVideo.src || ""));
+  if (queueItem && isFileBackedMediaPath(queueItem.path)) {
+    source = await resolveQueueItemMediaPath(queueItem);
+    activePreviewResolvedMediaFile = source;
+  }
 
   // The playback start position for an audio-only queue item is the explicit
   // cue start time on the queue entry (set by "Cue from Current Position").
@@ -13536,7 +14551,7 @@ async function playAudioOnlyLocally(startOverride = null) {
   // operator's mental model is: clicking Start plays the file from the start
   // (or from the cue point I explicitly set), not from wherever I last
   // scrubbed the preview to.
-  const audioUrl = pathToMediaUrl(source);
+  const audioUrl = pathToMediaUrl(source, queueItemMediaCacheBust(queueItem));
   const queueCueStart =
     currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
       ? queueItemCueStartTime(mediaQueue[currentQueueIndex])
@@ -13630,6 +14645,10 @@ async function createMediaWindow(options) {
     : currentMode === STREAMPLAYER
       ? document.getElementById("mdFile").value
       : mediaPlayerInputState.filePaths[0];
+  let projectionMediaFile = mediaFile;
+  if (!textItem && isQueuePlaybackContext) {
+    projectionMediaFile = await resolveQueueItemMediaPath(mediaQueue[currentQueueIndex]);
+  }
   var liveStreamMode = textItem ? false : isLiveStream(mediaFile);
   const displaySelectEl =
     currentMode === STREAMPLAYER
@@ -13708,7 +14727,7 @@ async function createMediaWindow(options) {
       webgl: false,
       skipTaskbar: true,
       additionalArguments: [
-        "__mediafile-ems=" + encodeURIComponent(mediaFile),
+        "__mediafile-ems=" + encodeURIComponent(projectionMediaFile),
         startTime !== 0 ? "__start-time=" + startTime : "",
         strtVl !== 1 ? "__start-vol=" + strtVl : "",
         effectiveLoop ? "__media-loop=true" : "",
@@ -13733,6 +14752,8 @@ async function createMediaWindow(options) {
   }
 
   isActiveMediaWindowCache = true;
+  activeResolvedMediaFile = projectionMediaFile;
+  activePreviewResolvedMediaFile = projectionMediaFile;
   try {
     const windowId = await invoke("create-media-window", windowOptions, selectedIndex);
     if (!windowId) {

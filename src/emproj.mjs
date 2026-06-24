@@ -12,6 +12,11 @@ import os from "os";
 import path from "path";
 import { pipeline } from "stream/promises";
 import { fileURLToPath } from "url";
+import {
+  baselineFileHashFields,
+  hashMediaFile,
+  storedFileHashFromRecord,
+} from "./media-file-hash.min.mjs";
 import yauzl from "yauzl";
 import yazl from "yazl";
 
@@ -335,15 +340,15 @@ async function sha256Buffer(buf) {
   return hash.digest("hex");
 }
 
-async function sha256File(filePath) {
-  const hash = createHash("sha256");
-  const input = createReadStream(filePath);
-  input.on("data", (chunk) => hash.update(chunk));
-  await new Promise((resolve, reject) => {
-    input.on("end", resolve);
-    input.on("error", reject);
-  });
-  return hash.digest("hex");
+function assetFingerprintFields(fallback = {}, digestHex) {
+  if (typeof digestHex === "string" && digestHex.length > 0) {
+    return baselineFileHashFields(digestHex);
+  }
+  const stored = storedFileHashFromRecord(fallback);
+  if (stored) {
+    return baselineFileHashFields(stored);
+  }
+  return {};
 }
 
 function statModifiedTime(info) {
@@ -387,8 +392,55 @@ function makeId(prefix, n) {
   return `${prefix}_${String(n).padStart(4, "0")}`;
 }
 
+function defaultLiveSourceStrategyForPath(filePath) {
+  return filePath ? "snapshot" : "reference";
+}
+
+function liveSourceFields(liveSource, filePath, opts = {}) {
+  const source = liveSource && typeof liveSource === "object" ? liveSource : {};
+  const mode =
+    opts.mode ||
+    (source.mode === "packaged" ? "packaged" : "linked");
+  return {
+    mode,
+    strategy:
+      source.strategy === "snapshot" || source.strategy === "reference"
+        ? source.strategy
+        : defaultLiveSourceStrategyForPath(filePath),
+    stagingTier: source.stagingTier === "full" ? "full" : "warn-only",
+    originalPath:
+      typeof source.originalPath === "string" && source.originalPath.length > 0
+        ? source.originalPath
+        : filePath,
+    snapshotId:
+      typeof source.snapshotId === "string" && source.snapshotId.length > 0
+        ? source.snapshotId
+        : undefined,
+    pinnedMtimeMs: Number.isFinite(source.pinnedMtimeMs)
+      ? source.pinnedMtimeMs
+      : undefined,
+    pinnedSizeBytes: Number.isFinite(source.pinnedSizeBytes)
+      ? source.pinnedSizeBytes
+      : undefined,
+    pinnedFileHash:
+      typeof source.pinnedFileHash === "string" && source.pinnedFileHash.length > 0
+        ? source.pinnedFileHash
+        : undefined,
+    previousSnapshotId:
+      typeof source.previousSnapshotId === "string" &&
+      source.previousSnapshotId.length > 0
+        ? source.previousSnapshotId
+        : undefined,
+    reason:
+      typeof source.reason === "string" && source.reason.length > 0
+        ? source.reason
+        : undefined,
+  };
+}
+
 function queueItemFromSequenceItem(item, resolvedPath, asset = null) {
   const kind = classifyKindFromPath(resolvedPath);
+  const sourceKind = item?.source?.kind;
   const originalPath =
     typeof asset?.originalPath === "string" && asset.originalPath.length > 0
       ? asset.originalPath
@@ -408,15 +460,33 @@ function queueItemFromSequenceItem(item, resolvedPath, asset = null) {
     missing: item?.source?.kind === "missing",
     originalPath,
     originalName,
-    sha256: typeof asset?.sha256 === "string" ? asset.sha256 : undefined,
+    fileHash: typeof asset?.fileHash === "string" ? asset.fileHash : undefined,
+    fileHashAlg:
+      typeof asset?.fileHashAlg === "string" ? asset.fileHashAlg : undefined,
     sizeBytes: Number.isFinite(asset?.sizeBytes) ? asset.sizeBytes : undefined,
     modifiedTime:
       typeof asset?.modifiedTime === "string" ? asset.modifiedTime : undefined,
+    lastPreflightWarningFingerprint:
+      typeof item?.lastPreflightWarningFingerprint === "string"
+        ? item.lastPreflightWarningFingerprint
+        : undefined,
     autoAdvance: item?.playback?.autoAdvance !== false,
     cueStartTime: sequenceItemPlaybackStartTime(item, kind),
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
     loop: item?.playback?.loop === true && kind !== "presentation",
     pptxSlideIndex: Number.isFinite(item?.startSlide) ? item.startSlide - 1 : -1,
+    liveSource:
+      item?.liveSource && typeof item.liveSource === "object"
+        ? liveSourceFields(item.liveSource, resolvedPath, {
+            mode: sourceKind === "bundled"
+              ? "packaged"
+              : item.liveSource.mode === "packaged"
+                ? "packaged"
+                : "linked",
+          })
+        : sourceKind === "bundled"
+          ? liveSourceFields({}, resolvedPath, { mode: "packaged" })
+          : undefined,
   };
 }
 
@@ -723,7 +793,7 @@ export async function saveEmprojSnapshot(
     if (isExternalUrl) return null;
 
     let assetSize = Number.isFinite(fallback.sizeBytes) ? fallback.sizeBytes : undefined;
-    let assetSha = typeof fallback.sha256 === "string" ? fallback.sha256 : undefined;
+    let assetFingerprint = assetFingerprintFields(fallback);
     let assetModifiedTime =
       typeof fallback.modifiedTime === "string" ? fallback.modifiedTime : undefined;
     let assetMissing = fallback.missing === true;
@@ -744,7 +814,7 @@ export async function saveEmprojSnapshot(
           bundledPath: existing.bundledPath,
           normalizedPath,
           kind,
-          assetSha,
+          assetFingerprint,
           assetSize,
           assetModifiedTime,
           assetMissing,
@@ -762,11 +832,15 @@ export async function saveEmprojSnapshot(
       }
       if (
         packMedia ||
-        !assetSha ||
+        !storedFileHashFromRecord(assetFingerprint) ||
         previousSize !== assetSize ||
         previousModifiedTime !== assetModifiedTime
       ) {
-        assetSha = await sha256File(normalizedPath);
+        try {
+          assetFingerprint = baselineFileHashFields(await hashMediaFile(normalizedPath));
+        } catch {
+          assetFingerprint = {};
+        }
       }
       fileIndex.set(normalizedPath, { bundledPath, assetId });
       assets.push({
@@ -780,7 +854,7 @@ export async function saveEmprojSnapshot(
               ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
               : "application/pdf")
           : undefined,
-        sha256: assetSha,
+        ...assetFingerprint,
         sizeBytes: assetSize,
         modifiedTime: assetModifiedTime,
         missingBehavior: "showPlaceholder",
@@ -791,7 +865,7 @@ export async function saveEmprojSnapshot(
         bundledPath,
         normalizedPath,
         kind,
-        assetSha,
+        assetFingerprint,
         assetSize,
         assetModifiedTime,
         assetMissing,
@@ -853,7 +927,7 @@ export async function saveEmprojSnapshot(
     let bundledPath = normalizedPath;
     let assetId = "";
     let assetSize = Number.isFinite(item.sizeBytes) ? item.sizeBytes : undefined;
-    let assetSha = typeof item.sha256 === "string" ? item.sha256 : undefined;
+    let assetFingerprint = assetFingerprintFields(item);
     let assetModifiedTime =
       typeof item.modifiedTime === "string" ? item.modifiedTime : undefined;
     let assetMissing = item.missing === true;
@@ -886,11 +960,17 @@ export async function saveEmprojSnapshot(
             }
             if (
               packMedia ||
-              !assetSha ||
+              !storedFileHashFromRecord(assetFingerprint) ||
               previousSize !== assetSize ||
               previousModifiedTime !== assetModifiedTime
             ) {
-              assetSha = await sha256File(normalizedPath);
+              try {
+                assetFingerprint = baselineFileHashFields(
+                  await hashMediaFile(normalizedPath),
+                );
+              } catch {
+                assetFingerprint = {};
+              }
             }
             fileIndex.set(normalizedPath, { bundledPath, assetId });
             assets.push({
@@ -904,7 +984,7 @@ export async function saveEmprojSnapshot(
                     ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     : "application/pdf")
                 : undefined,
-              sha256: assetSha,
+              ...assetFingerprint,
               sizeBytes: assetSize,
               modifiedTime: assetModifiedTime,
               missingBehavior: "showPlaceholder",
@@ -938,7 +1018,7 @@ export async function saveEmprojSnapshot(
                     ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     : "application/pdf")
                 : undefined,
-              sha256: assetSha,
+              ...assetFingerprintFields(item),
               sizeBytes: assetSize,
               modifiedTime: assetModifiedTime,
               missingBehavior: "showPlaceholder",
@@ -950,6 +1030,11 @@ export async function saveEmprojSnapshot(
     itemCounter += 1;
     const kind = classifyKindFromPath(sourcePath);
     const isPresentation = kind === "presentation";
+    const queueLiveSource = !isExternalUrl
+      ? liveSourceFields(item.liveSource, normalizedPath, {
+          mode: packMedia ? "packaged" : "linked",
+        })
+      : undefined;
     queueSequence.push({
       id: makeId("item", itemCounter),
       label: item.name || basenameAny(sourcePath),
@@ -962,6 +1047,12 @@ export async function saveEmprojSnapshot(
         missingBehavior: sourceKind === "missing" ? "showPlaceholder" : undefined,
       },
       presentationPath: isPresentation ? bundledPath : undefined,
+      liveSource: queueLiveSource,
+      lastPreflightWarningFingerprint:
+        typeof item.lastPreflightWarningFingerprint === "string" &&
+        item.lastPreflightWarningFingerprint.length > 0
+          ? item.lastPreflightWarningFingerprint
+          : undefined,
       startSlide:
         Number.isFinite(item.pptxSlideIndex) && item.pptxSlideIndex >= 0
           ? item.pptxSlideIndex + 1
@@ -1030,7 +1121,7 @@ export async function saveEmprojSnapshot(
     "diagnostics.json": await sha256Buffer(diagnosticsBuf),
   };
   for (const entry of assets) {
-    if (entry?.path && entry?.sha256) hashes[entry.path] = entry.sha256;
+    if (entry?.path && entry?.fileHash) hashes[entry.path] = entry.fileHash;
   }
 
   const manifestJson = {

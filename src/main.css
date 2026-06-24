@@ -3834,11 +3834,11 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .item-text {
-    flex-grow: 1;
+    flex: 1 1 auto;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
 }
 
 .item-label {
@@ -3847,18 +3847,63 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
+    width: 100%;
 }
 
 /*
- * Secondary row beneath the filename: live/cued pills and any explicit
- * start-offset label. Queue order carries the rest of the meaning.
+ * Secondary row beneath the filename: status badges, cue start, and
+ * Keep/Reload actions when a linked file changed outside EMS.
  */
-.item-status-row {
+.item-secondary-row {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    min-width: 0;
+}
+
+.item-status-row {
+    display: inline-flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
     min-width: 0;
+}
+
+.item-update-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.queue-item-trailing-actions {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    margin-left: auto;
+    gap: 4px;
+}
+
+.queue-item--pending-update {
+    align-items: flex-start;
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+
+.queue-item--pending-update .item-secondary-row {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+}
+
+.queue-item--pending-update .item-icon {
+    margin-top: 2px;
+}
+
+.queue-item--pending-update .queue-item-trailing-actions {
+    margin-top: 2px;
 }
 
 .state-badge {
@@ -3885,6 +3930,16 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     color: var(--accent-bg-color);
 }
 
+.state-badge--missing {
+    background: var(--destructive-bg-color, #c01c28);
+    color: var(--destructive-fg-color, #ffffff);
+}
+
+.state-badge--changed {
+    background: var(--warning-bg-color, #e5a50a);
+    color: var(--warning-fg-color, #1d1d1f);
+}
+
 .item-cue-start {
     font-size: 12px;
     font-feature-settings: "tnum" 1;
@@ -3895,10 +3950,10 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .row-auto-advance-btn {
-    flex: 0 0 52px;
+    flex: 0 0 auto;
     min-width: 52px;
     min-height: 28px;
-    margin-left: 8px;
+    margin-left: 0;
     padding: 4px 8px;
     border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
     border-radius: 999px;
@@ -3907,6 +3962,33 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     font-size: 12px;
     font-weight: 700;
     line-height: 1.2;
+}
+
+.row-media-update-btn {
+    flex: 0 0 auto;
+    min-height: 28px;
+    margin-left: 0;
+    padding: 4px 10px;
+    border: 1px solid color-mix(in srgb, var(--warning-bg-color, #e5a50a) 60%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--warning-bg-color, #e5a50a) 18%, transparent);
+    color: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.row-media-update-btn:hover {
+    background: color-mix(in srgb, var(--warning-bg-color, #e5a50a) 28%, transparent);
+}
+
+.row-media-update-btn:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
+.queue-item.is-selected .row-media-update-btn:focus-visible {
+    outline-color: #ffffff;
 }
 
 .row-auto-advance-btn:hover {
