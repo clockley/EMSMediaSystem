@@ -358,7 +358,11 @@ function sendRemainingTime(event, arg) {
 }
 
 function getSetting(_, setting) {
-  return settings.getSync(setting);
+  if (setting === EMBEDDED_AUTOSAVE_STATE_KEY) return undefined;
+  if (typeof setting === "string" && setting.length > 0) {
+    return readSettings()[setting];
+  }
+  return readSettings();
 }
 
 function handleCloseMediaWindow(event, id) {
@@ -1661,16 +1665,58 @@ const ALLOWED_MEDIA_EXTENSION_SET = new Set(
   ALLOWED_MEDIA_EXTENSIONS.map((ext) => "." + ext.toLowerCase()),
 );
 const PROJECT_FILE_EXTENSIONS = ["emproj", "zip"];
+const AUTOSAVE_PROJECT_FILENAME = "autosave.emproj";
+const AUTOSAVE_PROJECT_PATH_KEY = "autosaveProjectPath";
+const EMBEDDED_AUTOSAVE_STATE_KEY = "autosaveProjectState";
+
+function autosaveProjectFilePath() {
+  return path.join(app.getPath("userData"), AUTOSAVE_PROJECT_FILENAME);
+}
+
+function sanitizeSettingsData(data) {
+  const next = data && typeof data === "object" ? { ...data } : {};
+  delete next[EMBEDDED_AUTOSAVE_STATE_KEY];
+  return next;
+}
 
 function readSettings() {
   const data = settings.getSync();
-  return data && typeof data === "object" ? { ...data } : {};
+  return sanitizeSettingsData(data);
 }
 
 async function writeSettings(partial) {
   if (!partial || typeof partial !== "object") return;
-  await settings.set({ ...readSettings(), ...partial });
+  await settings.set(sanitizeSettingsData({ ...readSettings(), ...partial }));
   await settings.flush();
+}
+
+async function purgeEmbeddedAutosaveProjectState() {
+  const raw = settings.getSync();
+  if (
+    !raw ||
+    typeof raw !== "object" ||
+    !Object.prototype.hasOwnProperty.call(raw, EMBEDDED_AUTOSAVE_STATE_KEY)
+  ) {
+    return;
+  }
+  await settings.set(sanitizeSettingsData(raw));
+  await settings.flush();
+}
+
+function autosaveProjectPathFromSettings() {
+  const savedPath = readSettings()[AUTOSAVE_PROJECT_PATH_KEY];
+  return typeof savedPath === "string" && savedPath.length > 0 ? savedPath : "";
+}
+
+async function loadAutosaveProjectSnapshotFromSettings() {
+  const filePath = autosaveProjectPathFromSettings();
+  if (!filePath) return null;
+  try {
+    return await loadEmprojSnapshot(filePath);
+  } catch (err) {
+    console.error("Failed to load autosave project:", err);
+    return null;
+  }
 }
 
 async function pathExists(dir) {
@@ -2145,13 +2191,38 @@ async function handleSaveAutosaveProjectState(_, state) {
   if (typeof state.projectPath === "string") {
     activeProjectPath = state.projectPath;
   }
-  activeProjectGuid = projectGuidFromSnapshot(state) || activeProjectGuid;
-  rememberSessionProject(activeProjectGuid, activeProjectPath, state.mediaQueue);
-  await writeSettings({ autosaveProjectState: state });
-  await reconcileStagingFromSnapshot(state, { detectProtected: false }).catch((err) => {
+  const filePath = autosaveProjectFilePath();
+  const result = await saveEmprojSnapshot(filePath, state, app.getVersion(), {
+    packMedia: false,
+  });
+  const projectGuid =
+    normalizeProjectGuid(result?.projectGuid) ||
+    projectGuidFromSnapshot(state) ||
+    activeProjectGuid;
+  const autosaveSnapshot = {
+    ...state,
+    projectPath: filePath,
+    projectGuid,
+    projectCreated: result?.projectCreated || state.projectCreated,
+    projectStorageMode: "working",
+    project: {
+      ...(state.project && typeof state.project === "object" ? state.project : {}),
+      guid: projectGuid,
+      created: result?.projectCreated || state.project?.created,
+    },
+  };
+  activeProjectGuid = projectGuid;
+  rememberSessionProject(activeProjectGuid, filePath, autosaveSnapshot.mediaQueue);
+  await writeSettings({ [AUTOSAVE_PROJECT_PATH_KEY]: filePath });
+  await reconcileStagingFromSnapshot(autosaveSnapshot, { detectProtected: false }).catch((err) => {
     console.error("autosave staging reconciliation failed:", err);
   });
-  return { ok: true };
+  return {
+    ok: true,
+    filePath,
+    projectGuid,
+    projectCreated: result?.projectCreated,
+  };
 }
 
 async function handleSetActiveProjectPath(_, payload = {}) {
@@ -2161,12 +2232,12 @@ async function handleSetActiveProjectPath(_, payload = {}) {
   return { ok: true };
 }
 
-function handleLoadAutosaveProjectState() {
-  const { autosaveProjectState } = readSettings();
-  if (!autosaveProjectState || typeof autosaveProjectState !== "object") {
-    return null;
-  }
-  return autosaveProjectState;
+async function handleLoadAutosaveProjectState() {
+  const snapshot = await loadAutosaveProjectSnapshotFromSettings();
+  if (!snapshot) return null;
+  activeProjectPath = typeof snapshot.projectPath === "string" ? snapshot.projectPath : "";
+  activeProjectGuid = projectGuidFromSnapshot(snapshot) || activeProjectGuid;
+  return snapshot;
 }
 
 async function handleRememberMediaFolder(_, paths) {
@@ -2373,8 +2444,8 @@ async function collectProtectedStagingSnapshotIds(queue) {
   const protectedIds = new Set();
   let mediaQueue = queue;
   if (!Array.isArray(mediaQueue)) {
-    const { autosaveProjectState } = readSettings();
-    mediaQueue = autosaveProjectState?.mediaQueue;
+    const autosaveSnapshot = await loadAutosaveProjectSnapshotFromSettings();
+    mediaQueue = autosaveSnapshot?.mediaQueue;
   }
   if (!Array.isArray(mediaQueue)) return protectedIds;
 
@@ -2467,14 +2538,14 @@ async function reconcileStagingForProject({
 
 /** Reconcile all touched projects before quit and remove eligible cache files. */
 async function cleanupMediaStagingDir() {
-  const { autosaveProjectState } = readSettings();
+  const autosaveSnapshot = await loadAutosaveProjectSnapshotFromSettings();
   const projectPath =
-    typeof autosaveProjectState?.projectPath === "string"
-      ? autosaveProjectState.projectPath
+    typeof autosaveSnapshot?.projectPath === "string"
+      ? autosaveSnapshot.projectPath
       : activeProjectPath;
   const projectGuid =
-    normalizeProjectGuid(autosaveProjectState?.projectGuid) || activeProjectGuid;
-  const queue = autosaveProjectState?.mediaQueue;
+    projectGuidFromSnapshot(autosaveSnapshot) || activeProjectGuid;
+  const queue = autosaveSnapshot?.mediaQueue;
   try {
     await reconcileStagingForProject({
       projectGuid,
@@ -2889,6 +2960,7 @@ async function pinMediaSource(payload = {}) {
   const verifyStagedPin = payload?.verifyStagedPin === true;
   const projectPath =
     typeof payload?.projectPath === "string" ? payload.projectPath : activeProjectPath;
+  const projectGuid = normalizeProjectGuid(payload?.projectGuid) || activeProjectGuid;
 
   if (mode === "packaged") {
     return {
@@ -3749,6 +3821,9 @@ app.on("activate", () => {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
+  await purgeEmbeddedAutosaveProjectState().catch((err) => {
+    console.error("failed to purge embedded autosave project state:", err);
+  });
   await maintainMediaStagingIndexOnStartup().catch((err) => {
     console.error("media staging index maintenance failed:", err);
   });
