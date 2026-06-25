@@ -2038,6 +2038,10 @@ function applyPinnedMediaSource(item, pinned) {
     item.changedSinceSave = false;
     changed = true;
   }
+  if (item.missing) {
+    item.missing = false;
+    changed = true;
+  }
   if (item.lastPreflightWarningFingerprint) {
     const previousSnapshotId =
       typeof item.liveSource?.snapshotId === "string" ? item.liveSource.snapshotId : "";
@@ -2317,6 +2321,46 @@ function mediaUpdateWarningFingerprint(update) {
   return size || modified ? `meta:${size}:${modified}` : "";
 }
 
+function pendingMediaUpdateStatus(update) {
+  return update?.status || "ready";
+}
+
+function pendingMediaUpdateMatches(existingUpdate, nextUpdate) {
+  if (!existingUpdate || !nextUpdate) return false;
+  if (pendingMediaUpdateStatus(existingUpdate) !== pendingMediaUpdateStatus(nextUpdate)) {
+    return false;
+  }
+  const existingFingerprint =
+    existingUpdate.warningFingerprint || mediaUpdateWarningFingerprint(existingUpdate);
+  const nextFingerprint =
+    nextUpdate.warningFingerprint || mediaUpdateWarningFingerprint(nextUpdate);
+  return (
+    (existingFingerprint || "") === (nextFingerprint || "") &&
+    (existingUpdate.errorReason || "") === (nextUpdate.errorReason || "")
+  );
+}
+
+function shouldPreserveReadyMediaUpdate(existingUpdate, nextUpdate) {
+  return (
+    Boolean(existingUpdate) &&
+    pendingMediaUpdateStatus(existingUpdate) === "ready" &&
+    pendingMediaUpdateStatus(nextUpdate) !== "ready"
+  );
+}
+
+function applyMediaUpdateMissingFlag(item, status) {
+  if (!item) return false;
+  if (status === "missing" && item.missing !== true) {
+    item.missing = true;
+    return true;
+  }
+  if (status === "ready" && item.missing) {
+    item.missing = false;
+    return true;
+  }
+  return false;
+}
+
 function markQueueItemMediaUpdate(payload) {
   if (!payload || typeof payload !== "object") return;
   const originalPath = normalizeMediaPathForCompare(payload.originalPath || "");
@@ -2352,9 +2396,18 @@ function markQueueItemMediaUpdate(payload) {
       changed = true;
       return;
     }
+    const existingPendingMediaUpdate = item.pendingMediaUpdate;
+    if (shouldPreserveReadyMediaUpdate(existingPendingMediaUpdate, pendingMediaUpdate)) {
+      changed = applyMediaUpdateMissingFlag(item, pendingMediaUpdate.status) || changed;
+      return;
+    }
+    if (pendingMediaUpdateMatches(existingPendingMediaUpdate, pendingMediaUpdate)) {
+      changed = applyMediaUpdateMissingFlag(item, pendingMediaUpdate.status) || changed;
+      return;
+    }
     item.pendingMediaUpdate = pendingMediaUpdate;
     item.changedSinceSave = pendingMediaUpdate.status !== "stabilizing";
-    if (payload.status === "missing") item.missing = true;
+    applyMediaUpdateMissingFlag(item, pendingMediaUpdate.status);
     if (pendingMediaUpdate.status === "ready") visibleReadyChange = true;
     changed = true;
     if (String(payload.queueItemId || "") === String(index)) {

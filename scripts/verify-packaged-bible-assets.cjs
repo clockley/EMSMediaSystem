@@ -15,17 +15,6 @@ const xxhashBinaries = {
     ia32: "xxhash.win32-ia32-msvc.node",
   },
 };
-const parcelWatcherPackages = {
-  linux: {
-    x64: "@parcel/watcher-linux-x64-glibc",
-    arm64: "@parcel/watcher-linux-arm64-glibc",
-  },
-  win32: {
-    x64: "@parcel/watcher-win32-x64",
-    arm64: "@parcel/watcher-win32-arm64",
-    ia32: "@parcel/watcher-win32-ia32",
-  },
-};
 const archNames = {
   0: "ia32",
   1: "x64",
@@ -41,6 +30,16 @@ const bibleRpcBinaries = {
   win32: {
     x64: "bible-rpc-win32-x64.exe",
     arm64: "bible-rpc-win32-arm64.exe",
+  },
+};
+const mediaWatcherBinaries = {
+  linux: {
+    x64: "media-watcher-linux-x64",
+    arm64: "media-watcher-linux-arm64",
+  },
+  win32: {
+    x64: "media-watcher-win32-x64.exe",
+    arm64: "media-watcher-win32-arm64.exe",
   },
 };
 
@@ -73,6 +72,19 @@ function sidecarName(platform, arch) {
   return binaryName;
 }
 
+function mediaWatcherSidecarName(platform, arch) {
+  const archName = archNames[arch] || String(arch || "");
+  const platformBinaries = mediaWatcherBinaries[platform];
+  if (!platformBinaries) {
+    throw new Error(`Unsupported media watcher sidecar platform for packaging: ${platform}`);
+  }
+  const binaryName = platformBinaries[archName];
+  if (!binaryName) {
+    throw new Error(`Unsupported media watcher sidecar architecture for packaging: ${platform}/${archName}`);
+  }
+  return binaryName;
+}
+
 function findPackagedFile(rootDir, fileName) {
   const skipDirs = new Set(["node_modules/.cache"]);
   const stack = [rootDir];
@@ -93,39 +105,6 @@ function findPackagedFile(rootDir, fileName) {
         continue;
       }
       if (entry.name === fileName) {
-        return entryPath;
-      }
-    }
-  }
-  return null;
-}
-
-function pathContainsPackageName(filePath, packageName) {
-  const normalized = filePath.replace(/\\/g, "/");
-  const storePackageName = packageName.replace("/", "-");
-  return normalized.includes(packageName) || normalized.includes(storePackageName);
-}
-
-function findPackagedParcelWatcherBinding(rootDir, packageName) {
-  const stack = [rootDir];
-  const matches = [];
-  while (stack.length > 0) {
-    const dir = stack.pop();
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(entryPath);
-        continue;
-      }
-      if (entry.name !== "watcher.node") continue;
-      matches.push(entryPath);
-      if (pathContainsPackageName(entryPath, packageName)) {
         return entryPath;
       }
     }
@@ -160,33 +139,6 @@ function requireXxhashBinding(appOutDir, platform, arch) {
   return bindingPath;
 }
 
-function requireParcelWatcherBinding(appOutDir, platform, arch) {
-  const archName = archNames[arch] || String(arch || "");
-  const platformPackages = parcelWatcherPackages[platform];
-  if (!platformPackages) {
-    throw new Error(`Unsupported @parcel/watcher platform for packaging: ${platform}`);
-  }
-  const packageName = platformPackages[archName];
-  if (!packageName) {
-    throw new Error(`Unsupported @parcel/watcher architecture for packaging: ${platform}/${archName}`);
-  }
-
-  const bindingPath = findPackagedParcelWatcherBinding(appOutDir, packageName);
-  if (!bindingPath) {
-    throw new Error(
-      `${packageName}/watcher.node is missing from packaged app output. ` +
-        "Cross-platform builds need supportedArchitectures in .yarnrc.yml and " +
-        "the beforePack native-binding preparation hook.",
-    );
-  }
-
-  const stat = fs.statSync(bindingPath);
-  if (!stat.isFile() || stat.size < 1024) {
-    throw new Error(`@parcel/watcher native binding is unexpectedly small: ${bindingPath}`);
-  }
-  return bindingPath;
-}
-
 module.exports = async function verifyPackagedBibleAssets(context) {
   const resourcesDir = path.join(context.appOutDir, "resources");
   const legacySidecarDir = path.join(resourcesDir, "sidecar");
@@ -196,6 +148,11 @@ module.exports = async function verifyPackagedBibleAssets(context) {
     "bin",
     sidecarName(context.electronPlatformName, context.arch),
   );
+  const mediaWatcherBinaryPath = path.join(
+    resourcesDir,
+    "bin",
+    mediaWatcherSidecarName(context.electronPlatformName, context.arch),
+  );
 
   if (fs.existsSync(legacySidecarDir)) {
     throw new Error(`Legacy sidecar directory must not be packaged: ${legacySidecarDir}`);
@@ -203,12 +160,8 @@ module.exports = async function verifyPackagedBibleAssets(context) {
 
   const dbStat = requireFile(dbPath, "Bible database");
   const binaryStat = requireFile(binaryPath, "Bible RPC sidecar");
+  const mediaWatcherBinaryStat = requireFile(mediaWatcherBinaryPath, "media watcher sidecar");
   const xxhashBindingPath = requireXxhashBinding(
-    context.appOutDir,
-    context.electronPlatformName,
-    context.arch,
-  );
-  const parcelWatcherBindingPath = requireParcelWatcherBinding(
     context.appOutDir,
     context.electronPlatformName,
     context.arch,
@@ -217,12 +170,15 @@ module.exports = async function verifyPackagedBibleAssets(context) {
   if (context.electronPlatformName !== "win32" && (binaryStat.mode & 0o111) === 0) {
     throw new Error(`Bible RPC sidecar is not executable: ${binaryPath}`);
   }
+  if (context.electronPlatformName !== "win32" && (mediaWatcherBinaryStat.mode & 0o111) === 0) {
+    throw new Error(`Media watcher sidecar is not executable: ${mediaWatcherBinaryPath}`);
+  }
 
   console.log(
     `[OK] Packaged Bible assets for ${context.electronPlatformName}/${context.arch}: ` +
       `${path.relative(context.appOutDir, dbPath)} (${dbStat.size} bytes), ` +
       `${path.relative(context.appOutDir, binaryPath)} (${binaryStat.size} bytes), ` +
-      `${path.relative(context.appOutDir, xxhashBindingPath)}, ` +
-      `${path.relative(context.appOutDir, parcelWatcherBindingPath)}`,
+      `${path.relative(context.appOutDir, mediaWatcherBinaryPath)} (${mediaWatcherBinaryStat.size} bytes), ` +
+      `${path.relative(context.appOutDir, xxhashBindingPath)}`,
   );
 };

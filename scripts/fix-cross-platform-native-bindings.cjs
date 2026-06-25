@@ -4,8 +4,6 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const XXHASH_BINDING_RE = /^xxhash\.(.+)\.node$/;
-const PARCEL_WATCHER_BINDING = "watcher.node";
-const PARCEL_WATCHER_MIN_BYTES = 1024;
 
 function listDirs(dirPath) {
   try {
@@ -35,25 +33,6 @@ function archNameFromBuilderArch(arch) {
     4: "universal",
   };
   return archNames[arch] || String(arch || process.arch);
-}
-
-function isRealNativeFile(filePath, minBytes = 1024) {
-  try {
-    const stat = fs.statSync(filePath);
-    return stat.isFile() && stat.size >= minBytes;
-  } catch {
-    return false;
-  }
-}
-
-function findPackageDirByName(storeRoot, packageName, requiredFile) {
-  for (const packageDir of packageDirs(storeRoot)) {
-    const manifest = readJson(path.join(packageDir, "package.json"));
-    if (!manifest || manifest.name !== packageName || manifest.mocked) continue;
-    if (requiredFile && !isRealNativeFile(path.join(packageDir, requiredFile))) continue;
-    return packageDir;
-  }
-  return null;
 }
 
 function packageDirs(storeRoot) {
@@ -175,43 +154,6 @@ function copyBindingIntoMainPackage(projectRoot, bindingName) {
   return targetPath;
 }
 
-function copyPackageDir(sourceDir, targetDir) {
-  fs.rmSync(targetDir, { recursive: true, force: true });
-  fs.mkdirSync(path.dirname(targetDir), { recursive: true });
-  fs.cpSync(sourceDir, targetDir, {
-    recursive: true,
-    dereference: true,
-    force: true,
-    verbatimSymlinks: false,
-  });
-}
-
-function copyParcelWatcherPackageIntoMainPackage(projectRoot, packageName) {
-  const storeRoot = findStoreRoot(projectRoot);
-  if (!storeRoot) return null;
-
-  const sourceDir = findPackageDirByName(storeRoot, packageName, PARCEL_WATCHER_BINDING);
-  if (!sourceDir) {
-    throw new Error(
-      `${packageName} with a real ${PARCEL_WATCHER_BINDING} was not found. ` +
-        "Run yarn install with supportedArchitectures including the target OS/CPU/libc.",
-    );
-  }
-
-  const mainPackageDir = path.join(projectRoot, "node_modules", "@parcel", "watcher");
-  let resolvedMainDir = mainPackageDir;
-  try {
-    resolvedMainDir = fs.realpathSync(mainPackageDir);
-  } catch (err) {
-    throw new Error(`Could not resolve @parcel/watcher package: ${err?.message || err}`);
-  }
-
-  const packageBaseName = packageName.split("/").pop();
-  const targetDir = path.join(resolvedMainDir, "node_modules", "@parcel", packageBaseName);
-  copyPackageDir(sourceDir, targetDir);
-  return path.join(targetDir, PARCEL_WATCHER_BINDING);
-}
-
 function resolveBindingName(platform, arch) {
   const archName = archNameFromBuilderArch(arch);
   const bindings = {
@@ -226,22 +168,6 @@ function resolveBindingName(platform, arch) {
     },
   };
   return bindings[platform]?.[archName] || null;
-}
-
-function resolveParcelWatcherPackageName(platform, arch) {
-  const archName = archNameFromBuilderArch(arch);
-  const packages = {
-    linux: {
-      x64: "@parcel/watcher-linux-x64-glibc",
-      arm64: "@parcel/watcher-linux-arm64-glibc",
-    },
-    win32: {
-      x64: "@parcel/watcher-win32-x64",
-      arm64: "@parcel/watcher-win32-arm64",
-      ia32: "@parcel/watcher-win32-ia32",
-    },
-  };
-  return packages[platform]?.[archName] || null;
 }
 
 function fixCrossPlatformNativeBindings(options = {}) {
@@ -261,15 +187,6 @@ function fixCrossPlatformNativeBindings(options = {}) {
     if (copiedTo) fixed.push(copiedTo);
   }
 
-  const targetParcelWatcherPackage = options.targetParcelWatcherPackage || null;
-  if (targetParcelWatcherPackage) {
-    const copiedTo = copyParcelWatcherPackageIntoMainPackage(
-      projectRoot,
-      targetParcelWatcherPackage,
-    );
-    if (copiedTo) fixed.push(copiedTo);
-  }
-
   return fixed;
 }
 
@@ -279,11 +196,9 @@ async function prepareNativeBindings(context = {}) {
   const arch = context.electronPlatformName != null ? context.arch : process.arch;
   const bindingName =
     context.electronPlatformName != null ? resolveBindingName(platform, arch) : null;
-  const parcelWatcherPackage = resolveParcelWatcherPackageName(platform, arch);
   const fixed = fixCrossPlatformNativeBindings({
     projectRoot,
     targetBinding: bindingName,
-    targetParcelWatcherPackage: parcelWatcherPackage,
   });
 
   if (fixed.length > 0) {

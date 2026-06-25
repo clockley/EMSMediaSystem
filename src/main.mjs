@@ -146,6 +146,8 @@ let mediaWindowCreatePromise = null;
 let windowBounds = measurePerformance("Getting window bounds", getWindowBounds);
 let win = null;
 const mediaWatcher = new MediaWatcher({
+  app,
+  devRoot: path.dirname(import.meta.dirname),
   sendToRenderer(channel, payload) {
     if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
       win.webContents.send(channel, payload);
