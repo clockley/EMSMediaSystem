@@ -73,6 +73,65 @@ import {
   generateStreamsPanelHTML,
   queueTypeIconMarkup,
 } from "./app-ui-templates.mjs";
+import {
+  SCRIPTURE_AUTOSIZE_NORMALIZE,
+  SCRIPTURE_BODY_FONT_SIZE,
+  SCRIPTURE_DEFAULT_AUTOSIZE_MODE,
+  SCRIPTURE_DEFAULT_LOOK,
+  SCRIPTURE_FONT_FAMILY,
+  SCRIPTURE_FONT_WEIGHT,
+  SCRIPTURE_HEADING_FONT_SIZE,
+  SCRIPTURE_LABEL_FONT_SIZE,
+  SCRIPTURE_LINE_HEIGHT,
+  SCRIPTURE_LOOK_FULLSCREEN,
+  SCRIPTURE_LOOK_LOWER_THIRD,
+  SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
+  SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
+  SCRIPTURE_MIN_BODY_FONT_SIZE,
+  SCRIPTURE_REFERENCE_FONT_SIZE,
+  applyScriptureRenderToPreview,
+  bibleLowerThirdMeasurePanel,
+  bibleStyleSnapshot,
+  classifyPresentationType,
+  clampLowerThirdSegmentIndex,
+  configureBibleScriptureRender,
+  currentBibleBackgroundVideoSync,
+  getBibleDesignerStyle,
+  installBiblePreviewScaleObserver,
+  isBibleLowerThirdFeatureEnabled,
+  measureBibleEntryAutofit,
+  mergedBibleShowNowStyle,
+  normalizeBiblePreviewOutputSize,
+  normalizeLowerThirdSegments,
+  normalizeScriptureAutosizeMode,
+  normalizeScriptureFontSize,
+  normalizeScriptureLook,
+  normalizeScriptureMinFontSize,
+  queueBiblePreviewMediaWindowSizeRefresh,
+  refreshBiblePreviewMediaWindowSize,
+  resetBiblePreviewMediaWindowSize,
+  resolveBibleLowerThirdState,
+  scriptureReferencePresentationForBackground,
+  selectedBiblePreviewOutputSize,
+  setLastShownBibleStyleOverrides,
+  syncBiblePreviewOutputScale,
+  syncLowerThirdFeatureAvailability,
+} from "./app-bible-scripture-render.mjs";
+import {
+  configureCountdown,
+  handleTimeMessage,
+  paintCountdownFor,
+  resetCountdownSync,
+  restoreCountdownForLiveMedia,
+  updateTimestamp,
+} from "./app-countdown.mjs";
+import {
+  configureToasts,
+  invalidateQueueUndoToastAfterMutation,
+  resetPreviewWarningState,
+  showGnomeToast,
+  showPreviewWarningToast,
+} from "./app-toasts.mjs";
 
 let ipcRenderer;
 let bibleAPI;
@@ -208,7 +267,6 @@ var mediaSessionPause = false;
 let isPlaying = false;
 let img = null;
 let itc = 0;
-let hasShownPreviewWarning = false;
 let playPauseBtn;
 let playPauseIcon;
 let timeline;
@@ -217,46 +275,45 @@ let volumePopupOpen = false;
 let durationTimeDisplay;
 let repeatButton;
 const mediaLoopByPath = new Map();
+configureToasts({
+  getVideo: () => video,
+});
+
 const MEDIAPLAYER = 0,
   STREAMPLAYER = 1,
   BULKMEDIAPLAYER = 5,
   TEXTPLAYER = 6;
-const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
-const SCRIPTURE_BODY_FONT_SIZE = 66;
-const SCRIPTURE_REFERENCE_FONT_SIZE = 38;
-const SCRIPTURE_LABEL_FONT_SIZE = 28;
-const SCRIPTURE_HEADING_FONT_SIZE = 52;
-const SCRIPTURE_FONT_WEIGHT = 700;
-const SCRIPTURE_LINE_HEIGHT = 1.32;
-const SCRIPTURE_LOOK_FULLSCREEN = "fullscreen";
-const SCRIPTURE_LOOK_LOWER_THIRD = "lower-third";
-const BIBLE_LOWER_THIRD_FEATURE_ENABLED = false;
-const SCRIPTURE_DEFAULT_LOOK = SCRIPTURE_LOOK_FULLSCREEN;
-const SCRIPTURE_LOWER_THIRD_TEXT_COLOR = "#ffffff";
-const SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR = "#00ff00";
-const SCRIPTURE_REFERENCE_LIGHT_COLOR = "rgba(255, 255, 255, 0.78)";
-const SCRIPTURE_REFERENCE_DARK_COLOR = "rgba(24, 24, 28, 0.84)";
-const SCRIPTURE_REFERENCE_LIGHT_SHADOW = "0 2px 14px rgba(0, 0, 0, 0.72)";
-const SCRIPTURE_REFERENCE_DARK_SHADOW = "0 2px 12px rgba(255, 255, 255, 0.62)";
-const SCRIPTURE_REFERENCE_LIGHT_BACKGROUND_LUMINANCE = 0.58;
-const SCRIPTURE_MIN_BODY_FONT_SIZE = 38;
-const SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE = 20;
-const SCRIPTURE_MIN_REFERENCE_FONT_SIZE = 20;
-const SCRIPTURE_FIT_HEIGHT_RATIO = 0.86;
-const SCRIPTURE_AUTOSIZE_NONE = "none";
-const SCRIPTURE_AUTOSIZE_FIT = "fit";
-const SCRIPTURE_AUTOSIZE_NORMALIZE = "normalize";
-const SCRIPTURE_DEFAULT_AUTOSIZE_MODE = SCRIPTURE_AUTOSIZE_FIT;
-const LOWER_THIRD_MAX_LINES = 2;
-const LOWER_THIRD_MEASURE_ID = "bibleLowerThirdMeasure";
-const FULLSCREEN_SCRIPTURE_MEASURE_ID = "bibleFullscreenScriptureMeasure";
-const BIBLE_PREVIEW_DEFAULT_OUTPUT_WIDTH = 1920;
-const BIBLE_PREVIEW_DEFAULT_OUTPUT_HEIGHT = 1080;
+configureCountdown({
+  getActiveMediaWindowContentType: () => activeMediaWindowContentType,
+  getCurrentLiveQueueItem: () => currentLiveQueueItem(),
+  getCurrentMode: () => currentMode,
+  getCurrentPreviewCue: () => currentPreviewCue(),
+  getLiveAudio: () => liveAudio,
+  getLocalTimeStampUpdateIsRunning: () => localTimeStampUpdateIsRunning,
+  getMediaFile: () => mediaFile,
+  getPreviewAudio: () => previewAudio,
+  getPreviewCueVideo: () => previewCueVideo,
+  getSuppressPreviewForwarding: () => suppressPreviewForwarding,
+  getVideo: () => video,
+  hybridSync: (nextTargetTime) => hybridSync(nextTargetTime),
+  isActiveMediaWindow: () => isActiveMediaWindow(),
+  isAudioPreviewCueActive: () => isAudioPreviewCueActive(),
+  isImg: (filePath) => isImg(filePath),
+  isQueueItemImage: (item) => isQueueItemImage(item),
+  isVideoPreviewCueActive: () => isVideoPreviewCueActive(),
+  mediaPathMatchesCurrentLiveMedia: (filePath) => mediaPathMatchesCurrentLiveMedia(filePath),
+  mediaPlayerMode: MEDIAPLAYER,
+  setLocalTimeStampUpdateIsRunning: (value) => {
+    localTimeStampUpdateIsRunning = value;
+  },
+  setMediaCountdownOverlayVisible: (value) => setMediaCountdownOverlayVisible(value),
+  setMediaCountdownText: (value) => setMediaCountdownText(value),
+  setTargetTime: (value) => {
+    targetTime = value;
+  },
+});
 let isActiveMediaWindowCache = false;
-const SECONDS = new Int32Array(1);
-const SECONDSFLOAT = new Float64Array(1);
 const textNode = document.createTextNode("");
-const updatePending = new Int32Array(1);
 let videoWrapper;
 let focusableControls;
 let controlsOverlay;
@@ -280,8 +337,6 @@ let currentProjectCreated = new Date().toISOString();
 let activeMediaWindowContentType = null;
 let bibleShowNowModeActive = false;
 let bibleLowerThirdOutputActive = false;
-let biblePreviewActiveMediaWindowSize = null;
-let biblePreviewMediaWindowSizePromise = null;
 const bibleDesignerState = {
   version: "KJV",
   attribution: null,
@@ -346,6 +401,19 @@ function projectGuidFromState(state) {
   );
 }
 
+configureBibleScriptureRender({
+  bibleDesignerState,
+  buildBibleTextMessage: (...args) => buildBibleTextMessage(...args),
+  closeBibleLowerThirdOutput: (...args) => closeBibleLowerThirdOutput(...args),
+  getBibleLowerThirdOutputActive: () => bibleLowerThirdOutputActive,
+  invoke: (...args) => invoke(...args),
+  isQueueItemAudio: (item) => isQueueItemAudio(item),
+  isQueueItemBible: (item) => isQueueItemBible(item),
+  isQueueItemImage: (item) => isQueueItemImage(item),
+  isQueueItemPptx: (item) => isQueueItemPptx(item),
+  resolvedBibleStyleDefaults: (...args) => resolvedBibleStyleDefaults(...args),
+});
+
 const bibleVersionMetadataByKey = new Map();
 const projectScriptureOverrides = {
   fontFamily: "",
@@ -371,7 +439,6 @@ const bibleStyleDirtyState = {
   lowerThirdColor: false,
   lowerThirdChromaKeyColor: false,
 };
-let lastShownBibleStyleOverrides = {};
 const bibleVerseSelection = {
   verses: new Set(),
   anchor: 0,
@@ -3508,919 +3575,6 @@ async function openMediaFilesDialog() {
   }
 }
 
-function classifyPresentationType(item, opts = {}) {
-  if (opts?.textItem || isQueueItemBible(item)) return "bible";
-  if (isQueueItemPptx(item)) return "pptx";
-  if (isQueueItemImage(item)) return "image";
-  if (isQueueItemAudio(item)) return "audio";
-  return "video";
-}
-
-function getBibleDesignerStyle() {
-  const fontInput = document.getElementById("bibleFontInput");
-  const sizeInput = document.getElementById("bibleFontSizeInput");
-  const autosizeModeInput = document.getElementById("bibleAutosizeModeInput");
-  const minFontSizeInput = document.getElementById("bibleMinFontSizeInput");
-  const colorInput = document.getElementById("bibleTextColorInput");
-  const backgroundInput = document.getElementById("bibleBackgroundColorInput");
-  const lowerThirdColorInput = document.getElementById("bibleLowerThirdTextColorInput");
-  const lowerThirdChromaKeyInput = document.getElementById("bibleLowerThirdChromaKeyInput");
-  const fontSize = normalizeScriptureFontSize(
-    Number.parseInt(sizeInput?.value, 10),
-    bibleDesignerState.fontSize,
-  );
-  return {
-    fontFamily: fontInput?.value || bibleDesignerState.fontFamily,
-    fontSize,
-    autosizeMode: normalizeScriptureAutosizeMode(
-      autosizeModeInput?.value || bibleDesignerState.autosizeMode,
-    ),
-    minFontSize: normalizeScriptureMinFontSize(
-      Number.parseInt(minFontSizeInput?.value, 10),
-      fontSize,
-    ),
-    autoSplit: true,
-    color: colorInput?.value || bibleDesignerState.color,
-    backgroundColor: backgroundInput?.value || bibleDesignerState.backgroundColor,
-    backgroundPath: bibleDesignerState.backgroundPath || "",
-    lowerThirdColor: lowerThirdColorInput?.value || bibleDesignerState.lowerThirdColor,
-    lowerThirdChromaKeyColor:
-      lowerThirdChromaKeyInput?.value || bibleDesignerState.lowerThirdChromaKeyColor,
-  };
-}
-
-function bibleStyleSnapshot(entry = {}) {
-  const style = {};
-  if (typeof entry.fontFamily === "string" && entry.fontFamily.trim()) {
-    style.fontFamily = entry.fontFamily;
-  }
-  if (Number.isFinite(entry.fontSize)) {
-    style.fontSize = entry.fontSize;
-  }
-  if (typeof entry.autosizeMode === "string") {
-    style.autosizeMode = normalizeScriptureAutosizeMode(entry.autosizeMode);
-  }
-  if (Number.isFinite(entry.minFontSize)) {
-    style.minFontSize = normalizeScriptureMinFontSize(entry.minFontSize, entry.fontSize);
-  }
-  if (typeof entry.autoSplit === "boolean") {
-    style.autoSplit = entry.autoSplit;
-  }
-  if (typeof entry.color === "string" && entry.color) {
-    style.color = entry.color;
-  }
-  if (typeof entry.backgroundColor === "string" && entry.backgroundColor) {
-    style.backgroundColor = entry.backgroundColor;
-  }
-  if (typeof entry.backgroundPath === "string") {
-    style.backgroundPath = entry.backgroundPath;
-  }
-  if (typeof entry.lowerThirdColor === "string" && entry.lowerThirdColor) {
-    style.lowerThirdColor = entry.lowerThirdColor;
-  }
-  if (
-    typeof entry.lowerThirdChromaKeyColor === "string" &&
-    entry.lowerThirdChromaKeyColor
-  ) {
-    style.lowerThirdChromaKeyColor = entry.lowerThirdChromaKeyColor;
-  }
-  return style;
-}
-
-function mergedBibleShowNowStyle() {
-  return {
-    ...resolvedBibleStyleDefaults(),
-    ...lastShownBibleStyleOverrides,
-    ...getBibleDesignerStyle(),
-  };
-}
-
-function currentBibleBackgroundVideoSync() {
-  const backgroundVideo = document.getElementById("biblePreviewBackgroundVideo");
-  if (
-    !backgroundVideo ||
-    backgroundVideo.hidden ||
-    !Number.isFinite(backgroundVideo.currentTime)
-  ) {
-    return null;
-  }
-  return {
-    currentTime: backgroundVideo.currentTime,
-    capturedAt: Date.now(),
-  };
-}
-
-function normalizeScriptureLook(value) {
-  return value === SCRIPTURE_LOOK_LOWER_THIRD
-    ? SCRIPTURE_LOOK_LOWER_THIRD
-    : SCRIPTURE_LOOK_FULLSCREEN;
-}
-
-function normalizeScriptureAutosizeMode(value) {
-  if (value === SCRIPTURE_AUTOSIZE_NONE) return SCRIPTURE_AUTOSIZE_NONE;
-  if (value === SCRIPTURE_AUTOSIZE_NORMALIZE) return SCRIPTURE_AUTOSIZE_NORMALIZE;
-  return SCRIPTURE_AUTOSIZE_FIT;
-}
-
-function normalizeScriptureFontSize(value, fallback = SCRIPTURE_BODY_FONT_SIZE) {
-  const numeric = Number(value);
-  const resolved = Number.isFinite(numeric) ? numeric : fallback;
-  return Math.max(
-    SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE,
-    Math.min(160, Math.round(resolved)),
-  );
-}
-
-function normalizeScriptureMinFontSize(value, preferredFontSize = SCRIPTURE_BODY_FONT_SIZE) {
-  const preferred = normalizeScriptureFontSize(preferredFontSize);
-  const numeric = Number(value);
-  const resolved = Number.isFinite(numeric) ? numeric : SCRIPTURE_MIN_BODY_FONT_SIZE;
-  return Math.max(
-    SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE,
-    Math.min(preferred, Math.round(resolved)),
-  );
-}
-
-function scriptureLowerThirdFontSize(fontSize) {
-  const base = Number.isFinite(fontSize) ? fontSize : SCRIPTURE_BODY_FONT_SIZE;
-  return Math.max(26, Math.min(72, Math.round(base * 0.68)));
-}
-
-function scriptureColorToRgb(value) {
-  const color = String(value || "").trim();
-  const hexMatch = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
-  if (hexMatch) {
-    const hex = hexMatch[1];
-    if (hex.length === 3) {
-      return {
-        r: Number.parseInt(hex[0] + hex[0], 16),
-        g: Number.parseInt(hex[1] + hex[1], 16),
-        b: Number.parseInt(hex[2] + hex[2], 16),
-      };
-    }
-    return {
-      r: Number.parseInt(hex.slice(0, 2), 16),
-      g: Number.parseInt(hex.slice(2, 4), 16),
-      b: Number.parseInt(hex.slice(4, 6), 16),
-    };
-  }
-  const rgbMatch = color.match(
-    /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})(?:[\s,/]+[\d.]+)?\s*\)$/i,
-  );
-  if (!rgbMatch) return null;
-  return {
-    r: Math.max(0, Math.min(255, Number.parseInt(rgbMatch[1], 10))),
-    g: Math.max(0, Math.min(255, Number.parseInt(rgbMatch[2], 10))),
-    b: Math.max(0, Math.min(255, Number.parseInt(rgbMatch[3], 10))),
-  };
-}
-
-function scriptureRelativeLuminance({ r, g, b }) {
-  const channel = (value) => {
-    const normalized = value / 255;
-    return normalized <= 0.03928
-      ? normalized / 12.92
-      : ((normalized + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
-}
-
-function scriptureReferencePresentationForBackground(backgroundColor, options = {}) {
-  if (options.forceLight === true) {
-    return {
-      color: SCRIPTURE_REFERENCE_LIGHT_COLOR,
-      shadow: SCRIPTURE_REFERENCE_LIGHT_SHADOW,
-    };
-  }
-  const rgb = scriptureColorToRgb(backgroundColor);
-  if (!rgb) {
-    return {
-      color: SCRIPTURE_REFERENCE_LIGHT_COLOR,
-      shadow: SCRIPTURE_REFERENCE_LIGHT_SHADOW,
-    };
-  }
-  const isLightBackground =
-    scriptureRelativeLuminance(rgb) >= SCRIPTURE_REFERENCE_LIGHT_BACKGROUND_LUMINANCE;
-  return isLightBackground
-    ? {
-        color: SCRIPTURE_REFERENCE_DARK_COLOR,
-        shadow: SCRIPTURE_REFERENCE_DARK_SHADOW,
-      }
-    : {
-        color: SCRIPTURE_REFERENCE_LIGHT_COLOR,
-        shadow: SCRIPTURE_REFERENCE_LIGHT_SHADOW,
-      };
-}
-
-function normalizeLowerThirdSegmentText(text) {
-  return String(text || "").replace(/\s+/g, " ").trim();
-}
-
-function normalizeLowerThirdSegments(segments) {
-  if (!Array.isArray(segments)) return [];
-  return segments
-    .map((segment) => {
-      const text =
-        typeof segment === "string"
-          ? segment
-          : typeof segment?.text === "string"
-            ? segment.text
-            : "";
-      return { text: normalizeLowerThirdSegmentText(text) };
-    })
-    .filter((segment) => segment.text.length > 0);
-}
-
-function clampLowerThirdSegmentIndex(index, segments) {
-  if (!Array.isArray(segments) || segments.length === 0) return 0;
-  const numericIndex = Number.isFinite(index) ? Math.trunc(index) : 0;
-  return Math.max(0, Math.min(segments.length - 1, numericIndex));
-}
-
-function fallbackLowerThirdSegments(text, maxChars = 82) {
-  const clean = normalizeLowerThirdSegmentText(text);
-  if (!clean) return [];
-  const words = clean.split(/\s+/);
-  const segments = [];
-  let current = "";
-  words.forEach((word) => {
-    const candidate = current ? `${current} ${word}` : word;
-    if (current && candidate.length > maxChars) {
-      segments.push({ text: current });
-      current = word;
-    } else {
-      current = candidate;
-    }
-  });
-  if (current) segments.push({ text: current });
-  return segments;
-}
-
-function lowerThirdMeasureElements() {
-  if (!document?.body) return null;
-  let root = document.getElementById(LOWER_THIRD_MEASURE_ID);
-  if (!root) {
-    root = document.createElement("div");
-    root.id = LOWER_THIRD_MEASURE_ID;
-    root.className = "scripture-render scripture-render--lower-third scripture-render-measure";
-    root.innerHTML = `
-      <div class="scripture-render__box">
-        <div class="scripture-render__body"></div>
-        <div class="scripture-render__reference"></div>
-        <div class="scripture-render__attribution"></div>
-      </div>
-    `;
-    document.body.appendChild(root);
-  }
-  return {
-    root,
-    body: root.querySelector(".scripture-render__body"),
-    reference: root.querySelector(".scripture-render__reference"),
-  };
-}
-
-function scriptureRenderScale(el) {
-  if (!el?.classList?.contains("bible-preview-copy")) return 1;
-  const rawScale = window
-    .getComputedStyle(el)
-    .getPropertyValue("--bible-preview-output-scale")
-    .trim();
-  const scale = Number.parseFloat(rawScale);
-  return Number.isFinite(scale) && scale > 0 ? scale : 1;
-}
-
-function scaledScripturePx(el, value) {
-  return Math.max(1, value * scriptureRenderScale(el));
-}
-
-function applyScriptureRenderVariables(el, message) {
-  if (!el) return;
-  const bodyFontSize = normalizeScriptureFontSize(
-    message.fontSize,
-    SCRIPTURE_BODY_FONT_SIZE,
-  );
-  const referenceFontSize = Math.max(
-    14,
-    Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
-  );
-  const attributionFontSize = Math.max(12, Math.round(referenceFontSize * 0.42));
-  el.style.setProperty("--scripture-font-size", `${scaledScripturePx(el, bodyFontSize)}px`);
-  el.style.setProperty(
-    "--scripture-lower-third-font-size",
-    `${scaledScripturePx(el, scriptureLowerThirdFontSize(bodyFontSize))}px`,
-  );
-  el.style.setProperty(
-    "--scripture-reference-font-size",
-    `${scaledScripturePx(el, referenceFontSize)}px`,
-  );
-  el.style.setProperty(
-    "--scripture-attribution-font-size",
-    `${scaledScripturePx(el, attributionFontSize)}px`,
-  );
-  el.style.setProperty("--scripture-line-height", `${message.lineHeight || SCRIPTURE_LINE_HEIGHT}`);
-  el.style.setProperty("--scripture-font-weight", `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`);
-  el.style.setProperty("--scripture-color", message.color || "#ffffff");
-  const referencePresentation = scriptureReferencePresentationForBackground(
-    message.backgroundColor,
-    {
-      forceLight:
-        normalizeScriptureLook(message.look) === SCRIPTURE_LOOK_LOWER_THIRD ||
-        Boolean(message.backgroundImage || message.backgroundVideo || message.backgroundPath),
-    },
-  );
-  el.style.setProperty(
-    "--scripture-reference-color",
-    message.referenceColor || referencePresentation.color,
-  );
-  el.style.setProperty(
-    "--scripture-reference-shadow",
-    message.referenceTextShadow || referencePresentation.shadow,
-  );
-  el.style.fontFamily = message.fontFamily || SCRIPTURE_FONT_FAMILY;
-}
-
-function scriptureReferenceSizeForBody(bodyFontSize, baseReferenceSize, baseBodySize) {
-  const referenceScale = baseReferenceSize / Math.max(1, baseBodySize);
-  return Math.max(
-    SCRIPTURE_MIN_REFERENCE_FONT_SIZE,
-    Math.round(bodyFontSize * referenceScale),
-  );
-}
-
-function setFullscreenScriptureRenderFontSize(
-  render,
-  bodyFontSize,
-  baseReferenceSize,
-  baseBodySize,
-) {
-  const referenceFontSize = scriptureReferenceSizeForBody(
-    bodyFontSize,
-    baseReferenceSize,
-    baseBodySize,
-  );
-  render.style.setProperty("--scripture-font-size", `${scaledScripturePx(render, bodyFontSize)}px`);
-  render.style.setProperty(
-    "--scripture-reference-font-size",
-    `${scaledScripturePx(render, referenceFontSize)}px`,
-  );
-  render.style.setProperty(
-    "--scripture-attribution-font-size",
-    `${scaledScripturePx(render, Math.max(12, Math.round(referenceFontSize * 0.42)))}px`,
-  );
-  return referenceFontSize;
-}
-
-function visibleElementRect(element) {
-  const sourceRect = element?.getBoundingClientRect?.();
-  if (!sourceRect) return { width: 0, height: 0 };
-  let left = sourceRect.left;
-  let top = sourceRect.top;
-  let right = sourceRect.right;
-  let bottom = sourceRect.bottom;
-
-  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
-    const style = window.getComputedStyle(ancestor);
-    const clips =
-      /hidden|clip|auto|scroll/.test(style.overflow) ||
-      /hidden|clip|auto|scroll/.test(style.overflowX) ||
-      /hidden|clip|auto|scroll/.test(style.overflowY);
-    if (!clips) continue;
-    const ancestorRect = ancestor.getBoundingClientRect();
-    left = Math.max(left, ancestorRect.left);
-    top = Math.max(top, ancestorRect.top);
-    right = Math.min(right, ancestorRect.right);
-    bottom = Math.min(bottom, ancestorRect.bottom);
-  }
-
-  left = Math.max(left, 0);
-  top = Math.max(top, 0);
-  right = Math.min(right, window.innerWidth || right);
-  bottom = Math.min(bottom, window.innerHeight || bottom);
-  return {
-    width: Math.max(0, right - left),
-    height: Math.max(0, bottom - top),
-  };
-}
-
-function scriptureRenderFitBounds(render) {
-  const renderBounds = render.getBoundingClientRect();
-  const renderWidth = render.clientWidth || renderBounds.width || BIBLE_PREVIEW_DEFAULT_OUTPUT_WIDTH;
-  const renderHeight = render.clientHeight || renderBounds.height || BIBLE_PREVIEW_DEFAULT_OUTPUT_HEIGHT;
-  if (render.classList?.contains("bible-preview-copy")) {
-    const surface = render.closest(".bible-preview-surface");
-    const surfaceBounds = surface?.getBoundingClientRect?.();
-    const surfaceWidth = surface?.clientWidth || surfaceBounds?.width || renderWidth;
-    const surfaceHeight = surface?.clientHeight || surfaceBounds?.height || renderHeight;
-    const visibleRender = visibleElementRect(render);
-    const visibleSurface = surface ? visibleElementRect(surface) : visibleRender;
-    return {
-      maxWidth: Math.max(
-        1,
-        Math.min(
-          renderWidth,
-          surfaceWidth,
-          visibleRender.width || renderWidth,
-          visibleSurface.width || surfaceWidth,
-        ),
-      ),
-      maxHeight:
-        Math.max(
-          1,
-          Math.min(
-            renderHeight,
-            surfaceHeight,
-            visibleRender.height || renderHeight,
-            visibleSurface.height || surfaceHeight,
-          ),
-        ) * SCRIPTURE_FIT_HEIGHT_RATIO,
-    };
-  }
-  return {
-    maxWidth: Math.max(1, renderWidth),
-    maxHeight: Math.max(180, renderHeight) * SCRIPTURE_FIT_HEIGHT_RATIO,
-  };
-}
-
-function scriptureRenderBoxFits(render, box, fitBounds) {
-  const boxBounds = box.getBoundingClientRect();
-  const renderBounds = render.getBoundingClientRect();
-  const maxWidth =
-    typeof fitBounds === "number" ? undefined : Number(fitBounds?.maxWidth);
-  const maxHeight =
-    typeof fitBounds === "number" ? fitBounds : Number(fitBounds?.maxHeight);
-  const widthCandidates = [
-    box.clientWidth,
-    boxBounds.width,
-    render.clientWidth,
-    renderBounds.width,
-  ].filter((value) => Number.isFinite(value) && value > 0);
-  const heightCandidates = [
-    box.clientHeight,
-    boxBounds.height,
-    render.clientHeight,
-    renderBounds.height,
-  ].filter((value) => Number.isFinite(value) && value > 0);
-  const naturalAvailableWidth = Math.max(
-    1,
-    Math.min(...(widthCandidates.length ? widthCandidates : [1])),
-  );
-  const availableWidth = Number.isFinite(maxWidth)
-    ? Math.max(1, Math.min(naturalAvailableWidth, maxWidth))
-    : naturalAvailableWidth;
-  const availableHeight = Number.isFinite(maxHeight)
-    ? Math.max(1, maxHeight)
-    : Math.max(1, Math.min(...(heightCandidates.length ? heightCandidates : [1])));
-  return (
-    box.scrollHeight <= Math.ceil(availableHeight) + 1 &&
-    box.scrollWidth <= Math.ceil(availableWidth) + 1
-  );
-}
-
-function scriptureRenderLineCount(render, bodyFontSize) {
-  const body = render.querySelector(".scripture-render__body");
-  if (!body) return 0;
-  const style = window.getComputedStyle(body);
-  const measuredLineHeight = Number.parseFloat(style.lineHeight);
-  const lineHeight =
-    Number.isFinite(measuredLineHeight) && measuredLineHeight > 0
-      ? measuredLineHeight
-      : bodyFontSize * SCRIPTURE_LINE_HEIGHT;
-  return Math.max(1, Math.round(body.scrollHeight / Math.max(1, lineHeight)));
-}
-
-function findLargestFittingScriptureFontSize(
-  render,
-  box,
-  fitBounds,
-  minBodySize,
-  maxBodySize,
-  applyCandidate,
-) {
-  const highLimit = Math.max(minBodySize, Math.round(maxBodySize));
-  applyCandidate(highLimit);
-  if (scriptureRenderBoxFits(render, box, fitBounds)) return highLimit;
-
-  let low = minBodySize;
-  let high = highLimit;
-  let best = minBodySize;
-  while (low <= high) {
-    const candidate = Math.floor((low + high) / 2);
-    applyCandidate(candidate);
-    if (scriptureRenderBoxFits(render, box, fitBounds)) {
-      best = candidate;
-      low = candidate + 1;
-    } else {
-      high = candidate - 1;
-    }
-  }
-  applyCandidate(best);
-  return best;
-}
-
-function fitFullscreenScriptureRender(render, message) {
-  if (!render || normalizeScriptureLook(message?.look) !== SCRIPTURE_LOOK_FULLSCREEN) return;
-  const box = render.querySelector(".scripture-render__box");
-  if (!box) return;
-  const autosizeMode = normalizeScriptureAutosizeMode(message.autosizeMode);
-  const baseBodySize = normalizeScriptureFontSize(
-    message.fontSize,
-    SCRIPTURE_BODY_FONT_SIZE,
-  );
-  const baseReferenceSize = Math.max(
-    14,
-    Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
-  );
-  const minBodySize = normalizeScriptureMinFontSize(message.minFontSize, baseBodySize);
-  const fitBounds = scriptureRenderFitBounds(render);
-  const groupFontSize = Number.isFinite(message.autosizeGroupFontSize)
-    ? Math.max(
-        minBodySize,
-        Math.min(baseBodySize, normalizeScriptureFontSize(message.autosizeGroupFontSize)),
-      )
-    : null;
-
-  const applyCandidate = (fontSize) =>
-    setFullscreenScriptureRenderFontSize(
-      render,
-      fontSize,
-      baseReferenceSize,
-      baseBodySize,
-    );
-
-  let fittedBodySize = baseBodySize;
-  let normalized = false;
-  let normalizedClamped = false;
-
-  if (autosizeMode === SCRIPTURE_AUTOSIZE_NONE) {
-    applyCandidate(fittedBodySize);
-  } else if (groupFontSize !== null) {
-    fittedBodySize = groupFontSize;
-    normalized = true;
-    applyCandidate(fittedBodySize);
-    if (!scriptureRenderBoxFits(render, box, fitBounds)) {
-      fittedBodySize = findLargestFittingScriptureFontSize(
-        render,
-        box,
-        fitBounds,
-        minBodySize,
-        groupFontSize,
-        applyCandidate,
-      );
-      normalizedClamped = fittedBodySize < groupFontSize;
-    }
-  } else {
-    fittedBodySize = findLargestFittingScriptureFontSize(
-      render,
-      box,
-      fitBounds,
-      minBodySize,
-      baseBodySize,
-      applyCandidate,
-    );
-  }
-
-  const fittedReferenceSize = scriptureReferenceSizeForBody(
-    fittedBodySize,
-    baseReferenceSize,
-    baseBodySize,
-  );
-  const fits = scriptureRenderBoxFits(render, box, fitBounds);
-  return {
-    mode: autosizeMode,
-    preferredFontSize: baseBodySize,
-    minFontSize: minBodySize,
-    resolvedFontSize: fittedBodySize,
-    referenceFontSize: fittedReferenceSize,
-    lineCount: scriptureRenderLineCount(render, fittedBodySize),
-    fits,
-    overflow: !fits,
-    normalized,
-    normalizedClamped,
-    splitNeeded:
-      autosizeMode !== SCRIPTURE_AUTOSIZE_NONE &&
-      !fits &&
-      fittedBodySize <= minBodySize,
-  };
-}
-
-function fullscreenScriptureMeasureElements() {
-  if (!document?.body) return null;
-  let root = document.getElementById(FULLSCREEN_SCRIPTURE_MEASURE_ID);
-  if (!root) {
-    root = document.createElement("div");
-    root.id = FULLSCREEN_SCRIPTURE_MEASURE_ID;
-    root.className = "scripture-render scripture-render--fullscreen scripture-render-measure";
-    root.innerHTML = `
-      <div class="scripture-render__box">
-        <div class="scripture-render__body"></div>
-        <div class="scripture-render__reference"></div>
-        <div class="scripture-render__attribution"></div>
-      </div>
-    `;
-    document.body.appendChild(root);
-  }
-  return {
-    root,
-    body: root.querySelector(".scripture-render__body"),
-    reference: root.querySelector(".scripture-render__reference"),
-    attribution: root.querySelector(".scripture-render__attribution"),
-  };
-}
-
-function measureFullscreenScriptureMessage(message, outputSize = null) {
-  const elements = fullscreenScriptureMeasureElements();
-  if (!elements?.root || !elements.body || !elements.reference) return null;
-  const size = normalizeBiblePreviewOutputSize(outputSize) || selectedBiblePreviewOutputSize("dspSelct");
-  elements.root.style.width = `${Math.max(360, Math.round(size.width))}px`;
-  elements.root.style.height = `${Math.max(220, Math.round(size.height))}px`;
-  elements.root.classList.toggle("scripture-render--fullscreen", true);
-  elements.root.classList.toggle("scripture-render--lower-third", false);
-  applyScriptureRenderVariables(elements.root, message);
-  elements.body.textContent = message.bodyText || " ";
-  elements.reference.textContent = message.referenceText || "";
-  elements.reference.hidden = !message.referenceText;
-  if (elements.attribution) {
-    elements.attribution.textContent = message.attributionText || "";
-    elements.attribution.hidden = !message.attributionText;
-  }
-  return fitFullscreenScriptureRender(elements.root, message);
-}
-
-function measureBibleEntryAutofit(entry, outputSize = null) {
-  const message = buildBibleTextMessage(entry, { look: SCRIPTURE_LOOK_FULLSCREEN });
-  return measureFullscreenScriptureMessage(message, outputSize);
-}
-
-function refitBiblePreviewScripture() {
-  const audienceRender = document.getElementById("biblePreviewRender");
-  if (!audienceRender) return;
-  const message = buildBibleTextMessage(bibleDesignerState, { look: SCRIPTURE_LOOK_FULLSCREEN });
-  fitFullscreenScriptureRender(
-    audienceRender,
-    message,
-  );
-}
-
-function lowerThirdSegmentFits(text, style, width) {
-  const elements = lowerThirdMeasureElements();
-  if (!elements?.root || !elements.body) return true;
-  const message = {
-    fontFamily: style.fontFamily || SCRIPTURE_FONT_FAMILY,
-    fontSize: Number.isFinite(style.fontSize) ? style.fontSize : SCRIPTURE_BODY_FONT_SIZE,
-    referenceFontSize: SCRIPTURE_REFERENCE_FONT_SIZE,
-    fontWeight: SCRIPTURE_FONT_WEIGHT,
-    lineHeight: SCRIPTURE_LINE_HEIGHT,
-    color: style.color || "#ffffff",
-  };
-  elements.root.style.width = `${Math.max(360, Math.round(width || window.innerWidth || 1280))}px`;
-  elements.root.style.height = `${Math.max(220, Math.round((window.innerHeight || 720) * 0.35))}px`;
-  applyScriptureRenderVariables(elements.root, message);
-  elements.body.textContent = normalizeLowerThirdSegmentText(text) || " ";
-  if (elements.reference) elements.reference.textContent = "";
-  const fontSize = scriptureLowerThirdFontSize(message.fontSize);
-  const maxHeight = fontSize * 1.18 * LOWER_THIRD_MAX_LINES + 4;
-  return elements.body.scrollHeight <= maxHeight;
-}
-
-function buildMeasuredLowerThirdSegments(text, style = {}, panel = null) {
-  const clean = normalizeLowerThirdSegmentText(text);
-  if (!clean) return [];
-  const width =
-    panel?.getBoundingClientRect?.().width ||
-    document.getElementById("biblePreviewPanel")?.getBoundingClientRect?.().width ||
-    window.innerWidth ||
-    1280;
-  const words = clean.split(/\s+/);
-  const segments = [];
-  let current = "";
-  words.forEach((word) => {
-    const candidate = current ? `${current} ${word}` : word;
-    if (current && !lowerThirdSegmentFits(candidate, style, width)) {
-      segments.push({ text: current });
-      current = word;
-    } else {
-      current = candidate;
-    }
-  });
-  if (current) segments.push({ text: current });
-  return segments.length ? segments : fallbackLowerThirdSegments(clean);
-}
-
-function bibleLowerThirdMeasurePanel() {
-  return (
-    document.getElementById("bibleAudiencePreviewShell") ||
-    document.getElementById("biblePreviewPanel")
-  );
-}
-
-function resolveBibleLowerThirdState(entry, opts = {}) {
-  if (!entry || typeof entry !== "object") {
-    return { segments: [], index: 0, text: "" };
-  }
-  const sourceText = String(entry.text || "");
-  let segments = normalizeLowerThirdSegments(entry.lowerThirdSegments);
-  const sourceChanged = entry.lowerThirdSourceText !== sourceText;
-  const needsRebuild =
-    opts.rebuild === true ||
-    segments.length === 0 ||
-    sourceChanged;
-  if (needsRebuild) {
-    segments = buildMeasuredLowerThirdSegments(sourceText, entry, opts.panel);
-    entry.lowerThirdSegments = segments;
-    entry.lowerThirdSourceText = sourceText;
-    if (sourceChanged) {
-      entry.lowerThirdSegmentIndex = 0;
-    }
-  }
-  const index = clampLowerThirdSegmentIndex(entry.lowerThirdSegmentIndex, segments);
-  entry.lowerThirdSegmentIndex = index;
-  return {
-    segments,
-    index,
-    text: segments[index]?.text || normalizeLowerThirdSegmentText(sourceText),
-  };
-}
-
-function applyScriptureRenderToPreview(render, bodyEl, referenceEl, message) {
-  if (!render || !bodyEl || !referenceEl) return;
-  const look = normalizeScriptureLook(message.look);
-  render.classList.toggle("scripture-render--fullscreen", look === SCRIPTURE_LOOK_FULLSCREEN);
-  render.classList.toggle("scripture-render--lower-third", look === SCRIPTURE_LOOK_LOWER_THIRD);
-  render.dataset.scriptureLook = look;
-  applyScriptureRenderVariables(render, message);
-  bodyEl.textContent = message.bodyText || "No verse loaded";
-  referenceEl.textContent = message.referenceText || "";
-  referenceEl.hidden = !message.referenceText;
-  const attributionEl = render.querySelector(".scripture-render__attribution");
-  if (attributionEl) {
-    attributionEl.textContent = message.attributionText || "";
-    attributionEl.hidden = !message.attributionText;
-  }
-  fitFullscreenScriptureRender(render, message);
-}
-
-function isBibleLowerThirdFeatureEnabled() {
-  return BIBLE_LOWER_THIRD_FEATURE_ENABLED === true;
-}
-
-function syncLowerThirdFeatureAvailability() {
-  const enabled = isBibleLowerThirdFeatureEnabled();
-  document.querySelectorAll("[data-lower-third-feature]").forEach((element) => {
-    element.hidden = !enabled;
-    element.setAttribute("aria-hidden", enabled ? "false" : "true");
-    element.querySelectorAll("button, input, select, textarea").forEach((control) => {
-      if (!enabled) {
-        if (!control.dataset.lowerThirdWasDisabled) {
-          control.dataset.lowerThirdWasDisabled = control.disabled ? "true" : "false";
-        }
-        control.disabled = true;
-        return;
-      }
-      if (control.dataset.lowerThirdWasDisabled) {
-        control.disabled = control.dataset.lowerThirdWasDisabled === "true";
-        delete control.dataset.lowerThirdWasDisabled;
-      }
-    });
-  });
-  const lowerThirdKeyColorField = document.querySelector("[data-lower-third-key-color]");
-  if (lowerThirdKeyColorField) {
-    lowerThirdKeyColorField.hidden = !enabled;
-    lowerThirdKeyColorField.setAttribute("aria-hidden", enabled ? "false" : "true");
-    lowerThirdKeyColorField
-      .querySelectorAll("button, input, select, textarea")
-      .forEach((control) => {
-        control.disabled = !enabled;
-      });
-  }
-
-  document
-    .getElementById("biblePreviewPanel")
-    ?.classList.toggle("bible-preview-panel--audience-only", !enabled);
-  document
-    .querySelector(".bible-editor-fields")
-    ?.classList.toggle("bible-editor-fields--audience-only", !enabled);
-
-  if (!enabled) {
-    const lowerThirdDisplaySelect = document.getElementById("lowerThirdDspSelct");
-    if (lowerThirdDisplaySelect) lowerThirdDisplaySelect.value = "";
-    if (bibleLowerThirdOutputActive) void closeBibleLowerThirdOutput();
-  }
-}
-
-function normalizeBiblePreviewOutputSize(value) {
-  const width = Number.parseInt(value?.width || "", 10);
-  const height = Number.parseInt(value?.height || "", 10);
-  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
-    return { width, height };
-  }
-  return null;
-}
-
-function selectedBiblePreviewOutputSize(selectId = "dspSelct") {
-  if (selectId === "dspSelct") {
-    const mediaWindowSize = normalizeBiblePreviewOutputSize(biblePreviewActiveMediaWindowSize);
-    if (mediaWindowSize) return mediaWindowSize;
-  }
-  const select = document.getElementById(selectId);
-  const option = select?.selectedOptions?.[0];
-  const width = Number.parseInt(option?.dataset?.displayWidth || "", 10);
-  const height = Number.parseInt(option?.dataset?.displayHeight || "", 10);
-  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
-    return { width, height };
-  }
-  return {
-    width: BIBLE_PREVIEW_DEFAULT_OUTPUT_WIDTH,
-    height: BIBLE_PREVIEW_DEFAULT_OUTPUT_HEIGHT,
-  };
-}
-
-async function refreshBiblePreviewMediaWindowSize() {
-  if (biblePreviewMediaWindowSizePromise) {
-    return biblePreviewMediaWindowSizePromise;
-  }
-  biblePreviewMediaWindowSizePromise = invoke("get-media-window-bounds")
-    .then((bounds) => {
-      biblePreviewActiveMediaWindowSize = normalizeBiblePreviewOutputSize(bounds);
-      syncBiblePreviewOutputScale();
-      return biblePreviewActiveMediaWindowSize;
-    })
-    .catch((error) => {
-      console.error("Failed to read media window bounds:", error);
-      biblePreviewActiveMediaWindowSize = null;
-      syncBiblePreviewOutputScale();
-      return null;
-    })
-    .finally(() => {
-      biblePreviewMediaWindowSizePromise = null;
-    });
-  return biblePreviewMediaWindowSizePromise;
-}
-
-function queueBiblePreviewMediaWindowSizeRefresh(delayMs = 0) {
-  window.setTimeout(() => {
-    void refreshBiblePreviewMediaWindowSize();
-  }, Math.max(0, delayMs));
-}
-
-function applyBiblePreviewOutputScale(surface, outputSize) {
-  if (!surface || !outputSize) return;
-  const width = Math.max(1, Math.round(outputSize.width));
-  const height = Math.max(1, Math.round(outputSize.height));
-  surface.style.setProperty("--bible-preview-output-width", `${width}px`);
-  surface.style.setProperty("--bible-preview-output-height", `${height}px`);
-  const rect = surface.getBoundingClientRect();
-  const scale =
-    rect.width > 0 && rect.height > 0
-      ? Math.min(rect.width / width, rect.height / height)
-      : 1;
-  const safeScale = Math.max(0.01, scale);
-  const offsetX = Math.max(0, (rect.width - width * safeScale) / 2);
-  const offsetY = Math.max(0, (rect.height - height * safeScale) / 2);
-  surface.style.setProperty(
-    "--bible-preview-output-scale",
-    `${safeScale}`,
-  );
-  surface.style.setProperty("--bible-preview-scaled-width", `${width * safeScale}px`);
-  surface.style.setProperty("--bible-preview-scaled-height", `${height * safeScale}px`);
-  surface.style.setProperty(
-    "--bible-preview-scripture-gap",
-    `${Math.max(1, Math.round(24 * safeScale))}px`,
-  );
-  surface.style.setProperty("--bible-preview-output-offset-x", `${offsetX}px`);
-  surface.style.setProperty("--bible-preview-output-offset-y", `${offsetY}px`);
-}
-
-function syncBiblePreviewOutputScale() {
-  applyBiblePreviewOutputScale(
-    document.getElementById("bibleAudiencePreviewShell"),
-    selectedBiblePreviewOutputSize("dspSelct"),
-  );
-  if (isBibleLowerThirdFeatureEnabled()) {
-    applyBiblePreviewOutputScale(
-      document.getElementById("bibleLowerThirdPreviewShell"),
-      selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
-    );
-  }
-  refitBiblePreviewScripture();
-}
-
-function installBiblePreviewScaleObserver() {
-  const panel = document.getElementById("biblePreviewPanel");
-  if (!panel || panel.dataset.previewScaleObserverBound === "1") return;
-  panel.dataset.previewScaleObserverBound = "1";
-  if (typeof ResizeObserver === "function") {
-    const observer = new ResizeObserver(() => syncBiblePreviewOutputScale());
-    observer.observe(panel);
-    document.getElementById("bibleAudiencePreviewShell") &&
-      observer.observe(document.getElementById("bibleAudiencePreviewShell"));
-    document.getElementById("bibleLowerThirdPreviewShell") &&
-      observer.observe(document.getElementById("bibleLowerThirdPreviewShell"));
-    panel._biblePreviewScaleObserver = observer;
-  } else {
-    window.addEventListener("resize", syncBiblePreviewOutputScale);
-  }
-}
-
 function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
   const style = {
     fontFamily: entry.fontFamily || bibleDesignerState.fontFamily,
@@ -5474,7 +4628,7 @@ async function currentBibleTextOnlyEntry() {
 
 async function sendBibleTextToOutput(entry = bibleDesignerState) {
   const resolvedEntry = await bibleEntryWithLookupText(entry);
-  lastShownBibleStyleOverrides = bibleStyleSnapshot(resolvedEntry);
+  setLastShownBibleStyleOverrides(bibleStyleSnapshot(resolvedEntry));
   send("update-text", buildBibleTextMessage(resolvedEntry, {
     look: SCRIPTURE_LOOK_FULLSCREEN,
   }));
@@ -10177,7 +9331,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     activeMediaWindowContentType = classifyPresentationType(nextItem);
     isActiveMediaWindowCache = true;
     isPlaying = true;
-    lastUpdateTime = 0;
+    resetCountdownSync();
     localTimeStampUpdateIsRunning = false;
     setMediaCountdownText("");
     // endLocalMedia (which runs from the preview's "ended" event right before
@@ -10237,10 +9391,6 @@ async function trySlipstreamNextQueueItem() {
 }
 
 let pidController;
-
-const NUM_BUFFER = new Int32Array(4);
-const REM_BUFFER = new Int32Array(1);
-let usePad0, usePad1, usePad2, mask0, mask1, mask2, idx0, idx1, idx2;
 
 function isActiveMediaWindow() {
   return isActiveMediaWindowCache;
@@ -11234,7 +10384,6 @@ function consumePendingCueVolume(playbackIndex) {
   syncGtkSliderToCueState();
 }
 
-let lastUpdateTimeLocalPlayer = 0;
 
 function getAudioDevices() {
   return navigator.mediaDevices.enumerateDevices().then((devices) =>
@@ -11293,697 +10442,6 @@ function addFilenameToTitlebar(path) {
 
 function removeFilenameFromTitlebar() {
   document.title = "EMS Media System";
-}
-
-let toastTimer = null;
-/** Auto-hide deadline (ms since epoch) for interactive #gnomeToast hover pause. */
-let toastHideDeadline = 0;
-/** AbortController for mouseenter/mouseleave on interactive toast. */
-let toastHoverAbort = null;
-/** onUndoExpire while an interactive undo toast is active (cleared on undo or dismiss). */
-let activeInteractiveUndoExpire = null;
-
-let previewToastTimer = null;
-
-function resetPreviewWarningState() {
-  hasShownPreviewWarning = false;
-}
-
-/**
- * Dismisses a visible interactive undo toast: clears timers/hover, runs expire callback
- * (discards undo snapshot), and removes toast content. Used before new toasts or when
- * queue state changes and the old undo is no longer valid.
- */
-function dismissInteractiveGnomeToastForReplacement() {
-  if (toastHoverAbort) {
-    toastHoverAbort.abort();
-    toastHoverAbort = null;
-  }
-  if (toastTimer) {
-    clearTimeout(toastTimer);
-    toastTimer = null;
-  }
-  toastHideDeadline = 0;
-  const toast = document.getElementById("gnomeToast");
-  const hadInteractive = toast?.classList.contains("gnome-osd-toast--interactive");
-  if (hadInteractive && typeof activeInteractiveUndoExpire === "function") {
-    const fn = activeInteractiveUndoExpire;
-    activeInteractiveUndoExpire = null;
-    fn();
-  } else {
-    activeInteractiveUndoExpire = null;
-  }
-  if (hadInteractive && toast) {
-    toast.classList.remove("visible");
-    toast.replaceChildren();
-    toast.classList.remove("gnome-osd-toast--interactive");
-    toast.style.display = "none";
-  }
-}
-
-function invalidateQueueUndoToastAfterMutation() {
-  dismissInteractiveGnomeToastForReplacement();
-}
-
-/**
- * @param {string} message
- * @param {number | { onUndo?: () => void; onUndoExpire?: () => void; duration?: number; undoLabel?: string; undoStyle?: "pill-accent" }} [durationOrOptions]
- */
-function showGnomeToast(message, durationOrOptions = 3000) {
-  const FADE_OUT_DURATION = 300;
-  let duration = 3000;
-  /** @type {(() => void) | null} */
-  let onUndo = null;
-  /** @type {(() => void) | null} */
-  let onUndoExpire = null;
-  let undoLabel = "Undo";
-  /** @type {"pill-accent" | null} */
-  let undoStyle = null;
-
-  if (typeof durationOrOptions === "number" && Number.isFinite(durationOrOptions)) {
-    duration = durationOrOptions;
-  } else if (
-    durationOrOptions &&
-    typeof durationOrOptions === "object" &&
-    typeof durationOrOptions.onUndo === "function"
-  ) {
-    onUndo = durationOrOptions.onUndo;
-    duration =
-      typeof durationOrOptions.duration === "number"
-        ? durationOrOptions.duration
-        : 10000;
-    if (typeof durationOrOptions.undoLabel === "string") {
-      undoLabel = durationOrOptions.undoLabel;
-    }
-    if (typeof durationOrOptions.onUndoExpire === "function") {
-      onUndoExpire = durationOrOptions.onUndoExpire;
-    }
-    if (durationOrOptions.undoStyle === "pill-accent") {
-      undoStyle = "pill-accent";
-    }
-  }
-
-  const interactive = onUndo !== null;
-  /** @type {((ms: number) => void) | null} */
-  let startInteractiveAutoHide = null;
-
-  let toast = document.getElementById("gnomeToast");
-  if (!toast) {
-    toast = document.createElement("div");
-    toast.id = "gnomeToast";
-    toast.className = "gnome-osd-toast";
-    document.body.appendChild(toast);
-  }
-
-  dismissInteractiveGnomeToastForReplacement();
-
-  if (toastTimer) {
-    clearTimeout(toastTimer);
-    toastTimer = null;
-  }
-  toastHideDeadline = 0;
-
-  toast.setAttribute("role", "status");
-  toast.setAttribute("aria-live", "polite");
-  toast.setAttribute("aria-atomic", "true");
-
-  const dismissAfterUndo = () => {
-    if (toastHoverAbort) {
-      toastHoverAbort.abort();
-      toastHoverAbort = null;
-    }
-    if (toastTimer) {
-      clearTimeout(toastTimer);
-      toastTimer = null;
-    }
-    toastHideDeadline = 0;
-    activeInteractiveUndoExpire = null;
-    toast.classList.remove("visible");
-    setTimeout(() => {
-      toast.style.display = "none";
-      toast.replaceChildren();
-      toast.classList.remove("gnome-osd-toast--interactive");
-    }, FADE_OUT_DURATION);
-  };
-
-  if (interactive) {
-    toast.classList.add("gnome-osd-toast--interactive");
-    toast.replaceChildren();
-    const msg = document.createElement("span");
-    msg.className = "gnome-osd-toast__message";
-    msg.textContent = message;
-    const undoBtn = document.createElement("button");
-    undoBtn.type = "button";
-    undoBtn.className = "gnome-osd-toast__undo";
-    undoBtn.textContent = undoLabel;
-    undoBtn.setAttribute("aria-label", undoLabel);
-    if (undoStyle === "pill-accent") {
-      undoBtn.classList.add("gnome-osd-toast__undo--pill-accent");
-    }
-
-    activeInteractiveUndoExpire = onUndoExpire;
-
-    const runUndoExpire = () => {
-      const ex = activeInteractiveUndoExpire;
-      activeInteractiveUndoExpire = null;
-      if (typeof ex === "function") {
-        ex();
-      }
-    };
-
-    const ac = new AbortController();
-    toastHoverAbort = ac;
-
-    let resumeMs = duration;
-
-    const finishTimeoutHide = () => {
-      if (toastHoverAbort) {
-        toastHoverAbort.abort();
-        toastHoverAbort = null;
-      }
-      toast.classList.remove("visible");
-      toastTimer = null;
-      toastHideDeadline = 0;
-      setTimeout(() => {
-        toast.style.display = "none";
-        toast.replaceChildren();
-        toast.classList.remove("gnome-osd-toast--interactive");
-        runUndoExpire();
-      }, FADE_OUT_DURATION);
-    };
-
-    const scheduleHide = (ms) => {
-      if (toastTimer) {
-        clearTimeout(toastTimer);
-        toastTimer = null;
-      }
-      if (ms <= 0) {
-        finishTimeoutHide();
-        return;
-      }
-      toastHideDeadline = Date.now() + ms;
-      toastTimer = setTimeout(() => {
-        toastTimer = null;
-        finishTimeoutHide();
-      }, ms);
-    };
-
-    toast.addEventListener(
-      "mouseenter",
-      () => {
-        if (toastHideDeadline <= 0) return;
-        if (toastTimer) {
-          clearTimeout(toastTimer);
-          toastTimer = null;
-        }
-        resumeMs = Math.max(0, toastHideDeadline - Date.now());
-      },
-      { signal: ac.signal },
-    );
-
-    toast.addEventListener(
-      "mouseleave",
-      () => {
-        if (toastHideDeadline <= 0) return;
-        scheduleHide(resumeMs);
-      },
-      { signal: ac.signal },
-    );
-
-    undoBtn.addEventListener("click", () => {
-      if (toastHoverAbort) {
-        toastHoverAbort.abort();
-        toastHoverAbort = null;
-      }
-      if (toastTimer) {
-        clearTimeout(toastTimer);
-        toastTimer = null;
-      }
-      toastHideDeadline = 0;
-      activeInteractiveUndoExpire = null;
-      onUndo();
-      dismissAfterUndo();
-    });
-    toast.appendChild(msg);
-    toast.appendChild(undoBtn);
-    toast.style.display = "flex";
-
-    startInteractiveAutoHide = scheduleHide;
-  } else {
-    toast.classList.remove("gnome-osd-toast--interactive");
-    toast.replaceChildren(document.createTextNode(message));
-    toast.style.display = "block";
-  }
-
-  toast.classList.add("visible");
-
-  if (startInteractiveAutoHide) {
-    startInteractiveAutoHide(duration);
-  } else {
-    toastTimer = setTimeout(() => {
-      toast.classList.remove("visible");
-      toastTimer = null;
-      setTimeout(() => {
-        toast.style.display = "none";
-        toast.classList.remove("gnome-osd-toast--interactive");
-      }, FADE_OUT_DURATION);
-    }, duration);
-  }
-}
-
-function showPreviewWarningToast() {
-  // 1. Safety Check: Ensure video element exists
-  if (!video) return;
-  if (video.src === "") return;
-
-  if (hasShownPreviewWarning) {
-    return;
-  }
-
-  // 3. Find target container (Video parent)
-  // We attach to the parentNode so the absolute positioning is relative to the container, not the window
-  const container = video.parentNode;
-
-  // Ensure container has relative positioning for the absolute toast to work
-  if (window.getComputedStyle(container).position === "static") {
-    container.style.position = "relative";
-  }
-
-  // 4. Create or Select the Toast Element
-  let toast = container.querySelector(".gnome-osd-toast");
-  if (!toast) {
-    toast = document.createElement("div");
-    toast.className = "gnome-osd-toast";
-    container.appendChild(toast);
-  }
-
-  // 5. Set Text (GNOME HID Compliant Message)
-  toast.textContent =
-    'Press "Present" to show on the selected display.';
-
-  // 6. Manage Animation and Timer
-  // Force a reflow to ensure the transition triggers if element was just added
-  void toast.offsetWidth;
-
-  // Show the toast
-  requestAnimationFrame(() => {
-    toast.classList.add("visible");
-  });
-
-  // Clear any existing timer to prevent premature removal
-  if (previewToastTimer) {
-    clearTimeout(previewToastTimer);
-  }
-
-  // Set 5-second timer to remove
-  previewToastTimer = setTimeout(() => {
-    // Check if the toast element still exists in the DOM before manipulating classes
-    if (!toast || !toast.parentNode) {
-      previewToastTimer = null;
-      return; // Exit if the toast or its parent is already gone
-    }
-
-    toast.classList.remove("visible");
-
-    // Wait for CSS transition (250ms) to finish before removing from DOM
-    setTimeout(() => {
-      // Double-check the parent's existence right before removal
-      if (toast && toast.parentNode) {
-        // Use try...catch as a final safety measure against unexpected detachment
-        try {
-          toast.parentNode.removeChild(toast);
-        } catch (e) {
-          // Log the error if removal fails, but continue the cleanup
-          // console.error("Toast removal failed:", e);
-        }
-      }
-      previewToastTimer = null;
-    }, 250);
-  }, 5000);
-
-  hasShownPreviewWarning = true;
-}
-
-function update(time) {
-  // When liveAudio is performing the live presentation, drive the countdown
-  // timer from it instead of from the preview video element.
-  const activeEl = liveAudio?.paused === false ? liveAudio : video;
-  if (activeEl.paused | (currentMode !== MEDIAPLAYER)) {
-    localTimeStampUpdateIsRunning = 0;
-    return;
-  }
-
-  // Same rule as handleTimeMessage: a loaded cue owns the countdown,
-  // so the live-media RAF loop steps aside while the operator scrubs.
-  // The loop itself keeps going (so it resumes painting immediately when
-  // the cue is cleared) — only the NUM_BUFFER write is skipped.
-  const cueOwnsCountdown =
-    getCountdownSourceElement() !== null || isImagePreviewCueActive();
-  if (!cueOwnsCountdown && time - lastUpdateTimeLocalPlayer > 33) {
-    NUM_BUFFER[3] = activeEl.duration - activeEl.currentTime;
-
-    NUM_BUFFER[0] = (NUM_BUFFER[3] * 0.000277777777778) | 0;
-    NUM_BUFFER[1] =
-      ((NUM_BUFFER[3] - NUM_BUFFER[0] * 3600) * 0.0166666666667) | 0;
-    NUM_BUFFER[2] =
-      (NUM_BUFFER[3] | 0) - NUM_BUFFER[0] * 3600 - NUM_BUFFER[1] * 60;
-    NUM_BUFFER[3] = ((NUM_BUFFER[3] - (NUM_BUFFER[3] | 0)) * 1000) | 0;
-
-    idx0 = NUM_BUFFER[0] << 1;
-    mask0 = NUM_BUFFER[0] < 10;
-    idx1 = NUM_BUFFER[1] << 1;
-    mask1 = NUM_BUFFER[1] < 10;
-    idx2 = NUM_BUFFER[2] << 1;
-    mask2 = NUM_BUFFER[2] < 10;
-
-    updatePending[0] = 1;
-    requestAnimationFrame(updateCountdownNode);
-    lastUpdateTimeLocalPlayer = time;
-  }
-
-  requestAnimationFrame(update);
-}
-
-function updateTimestamp() {
-  if (localTimeStampUpdateIsRunning) {
-    return;
-  }
-
-  if (currentMode !== MEDIAPLAYER) {
-    localTimeStampUpdateIsRunning = false;
-    return;
-  }
-
-  if (!video.paused || liveAudio?.paused === false) {
-    localTimeStampUpdateIsRunning = true;
-    requestAnimationFrame(update);
-  }
-}
-
-let lastUpdateTime = 0;
-
-const STRING_BUFFER = new Uint16Array(20);
-const ZERO = "0".charCodeAt(0);
-STRING_BUFFER[2] = STRING_BUFFER[5] = ":".charCodeAt(0);
-STRING_BUFFER[8] = ".".charCodeAt(0);
-const PAD_CODES = new Uint16Array(128);
-for (let i = 0; i < 64; i++) {
-  PAD_CODES[i * 2] = 48 + ((i / 10) | 0);
-  PAD_CODES[i * 2 + 1] = 48 + (i % 10);
-}
-
-/**
- * Decide which media element owns the countdown overlay. Cue scrubs win
- * over the live mirror: while the operator is previewing a cued video or
- * audio item, the big "time remaining" display in the corner should
- * reflect what they're scrubbing, not the projection.
- *
- * Returns null when:
- *   - no cue is loaded (the live media drives the countdown), OR
- *   - the cue is an image (no meaningful countdown exists — caller hides
- *     the overlay instead).
- */
-function getCountdownSourceElement() {
-  if (isAudioPreviewCueActive() && previewAudio) {
-    return previewAudio;
-  }
-  if (isVideoPreviewCueActive() && previewCueVideo) {
-    return previewCueVideo;
-  }
-  return null;
-}
-
-/**
- * True when an image is cued. The countdown overlay must be hidden in
- * this case — there is no duration to count down from — and re-shown when
- * the cue clears (assuming the live media is not also an image).
- */
-function isImagePreviewCueActive() {
-  const cue = currentPreviewCue();
-  const cueEl = previewCueVideo || document.getElementById("previewCue");
-  return Boolean(
-    cue &&
-      isQueueItemImage(cue.item) &&
-      cueEl &&
-      cueEl.hidden === false &&
-      cueEl.hasAttribute("poster"),
-  );
-}
-
-/**
- * Per-cue scratch buffer. The live mirror has its own NUM_BUFFER /
- * STRING_BUFFER / requestAnimationFrame pipeline driven by
- * handleTimeMessage + update(); reusing those structures from the cue
- * scrub path would mean two independent sources mutating a single
- * shared buffer and racing for the same RAF slot. Even with strict
- * source-switching guards, the architecture is fragile — one missed
- * guard and the two countdowns interleave into torn digits. The cue
- * gets its own private buffer here and writes the formatted string
- * straight into the textNode, so a cue scrub can never corrupt the
- * live path's in-flight NUM_BUFFER state and vice versa.
- *
- * The buffer is pre-sized for "HH:MM:SS.mmm" (12 chars) and indexed by
- * absolute position so we never allocate a string just to format the
- * countdown — paintCountdownFor runs once per timeupdate (≈4 Hz) and
- * once per seek, well below the live RAF rate, but keeping it
- * allocation-free still avoids waking the GC inside event callbacks.
- */
-const CUE_COUNTDOWN_CHARS = new Uint16Array(12);
-CUE_COUNTDOWN_CHARS[2] = CUE_COUNTDOWN_CHARS[5] = ":".charCodeAt(0);
-CUE_COUNTDOWN_CHARS[8] = ".".charCodeAt(0);
-
-function writeTwoDigits(value, offset) {
-  if (value < 0) value = 0;
-  if (value > 99) value = 99;
-  CUE_COUNTDOWN_CHARS[offset] = ZERO + ((value / 10) | 0);
-  CUE_COUNTDOWN_CHARS[offset + 1] = ZERO + (value % 10);
-}
-
-function writeThreeDigits(value, offset) {
-  if (value < 0) value = 0;
-  if (value > 999) value = 999;
-  CUE_COUNTDOWN_CHARS[offset] = ZERO + ((value / 100) | 0);
-  CUE_COUNTDOWN_CHARS[offset + 1] = ZERO + (((value / 10) | 0) % 10);
-  CUE_COUNTDOWN_CHARS[offset + 2] = ZERO + (value % 10);
-}
-
-/**
- * Compute (duration − currentTime) for the cue scrub element and write
- * the formatted "HH:MM:SS.mmm" string straight into the textNode. This
- * deliberately does NOT touch NUM_BUFFER / STRING_BUFFER / updatePending
- * so the live mirror's RAF pipeline keeps owning its own state — even
- * while a cue is loaded, the live path can continue painting into its
- * private buffers (the source-switching guards just stop it from
- * applying those buffers to the on-screen textNode).
- *
- * Wired from previewCueVideo's timeupdate/seeked/loadedmetadata
- * listeners and previewAudio's equivalents, plus the one-shot redraw
- * inside restoreCountdownForLiveMedia for fast handoff back to live.
- */
-function paintCountdownFor(mediaEl) {
-  if (!mediaEl) return;
-  const duration = mediaEl.duration;
-  const currentTime = mediaEl.currentTime;
-  if (
-    !Number.isFinite(duration) ||
-    duration <= 0 ||
-    !Number.isFinite(currentTime) ||
-    currentTime < 0
-  ) {
-    return;
-  }
-  let remaining = duration - currentTime;
-  if (remaining < 0) remaining = 0;
-  const wholeSeconds = remaining | 0;
-  const hours = (wholeSeconds / 3600) | 0;
-  const rem = wholeSeconds - hours * 3600;
-  const minutes = (rem / 60) | 0;
-  const seconds = rem - minutes * 60;
-  const millis = ((remaining - wholeSeconds) * 1000 + 0.5) | 0;
-  writeTwoDigits(hours, 0);
-  writeTwoDigits(minutes, 3);
-  writeTwoDigits(seconds, 6);
-  writeThreeDigits(millis > 999 ? 999 : millis, 9);
-  setMediaCountdownText(String.fromCharCode(
-    CUE_COUNTDOWN_CHARS[0],
-    CUE_COUNTDOWN_CHARS[1],
-    CUE_COUNTDOWN_CHARS[2],
-    CUE_COUNTDOWN_CHARS[3],
-    CUE_COUNTDOWN_CHARS[4],
-    CUE_COUNTDOWN_CHARS[5],
-    CUE_COUNTDOWN_CHARS[6],
-    CUE_COUNTDOWN_CHARS[7],
-    CUE_COUNTDOWN_CHARS[8],
-    CUE_COUNTDOWN_CHARS[9],
-    CUE_COUNTDOWN_CHARS[10],
-    CUE_COUNTDOWN_CHARS[11],
-  ));
-}
-
-/**
- * Restore the countdown overlay's visibility to whatever the live media
- * requires. Called when a cue clears (the cue might have hidden the
- * overlay for an image preview, or pinned it to the cue's time), so the
- * operator sees the live time again for audio/video and nothing for an
- * image or empty live source.
- */
-function restoreCountdownForLiveMedia() {
-  const overlay = document.getElementById("customControls");
-  const liveItem = currentLiveQueueItem();
-  const liveIsBible = isActiveMediaWindow() && activeMediaWindowContentType === "bible";
-  const liveIsPptx = isActiveMediaWindow() && activeMediaWindowContentType === "pptx";
-  const hasLiveSource = Boolean(mediaFile);
-  const liveIsImage = (hasLiveSource && isImg(mediaFile)) || isQueueItemImage(liveItem);
-  const showTransportControls =
-    !liveIsBible &&
-    !liveIsPptx &&
-    !liveIsImage &&
-    (hasLiveSource || Boolean(liveAudio?.src));
-
-  if (overlay) {
-    overlay.style.display = "";
-    overlay.style.visibility = showTransportControls ? "" : "hidden";
-  }
-
-  const showCountdown = hasLiveSource && !liveIsImage;
-  setMediaCountdownOverlayVisible(showCountdown);
-  if (!showCountdown) {
-    setMediaCountdownText("");
-    return;
-  }
-  // Prefer liveAudio's clock for audio-only live presentations — the
-  // main video element may be paused/empty in that mode. Otherwise fall
-  // back to the main mirror so we paint immediately instead of waiting
-  // for the next projection time message.
-  if (liveAudio?.src && liveAudio.src !== "" && !liveAudio.paused) {
-    paintCountdownFor(liveAudio);
-  } else if (video) {
-    paintCountdownFor(video);
-  }
-}
-
-function updateCountdownNode() {
-  let tens = (NUM_BUFFER[0] / 10) | 0,
-    units = NUM_BUFFER[0] % 10;
-  STRING_BUFFER[0] = mask0 ? PAD_CODES[idx0] : ZERO + tens;
-  STRING_BUFFER[1] = mask0 ? PAD_CODES[idx0 + 1] : ZERO + units;
-
-  ((tens = (NUM_BUFFER[1] / 10) | 0), (units = NUM_BUFFER[1] % 10));
-  STRING_BUFFER[3] = mask1 ? PAD_CODES[idx1] : ZERO + tens;
-  STRING_BUFFER[4] = mask1 ? PAD_CODES[idx1 + 1] : ZERO + units;
-
-  ((tens = (NUM_BUFFER[2] / 10) | 0), (units = NUM_BUFFER[2] % 10));
-  STRING_BUFFER[6] = mask2 ? PAD_CODES[idx2] : ZERO + tens;
-  STRING_BUFFER[7] = mask2 ? PAD_CODES[idx2 + 1] : ZERO + units;
-
-  STRING_BUFFER[9] = ZERO + ((NUM_BUFFER[3] / 100) | 0);
-  STRING_BUFFER[10] = ZERO + (((NUM_BUFFER[3] / 10) | 0) % 10);
-  STRING_BUFFER[11] = ZERO + (NUM_BUFFER[3] % 10);
-
-  setMediaCountdownText(String.fromCharCode(
-    STRING_BUFFER[0],
-    STRING_BUFFER[1],
-    STRING_BUFFER[2],
-    STRING_BUFFER[3],
-    STRING_BUFFER[4],
-    STRING_BUFFER[5],
-    STRING_BUFFER[6],
-    STRING_BUFFER[7],
-    STRING_BUFFER[8],
-    STRING_BUFFER[9],
-    STRING_BUFFER[10],
-    STRING_BUFFER[11],
-  ));
-
-  updatePending[0] = 0;
-}
-
-let now = 0;
-function handleTimeMessage(_, message) {
-  const duration = Array.isArray(message) ? message[0] : message?.duration;
-  const currentTime = Array.isArray(message)
-    ? message[1]
-    : message?.currentTime;
-  const timestamp = Array.isArray(message) ? message[2] : message?.timestamp;
-  const messageMediaFile = Array.isArray(message)
-    ? message[3]
-    : message?.mediaFile;
-
-  if (
-    messageMediaFile &&
-    mediaFile &&
-    !mediaPathMatchesCurrentLiveMedia(messageMediaFile)
-  ) {
-    return;
-  }
-
-  if (
-    !Number.isFinite(duration) ||
-    !Number.isFinite(currentTime) ||
-    duration <= 0 ||
-    currentTime < 0
-  ) {
-    return;
-  }
-
-  now = Date.now();
-
-  if (currentMode === MEDIAPLAYER) {
-    // Cue scrubs own the countdown while a cue is loaded — the operator
-    // is reading "time remaining on the thing I'm previewing", not on the
-    // live media. The cue's own timeupdate/seeked handlers drive the
-    // overlay (or hide it entirely for an image cue), so we just step
-    // out of the way here.
-    if (!getCountdownSourceElement() && !isImagePreviewCueActive()) {
-      SECONDSFLOAT[0] = Math.max(0, duration - currentTime);
-      NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
-      REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
-      NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
-      NUM_BUFFER[2] = REM_BUFFER[0] % 60;
-      NUM_BUFFER[3] =
-        ((SECONDSFLOAT[0] - (SECONDSFLOAT[0] | 0)) * 1000 + 0.5) | 0;
-      // Keep the PAD_CODES lookup metadata in sync with NUM_BUFFER on
-      // every IPC tick. Historically only the local update() RAF loop
-      // refreshed mask*/idx*, which meant updateCountdownNode would
-      // render the hours/minutes/seconds digits from a stale lookup
-      // whenever this IPC path won the race to schedule the next paint
-      // — most visible right after a cue clears (update() skipped the
-      // refresh while the cue owned the countdown). Refresh here too so
-      // the live countdown is fully self-sufficient and never gets
-      // "stuck" digits.
-      idx0 = NUM_BUFFER[0] << 1;
-      mask0 = NUM_BUFFER[0] < 10;
-      idx1 = NUM_BUFFER[1] << 1;
-      mask1 = NUM_BUFFER[1] < 10;
-      idx2 = NUM_BUFFER[2] << 1;
-      mask2 = NUM_BUFFER[2] < 10;
-      if (!updatePending[0]) {
-        updatePending[0] = 1;
-        requestAnimationFrame(updateCountdownNode);
-      }
-    }
-  }
-
-  // The PID sync must run unconditionally while the live mirror is
-  // playing. In the old architecture this path early-returned whenever a
-  // cue was loaded (shouldSuppressPreviewForwarding was true), which
-  // froze the PID controller and let the mirror's playbackRate drift
-  // away from the projection. With the cue scrub on a dedicated overlay
-  // the main #preview is always the live mirror, so we keep adjusting it
-  // — only the explicit suppressPreviewForwarding flag (used briefly
-  // during projection→preview sync to break feedback) is honored here.
-  if (suppressPreviewForwarding) {
-    return;
-  }
-
-  // Perform timestamp calculations only if enough time has passed
-  if (now - lastUpdateTime > 500) {
-    if (video && !video.paused && !video.seeking) {
-      targetTime = currentTime - (now - timestamp + (Date.now() - now)) * 0.001;
-      hybridSync(targetTime);
-      lastUpdateTime = now;
-    }
-  }
 }
 
 async function handlePlaybackState(event, playbackState) {
@@ -12051,7 +10509,7 @@ function installIPCHandler() {
   on("remoteplaypause", handlePlayPause);
   on("media-window-closed", handleMediaWindowClosed);
   on("media-window-closed", () => {
-    biblePreviewActiveMediaWindowSize = null;
+    resetBiblePreviewMediaWindowSize();
     syncBiblePreviewOutputScale();
   });
   on("lower-third-window-closed", () => {
