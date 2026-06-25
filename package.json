@@ -23,7 +23,7 @@
     "csso": "^5.0.5",
     "electron": "^34.0.0",
     "electron-builder": "26.11.1",
-    "esbuild": "^0.27.0",
+    "esbuild": "^0.28.1",
     "html-minifier-terser": "^7.0.0",
     "terser": "^5.43.1"
   },
