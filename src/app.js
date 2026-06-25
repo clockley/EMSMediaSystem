@@ -2111,6 +2111,30 @@ async function syncMediaWatches() {
   await invoke("register-media-watches", watchItems);
 }
 
+function liveSourcePinnedModifiedTime(liveSource) {
+  if (!Number.isFinite(liveSource?.pinnedMtimeMs)) return undefined;
+  const modified = new Date(liveSource.pinnedMtimeMs);
+  return Number.isFinite(modified.getTime()) ? modified.toISOString() : undefined;
+}
+
+function queueItemPreflightCheckPayload(item) {
+  const liveSource = queueItemLiveSource(item);
+  const sourcePath =
+    liveSource?.mode === "linked"
+      ? liveSource.originalPath || item.originalPath || item.path
+      : item.path;
+  return {
+    path: sourcePath,
+    queuePath: item.path,
+    sizeBytes: Number.isFinite(liveSource?.pinnedSizeBytes)
+      ? liveSource.pinnedSizeBytes
+      : item.sizeBytes,
+    modifiedTime: liveSourcePinnedModifiedTime(liveSource) || item.modifiedTime,
+    fileHash: liveSource?.pinnedFileHash || item.fileHash,
+    fileHashAlg: item.fileHashAlg,
+  };
+}
+
 function queueItemNeedsDefaultSnapshotPin(item) {
   const liveSource = queueItemLiveSource(item);
   if (!liveSource || liveSource.mode !== "linked") return false;
@@ -2361,12 +2385,26 @@ function applyMediaUpdateMissingFlag(item, status) {
   return false;
 }
 
+function mediaUpdatePayloadQueueItemIds(payload) {
+  const values = [];
+  if (Array.isArray(payload?.queueItemIds)) values.push(...payload.queueItemIds);
+  if (payload?.queueItemId !== undefined && payload.queueItemId !== null) {
+    values.push(payload.queueItemId);
+  }
+  const ids = values
+    .map((value) => String(value))
+    .filter((value) => value.length > 0);
+  return ids.length > 0 ? new Set(ids) : null;
+}
+
 function markQueueItemMediaUpdate(payload) {
   if (!payload || typeof payload !== "object") return;
   const originalPath = normalizeMediaPathForCompare(payload.originalPath || "");
+  const payloadQueueItemIds = mediaUpdatePayloadQueueItemIds(payload);
   let changed = false;
   let visibleReadyChange = false;
   mediaQueue.forEach((item, index) => {
+    if (payloadQueueItemIds && !payloadQueueItemIds.has(String(index))) return;
     const liveSource = queueItemLiveSource(item);
     if (!liveSource || liveSource.mode !== "linked") return;
     if (normalizeMediaPathForCompare(liveSource.originalPath || item.path) !== originalPath) {
@@ -2387,15 +2425,6 @@ function markQueueItemMediaUpdate(payload) {
     if (warningFingerprint) {
       pendingMediaUpdate.warningFingerprint = warningFingerprint;
     }
-    if (
-      pendingMediaUpdate.status === "ready" &&
-      warningFingerprint &&
-      item.lastPreflightWarningFingerprint === warningFingerprint
-    ) {
-      acknowledgePreflightWarningForItem(item, warningFingerprint);
-      changed = true;
-      return;
-    }
     const existingPendingMediaUpdate = item.pendingMediaUpdate;
     if (shouldPreserveReadyMediaUpdate(existingPendingMediaUpdate, pendingMediaUpdate)) {
       changed = applyMediaUpdateMissingFlag(item, pendingMediaUpdate.status) || changed;
@@ -2410,7 +2439,7 @@ function markQueueItemMediaUpdate(payload) {
     applyMediaUpdateMissingFlag(item, pendingMediaUpdate.status);
     if (pendingMediaUpdate.status === "ready") visibleReadyChange = true;
     changed = true;
-    if (String(payload.queueItemId || "") === String(index)) {
+    if (payloadQueueItemIds?.has(String(index))) {
       selectedQueueAnchorIndex = queueIndexInRange(selectedQueueAnchorIndex)
         ? selectedQueueAnchorIndex
         : index;
@@ -2476,17 +2505,7 @@ function keepPendingMediaUpdate(index) {
   if (!item?.pendingMediaUpdate || !queueItemCanKeepOldMediaVersion(item)) {
     return false;
   }
-  const warningFingerprint =
-    item.pendingMediaUpdate.warningFingerprint ||
-    mediaUpdateWarningFingerprint(item.pendingMediaUpdate);
-  let changed = false;
-  if (warningFingerprint) {
-    changed = acknowledgePreflightWarningForItem(item, warningFingerprint);
-  } else {
-    delete item.pendingMediaUpdate;
-    item.changedSinceSave = false;
-    changed = true;
-  }
+  const changed = acknowledgePreflightWarningForItem(item);
   if (changed) {
     renderQueue();
     scheduleAutosaveProjectState();
@@ -7548,14 +7567,6 @@ function queueItemFingerprintSnapshotFields(item, bibleEntry) {
   return {};
 }
 
-function queueItemPreflightWarningSnapshotFields(item, bibleEntry) {
-  if (bibleEntry) return {};
-  return typeof item.lastPreflightWarningFingerprint === "string" &&
-    item.lastPreflightWarningFingerprint.length > 0
-    ? { lastPreflightWarningFingerprint: item.lastPreflightWarningFingerprint }
-    : {};
-}
-
 function buildProjectQueueItemSnapshot(item) {
   const bibleEntry = isQueueItemBible(item)
     ? projectBibleReferenceEntryForQueueItem(item)
@@ -7578,7 +7589,6 @@ function buildProjectQueueItemSnapshot(item) {
         ? item.originalName
         : itemName || queueBasename(itemPath),
     ...queueItemFingerprintSnapshotFields(item, bibleEntry),
-    ...queueItemPreflightWarningSnapshotFields(item, bibleEntry),
     sizeBytes: Number.isFinite(item.sizeBytes) && !bibleEntry ? item.sizeBytes : undefined,
     modifiedTime:
       typeof item.modifiedTime === "string" && !bibleEntry ? item.modifiedTime : undefined,
@@ -7718,7 +7728,6 @@ function applyProjectStateSnapshot(state, opts = {}) {
             ? x.originalName
             : itemName || queueBasename(itemPath),
         ...queueItemFingerprintSnapshotFields(x, bibleEntry),
-        ...queueItemPreflightWarningSnapshotFields(x, bibleEntry),
         sizeBytes: Number.isFinite(x.sizeBytes) && !bibleEntry ? x.sizeBytes : undefined,
         modifiedTime:
           typeof x.modifiedTime === "string" && !bibleEntry ? x.modifiedTime : undefined,
@@ -7897,11 +7906,11 @@ function preflightWarningFingerprint(result) {
   return size || modified ? `meta:${size}:${modified}` : "";
 }
 
-function acknowledgePreflightWarningForItem(item, warningFingerprint) {
-  if (!item || !warningFingerprint) return false;
+function acknowledgePreflightWarningForItem(item) {
+  if (!item) return false;
   let changed = false;
-  if (item.lastPreflightWarningFingerprint !== warningFingerprint) {
-    item.lastPreflightWarningFingerprint = warningFingerprint;
+  if (item.lastPreflightWarningFingerprint) {
+    delete item.lastPreflightWarningFingerprint;
     changed = true;
   }
   if (item.pendingMediaUpdate) {
@@ -7922,18 +7931,10 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => !isQueueItemBible(item));
   if (fileItems.length === 0) return;
+  const preflightItems = fileItems.map(({ item }) => queueItemPreflightCheckPayload(item));
   let results = [];
   try {
-    results = await invoke(
-      "preflight-check-media",
-      fileItems.map(({ item }) => ({
-        path: item.path,
-        sizeBytes: item.sizeBytes,
-        modifiedTime: item.modifiedTime,
-        fileHash: item.fileHash,
-        fileHashAlg: item.fileHashAlg,
-      })),
-    );
+    results = await invoke("preflight-check-media", preflightItems);
   } catch (err) {
     console.error("preflight-check-media failed:", err);
     return;
@@ -7942,28 +7943,20 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
   const changedItems = [];
   const unverifiableItems = [];
   let baselineStamped = false;
-  let acknowledgedStateChanged = false;
   fileItems.forEach(({ item, index }, i) => {
     const result = results?.[i] || {};
+    const preflightItem = preflightItems[i] || {};
+    const checkedPath = result.path || preflightItem.path || item.path;
     const status = result.status;
     item.missing = status === "missing";
     item.changedSinceSave = status === "changed";
     if (status === "missing") {
       missingFiles.push({
         name: item.originalName || item.name || item.path,
-        path: item.path,
+        path: checkedPath,
       });
     } else if (status === "changed") {
       const warningFingerprint = preflightWarningFingerprint(result);
-      const alreadyAcknowledged =
-        warningFingerprint &&
-        item.lastPreflightWarningFingerprint === warningFingerprint;
-      if (alreadyAcknowledged) {
-        acknowledgedStateChanged =
-          acknowledgePreflightWarningForItem(item, warningFingerprint) ||
-          acknowledgedStateChanged;
-        return;
-      }
       const liveSource = queueItemLiveSource(item);
       const canKeepOld = queueItemCanKeepOldMediaVersion(item);
       item.pendingMediaUpdate = {
@@ -7973,27 +7966,27 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
         fileHashAlg: result.currentFileHashAlg,
         detectedAt: Date.now(),
         status: "ready",
-        sourcePath: liveSource?.originalPath || item.path,
+        sourcePath: checkedPath,
         warningFingerprint,
         canKeepOld,
       };
-      if (
-        !warningFingerprint ||
-        item.lastPreflightWarningFingerprint !== warningFingerprint
-      ) {
-        changedItems.push({
-          index,
-          name: item.name || item.path,
-          path: item.path,
-          savedModifiedTime: item.modifiedTime,
-          currentModifiedTime: result.currentModifiedTime,
-          confirmedByHash: result.confirmedByHash === true,
-          warningFingerprint,
-          canKeepOld,
-          stagingTier: liveSource?.stagingTier,
-          reason: liveSource?.reason,
-        });
+      if (item.lastPreflightWarningFingerprint) {
+        delete item.lastPreflightWarningFingerprint;
+        baselineStamped = true;
       }
+      changedItems.push({
+        index,
+        name: item.name || item.path,
+        path: checkedPath,
+        queuePath: item.path,
+        savedModifiedTime: preflightItem.modifiedTime || item.modifiedTime,
+        currentModifiedTime: result.currentModifiedTime,
+        confirmedByHash: result.confirmedByHash === true,
+        warningFingerprint,
+        canKeepOld,
+        stagingTier: liveSource?.stagingTier,
+        reason: liveSource?.reason,
+      });
     } else if (status === "unverifiable") {
       // First sighting with no stored baseline. Adopt the current state as the
       // baseline so future changes are detectable. This does not assert the
@@ -8028,7 +8021,7 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
   if (unverifiableItems.length > 0) {
     // Fill in full baselines (including hash) in the background.
     void stampBaselineForQueueItems(unverifiableItems, { force: true });
-  } else if (baselineStamped || acknowledgedStateChanged) {
+  } else if (baselineStamped) {
     scheduleAutosaveProjectState();
   }
   if (warn && (missingFiles.length > 0 || changedItems.length > 0)) {
@@ -8044,33 +8037,17 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
         missingItems: missingFiles,
         actionMode,
       });
-      let acknowledged = false;
       for (const changedItem of changedItems) {
         const index = queueIndexInRange(changedItem.index)
           ? changedItem.index
-          : findQueueIndexByPath(changedItem.path);
+          : findQueueIndexByPath(changedItem.queuePath || changedItem.path);
         if (!queueIndexInRange(index)) continue;
         if (action === "reload" || !changedItem.canKeepOld) {
           await approvePendingMediaUpdate(index);
           continue;
         }
-        if (action !== "keep" && action !== "ok") continue;
-        const target = mediaQueue[index];
-        if (changedItem.warningFingerprint) {
-          acknowledged =
-            acknowledgePreflightWarningForItem(
-              target,
-              changedItem.warningFingerprint,
-            ) || acknowledged;
-        } else if (target?.pendingMediaUpdate) {
-          delete target.pendingMediaUpdate;
-          target.changedSinceSave = false;
-          acknowledged = true;
-        }
-      }
-      if (acknowledged) {
-        renderQueue();
-        scheduleAutosaveProjectState();
+        // Keep Old from the launch dialog keeps the staged old file active, but
+        // leaves the queue-row Reload/Keep controls visible for an explicit choice.
       }
     } catch (err) {
       console.error("Failed to show preflight dialog:", err);

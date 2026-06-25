@@ -59,7 +59,7 @@ function renderChangedRow(item) {
         : "Content changed since last save";
   const actionDetail =
     item.canKeepOld === true
-      ? "Keep Old is available"
+      ? "Keep is available"
       : "EMS will reload this linked file from disk";
   const detail = `${timeDetail}. ${actionDetail}.`;
   return `
@@ -101,7 +101,7 @@ function renderPreflight(payload) {
   if (actionMode === "choice") {
     preflightDefaultAction = "keep";
     intro.textContent =
-      `Some linked media files differ from the versions recorded when this project was last saved (${parts.join(", ")}). Choose Reload to use the file on disk, or Keep Old for files EMS has safely staged.`;
+      `Some linked media files differ from the versions recorded when this project was last saved (${parts.join(", ")}). Choose Reload to use the file on disk, or Keep for files EMS has safely staged.`;
   } else if (actionMode === "reload-only") {
     preflightDefaultAction = "reload";
     intro.textContent =

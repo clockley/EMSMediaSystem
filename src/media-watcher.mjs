@@ -9,19 +9,15 @@ the Free Software Foundation, either version 3 of the License, or
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  hashMediaFile,
-  MEDIA_FILE_HASH_ALG,
-} from "./media-file-hash.min.mjs";
 
 const RPC_TIMEOUT_MS = 10000;
-const DEBOUNCE_MS = 300;
-const STABILITY_INTERVAL_MS = 500;
-const STABILITY_SAMPLES = 3;
-const MAX_STABILITY_POLLS = 20;
+const WATCH_DEBOUNCE_MS = 300;
+const WATCH_STABILITY_INTERVAL_MS = 500;
+const WATCH_STABILITY_SAMPLES = 3;
+const WATCH_MAX_STABILITY_POLLS = 20;
+const WATCH_POLL_INTERVAL_MS = 5000;
 
 const MEDIA_WATCHER_BINARIES = Object.freeze({
   linux: Object.freeze({
@@ -57,31 +53,23 @@ function normalizeLocalPath(filePath) {
   }
 }
 
-function mediaFileMtimeIso(info) {
-  return info?.mtime instanceof Date && Number.isFinite(info.mtime.getTime())
-    ? info.mtime.toISOString()
-    : undefined;
-}
-
-function statSignature(info) {
-  return {
-    sizeBytes: info.size,
-    mtimeMs: info.mtimeMs,
-    modifiedTime: mediaFileMtimeIso(info),
-  };
-}
-
-function pinnedMetadataMatches(item, signature) {
+function pinnedMetadataMatches(item, payload) {
   return (
     Number.isFinite(item.pinnedSizeBytes) &&
-    item.pinnedSizeBytes === signature.sizeBytes &&
+    item.pinnedSizeBytes === payload.sizeBytes &&
     Number.isFinite(item.pinnedMtimeMs) &&
-    item.pinnedMtimeMs === signature.mtimeMs
+    item.pinnedMtimeMs === payload.mtimeMs
   );
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sidecarWatchOptions() {
+  return {
+    debounceMs: WATCH_DEBOUNCE_MS,
+    stabilityIntervalMs: WATCH_STABILITY_INTERVAL_MS,
+    stabilitySamples: WATCH_STABILITY_SAMPLES,
+    maxStabilityPolls: WATCH_MAX_STABILITY_POLLS,
+    pollIntervalMs: WATCH_POLL_INTERVAL_MS,
+  };
 }
 
 class MediaWatcherSidecarClient {
@@ -111,8 +99,13 @@ class MediaWatcherSidecarClient {
     return this.readyInfo;
   }
 
-  async setWatches(items) {
-    return this.call("watch.set", [{ items: Array.isArray(items) ? items : [] }]);
+  async setWatches(items, options = {}) {
+    return this.call("watch.set", [
+      {
+        items: Array.isArray(items) ? items : [],
+        options,
+      },
+    ]);
   }
 
   async clearWatches() {
@@ -207,7 +200,7 @@ class MediaWatcherSidecarClient {
 
   handleNotification(message) {
     const params = message.params || {};
-    if (message.method === "watch.event") {
+    if (message.method === "watch.changed") {
       this.onEvent(params);
     } else if (message.method === "watch.error") {
       this.onError(params);
@@ -262,14 +255,10 @@ export class MediaWatcher {
     this.sendToRenderer =
       typeof sendToRenderer === "function" ? sendToRenderer : () => {};
     this.itemsByPath = new Map();
-    this.timers = new Map();
-    this.watchGeneration = 0;
-    this.checksInFlight = new Set();
-    this.checksQueued = new Set();
     this.sidecar = new MediaWatcherSidecarClient({
       app,
       devRoot,
-      onEvent: (payload) => this.handleSidecarEvent(payload),
+      onEvent: (payload) => this.handleSidecarChanged(payload),
       onError: (payload) => {
         const detail = payload?.dir ? `${payload.dir}: ${payload.error}` : payload?.error;
         console.error(`[media-watcher] Sidecar watch error: ${detail || "unknown error"}`);
@@ -288,17 +277,25 @@ export class MediaWatcher {
       sidecarItems.push({
         queueItemId: item.queueItemId,
         originalPath: item.originalPath,
+        pinnedFileHash: item.pinnedFileHash,
+        pinnedSizeBytes: Number.isFinite(item.pinnedSizeBytes)
+          ? item.pinnedSizeBytes
+          : undefined,
+        pinnedMtimeMs: Number.isFinite(item.pinnedMtimeMs)
+          ? item.pinnedMtimeMs
+          : undefined,
       });
     }
 
     try {
       const result = sidecarItems.length > 0
-        ? await this.sidecar.setWatches(sidecarItems)
+        ? await this.sidecar.setWatches(sidecarItems, sidecarWatchOptions())
         : await this.sidecar.clearWatches();
       return {
         watchedItems: this.watchedItemCount(),
         watchedFiles: this.itemsByPath.size,
         watchedDirectories: result?.watchedDirectories ?? 0,
+        pollIntervalMs: result?.pollIntervalMs ?? 0,
         failedDirectories: result?.failedDirectories || [],
       };
     } catch (err) {
@@ -318,14 +315,7 @@ export class MediaWatcher {
   }
 
   resetLocalState() {
-    this.watchGeneration += 1;
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer);
-    }
-    this.timers.clear();
     this.itemsByPath.clear();
-    this.checksInFlight.clear();
-    this.checksQueued.clear();
   }
 
   normalizeWatchItem(raw) {
@@ -369,182 +359,103 @@ export class MediaWatcher {
     return count;
   }
 
-  handleSidecarEvent(payload) {
-    const originalPath = normalizeLocalPath(payload?.originalPath || payload?.eventPath || "");
-    if (!originalPath || !this.itemsByPath.has(originalPath)) return;
-    this.schedulePathCheck(originalPath);
-  }
-
-  isCurrentPath(originalPath, generation) {
-    return generation === this.watchGeneration && this.itemsByPath.has(originalPath);
-  }
-
-  schedulePathCheck(originalPath) {
-    const existingTimer = this.timers.get(originalPath);
-    if (existingTimer) clearTimeout(existingTimer);
-    const generation = this.watchGeneration;
-    const timer = setTimeout(() => {
-      this.timers.delete(originalPath);
-      this.runPathCheck(originalPath, generation);
-    }, DEBOUNCE_MS);
-    this.timers.set(originalPath, timer);
-    timer.unref?.();
-  }
-
-  runPathCheck(originalPath, generation) {
-    if (!this.isCurrentPath(originalPath, generation)) return;
-    const checkKey = `${generation}\0${originalPath}`;
-    if (this.checksInFlight.has(checkKey)) {
-      this.checksQueued.add(checkKey);
-      return;
-    }
-
-    this.checksInFlight.add(checkKey);
-    void this.checkPathWhenStable(originalPath, generation)
-      .catch((err) => {
-        console.error(`[media-watcher] Failed to check ${originalPath}:`, err);
-      })
-      .finally(() => {
-        this.checksInFlight.delete(checkKey);
-        const queued = this.checksQueued.has(checkKey);
-        this.checksQueued.delete(checkKey);
-        if (queued && this.isCurrentPath(originalPath, generation)) {
-          this.schedulePathCheck(originalPath);
-        }
-      });
-  }
-
-  queueItemIdsForPath(originalPath) {
-    return (this.itemsByPath.get(originalPath) || [])
+  queueItemIdsForItems(items) {
+    return (Array.isArray(items) ? items : [])
       .map((item) => item.queueItemId)
       .filter(Boolean);
   }
 
-  async checkPathWhenStable(originalPath, generation) {
-    let watchedItems = this.itemsByPath.get(originalPath);
-    if (!watchedItems || watchedItems.length === 0) return;
-    watchedItems.forEach((item) => {
-      item.pending = true;
-    });
-    this.sendToRenderer("media-source-stabilizing", {
-      originalPath,
-      queueItemIds: watchedItems.map((item) => item.queueItemId).filter(Boolean),
-    });
+  payloadQueueItemIds(payload) {
+    const values = [];
+    if (Array.isArray(payload?.queueItemIds)) values.push(...payload.queueItemIds);
+    if (payload?.queueItemId !== undefined && payload.queueItemId !== null) {
+      values.push(payload.queueItemId);
+    }
+    const normalized = values
+      .map((value) => String(value))
+      .filter((value) => value.length > 0);
+    return normalized.length > 0 ? new Set(normalized) : null;
+  }
 
-    const stable = await this.waitForStableFile(originalPath, generation);
-    if (!this.isCurrentPath(originalPath, generation)) return;
-    watchedItems = this.itemsByPath.get(originalPath) || [];
-    if (!stable) {
+  itemsForPayload(originalPath, payload) {
+    const watchedItems = this.itemsByPath.get(originalPath) || [];
+    const queueItemIds = this.payloadQueueItemIds(payload);
+    if (!queueItemIds) return watchedItems;
+    return watchedItems.filter((item) => queueItemIds.has(item.queueItemId));
+  }
+
+  sidecarFacts(payload) {
+    return {
+      mtimeMs: Number.isFinite(payload?.mtimeMs) ? payload.mtimeMs : undefined,
+      sizeBytes: Number.isFinite(payload?.sizeBytes) ? payload.sizeBytes : undefined,
+      modifiedTime:
+        typeof payload?.modifiedTime === "string" ? payload.modifiedTime : undefined,
+      fileHash:
+        typeof payload?.fileHash === "string" && payload.fileHash.length > 0
+          ? payload.fileHash.toLowerCase()
+          : "",
+      fileHashAlg:
+        typeof payload?.fileHashAlg === "string" && payload.fileHashAlg.length > 0
+          ? payload.fileHashAlg
+          : undefined,
+    };
+  }
+
+  handleSidecarChanged(payload) {
+    const originalPath = normalizeLocalPath(payload?.originalPath || payload?.eventPath || "");
+    if (!originalPath || !this.itemsByPath.has(originalPath)) return;
+    const watchedItems = this.itemsForPayload(originalPath, payload);
+    if (watchedItems.length === 0) return;
+
+    const status = payload?.status || "ready";
+    if (status === "stabilizing") {
       watchedItems.forEach((item) => {
-        item.pending = false;
+        item.pending = true;
+      });
+      this.sendToRenderer("media-source-stabilizing", {
+        originalPath,
+        queueItemIds: this.queueItemIdsForItems(watchedItems),
+        errorReason: payload?.errorReason,
       });
       return;
     }
 
-    if (watchedItems.every((item) => pinnedMetadataMatches(item, stable))) {
-      watchedItems.forEach((item) => {
-        item.pending = false;
-      });
-      return;
-    }
-
-    let fileHash = "";
-    try {
-      fileHash = await hashMediaFile(originalPath);
-    } catch (err) {
-      if (!this.isCurrentPath(originalPath, generation)) return;
+    if (status === "missing" || status === "error") {
       watchedItems.forEach((item) => {
         item.pending = false;
       });
       this.sendToRenderer("media-source-changed", {
         originalPath,
-        queueItemIds: watchedItems.map((item) => item.queueItemId).filter(Boolean),
-        status: "error",
-        errorReason: err?.message || "hash-failed",
+        queueItemIds: this.queueItemIdsForItems(watchedItems),
+        status,
+        errorReason: payload?.errorReason || status,
       });
       return;
     }
 
-    if (!this.isCurrentPath(originalPath, generation)) return;
-    watchedItems = this.itemsByPath.get(originalPath) || [];
+    if (status !== "ready") return;
+    const facts = this.sidecarFacts(payload);
     for (const item of watchedItems) {
       item.pending = false;
-      if (item.pinnedFileHash && fileHash === item.pinnedFileHash) {
-        item.pinnedMtimeMs = stable.mtimeMs;
-        item.pinnedSizeBytes = stable.sizeBytes;
+      if (item.pinnedFileHash && facts.fileHash === item.pinnedFileHash) {
+        if (Number.isFinite(facts.mtimeMs)) item.pinnedMtimeMs = facts.mtimeMs;
+        if (Number.isFinite(facts.sizeBytes)) item.pinnedSizeBytes = facts.sizeBytes;
         continue;
       }
-      if (
-        !item.pinnedFileHash &&
-        Number.isFinite(item.pinnedSizeBytes) &&
-        item.pinnedSizeBytes === stable.sizeBytes &&
-        Number.isFinite(item.pinnedMtimeMs) &&
-        item.pinnedMtimeMs === stable.mtimeMs
-      ) {
+      if (!item.pinnedFileHash && pinnedMetadataMatches(item, facts)) {
         continue;
       }
       this.sendToRenderer("media-source-changed", {
         originalPath,
         queueItemId: item.queueItemId,
-        mtimeMs: stable.mtimeMs,
-        sizeBytes: stable.sizeBytes,
-        modifiedTime: stable.modifiedTime,
-        fileHash,
-        fileHashAlg: MEDIA_FILE_HASH_ALG,
+        queueItemIds: item.queueItemId ? [item.queueItemId] : undefined,
+        mtimeMs: facts.mtimeMs,
+        sizeBytes: facts.sizeBytes,
+        modifiedTime: facts.modifiedTime,
+        fileHash: facts.fileHash || undefined,
+        fileHashAlg: facts.fileHashAlg,
         status: "ready",
       });
     }
-  }
-
-  async waitForStableFile(originalPath, generation) {
-    let last = null;
-    let stableCount = 0;
-    for (let poll = 0; poll < MAX_STABILITY_POLLS; poll += 1) {
-      if (!this.isCurrentPath(originalPath, generation)) return null;
-      let info;
-      try {
-        const handle = await fsp.open(originalPath, "r");
-        try {
-          info = await handle.stat();
-        } finally {
-          await handle.close().catch(() => {});
-        }
-        if (!info.isFile()) return null;
-      } catch (err) {
-        if (err?.code === "ENOENT") {
-          if (!this.isCurrentPath(originalPath, generation)) return null;
-          this.sendToRenderer("media-source-changed", {
-            originalPath,
-            queueItemIds: this.queueItemIdsForPath(originalPath),
-            status: "missing",
-            errorReason: "missing",
-          });
-          return null;
-        }
-        if (!this.isCurrentPath(originalPath, generation)) return null;
-        this.sendToRenderer("media-source-stabilizing", {
-          originalPath,
-          queueItemIds: this.queueItemIdsForPath(originalPath),
-          errorReason: err?.code || "locked",
-        });
-        await sleep(STABILITY_INTERVAL_MS);
-        continue;
-      }
-
-      const signature = statSignature(info);
-      if (
-        last &&
-        last.sizeBytes === signature.sizeBytes &&
-        last.mtimeMs === signature.mtimeMs
-      ) {
-        stableCount += 1;
-      } else {
-        stableCount = 1;
-        last = signature;
-      }
-      if (stableCount >= STABILITY_SAMPLES) return signature;
-      await sleep(STABILITY_INTERVAL_MS);
-    }
-    return last;
   }
 }
