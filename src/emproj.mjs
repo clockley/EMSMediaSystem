@@ -10,6 +10,7 @@ import {
 } from "fs/promises";
 import os from "os";
 import path from "path";
+import { Transform } from "stream";
 import { pipeline } from "stream/promises";
 import { fileURLToPath } from "url";
 import {
@@ -34,6 +35,44 @@ const SCRIPTURE_AUTOSIZE_NONE = "none";
 const SCRIPTURE_AUTOSIZE_FIT = "fit";
 const SCRIPTURE_AUTOSIZE_NORMALIZE = "normalize";
 const SCRIPTURE_DEFAULT_AUTOSIZE_MODE = SCRIPTURE_AUTOSIZE_FIT;
+const SHA256_HASH_ALG = "sha256";
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
+const PROJECT_GUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeProjectGuid(value) {
+  const guid = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return PROJECT_GUID_RE.test(guid) ? guid : "";
+}
+
+function generatedProjectId() {
+  return `proj_${randomUUID().replace(/-/g, "")}`;
+}
+
+function projectMetadataFromSnapshot(snapshot, nowIso) {
+  const project = snapshot?.project && typeof snapshot.project === "object"
+    ? snapshot.project
+    : {};
+  const guid =
+    normalizeProjectGuid(snapshot?.projectGuid) ||
+    normalizeProjectGuid(project.guid) ||
+    randomUUID();
+  const created =
+    typeof snapshot?.projectCreated === "string" && snapshot.projectCreated.length > 0
+      ? snapshot.projectCreated
+      : typeof project.created === "string" && project.created.length > 0
+        ? project.created
+        : nowIso;
+  return {
+    id: generatedProjectId(),
+    guid,
+    name: typeof project.name === "string" && project.name.length > 0
+      ? project.name
+      : "EMS Project",
+    created,
+    modified: nowIso,
+  };
+}
 
 function canonicalJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -335,9 +374,49 @@ function contentLocationForKind(kind) {
 }
 
 async function sha256Buffer(buf) {
-  const hash = createHash("sha256");
+  const hash = createHash(SHA256_HASH_ALG);
   hash.update(buf);
   return hash.digest("hex");
+}
+
+async function sha256File(filePath) {
+  const hash = createHash(SHA256_HASH_ALG);
+  const input = createReadStream(filePath);
+  input.on("data", (chunk) => hash.update(chunk));
+  await new Promise((resolve, reject) => {
+    input.on("end", resolve);
+    input.on("error", reject);
+  });
+  return hash.digest("hex");
+}
+
+function sha256Transform() {
+  const hash = createHash(SHA256_HASH_ALG);
+  const stream = new Transform({
+    transform(chunk, _encoding, callback) {
+      hash.update(chunk);
+      callback(null, chunk);
+    },
+  });
+  return {
+    stream,
+    digest: () => hash.digest("hex"),
+  };
+}
+
+function normalizeSha256Hex(value) {
+  const hash = typeof value === "string" ? value.toLowerCase() : "";
+  return SHA256_HEX_RE.test(hash) ? hash : "";
+}
+
+function packedIntegrityFields(digestHex) {
+  const integrityHash = normalizeSha256Hex(digestHex);
+  return integrityHash
+    ? {
+        integrityHash,
+        integrityHashAlg: SHA256_HASH_ALG,
+      }
+    : {};
 }
 
 function assetFingerprintFields(fallback = {}, digestHex) {
@@ -382,10 +461,129 @@ async function readEntryBuffer(zipfile, entry) {
   return Buffer.concat(chunks);
 }
 
+async function hashZipEntry(zipfile, entry) {
+  const rs = await openZipReadStream(zipfile, entry);
+  const hash = createHash(SHA256_HASH_ALG);
+  for await (const chunk of rs) hash.update(chunk);
+  return hash.digest("hex");
+}
+
+export async function readEmprojProjectGuid(projectPath) {
+  const zipfile = await openZip(projectPath);
+  const rootFiles = new Map();
+  const entryHashes = new Map();
+  await new Promise((resolve, reject) => {
+    zipfile.on("entry", async (entry) => {
+      try {
+        const inZipPath = assertSafeArchivePath(entry.fileName);
+        if (inZipPath.endsWith("/")) {
+          zipfile.readEntry();
+          return;
+        }
+        if (
+          inZipPath === "mimetype" ||
+          inZipPath === "manifest.json" ||
+          inZipPath === "queue.json" ||
+          inZipPath === "assets.json" ||
+          inZipPath === "outputs.json" ||
+          inZipPath === "diagnostics.json"
+        ) {
+          const buffer = await readEntryBuffer(zipfile, entry);
+          rootFiles.set(inZipPath, buffer);
+          entryHashes.set(inZipPath, await sha256Buffer(buffer));
+          zipfile.readEntry();
+          return;
+        }
+        if (inZipPath.startsWith("media/") || inZipPath.startsWith("presentations/")) {
+          entryHashes.set(inZipPath, await hashZipEntry(zipfile, entry));
+          zipfile.readEntry();
+          return;
+        }
+        zipfile.readEntry();
+      } catch (err) {
+        reject(err);
+      }
+    });
+    zipfile.once("error", reject);
+    zipfile.once("end", resolve);
+    zipfile.readEntry();
+  });
+
+  const mimetype = rootFiles.get("mimetype")?.toString("utf8").trim();
+  if (mimetype !== MIME_TYPE) {
+    throw new Error("Invalid project mimetype");
+  }
+  const manifestJsonRaw = rootFiles.get("manifest.json");
+  if (!manifestJsonRaw) throw new Error("Project missing manifest.json");
+  const manifestJson = JSON.parse(manifestJsonRaw.toString("utf8"));
+  verifyManifestIntegrity(manifestJson, entryHashes);
+  return normalizeProjectGuid(manifestJson?.project?.guid);
+}
+
 async function extractEntryToFile(zipfile, entry, outPath) {
   await mkdir(path.dirname(outPath), { recursive: true });
   const rs = await openZipReadStream(zipfile, entry);
-  await pipeline(rs, createWriteStream(outPath));
+  const hasher = sha256Transform();
+  await pipeline(rs, hasher.stream, createWriteStream(outPath));
+  return hasher.digest();
+}
+
+function manifestIntegrityHashes(manifestJson) {
+  const hashes = manifestJson?.integrity?.hashes;
+  if (!hashes || typeof hashes !== "object") return null;
+  return hashes;
+}
+
+function isPackedArchiveMediaPath(archivePath) {
+  return (
+    typeof archivePath === "string" &&
+    (archivePath.startsWith("media/") || archivePath.startsWith("presentations/"))
+  );
+}
+
+function verifyManifestIntegrity(manifestJson, entryHashes) {
+  const hashes = manifestIntegrityHashes(manifestJson);
+  if (!hashes) {
+    throw new Error("Project missing integrity hashes");
+  }
+  for (const requiredPath of ["queue.json", "assets.json", "outputs.json", "diagnostics.json"]) {
+    if (!normalizeSha256Hex(hashes[requiredPath])) {
+      throw new Error(`Project integrity missing hash for ${requiredPath}`);
+    }
+  }
+  for (const [rawPath, rawExpected] of Object.entries(hashes)) {
+    const archivePath = assertSafeArchivePath(rawPath);
+    const expected = normalizeSha256Hex(rawExpected);
+    if (!expected) {
+      throw new Error(`Project integrity hash is invalid for ${archivePath}`);
+    }
+    if (archivePath === "mimetype" || archivePath === "manifest.json") {
+      throw new Error(`Project integrity must not hash ${archivePath}`);
+    }
+    const actual = entryHashes.get(archivePath);
+    if (!actual) {
+      throw new Error(`Project integrity references missing archive member ${archivePath}`);
+    }
+    if (actual !== expected) {
+      throw new Error(`Project integrity mismatch for ${archivePath}`);
+    }
+  }
+}
+
+function verifyAssetIntegrityHashes(assets, manifestJson) {
+  const hashes = manifestIntegrityHashes(manifestJson) || {};
+  for (const asset of Array.isArray(assets) ? assets : []) {
+    if (!asset || typeof asset !== "object") continue;
+    const archivePath = typeof asset.path === "string" ? asset.path : "";
+    if (!isPackedArchiveMediaPath(archivePath)) continue;
+    const integrityHash = normalizeSha256Hex(asset.integrityHash);
+    if (asset.integrityHashAlg !== SHA256_HASH_ALG || !integrityHash) {
+      throw new Error(`Packed asset missing SHA-256 integrity hash for ${archivePath}`);
+    }
+    if (normalizeSha256Hex(hashes[archivePath]) !== integrityHash) {
+      throw new Error(`Packed asset integrity does not match manifest for ${archivePath}`);
+    }
+  }
 }
 
 function makeId(prefix, n) {
@@ -533,6 +731,7 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   const zipfile = await openZip(projectPath);
   const extractedMediaPaths = new Map();
   const rootFiles = new Map();
+  const entryHashes = new Map();
 
   await new Promise((resolve, reject) => {
     zipfile.on("entry", async (entry) => {
@@ -550,13 +749,15 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
           inZipPath === "outputs.json" ||
           inZipPath === "diagnostics.json"
         ) {
-          rootFiles.set(inZipPath, await readEntryBuffer(zipfile, entry));
+          const buffer = await readEntryBuffer(zipfile, entry);
+          rootFiles.set(inZipPath, buffer);
+          entryHashes.set(inZipPath, await sha256Buffer(buffer));
           zipfile.readEntry();
           return;
         }
         if (inZipPath.startsWith("media/") || inZipPath.startsWith("presentations/")) {
           const outPath = path.join(extractRoot, inZipPath);
-          await extractEntryToFile(zipfile, entry, outPath);
+          entryHashes.set(inZipPath, await extractEntryToFile(zipfile, entry, outPath));
           extractedMediaPaths.set(inZipPath, outPath);
         }
         zipfile.readEntry();
@@ -576,13 +777,15 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
 
   let manifestJson = {};
   const manifestJsonRaw = rootFiles.get("manifest.json");
-  if (manifestJsonRaw) {
-    try {
-      manifestJson = JSON.parse(manifestJsonRaw.toString("utf8"));
-    } catch {
-      manifestJson = {};
-    }
+  if (!manifestJsonRaw) {
+    throw new Error("Project missing manifest.json");
   }
+  try {
+    manifestJson = JSON.parse(manifestJsonRaw.toString("utf8"));
+  } catch (err) {
+    throw new Error(`Project manifest.json is corrupt: ${err.message}`);
+  }
+  verifyManifestIntegrity(manifestJson, entryHashes);
 
   const queueJsonRaw = rootFiles.get("queue.json");
   if (!queueJsonRaw) throw new Error("Project missing queue.json");
@@ -598,11 +801,12 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   if (assetsJsonRaw) {
     try {
       assetsJson = JSON.parse(assetsJsonRaw.toString("utf8"));
-    } catch {
-      assetsJson = { assets: [] };
+    } catch (err) {
+      throw new Error(`Project assets.json is corrupt: ${err.message}`);
     }
   }
   const assets = Array.isArray(assetsJson.assets) ? assetsJson.assets : [];
+  verifyAssetIntegrityHashes(assets, manifestJson);
   const assetById = new Map();
   const assetByPath = new Map();
   for (const asset of assets) {
@@ -716,10 +920,34 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
       return queueItem;
     }))
   ).filter(Boolean);
+  const manifestProjectGuid = normalizeProjectGuid(manifestJson?.project?.guid) || randomUUID();
+  const manifestProjectCreated =
+    typeof manifestJson?.project?.created === "string" &&
+    manifestJson.project.created.length > 0
+      ? manifestJson.project.created
+      : new Date().toISOString();
 
   return {
     schemaVersion: PROJECT_FILE_SCHEMA_VERSION,
     projectPath,
+    projectGuid: manifestProjectGuid,
+    projectCreated: manifestProjectCreated,
+    project: {
+      id:
+        typeof manifestJson?.project?.id === "string"
+          ? manifestJson.project.id
+          : undefined,
+      guid: manifestProjectGuid,
+      name:
+        typeof manifestJson?.project?.name === "string"
+          ? manifestJson.project.name
+          : "EMS Project",
+      created: manifestProjectCreated,
+      modified:
+        typeof manifestJson?.project?.modified === "string"
+          ? manifestJson.project.modified
+          : undefined,
+    },
     currentMode: 0,
     currentQueueIndex: -1,
     previewCueIndex: -1,
@@ -775,6 +1003,7 @@ export async function saveEmprojSnapshot(
       : {},
   );
   const nowIso = new Date().toISOString();
+  const projectMetadata = projectMetadataFromSnapshot(snapshot, nowIso);
   const fileIndex = new Map();
   const queueSequence = [];
   const assets = [];
@@ -838,6 +1067,9 @@ export async function saveEmprojSnapshot(
           assetFingerprint = {};
         }
       }
+      const assetIntegrity = packMedia
+        ? packedIntegrityFields(await sha256File(normalizedPath))
+        : {};
       fileIndex.set(normalizedPath, { bundledPath, assetId });
       assets.push({
         id: assetId,
@@ -851,6 +1083,7 @@ export async function saveEmprojSnapshot(
               : "application/pdf")
           : undefined,
         ...assetFingerprint,
+        ...assetIntegrity,
         sizeBytes: assetSize,
         modifiedTime: assetModifiedTime,
         missingBehavior: "showPlaceholder",
@@ -968,6 +1201,9 @@ export async function saveEmprojSnapshot(
                 assetFingerprint = {};
               }
             }
+            const assetIntegrity = packMedia
+              ? packedIntegrityFields(await sha256File(normalizedPath))
+              : {};
             fileIndex.set(normalizedPath, { bundledPath, assetId });
             assets.push({
               id: assetId,
@@ -981,6 +1217,7 @@ export async function saveEmprojSnapshot(
                     : "application/pdf")
                 : undefined,
               ...assetFingerprint,
+              ...assetIntegrity,
               sizeBytes: assetSize,
               modifiedTime: assetModifiedTime,
               missingBehavior: "showPlaceholder",
@@ -1112,7 +1349,11 @@ export async function saveEmprojSnapshot(
     "diagnostics.json": await sha256Buffer(diagnosticsBuf),
   };
   for (const entry of assets) {
-    if (entry?.path && entry?.fileHash) hashes[entry.path] = entry.fileHash;
+    const archivePath = typeof entry?.path === "string" ? entry.path : "";
+    const integrityHash = normalizeSha256Hex(entry?.integrityHash);
+    if (isPackedArchiveMediaPath(archivePath) && integrityHash) {
+      hashes[archivePath] = integrityHash;
+    }
   }
 
   const manifestJson = {
@@ -1124,12 +1365,7 @@ export async function saveEmprojSnapshot(
       version: appVersion,
       platform: process.platform,
     },
-    project: {
-      id: `proj_${randomUUID().replace(/-/g, "")}`,
-      name: "EMS Project",
-      created: nowIso,
-      modified: nowIso,
-    },
+    project: projectMetadata,
     storage: packMedia
       ? { mode: "packed", mediaPolicy: "bundled", pathMode: "relative" }
       : { mode: "working", mediaPolicy: "external", pathMode: "mixed" },
@@ -1173,7 +1409,12 @@ export async function saveEmprojSnapshot(
     // No prior file.
   }
   await rename(tmpPath, projectPath);
-  return { ok: true, filePath: projectPath };
+  return {
+    ok: true,
+    filePath: projectPath,
+    projectGuid: projectMetadata.guid,
+    projectCreated: projectMetadata.created,
+  };
 }
 
 export async function cleanupExtractedProjectMedia(snapshot) {

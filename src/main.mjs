@@ -43,7 +43,6 @@ import { fileURLToPath } from "url";
 import {
   baselineFileHashFields,
   hashMediaFile,
-  isValidMediaFileHash,
   MEDIA_FILE_HASH_ALG,
   storedFileHashFromRecord,
 } from "./media-file-hash.min.mjs";
@@ -53,8 +52,15 @@ import {
   loadEmprojSnapshot,
   saveEmprojSnapshot,
   cleanupExtractedProjectMedia,
+  readEmprojProjectGuid,
 } from "./emproj.min.mjs";
 import { MediaWatcher } from "./media-watcher.min.mjs";
+import {
+  StagingIndex,
+  normalizeProjectGuid,
+  normalizeSnapshotId,
+  snapshotIdFromStagedFilename,
+} from "./staging-index.min.mjs";
 let sessionID = 0;
 let innertubePromise = null;
 const youtubePathNTransformCache = new Map();
@@ -2050,6 +2056,24 @@ async function handleShowRelinkSummaryDialog(event, opts = {}) {
 
 let activeProjectSnapshot = null;
 
+function projectGuidFromSnapshot(snapshot) {
+  return (
+    normalizeProjectGuid(snapshot?.projectGuid) ||
+    normalizeProjectGuid(snapshot?.project?.guid)
+  );
+}
+
+async function reconcileStagingFromSnapshot(snapshot, opts = {}) {
+  const projectGuid = projectGuidFromSnapshot(snapshot);
+  if (!projectGuid) return;
+  await reconcileStagingForProject({
+    projectGuid,
+    projectPath: typeof snapshot?.projectPath === "string" ? snapshot.projectPath : "",
+    queue: Array.isArray(snapshot?.mediaQueue) ? snapshot.mediaQueue : [],
+    detectProtected: opts.detectProtected === true,
+  });
+}
+
 async function handleReadProjectFile(_, filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) {
     throw new Error("Invalid project path");
@@ -2060,6 +2084,15 @@ async function handleReadProjectFile(_, filePath) {
   if (previousSnapshot) {
     await cleanupExtractedProjectMedia(previousSnapshot).catch(() => {});
   }
+  activeProjectPath = filePath;
+  activeProjectGuid = projectGuidFromSnapshot(snapshot);
+  await getStagingIndex().removeProjectsAtPathExcept(filePath, activeProjectGuid)
+    .then(async (result) => {
+      for (const snapshotId of result.eligibleSnapshotIds || []) {
+        await deleteStagedSnapshotsById(mediaStagingDir(), snapshotId);
+      }
+    });
+  await reconcileStagingFromSnapshot(snapshot, { detectProtected: false });
   await writeSettings({ lastOpenedProjectPath: filePath });
   return { filePath, data: JSON.stringify(snapshot) };
 }
@@ -2068,6 +2101,7 @@ async function handleWriteProjectFile(_, payload) {
   const filePath = typeof payload?.filePath === "string" ? payload.filePath : "";
   const data = typeof payload?.data === "string" ? payload.data : "";
   const mode = payload?.mode === "packed" ? "packed" : "working";
+  const activateProject = payload?.activateProject !== false;
   if (!filePath) throw new Error("Invalid project path");
   if (!data) throw new Error("Project data is empty");
   let snapshot;
@@ -2076,12 +2110,34 @@ async function handleWriteProjectFile(_, payload) {
   } catch {
     throw new Error("Project data is invalid JSON");
   }
-  await saveEmprojSnapshot(filePath, snapshot, app.getVersion(), {
+  const result = await saveEmprojSnapshot(filePath, snapshot, app.getVersion(), {
     packMedia: mode === "packed",
   });
+  const projectGuid = normalizeProjectGuid(result?.projectGuid) || projectGuidFromSnapshot(snapshot);
+  if (activateProject) {
+    activeProjectPath = filePath;
+    activeProjectGuid = projectGuid;
+    snapshot.projectPath = filePath;
+    snapshot.projectGuid = activeProjectGuid;
+    if (typeof result?.projectCreated === "string") {
+      snapshot.projectCreated = result.projectCreated;
+    }
+    await getStagingIndex().removeProjectsAtPathExcept(filePath, activeProjectGuid)
+      .then(async (cleanupResult) => {
+        for (const snapshotId of cleanupResult.eligibleSnapshotIds || []) {
+          await deleteStagedSnapshotsById(mediaStagingDir(), snapshotId);
+        }
+      });
+    await reconcileStagingFromSnapshot(snapshot, { detectProtected: false });
+    await writeSettings({ lastOpenedProjectPath: filePath });
+  }
   await rememberProjectFolder(filePath);
-  await writeSettings({ lastOpenedProjectPath: filePath });
-  return { ok: true, filePath };
+  return {
+    ok: true,
+    filePath,
+    projectGuid,
+    projectCreated: result?.projectCreated,
+  };
 }
 
 async function handleSaveAutosaveProjectState(_, state) {
@@ -2089,13 +2145,19 @@ async function handleSaveAutosaveProjectState(_, state) {
   if (typeof state.projectPath === "string") {
     activeProjectPath = state.projectPath;
   }
+  activeProjectGuid = projectGuidFromSnapshot(state) || activeProjectGuid;
+  rememberSessionProject(activeProjectGuid, activeProjectPath, state.mediaQueue);
   await writeSettings({ autosaveProjectState: state });
+  await reconcileStagingFromSnapshot(state, { detectProtected: false }).catch((err) => {
+    console.error("autosave staging reconciliation failed:", err);
+  });
   return { ok: true };
 }
 
 async function handleSetActiveProjectPath(_, payload = {}) {
   activeProjectPath =
     payload && typeof payload.projectPath === "string" ? payload.projectPath : "";
+  activeProjectGuid = normalizeProjectGuid(payload?.projectGuid) || activeProjectGuid;
   return { ok: true };
 }
 
@@ -2153,26 +2215,57 @@ const COW_FSTYPES_BY_PLATFORM = Object.freeze({
   darwin: new Set(["apfs"]),
 });
 const stagingCapabilityCache = new Map();
-/** projectPath (empty string = unsaved) -> Set<snapshotId> staged this app session */
+/** project.guid -> Set<snapshotId> staged this app session */
 const sessionStagingByProject = new Map();
+const sessionProjectQueues = new Map();
+const sessionProjectPaths = new Map();
+let stagingIndexInstance = null;
 let activeProjectPath = "";
+let activeProjectGuid = "";
 
-function normalizeProjectKey(projectPath) {
+function projectPathForStaging(projectPath) {
   return typeof projectPath === "string" ? projectPath : "";
 }
 
-function registerSessionStagedSnapshot(projectPath, snapshotId) {
+function projectGuidForStaging(projectGuid) {
+  return normalizeProjectGuid(projectGuid) || activeProjectGuid;
+}
+
+function getStagingIndex() {
+  if (!stagingIndexInstance) {
+    stagingIndexInstance = new StagingIndex(mediaStagingDir());
+  }
+  return stagingIndexInstance;
+}
+
+function rememberSessionProject(projectGuid, projectPath, queue) {
+  const guid = normalizeProjectGuid(projectGuid);
+  if (!guid) return;
+  sessionProjectPaths.set(guid, projectPathForStaging(projectPath));
+  if (Array.isArray(queue)) {
+    sessionProjectQueues.set(guid, queue);
+  }
+}
+
+async function registerSessionStagedSnapshot(projectGuid, projectPath, snapshotId) {
   const id = normalizeSnapshotId(snapshotId);
   if (!id) return;
-  const key = normalizeProjectKey(
-    typeof projectPath === "string" ? projectPath : activeProjectPath,
-  );
-  let ids = sessionStagingByProject.get(key);
+  const guid = projectGuidForStaging(projectGuid);
+  if (!guid) return;
+  const resolvedPath = projectPathForStaging(projectPath || activeProjectPath);
+  rememberSessionProject(guid, resolvedPath);
+  let ids = sessionStagingByProject.get(guid);
   if (!ids) {
     ids = new Set();
-    sessionStagingByProject.set(key, ids);
+    sessionStagingByProject.set(guid, ids);
   }
   ids.add(id);
+  await getStagingIndex().registerSnapshot({
+    projectGuid: guid,
+    projectPath: resolvedPath,
+    snapshotId: id,
+    unsaved: resolvedPath.length === 0,
+  });
 }
 
 function collectSnapshotIdsFromQueue(queue) {
@@ -2222,6 +2315,30 @@ async function deleteStagedSnapshotsById(stagingDir, snapshotId) {
   );
 }
 
+async function deleteStagedSnapshots(snapshotIds) {
+  const stagingDir = mediaStagingDir();
+  const uniqueIds = new Set(
+    (Array.isArray(snapshotIds) ? snapshotIds : [])
+      .map((snapshotId) => normalizeSnapshotId(snapshotId))
+      .filter(Boolean),
+  );
+  for (const snapshotId of uniqueIds) {
+    await deleteStagedSnapshotsById(stagingDir, snapshotId);
+  }
+}
+
+async function maintainMediaStagingIndexOnStartup() {
+  const stagingDir = mediaStagingDir();
+  await mkdir(stagingDir, { recursive: true });
+  const index = getStagingIndex();
+  await index.load();
+  const ghostSnapshotIds = await index.sweepGhostProjects(readEmprojProjectGuid);
+  await deleteStagedSnapshots(ghostSnapshotIds);
+  const orphanSnapshotIds = await index.orphanSnapshotIdsOnDisk();
+  await deleteStagedSnapshots(orphanSnapshotIds);
+  await removeReflinkProbeFiles(stagingDir);
+}
+
 async function removeReflinkProbeFiles(stagingDir) {
   let entries = [];
   try {
@@ -2238,18 +2355,6 @@ async function removeReflinkProbeFiles(stagingDir) {
 
 function mediaStagingDir() {
   return path.join(app.getPath("userData"), "media-staging");
-}
-
-const STAGED_SNAPSHOT_FILENAME_RE = /^([a-f0-9]{16})(\.[^.]+)?$/i;
-
-function normalizeSnapshotId(value) {
-  const id = typeof value === "string" ? value.toLowerCase() : "";
-  return isValidMediaFileHash(id) ? id : "";
-}
-
-function snapshotIdFromStagedFilename(filename) {
-  const match = STAGED_SNAPSHOT_FILENAME_RE.exec(String(filename || ""));
-  return match ? normalizeSnapshotId(match[1]) : "";
 }
 
 function queueItemOriginalPathForStaging(item) {
@@ -2314,70 +2419,116 @@ async function collectProtectedStagingSnapshotIds(queue) {
 }
 
 /**
- * Remove resolved staged clones for one project. Keeps snapshots that still
- * need operator action (linked source on disk differs from the active pin).
+ * Reconcile one project's queue refs. Staged files are deleted only after the
+ * index confirms no project guid still references the snapshot.
  */
-async function cleanupResolvedStagingForProject(projectPath, queue) {
-  const projectKey = normalizeProjectKey(projectPath);
-  const protectedIds = await collectProtectedStagingSnapshotIds(queue);
+async function reconcileStagingForProject({
+  projectGuid,
+  projectPath,
+  queue,
+  protectedSnapshotIds,
+  detectProtected = true,
+}) {
+  const guid = projectGuidForStaging(projectGuid);
   const stagingDir = mediaStagingDir();
-  const idsToEvaluate = new Set(collectSnapshotIdsFromQueue(queue));
-  const sessionIds = sessionStagingByProject.get(projectKey);
-  if (sessionIds) {
-    for (const id of sessionIds) idsToEvaluate.add(id);
-  }
-  if (idsToEvaluate.size === 0) {
+  if (!guid) {
     await removeReflinkProbeFiles(stagingDir);
     return;
   }
-
-  for (const snapshotId of idsToEvaluate) {
-    if (protectedIds.has(snapshotId)) continue;
-    await deleteStagedSnapshotsById(stagingDir, snapshotId);
-    sessionIds?.delete(snapshotId);
+  const resolvedPath = projectPathForStaging(projectPath || activeProjectPath);
+  const mediaQueue = Array.isArray(queue) ? queue : [];
+  const snapshotIds = collectSnapshotIdsFromQueue(mediaQueue);
+  let protectedIds = protectedSnapshotIds;
+  if (!Array.isArray(protectedIds) && detectProtected) {
+    protectedIds = [...(await collectProtectedStagingSnapshotIds(mediaQueue))];
   }
-  if (sessionIds && sessionIds.size === 0) {
-    sessionStagingByProject.delete(projectKey);
+
+  rememberSessionProject(guid, resolvedPath, mediaQueue);
+  const result = await getStagingIndex().reconcileProject({
+    projectGuid: guid,
+    projectPath: resolvedPath,
+    snapshotIds: [...snapshotIds],
+    protectedSnapshotIds: Array.isArray(protectedIds) ? protectedIds : undefined,
+    unsaved: resolvedPath.length === 0,
+  });
+
+  if (snapshotIds.size > 0) {
+    sessionStagingByProject.set(guid, new Set(snapshotIds));
+  } else {
+    sessionStagingByProject.delete(guid);
+  }
+  if (Array.isArray(result?.eligibleSnapshotIds)) {
+    for (const snapshotId of result.eligibleSnapshotIds) {
+      await deleteStagedSnapshotsById(stagingDir, snapshotId);
+    }
   }
   await removeReflinkProbeFiles(stagingDir);
 }
 
-/** Drop resolved staging for the active project; keep unresolved keep-old pins. */
+/** Reconcile all touched projects before quit and remove eligible cache files. */
 async function cleanupMediaStagingDir() {
   const { autosaveProjectState } = readSettings();
   const projectPath =
     typeof autosaveProjectState?.projectPath === "string"
       ? autosaveProjectState.projectPath
       : activeProjectPath;
+  const projectGuid =
+    normalizeProjectGuid(autosaveProjectState?.projectGuid) || activeProjectGuid;
   const queue = autosaveProjectState?.mediaQueue;
   try {
-    await cleanupResolvedStagingForProject(projectPath, queue);
+    await reconcileStagingForProject({
+      projectGuid,
+      projectPath,
+      queue,
+      detectProtected: true,
+    });
   } catch (err) {
-    console.error("Failed to clean resolved media staging files:", err);
+    console.error("Failed to reconcile active media staging files:", err);
   }
 
-  // Other projects touched this session no longer have autosave context — remove
-  // their resolved session staging so the shared folder stays tidy.
-  const currentKey = normalizeProjectKey(projectPath);
-  for (const [projectKey, sessionIds] of [...sessionStagingByProject.entries()]) {
-    if (projectKey === currentKey) continue;
-    for (const snapshotId of [...sessionIds]) {
-      await deleteStagedSnapshotsById(mediaStagingDir(), snapshotId);
-      sessionIds.delete(snapshotId);
-    }
-    if (sessionIds.size === 0) {
-      sessionStagingByProject.delete(projectKey);
+  for (const [guid, projectQueue] of [...sessionProjectQueues.entries()]) {
+    if (guid === projectGuid) continue;
+    try {
+      await reconcileStagingForProject({
+        projectGuid: guid,
+        projectPath: sessionProjectPaths.get(guid) || "",
+        queue: projectQueue,
+        detectProtected: true,
+      });
+    } catch (err) {
+      console.error("Failed to reconcile media staging for project:", guid, err);
     }
   }
 
+  const index = getStagingIndex();
+  for (const [guid, projectPathHint] of [...sessionProjectPaths.entries()]) {
+    if (projectPathHint) continue;
+    try {
+      const result = await index.removeProject(guid);
+      for (const snapshotId of result.eligibleSnapshotIds || []) {
+        await deleteStagedSnapshotsById(mediaStagingDir(), snapshotId);
+      }
+    } catch (err) {
+      console.error("Failed to remove unsaved staging refs:", guid, err);
+    }
+  }
+  sessionStagingByProject.clear();
+  sessionProjectQueues.clear();
+  sessionProjectPaths.clear();
   stagingCapabilityCache.clear();
 }
 
 async function handleCleanupProjectStaging(_, payload = {}) {
   const projectPath =
     typeof payload?.projectPath === "string" ? payload.projectPath : activeProjectPath;
+  const projectGuid = normalizeProjectGuid(payload?.projectGuid) || activeProjectGuid;
   const queue = Array.isArray(payload?.mediaQueue) ? payload.mediaQueue : [];
-  await cleanupResolvedStagingForProject(projectPath, queue);
+  await reconcileStagingForProject({
+    projectGuid,
+    projectPath,
+    queue,
+    detectProtected: true,
+  });
   return { ok: true };
 }
 
@@ -2568,6 +2719,7 @@ async function ensureStagedMediaFile(
   snapshotId,
   capability,
   projectPath = activeProjectPath,
+  projectGuid = activeProjectGuid,
 ) {
   const stagedPath = stagedMediaPathForSnapshot(
     capability.stagingDir,
@@ -2577,7 +2729,7 @@ async function ensureStagedMediaFile(
   try {
     const existing = await stat(stagedPath);
     if (existing.isFile()) {
-      registerSessionStagedSnapshot(projectPath, snapshotId);
+      await registerSessionStagedSnapshot(projectGuid, projectPath, snapshotId);
       return stagedPath;
     }
   } catch {}
@@ -2590,7 +2742,7 @@ async function ensureStagedMediaFile(
     if (err?.code === "EEXIST") return;
     throw err;
   });
-  registerSessionStagedSnapshot(projectPath, snapshotId);
+  await registerSessionStagedSnapshot(projectGuid, projectPath, snapshotId);
   return stagedPath;
 }
 
@@ -2680,6 +2832,7 @@ async function tryResolvePreservedStagedPin({
   diskVersion,
   forceRefresh,
   projectPath = activeProjectPath,
+  projectGuid = activeProjectGuid,
 }) {
   if (forceRefresh) return null;
   const pinnedSnapshotId = activePinnedSnapshotId(previousLiveSource);
@@ -2693,7 +2846,7 @@ async function tryResolvePreservedStagedPin({
   );
   if (!staged) return null;
 
-  registerSessionStagedSnapshot(projectPath, pinnedSnapshotId);
+  await registerSessionStagedSnapshot(projectGuid, projectPath, pinnedSnapshotId);
 
   return buildLinkedSnapshotPinResult(rawPath, sourcePath, pinnedSnapshotId, capability, {
     previousLiveSource,
@@ -2732,6 +2885,7 @@ async function pinMediaSource(payload = {}) {
   );
   const version = await computeMediaVersion(sourcePath);
   let forceRefresh = payload?.forceRefresh === true;
+  const preservePreviousSnapshot = payload?.preservePreviousSnapshot === true;
   const verifyStagedPin = payload?.verifyStagedPin === true;
   const projectPath =
     typeof payload?.projectPath === "string" ? payload.projectPath : activeProjectPath;
@@ -2763,7 +2917,7 @@ async function pinMediaSource(payload = {}) {
   let snapshotId = null;
   let resolvedPath = sourcePath;
   let previousSnapshotId =
-    typeof previousLiveSource.previousSnapshotId === "string"
+    preservePreviousSnapshot && typeof previousLiveSource.previousSnapshotId === "string"
       ? previousLiveSource.previousSnapshotId
       : null;
 
@@ -2776,6 +2930,7 @@ async function pinMediaSource(payload = {}) {
       diskVersion: version,
       forceRefresh,
       projectPath,
+      projectGuid,
     });
     if (preservedPin) {
       return preservedPin;
@@ -2795,6 +2950,7 @@ async function pinMediaSource(payload = {}) {
             pinnedSnapshotId,
             capability,
             projectPath,
+            projectGuid,
           );
           return buildLinkedSnapshotPinResult(
             rawPath,
@@ -2815,7 +2971,7 @@ async function pinMediaSource(payload = {}) {
             rawPath,
           );
           forceRefresh = true;
-          previousSnapshotId = pinnedSnapshotId;
+          previousSnapshotId = preservePreviousSnapshot ? pinnedSnapshotId : null;
         }
       }
     }
@@ -2826,15 +2982,17 @@ async function pinMediaSource(payload = {}) {
         version.fileHash,
         capability,
         projectPath,
+        projectGuid,
       );
       snapshotId = version.fileHash;
       if (
         typeof previousLiveSource.snapshotId === "string" &&
         previousLiveSource.snapshotId.length > 0 &&
-        previousLiveSource.snapshotId !== snapshotId
+        previousLiveSource.snapshotId !== snapshotId &&
+        preservePreviousSnapshot
       ) {
         previousSnapshotId = previousLiveSource.snapshotId;
-        registerSessionStagedSnapshot(projectPath, previousSnapshotId);
+        await registerSessionStagedSnapshot(projectGuid, projectPath, previousSnapshotId);
       }
     } catch (err) {
       console.error("Failed to stage media source; falling back to warn-only:", err);
@@ -2886,6 +3044,9 @@ async function resolveStagedMediaPath(payload = {}) {
       : typeof liveSource.originalPath === "string"
         ? liveSource.originalPath
         : "";
+  const projectPath =
+    typeof payload?.projectPath === "string" ? payload.projectPath : activeProjectPath;
+  const projectGuid = normalizeProjectGuid(payload?.projectGuid) || activeProjectGuid;
   if (!rawPath || isRemoteMediaPath(rawPath)) return rawPath;
   const sourcePath = localFileSystemPathFromMediaPath(rawPath);
   if (
@@ -2904,7 +3065,7 @@ async function resolveStagedMediaPath(payload = {}) {
       pinnedSnapshotId,
     );
     if (staged) {
-      registerSessionStagedSnapshot(activeProjectPath, pinnedSnapshotId);
+      await registerSessionStagedSnapshot(projectGuid, projectPath, pinnedSnapshotId);
       return staged.stagedPath;
     }
 
@@ -2920,7 +3081,8 @@ async function resolveStagedMediaPath(payload = {}) {
           sourcePath,
           pinnedSnapshotId,
           capability,
-          activeProjectPath,
+          projectPath,
+          projectGuid,
         );
       } catch {
         return sourcePath;
@@ -3587,6 +3749,9 @@ app.on("activate", () => {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
+  await maintainMediaStagingIndexOnStartup().catch((err) => {
+    console.error("media staging index maintenance failed:", err);
+  });
   const startupProjectPath = firstProjectPathFromArgv(process.argv.slice(1));
   if (startupProjectPath) {
     pendingProjectOpenPath = startupProjectPath;

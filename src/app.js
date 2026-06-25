@@ -270,9 +270,13 @@ const mediaPlayerInputState = {
 };
 const PROJECT_SCHEMA_VERSION = 2;
 const AUTOSAVE_WRITE_DEBOUNCE_MS = 300;
+const PROJECT_GUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let autosaveWriteTimer = null;
 let currentProjectPath = "";
 let currentProjectStorageMode = "working";
+let currentProjectGuid = generateProjectGuid();
+let currentProjectCreated = new Date().toISOString();
 let activeMediaWindowContentType = null;
 let bibleShowNowModeActive = false;
 let bibleLowerThirdOutputActive = false;
@@ -302,6 +306,46 @@ const bibleDesignerState = {
   lowerThirdSegmentIndex: 0,
   lowerThirdSourceText: "",
 };
+
+function normalizeProjectGuid(value) {
+  const guid = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return PROJECT_GUID_RE.test(guid) ? guid : "";
+}
+
+function generateProjectGuid() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
+}
+
+function resetCurrentProjectIdentity() {
+  currentProjectGuid = generateProjectGuid();
+  currentProjectCreated = new Date().toISOString();
+}
+
+function projectGuidFromState(state) {
+  return (
+    normalizeProjectGuid(state?.projectGuid) ||
+    normalizeProjectGuid(state?.project?.guid)
+  );
+}
+
 const bibleVersionMetadataByKey = new Map();
 const projectScriptureOverrides = {
   fontFamily: "",
@@ -2067,6 +2111,7 @@ function mediaPinPayloadForItem(item, opts = {}) {
     path: item.path,
     type: item.type || classifyQueueMediaType(item.path),
     projectPath: currentProjectPath || "",
+    projectGuid: currentProjectGuid,
     liveSource: {
       ...liveSource,
       ...(opts.liveSource || {}),
@@ -6473,11 +6518,16 @@ async function saveCurrentProjectInStorageMode({ quiet = false } = {}) {
   try {
     await syncCurrentPptxSlideForProjectSnapshot();
     const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
-    await invoke("write-project-file", {
+    const result = await invoke("write-project-file", {
       filePath: currentProjectPath,
       data,
       mode: currentProjectStorageMode === "packed" ? "packed" : "working",
+      activateProject: true,
     });
+    currentProjectGuid = normalizeProjectGuid(result?.projectGuid) || currentProjectGuid;
+    if (typeof result?.projectCreated === "string" && result.projectCreated.length > 0) {
+      currentProjectCreated = result.projectCreated;
+    }
     scheduleAutosaveProjectState();
     refreshBaselinesAfterSave();
     if (!quiet) showGnomeToast("Project saved");
@@ -7604,10 +7654,22 @@ function buildProjectQueueItemSnapshot(item) {
   };
 }
 
-function buildProjectStateSnapshot() {
+function buildProjectStateSnapshot(opts = {}) {
+  const projectGuid = normalizeProjectGuid(opts.projectGuid) || currentProjectGuid;
+  const projectCreated =
+    typeof opts.projectCreated === "string" && opts.projectCreated.length > 0
+      ? opts.projectCreated
+      : currentProjectCreated;
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
     projectPath: currentProjectPath || "",
+    projectGuid,
+    projectCreated,
+    project: {
+      guid: projectGuid,
+      name: "EMS Project",
+      created: projectCreated,
+    },
     projectStorageMode: currentProjectStorageMode,
     projectScriptureText: projectScriptureTextFromOverrides(projectScriptureOverrides),
     currentMode,
@@ -7640,6 +7702,7 @@ async function syncActiveProjectPathToMain(projectPath) {
   try {
     await invoke("set-active-project-path", {
       projectPath: typeof projectPath === "string" ? projectPath : "",
+      projectGuid: currentProjectGuid,
     });
   } catch (err) {
     console.error("set-active-project-path failed:", err);
@@ -7652,6 +7715,7 @@ async function cleanupStagingForCurrentProjectBeforeSwitch() {
     await flushAutosaveOnClose();
     await invoke("cleanup-project-staging", {
       projectPath: currentProjectPath || "",
+      projectGuid: currentProjectGuid,
       mediaQueue: mediaQueue.map(buildProjectQueueItemSnapshot),
     });
   } catch (err) {
@@ -7672,6 +7736,13 @@ function applyProjectStateSnapshot(state, opts = {}) {
     const nextProjectPath =
       typeof state.projectPath === "string" ? state.projectPath : currentProjectPath || "";
     currentProjectPath = nextProjectPath;
+    currentProjectGuid = projectGuidFromState(state) || generateProjectGuid();
+    currentProjectCreated =
+      typeof state.projectCreated === "string" && state.projectCreated.length > 0
+        ? state.projectCreated
+        : typeof state.project?.created === "string" && state.project.created.length > 0
+          ? state.project.created
+          : new Date().toISOString();
     currentProjectStorageMode = state.projectStorageMode === "packed" ? "packed" : "working";
     await syncActiveProjectPathToMain(nextProjectPath);
 
@@ -8245,24 +8316,40 @@ async function openProjectByPath(filePath) {
 }
 
 async function saveProjectAsDialog() {
+  const previousProjectPath = currentProjectPath;
+  const previousProjectStorageMode = currentProjectStorageMode;
+  const previousProjectGuid = currentProjectGuid;
+  const previousProjectCreated = currentProjectCreated;
   try {
     const defaultPath = currentProjectPath || "Untitled.emproj";
     const res = await invoke("show-save-project-dialog", { defaultPath });
     if (!res || res.canceled || !res.filePath) return false;
+    if (previousProjectPath) {
+      resetCurrentProjectIdentity();
+    }
     currentProjectPath = res.filePath;
     currentProjectStorageMode = "working";
     await syncCurrentPptxSlideForProjectSnapshot();
     const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
-    await invoke("write-project-file", {
+    const result = await invoke("write-project-file", {
       filePath: currentProjectPath,
       data,
       mode: "working",
+      activateProject: true,
     });
+    currentProjectGuid = normalizeProjectGuid(result?.projectGuid) || currentProjectGuid;
+    if (typeof result?.projectCreated === "string" && result.projectCreated.length > 0) {
+      currentProjectCreated = result.projectCreated;
+    }
     scheduleAutosaveProjectState();
     refreshBaselinesAfterSave();
     showGnomeToast("Project saved");
     return true;
   } catch (err) {
+    currentProjectPath = previousProjectPath;
+    currentProjectStorageMode = previousProjectStorageMode;
+    currentProjectGuid = previousProjectGuid;
+    currentProjectCreated = previousProjectCreated;
     console.error("Failed to save project as:", err);
     showGnomeToast("Failed to save project");
     return false;
@@ -8282,11 +8369,19 @@ async function exportPortableProjectDialog() {
     const res = await invoke("show-export-project-dialog", { defaultPath });
     if (!res || res.canceled || !res.filePath) return false;
     await syncCurrentPptxSlideForProjectSnapshot();
-    const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
+    const data = JSON.stringify(
+      buildProjectStateSnapshot({
+        projectGuid: generateProjectGuid(),
+        projectCreated: new Date().toISOString(),
+      }),
+      null,
+      2,
+    );
     await invoke("write-project-file", {
       filePath: res.filePath,
       data,
       mode: "packed",
+      activateProject: false,
     });
     showGnomeToast("Portable project exported");
     return true;
