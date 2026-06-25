@@ -2109,6 +2109,13 @@ function projectGuidFromSnapshot(snapshot) {
   );
 }
 
+function projectWriterAppInfo() {
+  return {
+    name: app.getName(),
+    version: app.getVersion(),
+  };
+}
+
 async function reconcileStagingFromSnapshot(snapshot, opts = {}) {
   const projectGuid = projectGuidFromSnapshot(snapshot);
   if (!projectGuid) return;
@@ -2156,7 +2163,7 @@ async function handleWriteProjectFile(_, payload) {
   } catch {
     throw new Error("Project data is invalid JSON");
   }
-  const result = await saveEmprojSnapshot(filePath, snapshot, app.getVersion(), {
+  const result = await saveEmprojSnapshot(filePath, snapshot, projectWriterAppInfo(), {
     packMedia: mode === "packed",
   });
   const projectGuid = normalizeProjectGuid(result?.projectGuid) || projectGuidFromSnapshot(snapshot);
@@ -2192,7 +2199,7 @@ async function handleSaveAutosaveProjectState(_, state) {
     activeProjectPath = state.projectPath;
   }
   const filePath = autosaveProjectFilePath();
-  const result = await saveEmprojSnapshot(filePath, state, app.getVersion(), {
+  const result = await saveEmprojSnapshot(filePath, state, projectWriterAppInfo(), {
     packMedia: false,
   });
   const projectGuid =
