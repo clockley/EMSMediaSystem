@@ -79,8 +79,7 @@ const bibleRpcClient = new BibleRpcClient({
 });
 
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
-app.commandLine.appendSwitch('disable-features', 'MultiBufferNeverDefer');
-app.commandLine.appendSwitch('disable-background-networking');
+
 // Force IPv4 for all outbound connections. YouTube signs HLS/DASH segment
 // URLs against the *exact* client IP that requested the manifest (the URL
 // embeds the IP in its path, e.g. `.../ip/<ipv6>/...`). When the host has

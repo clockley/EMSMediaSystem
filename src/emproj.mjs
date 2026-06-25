@@ -466,10 +466,6 @@ function queueItemFromSequenceItem(item, resolvedPath, asset = null) {
     sizeBytes: Number.isFinite(asset?.sizeBytes) ? asset.sizeBytes : undefined,
     modifiedTime:
       typeof asset?.modifiedTime === "string" ? asset.modifiedTime : undefined,
-    lastPreflightWarningFingerprint:
-      typeof item?.lastPreflightWarningFingerprint === "string"
-        ? item.lastPreflightWarningFingerprint
-        : undefined,
     autoAdvance: item?.playback?.autoAdvance !== false,
     cueStartTime: sequenceItemPlaybackStartTime(item, kind),
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
@@ -1048,11 +1044,6 @@ export async function saveEmprojSnapshot(
       },
       presentationPath: isPresentation ? bundledPath : undefined,
       liveSource: queueLiveSource,
-      lastPreflightWarningFingerprint:
-        typeof item.lastPreflightWarningFingerprint === "string" &&
-        item.lastPreflightWarningFingerprint.length > 0
-          ? item.lastPreflightWarningFingerprint
-          : undefined,
       startSlide:
         Number.isFinite(item.pptxSlideIndex) && item.pptxSlideIndex >= 0
           ? item.pptxSlideIndex + 1
