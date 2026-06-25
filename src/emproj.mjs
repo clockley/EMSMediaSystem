@@ -22,6 +22,8 @@ import yauzl from "yauzl";
 import yazl from "yazl";
 
 const MIME_TYPE = "application/vnd.ems.project+zip";
+const ARCHIVE_COMMENT_FORMAT = "application/vnd.ems.project.comment+json";
+const ARCHIVE_COMMENT_VERSION = 1;
 const PROJECT_FILE_SCHEMA_VERSION = 2;
 const BIBLE_URI_PREFIX = "bible://";
 const IMAGE_EXT = new Set([".bmp", ".gif", ".jpg", ".jpeg", ".png", ".webp", ".svg", ".ico"]);
@@ -76,6 +78,13 @@ function projectMetadataFromSnapshot(snapshot, nowIso) {
 
 function canonicalJson(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function asciiJson(value) {
+  return JSON.stringify(value).replace(/[^\x20-\x7e]/g, (char) => {
+    const code = char.charCodeAt(0).toString(16).padStart(4, "0");
+    return `\\u${code}`;
+  });
 }
 
 function normalizeArchivePath(p) {
@@ -419,6 +428,83 @@ function packedIntegrityFields(digestHex) {
     : {};
 }
 
+function normalizeApplicationInfo(appInfo) {
+  const source = appInfo && typeof appInfo === "object" ? appInfo : {};
+  const legacyVersion = typeof appInfo === "string" ? appInfo.trim() : "";
+  const name =
+    typeof source.name === "string" && source.name.trim()
+      ? source.name.trim()
+      : "unknown";
+  const version =
+    typeof source.version === "string" && source.version.trim()
+      ? source.version.trim()
+      : legacyVersion || "unknown";
+  return { name, version };
+}
+
+function buildProjectArchiveComment({
+  application,
+  manifestHash,
+  projectGuid,
+  savedAt,
+}) {
+  const comment = {
+    format: ARCHIVE_COMMENT_FORMAT,
+    version: ARCHIVE_COMMENT_VERSION,
+    guid: normalizeProjectGuid(projectGuid),
+    savedBy: `${application.name}/${application.version}`,
+    appName: application.name,
+    appVersion: application.version,
+    savedAt,
+    manifestHashAlg: SHA256_HASH_ALG,
+    manifestHash: normalizeSha256Hex(manifestHash),
+  };
+  return asciiJson(comment);
+}
+
+function parseProjectArchiveComment(rawComment) {
+  const text = Buffer.isBuffer(rawComment)
+    ? rawComment.toString("utf8")
+    : typeof rawComment === "string"
+      ? rawComment
+      : "";
+  if (!text.trim()) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  if (parsed.format !== ARCHIVE_COMMENT_FORMAT) return null;
+  if (parsed.version !== ARCHIVE_COMMENT_VERSION) {
+    throw new Error("Unsupported EMS project archive comment version");
+  }
+  const guid = normalizeProjectGuid(parsed.guid);
+  const manifestHash = normalizeSha256Hex(parsed.manifestHash);
+  if (!guid || parsed.manifestHashAlg !== SHA256_HASH_ALG || !manifestHash) {
+    throw new Error("Invalid EMS project archive comment");
+  }
+  return {
+    guid,
+    manifestHash,
+    savedAt: typeof parsed.savedAt === "string" ? parsed.savedAt : "",
+    savedBy: typeof parsed.savedBy === "string" ? parsed.savedBy : "",
+  };
+}
+
+async function verifyProjectArchiveComment(comment, manifestJson, manifestBuffer) {
+  if (!comment) return;
+  const manifestGuid = normalizeProjectGuid(manifestJson?.project?.guid);
+  if (!manifestGuid || comment.guid !== manifestGuid) {
+    throw new Error("Project archive comment GUID does not match manifest");
+  }
+  const actualManifestHash = await sha256Buffer(manifestBuffer);
+  if (comment.manifestHash !== actualManifestHash) {
+    throw new Error("Project archive comment manifest hash does not match manifest.json");
+  }
+}
+
 function assetFingerprintFields(fallback = {}, digestHex) {
   if (typeof digestHex === "string" && digestHex.length > 0) {
     return baselineFileHashFields(digestHex);
@@ -470,6 +556,13 @@ async function hashZipEntry(zipfile, entry) {
 
 export async function readEmprojProjectGuid(projectPath) {
   const zipfile = await openZip(projectPath);
+  let archiveComment = null;
+  try {
+    archiveComment = parseProjectArchiveComment(zipfile.comment);
+  } catch (err) {
+    zipfile.close();
+    throw err;
+  }
   const rootFiles = new Map();
   const entryHashes = new Map();
   await new Promise((resolve, reject) => {
@@ -495,7 +588,9 @@ export async function readEmprojProjectGuid(projectPath) {
           return;
         }
         if (inZipPath.startsWith("media/") || inZipPath.startsWith("presentations/")) {
-          entryHashes.set(inZipPath, await hashZipEntry(zipfile, entry));
+          if (!archiveComment) {
+            entryHashes.set(inZipPath, await hashZipEntry(zipfile, entry));
+          }
           zipfile.readEntry();
           return;
         }
@@ -516,6 +611,10 @@ export async function readEmprojProjectGuid(projectPath) {
   const manifestJsonRaw = rootFiles.get("manifest.json");
   if (!manifestJsonRaw) throw new Error("Project missing manifest.json");
   const manifestJson = JSON.parse(manifestJsonRaw.toString("utf8"));
+  if (archiveComment) {
+    await verifyProjectArchiveComment(archiveComment, manifestJson, manifestJsonRaw);
+    return normalizeProjectGuid(manifestJson?.project?.guid);
+  }
   verifyManifestIntegrity(manifestJson, entryHashes);
   return normalizeProjectGuid(manifestJson?.project?.guid);
 }
@@ -729,6 +828,13 @@ export async function loadEmprojSnapshot(projectPath) {
 
 async function readEmprojSnapshotInto(projectPath, extractRoot) {
   const zipfile = await openZip(projectPath);
+  let archiveComment = null;
+  try {
+    archiveComment = parseProjectArchiveComment(zipfile.comment);
+  } catch (err) {
+    zipfile.close();
+    throw err;
+  }
   const extractedMediaPaths = new Map();
   const rootFiles = new Map();
   const entryHashes = new Map();
@@ -785,6 +891,7 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   } catch (err) {
     throw new Error(`Project manifest.json is corrupt: ${err.message}`);
   }
+  await verifyProjectArchiveComment(archiveComment, manifestJson, manifestJsonRaw);
   verifyManifestIntegrity(manifestJson, entryHashes);
 
   const queueJsonRaw = rootFiles.get("queue.json");
@@ -957,7 +1064,7 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   };
 }
 
-async function addZipFromBuffersAndFiles(targetZipPath, buffers, files) {
+async function addZipFromBuffersAndFiles(targetZipPath, buffers, files, comment = "") {
   await mkdir(path.dirname(targetZipPath), { recursive: true });
   const zipFile = new yazl.ZipFile();
   const out = createWriteStream(targetZipPath);
@@ -973,17 +1080,22 @@ async function addZipFromBuffersAndFiles(targetZipPath, buffers, files) {
   for (const item of files) {
     zipFile.addFile(item.realPath, item.path, { compress: item.compress !== false });
   }
-  zipFile.end();
+  if (comment) {
+    zipFile.end({ comment });
+  } else {
+    zipFile.end();
+  }
   await done;
 }
 
 export async function saveEmprojSnapshot(
   projectPath,
   snapshot,
-  appVersion = "1.0.0",
+  appInfo = {},
   opts = {},
 ) {
   const packMedia = opts?.packMedia === true;
+  const applicationInfo = normalizeApplicationInfo(appInfo);
   const queue = Array.isArray(snapshot?.mediaQueue) ? snapshot.mediaQueue : [];
   const projectScriptureOverrides = normalizeProjectScriptureOverrides(
     snapshot?.projectScriptureText?.presentation && typeof snapshot.projectScriptureText.presentation === "object"
@@ -1361,8 +1473,8 @@ export async function saveEmprojSnapshot(
     format: "EMS Project",
     formatExtension: "emproj",
     application: {
-      name: "EMS Media System",
-      version: appVersion,
+      name: applicationInfo.name,
+      version: applicationInfo.version,
       platform: process.platform,
     },
     project: projectMetadata,
@@ -1388,6 +1500,13 @@ export async function saveEmprojSnapshot(
     },
   };
   const manifestBuf = Buffer.from(canonicalJson(manifestJson), "utf8");
+  const manifestHash = await sha256Buffer(manifestBuf);
+  const archiveComment = buildProjectArchiveComment({
+    application: applicationInfo,
+    manifestHash,
+    projectGuid: projectMetadata.guid,
+    savedAt: nowIso,
+  });
   const mimeBuf = Buffer.from(`${MIME_TYPE}\n`, "utf8");
 
   // Use a per-save temp path so overlapping saves do not race on the same file.
@@ -1402,7 +1521,12 @@ export async function saveEmprojSnapshot(
     { path: "diagnostics.json", buffer: diagnosticsBuf, compress: true },
   ];
 
-  await addZipFromBuffersAndFiles(tmpPath, zipBuffers, packMedia ? fileEntries : []);
+  await addZipFromBuffersAndFiles(
+    tmpPath,
+    zipBuffers,
+    packMedia ? fileEntries : [],
+    archiveComment,
+  );
   try {
     await copyFile(projectPath, bakPath);
   } catch {
