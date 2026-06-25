@@ -30,7 +30,6 @@
   "dependencies": {
     "@aiden0z/pptx-renderer": "^1.2.0",
     "@node-rs/xxhash": "^1.7.6",
-    "@parcel/watcher": "^2.5.6",
     "dashjs": "^5.1.1",
     "fflate": "^0.8.3",
     "hls.js": "^1.6.15",

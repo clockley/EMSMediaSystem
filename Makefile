@@ -80,6 +80,7 @@ JS_FILES := $(filter-out src/app.js src/Bible.mjs src/wasm_exec.js,$(JS_FILES))
 APP_BUNDLE_SRC = src/app.js
 APP_BUNDLE_OUT = $(DERIVED_DIR)/src/app.min.js
 BIBLE_RPC_ROOT = sidecars/bible-rpc
+MEDIA_WATCHER_ROOT = sidecars/media-watcher
 BIBLE_PRIVATE_ROOT = private-bibles
 BIBLE_RPC_ASSET_BUILDER = $(BIBLE_RPC_ROOT)/build-bible-assets.mjs
 BIBLE_RPC_IMPORTER = $(BIBLE_RPC_ROOT)/import-bibles.mjs
@@ -104,6 +105,7 @@ endif
 
 # Go source that produces the sidecar binary (edition independent).
 BIBLE_RPC_GO_SOURCES = $(BIBLE_RPC_ROOT)/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
+MEDIA_WATCHER_GO_SOURCES = $(MEDIA_WATCHER_ROOT)/main.go $(MEDIA_WATCHER_ROOT)/go.mod $(MEDIA_WATCHER_ROOT)/go.sum
 # Go source for the DB optimizer the asset builder runs via `go run`.
 BIBLE_OPTIMIZE_GO_SOURCES = $(BIBLE_RPC_ROOT)/cmd/bible-db-optimize/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
 
@@ -125,10 +127,15 @@ BIBLE_DB_DEPS = $(BIBLE_DB_DEPS_$(BIBLE_EDITION))
 # Sidecar binaries to produce. Cross-compile the shipped x64 targets and, when
 # the host differs, also the host-native binary so dev (`yarn start`) can run.
 BIBLE_SIDECAR_BINS := $(DERIVED_DIR)/bin/bible-rpc-linux-x64 $(DERIVED_DIR)/bin/bible-rpc-win32-x64.exe
+MEDIA_WATCHER_BINS := $(DERIVED_DIR)/bin/media-watcher-linux-x64 $(DERIVED_DIR)/bin/media-watcher-win32-x64.exe
 $(DERIVED_DIR)/bin/bible-rpc-linux-x64: GOOS_T := linux
 $(DERIVED_DIR)/bin/bible-rpc-linux-x64: GOARCH_T := amd64
 $(DERIVED_DIR)/bin/bible-rpc-win32-x64.exe: GOOS_T := windows
 $(DERIVED_DIR)/bin/bible-rpc-win32-x64.exe: GOARCH_T := amd64
+$(DERIVED_DIR)/bin/media-watcher-linux-x64: GOOS_T := linux
+$(DERIVED_DIR)/bin/media-watcher-linux-x64: GOARCH_T := amd64
+$(DERIVED_DIR)/bin/media-watcher-win32-x64.exe: GOOS_T := windows
+$(DERIVED_DIR)/bin/media-watcher-win32-x64.exe: GOARCH_T := amd64
 
 ifneq ($(WINDOWS), 1)
   HOST_GOOS := $(shell $(GO) env GOOS 2>/dev/null)
@@ -136,10 +143,16 @@ ifneq ($(WINDOWS), 1)
   HOST_BIN_PLATFORM := $(if $(filter windows,$(HOST_GOOS)),win32,$(HOST_GOOS))
   HOST_BIN_ARCH := $(if $(filter amd64,$(HOST_GOARCH)),x64,$(HOST_GOARCH))
   HOST_BIN := $(DERIVED_DIR)/bin/bible-rpc-$(HOST_BIN_PLATFORM)-$(HOST_BIN_ARCH)$(if $(filter windows,$(HOST_GOOS)),.exe,)
+  MEDIA_WATCHER_HOST_BIN := $(DERIVED_DIR)/bin/media-watcher-$(HOST_BIN_PLATFORM)-$(HOST_BIN_ARCH)$(if $(filter windows,$(HOST_GOOS)),.exe,)
   ifeq ($(filter $(HOST_BIN),$(BIBLE_SIDECAR_BINS)),)
     BIBLE_SIDECAR_BINS += $(HOST_BIN)
     $(HOST_BIN): GOOS_T := $(HOST_GOOS)
     $(HOST_BIN): GOARCH_T := $(HOST_GOARCH)
+  endif
+  ifeq ($(filter $(MEDIA_WATCHER_HOST_BIN),$(MEDIA_WATCHER_BINS)),)
+    MEDIA_WATCHER_BINS += $(MEDIA_WATCHER_HOST_BIN)
+    $(MEDIA_WATCHER_HOST_BIN): GOOS_T := $(HOST_GOOS)
+    $(MEDIA_WATCHER_HOST_BIN): GOARCH_T := $(HOST_GOARCH)
   endif
 endif
 
@@ -147,7 +160,7 @@ endif
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
 IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
 DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all copied binary/static resources
-BIBLE_RESOURCES = $(BIBLE_SIDECAR_BINS) $(BIBLE_DB_OUT)
+BIBLE_RESOURCES = $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(BIBLE_DB_OUT)
 
 ifeq ($(NO_COLOR), 1)
   COLOR_GREEN =
@@ -238,6 +251,20 @@ else
 	@mkdir -p $(dir $@)
 	@echo "$(COLOR_YELLOW)Building Bible RPC sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
 	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) "$(GO)" build -C "$(BIBLE_RPC_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
+	@[ "$(GOOS_T)" = "windows" ] || chmod 755 "$@"
+endif
+	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
+
+# --- Media watcher Go sidecar (built directly by Make) ---
+$(MEDIA_WATCHER_BINS): $(MEDIA_WATCHER_GO_SOURCES) | $(DERIVED_DIR)
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+	@echo "$(COLOR_YELLOW)Building media watcher sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
+	@powershell -NoProfile -c "$$env:CGO_ENABLED='0'; $$env:GOOS='$(GOOS_T)'; $$env:GOARCH='$(GOARCH_T)'; & '$(GO)' build -C '$(MEDIA_WATCHER_ROOT)' -trimpath -ldflags '-s -w' -o '$(CURDIR)/$@' '.'"
+else
+	@mkdir -p $(dir $@)
+	@echo "$(COLOR_YELLOW)Building media watcher sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
+	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) "$(GO)" build -C "$(MEDIA_WATCHER_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
 	@[ "$(GOOS_T)" = "windows" ] || chmod 755 "$@"
 endif
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"

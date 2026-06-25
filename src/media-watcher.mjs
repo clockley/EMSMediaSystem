@@ -7,6 +7,8 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 */
 
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,25 +17,33 @@ import {
   MEDIA_FILE_HASH_ALG,
 } from "./media-file-hash.min.mjs";
 
+const RPC_TIMEOUT_MS = 10000;
 const DEBOUNCE_MS = 300;
 const STABILITY_INTERVAL_MS = 500;
 const STABILITY_SAMPLES = 3;
 const MAX_STABILITY_POLLS = 20;
-const POLLING_INTERVAL_MS = 5000;
 
-let parcelWatcherModulePromise = null;
+const MEDIA_WATCHER_BINARIES = Object.freeze({
+  linux: Object.freeze({
+    x64: "media-watcher-linux-x64",
+    arm64: "media-watcher-linux-arm64",
+  }),
+  win32: Object.freeze({
+    x64: "media-watcher-win32-x64.exe",
+    arm64: "media-watcher-win32-arm64.exe",
+  }),
+});
 
-async function loadParcelWatcher() {
-  if (!parcelWatcherModulePromise) {
-    parcelWatcherModulePromise = import("@parcel/watcher").then((module) => {
-      const watcher = module.default || module;
-      if (typeof watcher.subscribe !== "function") {
-        throw new Error("@parcel/watcher subscribe API is unavailable");
-      }
-      return watcher;
-    });
+export function mediaWatcherBinaryName(platform = process.platform, arch = process.arch) {
+  const platformBinaries = MEDIA_WATCHER_BINARIES[platform];
+  if (!platformBinaries) {
+    throw new Error(`Unsupported media watcher sidecar platform: ${platform}`);
   }
-  return parcelWatcherModulePromise;
+  const binaryName = platformBinaries[arch];
+  if (!binaryName) {
+    throw new Error(`Unsupported media watcher sidecar architecture: ${platform}/${arch}`);
+  }
+  return binaryName;
 }
 
 function normalizeLocalPath(filePath) {
@@ -61,75 +71,261 @@ function statSignature(info) {
   };
 }
 
-function comparablePathKey(filePath) {
-  const normalized = path.resolve(String(filePath || ""));
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-function normalizeWatcherEventPath(dir, eventPath) {
-  if (typeof eventPath !== "string" || eventPath.length === 0) return "";
-  return path.resolve(dir, eventPath);
-}
-
-function checkKeyFor(originalPath, generation) {
-  return `${generation}\0${originalPath}`;
+function pinnedMetadataMatches(item, signature) {
+  return (
+    Number.isFinite(item.pinnedSizeBytes) &&
+    item.pinnedSizeBytes === signature.sizeBytes &&
+    Number.isFinite(item.pinnedMtimeMs) &&
+    item.pinnedMtimeMs === signature.mtimeMs
+  );
 }
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+class MediaWatcherSidecarClient {
+  constructor({ app, devRoot, onEvent, onError }) {
+    this.app = app;
+    this.devRoot = devRoot;
+    this.onEvent = typeof onEvent === "function" ? onEvent : () => {};
+    this.onError = typeof onError === "function" ? onError : () => {};
+    this.child = null;
+    this.buffer = "";
+    this.nextId = 1;
+    this.pending = new Map();
+    this.startPromise = null;
+    this.readyInfo = null;
+  }
+
+  resourcesRoot() {
+    return this.app?.isPackaged ? process.resourcesPath : this.devRoot;
+  }
+
+  binaryPath() {
+    return path.join(this.resourcesRoot(), "bin", mediaWatcherBinaryName());
+  }
+
+  async ready() {
+    await this.ensureStarted();
+    return this.readyInfo;
+  }
+
+  async setWatches(items) {
+    return this.call("watch.set", [{ items: Array.isArray(items) ? items : [] }]);
+  }
+
+  async clearWatches() {
+    if (!this.child || this.child.killed) {
+      return { watchedItems: 0, watchedFiles: 0, watchedDirectories: 0 };
+    }
+    return this.call("watch.clear");
+  }
+
+  async call(method, params = []) {
+    await this.ensureStarted();
+    return this.request(method, params);
+  }
+
+  async ensureStarted() {
+    if (this.child && !this.child.killed) return;
+    if (this.startPromise) return this.startPromise;
+    this.startPromise = this.start();
+    try {
+      await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  async start() {
+    const binaryPath = this.binaryPath();
+    if (!existsSync(binaryPath)) {
+      throw new Error(`Media watcher sidecar not found: ${binaryPath}`);
+    }
+
+    this.child = spawn(binaryPath, [], {
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    this.buffer = "";
+    this.readyInfo = null;
+
+    this.child.stdout.setEncoding("utf8");
+    this.child.stdout.on("data", (chunk) => this.handleStdout(chunk));
+    this.child.stderr.setEncoding("utf8");
+    this.child.stderr.on("data", (chunk) => {
+      const message = String(chunk || "").trim();
+      if (message) console.error(`[media-watcher] ${message}`);
+    });
+    this.child.on("error", (err) => this.rejectAll(err));
+    this.child.on("exit", (code, signal) => {
+      const detail = signal ? `signal ${signal}` : `code ${code}`;
+      this.rejectAll(new Error(`Media watcher sidecar exited with ${detail}`));
+      this.child = null;
+      this.readyInfo = null;
+    });
+
+    this.readyInfo = await this.request("watch.ready");
+  }
+
+  handleStdout(chunk) {
+    this.buffer += chunk;
+    let newlineIndex = this.buffer.indexOf("\n");
+    while (newlineIndex >= 0) {
+      const line = this.buffer.slice(0, newlineIndex).trim();
+      this.buffer = this.buffer.slice(newlineIndex + 1);
+      if (line) this.handleMessage(line);
+      newlineIndex = this.buffer.indexOf("\n");
+    }
+  }
+
+  handleMessage(line) {
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch (err) {
+      console.error("[media-watcher] Failed to parse sidecar message:", err);
+      return;
+    }
+
+    if (message.method) {
+      this.handleNotification(message);
+      return;
+    }
+
+    const pending = this.pending.get(String(message.id));
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pending.delete(String(message.id));
+    if (message.error) {
+      pending.reject(new Error(message.error.message || "Media watcher RPC error"));
+    } else {
+      pending.resolve(message.result);
+    }
+  }
+
+  handleNotification(message) {
+    const params = message.params || {};
+    if (message.method === "watch.event") {
+      this.onEvent(params);
+    } else if (message.method === "watch.error") {
+      this.onError(params);
+    }
+  }
+
+  request(method, params = []) {
+    const id = this.nextId;
+    this.nextId += 1;
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      method,
+      params: Array.isArray(params) ? params : [],
+    });
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(String(id));
+        reject(new Error(`Media watcher RPC timed out: ${method}`));
+      }, RPC_TIMEOUT_MS);
+      this.pending.set(String(id), { resolve, reject, timer });
+      this.child.stdin.write(`${payload}\n`, "utf8", (err) => {
+        if (!err) return;
+        clearTimeout(timer);
+        this.pending.delete(String(id));
+        reject(err);
+      });
+    });
+  }
+
+  rejectAll(err) {
+    for (const [id, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.reject(err);
+      this.pending.delete(id);
+    }
+  }
+
+  stop() {
+    this.rejectAll(new Error("Media watcher sidecar stopped"));
+    if (this.child && !this.child.killed) {
+      this.child.kill();
+    }
+    this.child = null;
+    this.readyInfo = null;
+  }
+}
+
 export class MediaWatcher {
-  constructor({ sendToRenderer }) {
+  constructor({ app, devRoot, sendToRenderer }) {
     this.sendToRenderer =
       typeof sendToRenderer === "function" ? sendToRenderer : () => {};
-    this.directories = new Map();
     this.itemsByPath = new Map();
-    this.pollTimer = null;
+    this.timers = new Map();
     this.watchGeneration = 0;
     this.checksInFlight = new Set();
     this.checksQueued = new Set();
+    this.sidecar = new MediaWatcherSidecarClient({
+      app,
+      devRoot,
+      onEvent: (payload) => this.handleSidecarEvent(payload),
+      onError: (payload) => {
+        const detail = payload?.dir ? `${payload.dir}: ${payload.error}` : payload?.error;
+        console.error(`[media-watcher] Sidecar watch error: ${detail || "unknown error"}`);
+      },
+    });
   }
 
-  sync(items) {
-    this.closeAll();
+  async sync(items) {
+    this.resetLocalState();
     const nextItems = Array.isArray(items) ? items : [];
+    const sidecarItems = [];
     for (const raw of nextItems) {
       const item = this.normalizeWatchItem(raw);
       if (!item) continue;
       this.addItem(item);
+      sidecarItems.push({
+        queueItemId: item.queueItemId,
+        originalPath: item.originalPath,
+      });
     }
-    this.ensurePollingState();
-    return {
-      watchedItems: this.itemsByPath.size,
-      watchedDirectories: this.directories.size,
-    };
+
+    try {
+      const result = sidecarItems.length > 0
+        ? await this.sidecar.setWatches(sidecarItems)
+        : await this.sidecar.clearWatches();
+      return {
+        watchedItems: this.watchedItemCount(),
+        watchedFiles: this.itemsByPath.size,
+        watchedDirectories: result?.watchedDirectories ?? 0,
+        failedDirectories: result?.failedDirectories || [],
+      };
+    } catch (err) {
+      console.error("[media-watcher] Failed to sync sidecar watches:", err);
+      return {
+        watchedItems: this.watchedItemCount(),
+        watchedFiles: this.itemsByPath.size,
+        watchedDirectories: 0,
+        error: err?.message || String(err),
+      };
+    }
   }
 
   closeAll() {
+    this.resetLocalState();
+    this.sidecar.stop();
+  }
+
+  resetLocalState() {
     this.watchGeneration += 1;
-    for (const entry of this.directories.values()) {
-      entry.closed = true;
-      for (const timer of entry.timers.values()) {
-        clearTimeout(timer);
-      }
-      entry.timers.clear();
-      const subscription = entry.subscription;
-      entry.subscription = null;
-      if (subscription) {
-        void subscription.unsubscribe().catch((err) => {
-          console.error(`[media-watcher] Failed to unsubscribe from ${entry.dir}:`, err);
-        });
-      }
+    for (const timer of this.timers.values()) {
+      clearTimeout(timer);
     }
-    this.directories.clear();
+    this.timers.clear();
     this.itemsByPath.clear();
     this.checksInFlight.clear();
     this.checksQueued.clear();
-    if (this.pollTimer !== null) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
   }
 
   normalizeWatchItem(raw) {
@@ -163,152 +359,41 @@ export class MediaWatcher {
     const existing = this.itemsByPath.get(item.originalPath) || [];
     existing.push(item);
     this.itemsByPath.set(item.originalPath, existing);
-
-    const dir = path.dirname(item.originalPath);
-    let entry = this.directories.get(dir);
-    if (!entry) {
-      entry = {
-        dir,
-        items: new Set(),
-        itemPathsByEventKey: new Map(),
-        timers: new Map(),
-        subscription: null,
-        closed: false,
-        pollingOnly: false,
-      };
-      this.directories.set(dir, entry);
-      void this.startDirectoryWatch(entry);
-    }
-    entry.items.add(item.originalPath);
-    const eventKey = comparablePathKey(item.originalPath);
-    let eventPaths = entry.itemPathsByEventKey.get(eventKey);
-    if (!eventPaths) {
-      eventPaths = new Set();
-      entry.itemPathsByEventKey.set(eventKey, eventPaths);
-    }
-    eventPaths.add(item.originalPath);
   }
 
-  async startDirectoryWatch(entry) {
-    const generation = this.watchGeneration;
-    const onEvents = (err, events) => {
-      if (!this.isCurrentEntry(entry, generation)) return;
-      if (err) {
-        this.markDirectoryPollingOnly(entry, err);
-        return;
-      }
-      this.handleWatcherEvents(entry, events);
-    };
-
-    try {
-      const parcelWatcher = await loadParcelWatcher();
-      const subscription = await parcelWatcher.subscribe(entry.dir, onEvents);
-      if (!this.isCurrentEntry(entry, generation)) {
-        await subscription.unsubscribe().catch(() => {});
-        return;
-      }
-      entry.subscription = subscription;
-    } catch (err) {
-      if (!this.isCurrentEntry(entry, generation)) return;
-      this.markDirectoryPollingOnly(entry, err);
+  watchedItemCount() {
+    let count = 0;
+    for (const items of this.itemsByPath.values()) {
+      count += items.length;
     }
+    return count;
   }
 
-  isCurrentEntry(entry, generation) {
-    return (
-      generation === this.watchGeneration &&
-      !entry.closed &&
-      this.directories.get(entry.dir) === entry
-    );
+  handleSidecarEvent(payload) {
+    const originalPath = normalizeLocalPath(payload?.originalPath || payload?.eventPath || "");
+    if (!originalPath || !this.itemsByPath.has(originalPath)) return;
+    this.schedulePathCheck(originalPath);
   }
 
   isCurrentPath(originalPath, generation) {
     return generation === this.watchGeneration && this.itemsByPath.has(originalPath);
   }
 
-  markDirectoryPollingOnly(entry, err) {
-    if (entry.closed) return;
-    if (!entry.pollingOnly) {
-      console.error(`[media-watcher] Falling back to polling for ${entry.dir}:`, err);
-    }
-    entry.pollingOnly = true;
-    const subscription = entry.subscription;
-    entry.subscription = null;
-    if (subscription) {
-      void subscription.unsubscribe().catch(() => {});
-    }
-    this.ensurePollingState();
-  }
-
-  handleWatcherEvents(entry, events) {
-    if (!Array.isArray(events) || events.length === 0) {
-      this.scheduleEntryChecks(entry);
-      return;
-    }
-
-    const scheduled = new Set();
-    for (const event of events) {
-      const eventPath = normalizeWatcherEventPath(entry.dir, event?.path);
-      if (!eventPath) {
-        this.scheduleEntryChecks(entry, scheduled);
-        continue;
-      }
-      const watchedPaths = entry.itemPathsByEventKey.get(comparablePathKey(eventPath));
-      if (!watchedPaths) continue;
-      for (const watchedPath of watchedPaths) {
-        if (scheduled.has(watchedPath)) continue;
-        scheduled.add(watchedPath);
-        this.schedulePathCheck(watchedPath);
-      }
-    }
-  }
-
-  scheduleEntryChecks(entry, scheduled = new Set()) {
-    for (const watchedPath of entry.items) {
-      if (scheduled.has(watchedPath)) continue;
-      scheduled.add(watchedPath);
-      this.schedulePathCheck(watchedPath);
-    }
-  }
-
-  ensurePollingState() {
-    const needsPolling =
-      this.itemsByPath.size > 0 &&
-      Array.from(this.directories.values()).some((entry) => entry.pollingOnly);
-    if (!needsPolling && this.pollTimer !== null) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-      return;
-    }
-    if (needsPolling && this.pollTimer === null) {
-      this.pollTimer = setInterval(() => {
-        for (const entry of this.directories.values()) {
-          if (!entry.pollingOnly) continue;
-          this.scheduleEntryChecks(entry);
-        }
-      }, POLLING_INTERVAL_MS);
-      this.pollTimer.unref?.();
-    }
-  }
-
   schedulePathCheck(originalPath) {
-    const dir = path.dirname(originalPath);
-    const entry = this.directories.get(dir);
-    if (!entry) return;
-    const existingTimer = entry.timers.get(originalPath);
+    const existingTimer = this.timers.get(originalPath);
     if (existingTimer) clearTimeout(existingTimer);
     const generation = this.watchGeneration;
     const timer = setTimeout(() => {
-      entry.timers.delete(originalPath);
+      this.timers.delete(originalPath);
       this.runPathCheck(originalPath, generation);
     }, DEBOUNCE_MS);
-    entry.timers.set(originalPath, timer);
+    this.timers.set(originalPath, timer);
     timer.unref?.();
   }
 
   runPathCheck(originalPath, generation) {
     if (!this.isCurrentPath(originalPath, generation)) return;
-    const checkKey = checkKeyFor(originalPath, generation);
+    const checkKey = `${generation}\0${originalPath}`;
     if (this.checksInFlight.has(checkKey)) {
       this.checksQueued.add(checkKey);
       return;
@@ -321,10 +406,9 @@ export class MediaWatcher {
       })
       .finally(() => {
         this.checksInFlight.delete(checkKey);
-        if (
-          this.checksQueued.delete(checkKey) &&
-          this.isCurrentPath(originalPath, generation)
-        ) {
+        const queued = this.checksQueued.has(checkKey);
+        this.checksQueued.delete(checkKey);
+        if (queued && this.isCurrentPath(originalPath, generation)) {
           this.schedulePathCheck(originalPath);
         }
       });
@@ -351,6 +435,13 @@ export class MediaWatcher {
     if (!this.isCurrentPath(originalPath, generation)) return;
     watchedItems = this.itemsByPath.get(originalPath) || [];
     if (!stable) {
+      watchedItems.forEach((item) => {
+        item.pending = false;
+      });
+      return;
+    }
+
+    if (watchedItems.every((item) => pinnedMetadataMatches(item, stable))) {
       watchedItems.forEach((item) => {
         item.pending = false;
       });
