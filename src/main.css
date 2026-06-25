@@ -3969,17 +3969,17 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     min-height: 28px;
     margin-left: 0;
     padding: 4px 10px;
-    border: 1px solid color-mix(in srgb, var(--warning-bg-color, #e5a50a) 60%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warning-bg-color, #e5a50a) 72%, var(--warning-fg-color, #1d1d1f));
     border-radius: 999px;
-    background: color-mix(in srgb, var(--warning-bg-color, #e5a50a) 18%, transparent);
-    color: inherit;
+    background: var(--warning-bg-color, #e5a50a);
+    color: var(--warning-fg-color, #1d1d1f);
     font-size: 12px;
     font-weight: 700;
     line-height: 1.2;
 }
 
 .row-media-update-btn:hover {
-    background: color-mix(in srgb, var(--warning-bg-color, #e5a50a) 28%, transparent);
+    background: color-mix(in srgb, var(--warning-bg-color, #e5a50a) 86%, #ffffff);
 }
 
 .row-media-update-btn:focus-visible {
