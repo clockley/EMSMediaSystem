@@ -2044,8 +2044,12 @@ function liveSourceSnapshotFields(liveSource) {
   };
 }
 
-function applyPinnedMediaSource(item, pinned) {
+function applyPinnedMediaSource(item, pinned, opts = {}) {
   if (!item || !pinned) return false;
+  const clearPendingMediaUpdate = opts.clearPendingMediaUpdate === true;
+  if (item.pendingMediaUpdate && !clearPendingMediaUpdate) {
+    return false;
+  }
   let changed = false;
   if (typeof pinned.fileHash === "string" && item.fileHash !== pinned.fileHash) {
     item.fileHash = pinned.fileHash;
@@ -2074,11 +2078,11 @@ function applyPinnedMediaSource(item, pinned) {
     item.liveSource = normalized;
     changed = true;
   }
-  if (item.pendingMediaUpdate) {
+  if (clearPendingMediaUpdate && item.pendingMediaUpdate) {
     delete item.pendingMediaUpdate;
     changed = true;
   }
-  if (item.changedSinceSave) {
+  if (clearPendingMediaUpdate && item.changedSinceSave) {
     item.changedSinceSave = false;
     changed = true;
   }
@@ -2222,7 +2226,9 @@ async function pinQueueMediaSources(items, opts = {}) {
         ...payload,
         verifyStagedPin: opts.repairStaging === true,
       });
-      changed = applyPinnedMediaSource(item, pinned) || changed;
+      changed = applyPinnedMediaSource(item, pinned, {
+        clearPendingMediaUpdate: opts.clearPendingMediaUpdate === true,
+      }) || changed;
     } catch (err) {
       console.error(`Failed to pin media source ${item.path}:`, err);
     }
@@ -2507,7 +2513,7 @@ async function approvePendingMediaUpdate(index) {
   if (!payload) return false;
   try {
     const pinned = await invoke("approve-media-refresh", payload);
-    if (!applyPinnedMediaSource(item, pinned)) return false;
+    if (!applyPinnedMediaSource(item, pinned, { clearPendingMediaUpdate: true })) return false;
     renderQueue();
     scheduleAutosaveProjectState();
     scheduleMediaWatchSync();
@@ -7914,7 +7920,7 @@ function scheduleAutosaveProjectState() {
  * modifiedTime}) onto queue items so the load-time preflight and future change
  * detection have something to compare against. By default only items missing a
  * baseline are stamped; pass { force: true } to re-stamp from current disk state
- * (e.g. right after an explicit project save, so "changed since last saved" resets).
+ * for items without unresolved Keep/Reload decisions.
  */
 async function stampBaselineForQueueItems(items, opts = {}) {
   const force = opts?.force === true;
@@ -7925,6 +7931,7 @@ async function stampBaselineForQueueItems(items, opts = {}) {
       !isQueueItemBible(item) &&
       typeof item.path === "string" &&
       item.path.length > 0 &&
+      (opts.clearPendingMediaUpdate === true || !item.pendingMediaUpdate) &&
       (force ||
         !(queueItemHasStoredFileHash(item) && Number.isFinite(item.sizeBytes))),
   );
@@ -7932,6 +7939,7 @@ async function stampBaselineForQueueItems(items, opts = {}) {
   const changed = await pinQueueMediaSources(targets, {
     force: true,
     skipScheduleAutosave: true,
+    clearPendingMediaUpdate: opts.clearPendingMediaUpdate === true,
   });
   if (changed) {
     renderQueue();
@@ -8252,6 +8260,7 @@ async function relinkMissingFilesDialog() {
       await pinQueueMediaSources(matches.map((match) => mediaQueue[match.index]), {
         force: true,
         skipScheduleAutosave: true,
+        clearPendingMediaUpdate: true,
       });
       renderQueue();
       const reloadIndexes = new Set(
