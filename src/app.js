@@ -10764,7 +10764,7 @@ function setMediaCountdownText(value) {
 function syncMediaCountdownOverlayState() {
   const countdownEl = document.getElementById("mediaCntDn");
   if (!countdownEl) return;
-  const hasText = textNode.data.trim().length > 0;
+  const hasText = textNode.data.length > 0;
   const isAllowed = countdownEl.dataset.countdownAllowed === "true";
   const isActive = isAllowed && hasText;
   countdownEl.hidden = !isActive;
