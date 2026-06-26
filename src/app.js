@@ -1566,7 +1566,14 @@ function isPptxPreviewVisible() {
 }
 
 function hidePptxPreviewIfNeeded(options = {}) {
-  if (isPptxPreviewVisible()) hidePptxPreview(options);
+  if (isPptxPreviewVisible()) {
+    hidePptxPreview(options);
+  } else {
+    // A slow PPTX load may still be between the async import/read steps and
+    // the first visible render. Invalidate it even when there is nothing on
+    // screen yet, otherwise it can re-activate after the user returns to live.
+    nextPptxPreviewRequestToken();
+  }
 }
 
 function restoreNonPptxPreviewSurface(options = {}) {
@@ -3067,6 +3074,7 @@ function resolveQueueItemPlaybackVolume(index) {
 }
 
 function clearPreviewCue() {
+  nextPreviewLoadToken();
   commitActiveCueVolume();
   stopPreviewAudioCue();
   clearVideoPreviewCueOverlay();
@@ -3083,6 +3091,7 @@ function clearPreviewCue() {
 
 function clearCueAfterTake(index) {
   if (previewCueIndex === index) {
+    nextPreviewLoadToken();
     stopPreviewAudioCue();
     clearVideoPreviewCueOverlay();
     previewCueIndex = -1;
@@ -3152,8 +3161,8 @@ function ensurePreviewCueVideoElement() {
  * element is never touched, so the live mirror keeps playing the whole
  * time the operator scrubs the cued item.
  */
-async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
-  const token = nextPreviewLoadToken();
+async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, loadToken) {
+  const token = Number.isFinite(loadToken) ? loadToken : nextPreviewLoadToken();
   const el = ensurePreviewCueVideoElement();
   if (!el) return;
   previewCueVideoIndex = index;
@@ -3177,20 +3186,25 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
   el.removeAttribute("src");
   el.removeAttribute("poster");
   el.load();
-  el.src = await stagedMediaUrlForItem(item);
+  const cueUrl = await stagedMediaUrlForItem(item);
+  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
+    if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
+    return;
+  }
+  el.src = cueUrl;
   el.load();
   el.hidden = false;
   setPreviewStackSurface(PREVIEW_SURFACE_CUE_VIDEO);
 
   await waitForLoadedMetadata(el);
   if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
-    clearVideoPreviewCueOverlay();
+    if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
     return;
   }
 
   const actualStart = await seekMedia(el, startTime);
   if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
-    clearVideoPreviewCueOverlay();
+    if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
     return;
   }
 
@@ -5244,6 +5258,12 @@ function syncBibleBackgroundLabel(filePath = bibleDesignerState.backgroundPath) 
 
 async function loadBibleEntryIntoEditor(entry = bibleDesignerState, opts = {}) {
   const resolvedEntry = hydrateBibleEntryStyle(await bibleEntryWithLookupText(entry));
+  if (
+    typeof opts?.previewLoadToken === "number" &&
+    !isCurrentPreviewLoad(opts.previewLoadToken)
+  ) {
+    return false;
+  }
   Object.assign(bibleDesignerState, resolvedEntry);
   setBibleVerseSelectionFromEntry(bibleDesignerState);
   syncBibleSelectorsFromState();
@@ -5254,6 +5274,7 @@ async function loadBibleEntryIntoEditor(entry = bibleDesignerState, opts = {}) {
     window.requestAnimationFrame(scrollBibleViewerToCurrentVerse);
   }
   applyBiblePreview(bibleDesignerState);
+  return true;
 }
 
 function currentBibleEditorTargetIndex() {
@@ -8268,11 +8289,13 @@ function installPreviewEmptyStateHandlers() {
 async function restorePreviewToLiveOutput(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   const item = mediaQueue[index];
+  const token = nextPreviewLoadToken();
   if (!isQueueItemBible(item)) {
     hideBibleWorkspace();
   }
   if (isQueueItemPptx(item)) {
     const liveSlide = await getLivePptxSlideFromMediaWindow(item.path);
+    if (!isCurrentPreviewLoad(token)) return;
     const startSlide = isSavedPptxSlideIndex(liveSlide)
       ? liveSlide
       : pptxStartSlideForItem(item);
@@ -8289,6 +8312,7 @@ async function restorePreviewToLiveOutput(index) {
     setMediaCountdownOverlayVisible(false);
     setMediaCountdownText("");
     await loadPptxPreview(item.path, { startSlide });
+    if (!isCurrentPreviewLoad(token)) return;
     syncMediaLoopState({ notify: false });
     updatePreviewCueUI();
     renderQueue();
@@ -8296,6 +8320,7 @@ async function restorePreviewToLiveOutput(index) {
     return;
   } else if (isQueueItemBible(item)) {
     const liveBibleEntry = await resolvedBibleEntryForItem(item);
+    if (!isCurrentPreviewLoad(token)) return;
     mediaFile = item.path;
     mediaPlayerInputState.filePaths = [item.path];
     updateQueueFileLabel(item.name);
@@ -8309,7 +8334,10 @@ async function restorePreviewToLiveOutput(index) {
     setMediaCountdownOverlayVisible(false);
     setMediaCountdownText("");
     item.bible = { ...liveBibleEntry };
-    await loadBibleEntryIntoEditor(liveBibleEntry);
+    const loaded = await loadBibleEntryIntoEditor(liveBibleEntry, {
+      previewLoadToken: token,
+    });
+    if (!loaded || !isCurrentPreviewLoad(token)) return;
     showBibleWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
     syncMediaLoopState({ notify: false });
@@ -8411,11 +8439,11 @@ async function restorePreviewCueAfterPresentationStopped() {
   return true;
 }
 
-async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
+async function loadAudioQueueItemIntoPreviewCue(index, item, startTime, loadToken) {
   if (!isBiblePresentationActive()) {
     restoreNonPptxPreviewSurface();
   }
-  const token = nextPreviewLoadToken();
+  const token = Number.isFinite(loadToken) ? loadToken : nextPreviewLoadToken();
   const audio = ensurePreviewAudioElement();
   previewAudioCueIndex = index;
 
@@ -8430,7 +8458,9 @@ async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
   audio.volume = 0;
   audio.loop = loopEnabledForQueueItem(item);
   audio.preload = "metadata";
-  audio.src = await stagedMediaUrlForItem(item);
+  const audioUrl = await stagedMediaUrlForItem(item);
+  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+  audio.src = audioUrl;
 
   await waitForLoadedMetadata(audio);
   if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
@@ -8498,6 +8528,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     return;
   }
 
+  const token = nextPreviewLoadToken();
   commitActiveCueVolume();
   previewCueIndex = index;
   cueVolumeDirty = false;
@@ -8533,6 +8564,7 @@ async function loadQueueItemIntoPreviewCue(index) {
       preserveLiveVideo: isQueuePresentationActive() && isQueueItemVideo(currentLiveQueueItem()),
       preserveLiveBible: isBiblePresentationActive(),
     });
+    if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
     syncMediaLoopState({ notify: false });
     updatePreviewCueUI();
     renderQueue();
@@ -8546,8 +8578,12 @@ async function loadQueueItemIntoPreviewCue(index) {
     setMediaCountdownOverlayVisible(false);
     setMediaCountdownText("");
     const cueBibleEntry = await resolvedBibleEntryForItem(item);
+    if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
     item.bible = { ...cueBibleEntry };
-    await loadBibleEntryIntoEditor(cueBibleEntry);
+    const loaded = await loadBibleEntryIntoEditor(cueBibleEntry, {
+      previewLoadToken: token,
+    });
+    if (!loaded || !isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemImage(item)) {
     if (!isBiblePresentationActive()) {
@@ -8564,7 +8600,9 @@ async function loadQueueItemIntoPreviewCue(index) {
     // this static image display.
     const cueEl = ensurePreviewCueVideoElement();
     if (cueEl) {
-      cueEl.poster = await stagedMediaUrlForItem(item);
+      const posterUrl = await stagedMediaUrlForItem(item);
+      if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+      cueEl.poster = posterUrl;
       cueEl.hidden = false;
       setPreviewStackSurface(PREVIEW_SURFACE_CUE_IMAGE);
     }
@@ -8591,7 +8629,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     // countdown before the cue's metadata loads.
     setMediaCountdownOverlayVisible(true);
     setMediaCountdownText("");
-    await loadAudioQueueItemIntoPreviewCue(index, item, cueStart);
+    await loadAudioQueueItemIntoPreviewCue(index, item, cueStart, token);
   } else {
     if (!isBiblePresentationActive()) {
       restoreNonPptxPreviewSurface();
@@ -8608,9 +8646,11 @@ async function loadQueueItemIntoPreviewCue(index) {
     // paints; until then the pill stays hidden so no blank chrome leaks.
     setMediaCountdownOverlayVisible(true);
     setMediaCountdownText("");
-    await loadVideoQueueItemIntoPreviewCueOverlay(index, item, cueStart);
+    await loadVideoQueueItemIntoPreviewCueOverlay(index, item, cueStart, token);
+    if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
     syncPreviewAudioTrackState();
   }
+  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
   syncMediaLoopState({ notify: false });
   updatePreviewCueUI();
   renderQueue();
