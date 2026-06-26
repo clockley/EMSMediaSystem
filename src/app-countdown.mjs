@@ -245,7 +245,7 @@ function getCountdownSourceElement() {
  * this case — there is no duration to count down from — and re-shown when
  * the cue clears (assuming the live media is not also an image).
  */
-function isImagePreviewCueActive() {
+export function isImagePreviewCueActive() {
   const cue = getCurrentPreviewCue();
   const cueEl = getPreviewCueVideo() || document.getElementById("previewCue");
   return Boolean(

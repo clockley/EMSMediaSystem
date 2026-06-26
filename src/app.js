@@ -120,6 +120,7 @@ import {
 import {
   configureCountdown,
   handleTimeMessage,
+  isImagePreviewCueActive,
   paintCountdownFor,
   resetCountdownSync,
   restoreCountdownForLiveMedia,
