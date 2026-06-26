@@ -349,12 +349,7 @@ function stopMediaPlaybackPowerHint() {
 
 function sendRemainingTime(event, arg) {
   if (!win || win.isDestroyed()) return;
-  win.webContents.send("timeRemaining-message", {
-    duration: arg?.[0],
-    currentTime: arg?.[1],
-    timestamp: arg?.[2],
-    mediaFile: arg?.[3],
-  });
+  win.webContents.send("timeRemaining-message", arg);
 }
 
 function getSetting(_, setting) {

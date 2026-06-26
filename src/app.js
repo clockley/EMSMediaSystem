@@ -309,12 +309,23 @@ configureCountdown({
   },
   setMediaCountdownOverlayVisible: (value) => setMediaCountdownOverlayVisible(value),
   setMediaCountdownText: (value) => setMediaCountdownText(value),
+  setMediaCountdownFromCodes: (codes) => setMediaCountdownFromCodes(codes),
   setTargetTime: (value) => {
     targetTime = value;
   },
 });
 let isActiveMediaWindowCache = false;
-const textNode = document.createTextNode("");
+const MEDIA_COUNTDOWN_DIGIT_COUNT = 12;
+const countdownDigitNodes = [];
+const countdownDigitLastCode = new Int32Array(MEDIA_COUNTDOWN_DIGIT_COUNT);
+countdownDigitLastCode.fill(-1);
+let countdownHasDisplayedDigits = false;
+const MEDIA_COUNTDOWN_CHAR_BY_CODE = new Array(128);
+for (let digit = 0; digit < 10; digit++) {
+  MEDIA_COUNTDOWN_CHAR_BY_CODE[48 + digit] = String(digit);
+}
+MEDIA_COUNTDOWN_CHAR_BY_CODE[(":".charCodeAt(0))] = ":";
+MEDIA_COUNTDOWN_CHAR_BY_CODE[(".".charCodeAt(0))] = ".";
 let videoWrapper;
 let focusableControls;
 let controlsOverlay;
@@ -10745,26 +10756,89 @@ function handleMediaPlayback(isImgFile, sourcePath = mediaFile, cacheBust) {
   }
 }
 
+function ensureMediaCountdownDigitNodes() {
+  const parent = document.getElementById("mediaCntDn");
+  if (!parent) return false;
+  for (let i = 0; i < MEDIA_COUNTDOWN_DIGIT_COUNT; i++) {
+    let node = countdownDigitNodes[i];
+    if (!node) {
+      node = document.createTextNode("");
+      countdownDigitNodes[i] = node;
+    }
+    if (!parent.contains(node)) {
+      parent.appendChild(node);
+    }
+  }
+  return true;
+}
+
+function clearMediaCountdownDigits() {
+  for (let i = 0; i < MEDIA_COUNTDOWN_DIGIT_COUNT; i++) {
+    const node = countdownDigitNodes[i];
+    if (!node) continue;
+    if (countdownDigitLastCode[i] !== -1) {
+      node.data = "";
+      countdownDigitLastCode[i] = -1;
+    }
+  }
+  countdownHasDisplayedDigits = false;
+}
+
+/**
+ * Paint HH:MM:SS.mmm into fixed per-digit text nodes using pre-cached
+ * single-character strings — avoids String.fromCharCode on every RAF/IPC tick.
+ */
+function setMediaCountdownFromCodes(codes) {
+  if (!codes || codes.length < MEDIA_COUNTDOWN_DIGIT_COUNT) {
+    clearMediaCountdownDigits();
+    syncMediaCountdownOverlayState();
+    return;
+  }
+  if (!ensureMediaCountdownDigitNodes()) {
+    return;
+  }
+  let hasText = false;
+  for (let i = 0; i < MEDIA_COUNTDOWN_DIGIT_COUNT; i++) {
+    const code = codes[i];
+    if (countdownDigitLastCode[i] === code) {
+      if (MEDIA_COUNTDOWN_CHAR_BY_CODE[code]) {
+        hasText = true;
+      }
+      continue;
+    }
+    countdownDigitLastCode[i] = code;
+    const cached = MEDIA_COUNTDOWN_CHAR_BY_CODE[code] ?? "";
+    countdownDigitNodes[i].data = cached;
+    if (cached) {
+      hasText = true;
+    }
+  }
+  countdownHasDisplayedDigits = hasText;
+  syncMediaCountdownOverlayState();
+}
+
 function setMediaCountdownOverlayVisible(isVisible) {
   const countdownEl = document.getElementById("mediaCntDn");
   if (!countdownEl) return;
   const wasAllowed = countdownEl.dataset.countdownAllowed === "true";
   countdownEl.dataset.countdownAllowed = isVisible ? "true" : "false";
   if (!isVisible || !wasAllowed) {
-    textNode.data = "";
+    clearMediaCountdownDigits();
   }
   syncMediaCountdownOverlayState();
 }
 
 function setMediaCountdownText(value) {
-  textNode.data = typeof value === "string" ? value : "";
-  syncMediaCountdownOverlayState();
+  if (value === "") {
+    clearMediaCountdownDigits();
+    syncMediaCountdownOverlayState();
+  }
 }
 
 function syncMediaCountdownOverlayState() {
   const countdownEl = document.getElementById("mediaCntDn");
   if (!countdownEl) return;
-  const hasText = textNode.data.length > 0;
+  const hasText = countdownHasDisplayedDigits;
   const isAllowed = countdownEl.dataset.countdownAllowed === "true";
   const isActive = isAllowed && hasText;
   countdownEl.hidden = !isActive;
@@ -11876,10 +11950,7 @@ function setSBFormMediaPlayer() {
   restoreLivePreviewIntoPanel(mediaPanel);
   syncStreamRendererPreviewCapture();
 
-  const mediaCntDnEl = document.getElementById("mediaCntDn");
-  if (mediaCntDnEl && textNode && !mediaCntDnEl.contains(textNode)) {
-    mediaCntDnEl.appendChild(textNode);
-  }
+  ensureMediaCountdownDigitNodes();
   installDisplayChangeHandler();
   populateDisplaySelect();
 
@@ -12315,8 +12386,12 @@ function cleanRefs(options = {}) {
   }
 
   const mcd = document.getElementById("mediaCntDn");
-  if (mcd && mcd.contains(textNode)) {
-    mcd.removeChild(textNode);
+  if (mcd) {
+    for (const node of countdownDigitNodes) {
+      if (node && mcd.contains(node)) {
+        mcd.removeChild(node);
+      }
+    }
   }
 
   if (setupCustomMediaControls.controller) {

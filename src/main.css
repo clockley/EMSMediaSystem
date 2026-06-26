@@ -1252,6 +1252,8 @@ footer {
     border: 1px solid rgb(255 255 255 / 22%);
     background: rgb(0 0 0 / 58%);
     backdrop-filter: blur(6px);
+    contain: layout style paint;
+    isolation: isolate;
     font-size: 12px;
     line-height: 1.2;
     text-align: center;
