@@ -26,6 +26,7 @@ let countdownDeps = {
   isAudioPreviewCueActive: () => false,
   isImg: () => false,
   isQueueItemImage: () => false,
+  isRemoteCountdownAuthoritative: () => false,
   isVideoPreviewCueActive: () => false,
   mediaPathMatchesCurrentLiveMedia: () => true,
   mediaPlayerMode: 0,
@@ -108,6 +109,10 @@ function isQueueItemImage(item) {
   return countdownDeps.isQueueItemImage(item);
 }
 
+function isRemoteCountdownAuthoritative() {
+  return countdownDeps.isRemoteCountdownAuthoritative();
+}
+
 function isVideoPreviewCueActive() {
   return countdownDeps.isVideoPreviewCueActive();
 }
@@ -161,6 +166,10 @@ function update(time) {
     setLocalTimeStampUpdateIsRunning(false);
     return;
   }
+  if (isRemoteCountdownAuthoritative()) {
+    setLocalTimeStampUpdateIsRunning(false);
+    return;
+  }
 
   // Same rule as handleTimeMessage: a loaded cue owns the countdown,
   // so the live-media RAF loop steps aside while the operator scrubs.
@@ -194,12 +203,15 @@ function update(time) {
 }
 
 export function updateTimestamp() {
-  if (getLocalTimeStampUpdateIsRunning()) {
-    return;
-  }
-
   if (getCurrentMode() !== mediaPlayerMode()) {
     setLocalTimeStampUpdateIsRunning(false);
+    return;
+  }
+  if (isRemoteCountdownAuthoritative()) {
+    setLocalTimeStampUpdateIsRunning(false);
+    return;
+  }
+  if (getLocalTimeStampUpdateIsRunning()) {
     return;
   }
 
@@ -436,7 +448,10 @@ export function handleTimeMessage(_, message) {
 
   now = Date.now();
 
-  if (getCurrentMode() === mediaPlayerMode()) {
+  if (
+    getCurrentMode() === mediaPlayerMode() &&
+    isRemoteCountdownAuthoritative()
+  ) {
     // Cue scrubs own the countdown while a cue is loaded — the operator
     // is reading "time remaining on the thing I'm previewing", not on the
     // live media. The cue's own timeupdate/seeked handlers drive the

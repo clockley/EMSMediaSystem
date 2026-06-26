@@ -304,6 +304,7 @@ configureCountdown({
   isAudioPreviewCueActive: () => isAudioPreviewCueActive(),
   isImg: (filePath) => isImg(filePath),
   isQueueItemImage: (item) => isQueueItemImage(item),
+  isRemoteCountdownAuthoritative: () => remoteCountdownOwnsLiveMedia(),
   isVideoPreviewCueActive: () => isVideoPreviewCueActive(),
   mediaPathMatchesCurrentLiveMedia: (filePath) => mediaPathMatchesCurrentLiveMedia(filePath),
   mediaPlayerMode: MEDIAPLAYER,
@@ -1095,6 +1096,48 @@ function queueItemCueStartTime(item) {
     item.cueStartTime > 0
     ? item.cueStartTime
     : 0;
+}
+
+function validMediaStartTime(value) {
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function currentPreviewStartTimeForQueueItem(index, item, fallback = null) {
+  if (!queueItemSupportsCueStartTime(item)) return null;
+
+  if (index === previewCueIndex) {
+    const cueMedia = isAudioPreviewCueActive()
+      ? previewAudio
+      : isVideoPreviewCueActive()
+        ? previewCueVideo
+        : null;
+    if (Number.isFinite(cueMedia?.currentTime)) {
+      return validMediaStartTime(cueMedia.currentTime);
+    }
+  }
+
+  if (index === currentQueueIndex || previewShowsSameClipAsPath(item.path)) {
+    if (Number.isFinite(video?.currentTime)) {
+      return validMediaStartTime(video.currentTime);
+    }
+    if (Number.isFinite(fallback)) {
+      return validMediaStartTime(fallback);
+    }
+  }
+
+  return null;
+}
+
+function presentationStartTimeForQueueItem(index, fallback = null) {
+  const item = index >= 0 && index < mediaQueue.length ? mediaQueue[index] : null;
+  if (!item) return 0;
+
+  const previewStart = currentPreviewStartTimeForQueueItem(index, item, fallback);
+  if (previewStart !== null && previewStart > 0) {
+    return previewStart;
+  }
+
+  return queueItemCueStartTime(item);
 }
 
 function resolvePptxPreviewStartSlide(filePath, opts) {
@@ -8732,7 +8775,10 @@ function cueFromCurrentPosition() {
 async function playCueNow() {
   const cue = currentPreviewCue();
   if (!cue) return;
-  await switchQueueItemLiveWithConfirmation(cue.index, cue.startTime);
+  await switchQueueItemLiveWithConfirmation(
+    cue.index,
+    presentationStartTimeForQueueItem(cue.index, cue.startTime),
+  );
 }
 
 function shouldConfirmLiveSwitch(targetItem) {
@@ -9231,7 +9277,10 @@ async function playCurrentQueueItem(opts) {
     return;
   }
 
-  await createMediaWindow();
+  const projectionVideo = resolveQueuePresentationVideo();
+  await createMediaWindow({
+    startTime: validMediaStartTime(projectionVideo?.currentTime),
+  });
 }
 
 async function advanceQueueAfterMediaWindowClosed() {
@@ -9449,6 +9498,15 @@ let pidController;
 
 function isActiveMediaWindow() {
   return isActiveMediaWindowCache;
+}
+
+function remoteCountdownOwnsLiveMedia() {
+  return Boolean(
+    currentMode === MEDIAPLAYER &&
+      isActiveMediaWindow() &&
+      activeMediaWindowContentType === "video" &&
+      timeRemaining?.isPortReady?.(),
+  );
 }
 
 function syncPreviewAudioTrackState() {
@@ -11168,11 +11226,16 @@ async function playMedia(e) {
     mediaQueue.length > 0
   ) {
     const startIdx = queueStartIndexForPresent();
-    if (!isLiveStream(mediaQueue[startIdx].path)) {
+    const item = mediaQueue[startIdx];
+    if (!isLiveStream(item.path)) {
       return runPresentationStart(async () => {
+        const presentStartTime = presentationStartTimeForQueueItem(startIdx, startTime);
         isQueuePlaying = true;
         currentQueueIndex = startIdx;
-        await playCurrentQueueItem({ previewSeekTime: startTime });
+        await playCurrentQueueItem({
+          preservePreviewSeek: false,
+          startTime: presentStartTime,
+        });
         if (previewCueIndex === startIdx) clearCueAfterTake(startIdx);
       });
     }
@@ -11197,7 +11260,10 @@ async function playMedia(e) {
       }
       saveMediaFile();
       isQueuePlaying = true;
-      await playCurrentQueueItem({ previewSeekTime: startTime });
+      await playCurrentQueueItem({
+        preservePreviewSeek: false,
+        startTime: validMediaStartTime(startTime),
+      });
     });
   }
 
@@ -13351,6 +13417,10 @@ async function playAudioOnlyLocally(startOverride = null) {
 
 async function createMediaWindow(options) {
   const seekOnly = options && options.seekOnly === true;
+  const hasExplicitStartTime =
+    typeof options?.startTime === "number" &&
+    Number.isFinite(options.startTime) &&
+    options.startTime >= 0;
   const textItem = options?.textItem || null;
   const transientText = options?.transientText === true;
   if (!video) {
@@ -13446,8 +13516,10 @@ async function createMediaWindow(options) {
   const effectiveLoop = loopEnabledForLiveMedia(mediaFile);
   syncMediaLoopState({ notify: false });
 
-  if (liveStreamMode === false && video !== null) {
-    startTime = video.currentTime;
+  if (liveStreamMode === false) {
+    startTime = hasExplicitStartTime
+      ? validMediaStartTime(options.startTime)
+      : validMediaStartTime(video?.currentTime);
   }
 
   const windowOptions = {
