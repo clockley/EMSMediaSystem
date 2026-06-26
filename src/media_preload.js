@@ -18,6 +18,35 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 const { contextBridge, ipcRenderer } = require("electron/renderer");
 
 const audioFxPromise = import(`./audioFx.min.mjs`);
+let timeRemainingPort = null;
+
+ipcRenderer.on("timeRemaining-port", (event) => {
+  const [port] = event.ports || [];
+  if (!port) return;
+
+  if (timeRemainingPort) {
+    try {
+      timeRemainingPort.close();
+    } catch {}
+  }
+
+  timeRemainingPort = port;
+  timeRemainingPort.start?.();
+});
+
+function sendTimeRemaining(payload) {
+  if (!timeRemainingPort) return false;
+  try {
+    timeRemainingPort.postMessage(payload);
+    return true;
+  } catch {
+    try {
+      timeRemainingPort.close();
+    } catch {}
+    timeRemainingPort = null;
+    return false;
+  }
+}
 
 function exposeMediaApi() {
   const video = document.getElementById("bigPlayer");
@@ -38,6 +67,10 @@ contextBridge.exposeInMainWorld("electron", {
     send: ipcRenderer.send.bind(ipcRenderer),
     on: ipcRenderer.on.bind(ipcRenderer),
     invoke: ipcRenderer.invoke.bind(ipcRenderer),
+  },
+  timeRemaining: {
+    send: sendTimeRemaining,
+    isPortReady: () => Boolean(timeRemainingPort),
   },
   attachCubicWaveShaper: async (...args) => {
     const { attachCubicWaveShaper } = await audioFxPromise;

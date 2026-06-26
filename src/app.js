@@ -50,8 +50,9 @@ import {
   parseScriptureReference,
 } from "./app-bible-reference-utils.mjs";
 import {
-  formatTime,
+  bindTransportTimeDisplay,
   getHostnameOrBasename,
+  paintTransportTimeDisplay,
   PIDController,
 } from "./app-controls-utils.mjs";
 import {
@@ -138,6 +139,7 @@ let ipcRenderer;
 let bibleAPI;
 let webUtils;
 let attachCubicWaveShaper;
+let timeRemaining;
 let __dirname;
 
 let send;
@@ -173,6 +175,7 @@ function attachElectronBridge() {
   bibleAPI = electron.bibleAPI;
   webUtils = electron.webUtils;
   attachCubicWaveShaper = electron.attachCubicWaveShaper;
+  timeRemaining = electron.timeRemaining;
   __dirname = electron.__dirname;
   
   send = ipcRenderer.send;
@@ -3198,8 +3201,8 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime) {
 
   if (timeline && Number.isFinite(el.duration) && el.duration > 0) {
     timeline.value = (actualStart / el.duration) * 100;
-    if (currentTimeDisplay) currentTimeDisplay.textContent = formatTime(actualStart);
-    if (durationTimeDisplay) durationTimeDisplay.textContent = formatTime(el.duration);
+    if (currentTimeDisplay) paintTransportTimeDisplay(currentTimeDisplay, actualStart);
+    if (durationTimeDisplay) paintTransportTimeDisplay(durationTimeDisplay, el.duration);
     document
       .getElementById("customControls")
       ?.style.setProperty("visibility", "visible");
@@ -8444,8 +8447,8 @@ async function loadAudioQueueItemIntoPreviewCue(index, item, startTime) {
   }
   if (timeline && duration > 0) {
     timeline.value = (actualStart / duration) * 100;
-    currentTimeDisplay.textContent = formatTime(actualStart);
-    durationTimeDisplay.textContent = formatTime(duration);
+    currentTimeDisplay && paintTransportTimeDisplay(currentTimeDisplay, actualStart);
+    durationTimeDisplay && paintTransportTimeDisplay(durationTimeDisplay, duration);
     document
       .getElementById("customControls")
       ?.style.setProperty("visibility", "visible");
@@ -9580,14 +9583,8 @@ function refreshLiveAudioControls() {
   const d = liveAudio.duration;
   const c = liveAudio.currentTime;
   if (isFinite(d) && d > 0) {
-    const fmtTime = (sec) => {
-      if (!isFinite(sec) || sec < 0) return "0:00";
-      const m = Math.floor(sec / 60);
-      const s = Math.floor(sec % 60);
-      return `${m}:${s.toString().padStart(2, "0")}`;
-    };
-    if (durationTimeDisplay) durationTimeDisplay.textContent = fmtTime(d);
-    if (currentTimeDisplay) currentTimeDisplay.textContent = fmtTime(c);
+    if (durationTimeDisplay) paintTransportTimeDisplay(durationTimeDisplay, d);
+    if (currentTimeDisplay) paintTransportTimeDisplay(currentTimeDisplay, c);
     timeline.min = 0;
     timeline.max = 100;
     timeline.value = (c / d) * 100;
@@ -9735,12 +9732,28 @@ function setupCustomMediaControls() {
   let wasPlayingBeforeDrag = false;
   let timelineSeekToken = 0;
 
-  // --- Format time utility ---
-  const fmt = (sec) => {
-    if (!isFinite(sec) || sec < 0) return "0:00";
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m}:${s.toString().padStart(2, "0")}`;
+  bindTransportTimeDisplay(currentTimeDisplay);
+  bindTransportTimeDisplay(durationTimeDisplay);
+
+  const isTransportControlsPaintVisible = () => {
+    if (currentMode !== MEDIAPLAYER) {
+      return false;
+    }
+    if (!overlay || overlay.style.display === "none") {
+      return false;
+    }
+    if (overlay.style.visibility === "hidden") {
+      return false;
+    }
+    if (isDragging) {
+      return true;
+    }
+    return Boolean(videoWrapper?.matches(":hover"));
+  };
+
+  const paintTransportControlsTime = (displayEl, seconds) => {
+    if (!displayEl) return;
+    paintTransportTimeDisplay(displayEl, seconds);
   };
   // Routes the custom controls (scrubber, play/pause, time display) to the
   // right media element for the current operator intent:
@@ -9784,10 +9797,13 @@ function setupCustomMediaControls() {
       isPlaying && hasSeekableMedia
         ? (mediaEl.currentTime / mediaEl.duration) * 100
         : 0;
-    currentTimeDisplay.textContent = isPlaying
-      ? fmt(mediaEl.currentTime)
-      : "0:00";
-    durationTimeDisplay.textContent = fmt(mediaEl.duration);
+    if (isTransportControlsPaintVisible()) {
+      paintTransportControlsTime(
+        currentTimeDisplay,
+        isPlaying ? mediaEl.currentTime : 0,
+      );
+      paintTransportControlsTime(durationTimeDisplay, mediaEl.duration);
+    }
 
     playPauseIcon.innerHTML = mediaEl.paused
       ? `<path d="M8 5v14l11-7z"/>`
@@ -9803,9 +9819,10 @@ function setupCustomMediaControls() {
   const updateControlsForTime = (mediaEl) => {
     if (mediaEl !== currentControlMedia()) return;
     if (!mediaEl.duration || timeline === null) return;
-    if (currentTimeDisplay !== null) {
-      currentTimeDisplay.textContent = fmt(mediaEl.currentTime);
+    if (!isTransportControlsPaintVisible()) {
+      return;
     }
+    paintTransportControlsTime(currentTimeDisplay, mediaEl.currentTime);
 
     if (!isDragging) {
       timeline.value = (mediaEl.currentTime / mediaEl.duration) * 100;
@@ -9828,6 +9845,13 @@ function setupCustomMediaControls() {
           setupCustomMediaControls.mouseLeaveFocusTimer = null;
         }
         enableTabFocus();
+        const mediaEl = currentControlMedia();
+        if (mediaEl) {
+          updateControlsForMetadata(mediaEl);
+          if (!mediaEl.paused && Number.isFinite(mediaEl.duration) && mediaEl.duration > 0) {
+            updateControlsForTime(mediaEl);
+          }
+        }
       },
       sig,
     );
@@ -10030,10 +10054,10 @@ function setupCustomMediaControls() {
       const seekTime = (timeline.value / 100) * mediaEl.duration;
       const seekToken = ++timelineSeekToken;
 
-      currentTimeDisplay.textContent = fmt(seekTime);
+      currentTimeDisplay && paintTransportTimeDisplay(currentTimeDisplay, seekTime);
       void seekMedia(mediaEl, seekTime).then((actualTime) => {
         if (seekToken !== timelineSeekToken) return;
-        currentTimeDisplay.textContent = fmt(actualTime);
+        currentTimeDisplay && paintTransportTimeDisplay(currentTimeDisplay, actualTime);
         if (isPreparingSeparateCue()) {
           setCueStartTime(previewCueIndex, actualTime);
         }
@@ -10118,7 +10142,7 @@ function setupCustomMediaControls() {
         video.currentTime = 0;
         video.pause();
         timeline.value = 0;
-        currentTimeDisplay.textContent = "0:00";
+        paintTransportControlsTime(currentTimeDisplay, 0);
       }
     },
     sig,
@@ -10131,7 +10155,7 @@ function setupCustomMediaControls() {
       previewAudio.currentTime = 0;
       previewAudio.pause();
       timeline.value = 0;
-      currentTimeDisplay.textContent = "0:00";
+      paintTransportTimeDisplay(currentTimeDisplay, 0);
     },
     sig,
   );
@@ -10142,7 +10166,7 @@ function setupCustomMediaControls() {
     () => {
       if (la !== currentControlMedia() || currentMode !== MEDIAPLAYER) return;
       timeline.value = 0;
-      currentTimeDisplay.textContent = "0:00";
+      paintTransportTimeDisplay(currentTimeDisplay, 0);
     },
     sig,
   );
@@ -10155,7 +10179,7 @@ function setupCustomMediaControls() {
         previewCue.currentTime = 0;
         previewCue.pause();
         timeline.value = 0;
-        currentTimeDisplay.textContent = "0:00";
+        paintTransportControlsTime(currentTimeDisplay, 0);
       },
       sig,
     );
@@ -10516,7 +10540,7 @@ function handleWindowMax(event, isMaximized) {
 }
 
 function installIPCHandler() {
-  on("timeRemaining-message", handleTimeMessage);
+  timeRemaining?.onMessage?.((message) => handleTimeMessage(null, message));
   on("update-playback-state", handlePlaybackState);
   on("remoteplaypause", handlePlayPause);
   on("media-window-closed", handleMediaWindowClosed);

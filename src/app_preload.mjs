@@ -20,6 +20,31 @@ import { FadeOut, attachCubicWaveShaper } from "./audioFx.min.mjs";
 
 let isInitialized = false;
 let initPromise = null;
+let timeRemainingPort = null;
+const timeRemainingMessageListeners = new Set();
+
+ipcRenderer.on("timeRemaining-port", (event) => {
+  const [port] = event.ports || [];
+  if (!port) return;
+
+  if (timeRemainingPort) {
+    try {
+      timeRemainingPort.close();
+    } catch {}
+  }
+
+  timeRemainingPort = port;
+  timeRemainingPort.onmessage = (messageEvent) => {
+    for (const listener of timeRemainingMessageListeners) {
+      try {
+        listener(messageEvent.data);
+      } catch (err) {
+        console.error("timeRemaining MessagePort listener failed:", err);
+      }
+    }
+  };
+  timeRemainingPort.start?.();
+});
 
 async function initialize() {
   if (isInitialized) return;
@@ -67,6 +92,14 @@ contextBridge.exposeInMainWorld("electron", {
     on: ipcRenderer.on.bind(ipcRenderer),
     once: ipcRenderer.once.bind(ipcRenderer),
     invoke: ipcRenderer.invoke.bind(ipcRenderer),
+  },
+  timeRemaining: {
+    onMessage: (listener) => {
+      if (typeof listener !== "function") return () => {};
+      timeRemainingMessageListeners.add(listener);
+      return () => timeRemainingMessageListeners.delete(listener);
+    },
+    isPortReady: () => Boolean(timeRemainingPort),
   },
   __dirname: import.meta.dirname,
   bibleAPI,

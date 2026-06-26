@@ -443,7 +443,8 @@ export function handleTimeMessage(_, message) {
     // overlay (or hide it entirely for an image cue), so we just step
     // out of the way here.
     if (!getCountdownSourceElement() && !isImagePreviewCueActive()) {
-      SECONDSFLOAT[0] = Math.max(0, duration - currentTime);
+      const remaining = duration - currentTime;
+      SECONDSFLOAT[0] = remaining > 0 ? remaining : 0;
       NUM_BUFFER[0] = ((SECONDSFLOAT[0] | 0) / 3600) | 0;
       REM_BUFFER[0] = (SECONDSFLOAT[0] | 0) % 3600;
       NUM_BUFFER[1] = (REM_BUFFER[0] / 60) | 0;
