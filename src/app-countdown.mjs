@@ -32,6 +32,7 @@ let countdownDeps = {
   setLocalTimeStampUpdateIsRunning: () => {},
   setMediaCountdownOverlayVisible: () => {},
   setMediaCountdownText: () => {},
+  setMediaCountdownFromCodes: () => {},
   setTargetTime: () => {},
 };
 
@@ -129,6 +130,10 @@ function setMediaCountdownOverlayVisible(value) {
 
 function setMediaCountdownText(value) {
   countdownDeps.setMediaCountdownText(value);
+}
+
+function setMediaCountdownFromCodes(codes) {
+  countdownDeps.setMediaCountdownFromCodes(codes);
 }
 
 function setTargetTime(value) {
@@ -265,8 +270,8 @@ export function isImagePreviewCueActive() {
  * shared buffer and racing for the same RAF slot. Even with strict
  * source-switching guards, the architecture is fragile — one missed
  * guard and the two countdowns interleave into torn digits. The cue
- * gets its own private buffer here and writes the formatted string
- * straight into the textNode, so a cue scrub can never corrupt the
+ * gets its own private buffer here and paints via per-digit text nodes,
+ * so a cue scrub can never corrupt the live path's in-flight NUM_BUFFER
  * live path's in-flight NUM_BUFFER state and vice versa.
  *
  * The buffer is pre-sized for "HH:MM:SS.mmm" (12 chars) and indexed by
@@ -295,13 +300,13 @@ function writeThreeDigits(value, offset) {
 }
 
 /**
- * Compute (duration − currentTime) for the cue scrub element and write
- * the formatted "HH:MM:SS.mmm" string straight into the textNode. This
- * deliberately does NOT touch NUM_BUFFER / STRING_BUFFER / updatePending
- * so the live mirror's RAF pipeline keeps owning its own state — even
- * while a cue is loaded, the live path can continue painting into its
- * private buffers (the source-switching guards just stop it from
- * applying those buffers to the on-screen textNode).
+ * Compute (duration − currentTime) for the cue scrub element and paint
+ * HH:MM:SS.mmm into the per-digit overlay nodes. This deliberately does
+ * NOT touch NUM_BUFFER / STRING_BUFFER / updatePending so the live mirror's
+ * RAF pipeline keeps owning its own state — even while a cue is loaded, the
+ * live path can continue painting into its private buffers (the
+ * source-switching guards just stop it from applying those buffers to the
+ * on-screen digit nodes).
  *
  * Wired from getPreviewCueVideo()'s timeupdate/seeked/loadedmetadata
  * listeners and getPreviewAudio()'s equivalents, plus the one-shot redraw
@@ -331,20 +336,7 @@ export function paintCountdownFor(mediaEl) {
   writeTwoDigits(minutes, 3);
   writeTwoDigits(seconds, 6);
   writeThreeDigits(millis > 999 ? 999 : millis, 9);
-  setMediaCountdownText(String.fromCharCode(
-    CUE_COUNTDOWN_CHARS[0],
-    CUE_COUNTDOWN_CHARS[1],
-    CUE_COUNTDOWN_CHARS[2],
-    CUE_COUNTDOWN_CHARS[3],
-    CUE_COUNTDOWN_CHARS[4],
-    CUE_COUNTDOWN_CHARS[5],
-    CUE_COUNTDOWN_CHARS[6],
-    CUE_COUNTDOWN_CHARS[7],
-    CUE_COUNTDOWN_CHARS[8],
-    CUE_COUNTDOWN_CHARS[9],
-    CUE_COUNTDOWN_CHARS[10],
-    CUE_COUNTDOWN_CHARS[11],
-  ));
+  setMediaCountdownFromCodes(CUE_COUNTDOWN_CHARS);
 }
 
 /**
@@ -409,20 +401,7 @@ function updateCountdownNode() {
   STRING_BUFFER[10] = ZERO + (((NUM_BUFFER[3] / 10) | 0) % 10);
   STRING_BUFFER[11] = ZERO + (NUM_BUFFER[3] % 10);
 
-  setMediaCountdownText(String.fromCharCode(
-    STRING_BUFFER[0],
-    STRING_BUFFER[1],
-    STRING_BUFFER[2],
-    STRING_BUFFER[3],
-    STRING_BUFFER[4],
-    STRING_BUFFER[5],
-    STRING_BUFFER[6],
-    STRING_BUFFER[7],
-    STRING_BUFFER[8],
-    STRING_BUFFER[9],
-    STRING_BUFFER[10],
-    STRING_BUFFER[11],
-  ));
+  setMediaCountdownFromCodes(STRING_BUFFER);
 
   updatePending[0] = 0;
 }

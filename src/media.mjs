@@ -29,6 +29,7 @@ let dashPlayer = null;
 let dashManifestObjectUrl = null;
 /** Guards one-time installation of the <video> playback event wiring. */
 let videoPlaybackWiringInstalled = false;
+const TIME_REMAINING_PAYLOAD = [0, 0, 0, ""];
 var img = null;
 var mediaFile;
 var loopFile = false;
@@ -876,12 +877,11 @@ function sendRemainingTime(video) {
       !video.paused &&
       !streamActsAsLiveEdge
     ) {
-      ipcRenderer.send("timeRemaining-message", [
-        video.duration,
-        video.currentTime,
-        Date.now() + (currentTime - performance.now()),
-        mediaFile,
-      ]);
+      TIME_REMAINING_PAYLOAD[0] = video.duration;
+      TIME_REMAINING_PAYLOAD[1] = video.currentTime;
+      TIME_REMAINING_PAYLOAD[2] = Date.now() + (currentTime - performance.now());
+      TIME_REMAINING_PAYLOAD[3] = mediaFile;
+      ipcRenderer.send("timeRemaining-message", TIME_REMAINING_PAYLOAD);
       lastTime = currentTime;
     }
     requestAnimationFrame(send);
