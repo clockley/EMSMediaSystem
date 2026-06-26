@@ -15,7 +15,16 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-const { ipcRenderer, argv, birth, attachCubicWaveShaper } = window.electron;
+const {
+  ipcRenderer,
+  argv,
+  birth,
+  attachCubicWaveShaper,
+  timeRemaining,
+} = window.electron;
+const sendTimeRemaining =
+  timeRemaining?.send ||
+  (() => false);
 let video = null;
 /**
  * Live-stream player handles are hoisted to module scope so that slipstream
@@ -30,6 +39,8 @@ let dashManifestObjectUrl = null;
 /** Guards one-time installation of the <video> playback event wiring. */
 let videoPlaybackWiringInstalled = false;
 const TIME_REMAINING_PAYLOAD = [0, 0, 0, ""];
+const TIME_REMAINING_PAYLOAD_NO_FILE = [0, 0, 0];
+let lastTimeRemainingMediaFile = "";
 var img = null;
 var mediaFile;
 var loopFile = false;
@@ -877,11 +888,23 @@ function sendRemainingTime(video) {
       !video.paused &&
       !streamActsAsLiveEdge
     ) {
-      TIME_REMAINING_PAYLOAD[0] = video.duration;
-      TIME_REMAINING_PAYLOAD[1] = video.currentTime;
-      TIME_REMAINING_PAYLOAD[2] = Date.now() + (currentTime - performance.now());
-      TIME_REMAINING_PAYLOAD[3] = mediaFile;
-      ipcRenderer.send("timeRemaining-message", TIME_REMAINING_PAYLOAD);
+      const duration = video.duration;
+      const playbackTime = video.currentTime;
+      const timestamp = Date.now() + (currentTime - performance.now());
+      TIME_REMAINING_PAYLOAD[0] = duration;
+      TIME_REMAINING_PAYLOAD[1] = playbackTime;
+      TIME_REMAINING_PAYLOAD[2] = timestamp;
+      TIME_REMAINING_PAYLOAD_NO_FILE[0] = duration;
+      TIME_REMAINING_PAYLOAD_NO_FILE[1] = playbackTime;
+      TIME_REMAINING_PAYLOAD_NO_FILE[2] = timestamp;
+      const mediaFileChanged = mediaFile !== lastTimeRemainingMediaFile;
+      if (mediaFileChanged) {
+        lastTimeRemainingMediaFile = mediaFile;
+        TIME_REMAINING_PAYLOAD[3] = mediaFile;
+        sendTimeRemaining(TIME_REMAINING_PAYLOAD);
+      } else {
+        sendTimeRemaining(TIME_REMAINING_PAYLOAD_NO_FILE);
+      }
       lastTime = currentTime;
     }
     requestAnimationFrame(send);

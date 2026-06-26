@@ -22,6 +22,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  MessageChannelMain,
   screen,
   powerSaveBlocker,
   session,
@@ -78,6 +79,7 @@ let preflightDialogWindow = null;
 const PREFLIGHT_DIALOG_IPC_CHANNEL = "preflight-dialog-response";
 let preflightDialogResponseListener = null;
 let allowMainWindowClose = false;
+const TIME_REMAINING_PORT_CHANNEL = "timeRemaining-port";
 let pendingProjectOpenPath = null;
 const bibleRpcClient = new BibleRpcClient({
   app,
@@ -289,6 +291,7 @@ function createWindow() {
   }
 
   win.webContents.on("did-finish-load", lateInit);
+  win.webContents.on("did-finish-load", installTimeRemainingMessagePort);
   win.webContents.on("did-finish-load", () => {
     if (pendingProjectOpenPath) {
       win.webContents.send("open-project-path", pendingProjectOpenPath);
@@ -347,9 +350,35 @@ function stopMediaPlaybackPowerHint() {
   });
 }
 
-function sendRemainingTime(event, arg) {
-  if (!win || win.isDestroyed()) return;
-  win.webContents.send("timeRemaining-message", arg);
+function installTimeRemainingMessagePort() {
+  if (
+    !win ||
+    win.isDestroyed() ||
+    win.webContents.isDestroyed() ||
+    !mediaWindow ||
+    mediaWindow.isDestroyed() ||
+    mediaWindow.webContents.isDestroyed()
+  ) {
+    return false;
+  }
+
+  const { port1, port2 } = new MessageChannelMain();
+  try {
+    win.webContents.postMessage(TIME_REMAINING_PORT_CHANNEL, null, [port1]);
+    mediaWindow.webContents.postMessage(TIME_REMAINING_PORT_CHANNEL, null, [
+      port2,
+    ]);
+    return true;
+  } catch (err) {
+    try {
+      port1.close();
+    } catch {}
+    try {
+      port2.close();
+    } catch {}
+    console.error("Failed to install time remaining MessagePort:", err);
+    return false;
+  }
 }
 
 function getSetting(_, setting) {
@@ -467,6 +496,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     if (!targetDisplay) return null;
     mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetDisplay));
     mediaWindow.setFullScreen(true);
+    installTimeRemainingMessagePort();
     return mediaWindow.id;
   }
   if (mediaWindowCreatePromise) return mediaWindowCreatePromise;
@@ -498,6 +528,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     createdMediaWindow.setIgnoreMouseEvents(true);
     //mediaWindow.openDevTools()
     await createdMediaWindow.loadFile("derived/src/media.prod.html");
+    installTimeRemainingMessagePort();
     createdMediaWindow.on("closed", () => {
       const closedId = createdMediaWindow.id;
       const wasActiveMediaWindow = mediaWindow === createdMediaWindow;
@@ -3699,7 +3730,6 @@ function setIPC() {
     }
     return false;
   });
-  ipcMain.on("timeRemaining-message", sendRemainingTime);
   ipcMain.on("vlcl", handleVlcl);
   ipcMain.on("update-text", (_event, message) => {
     if (mediaWindow && !mediaWindow.isDestroyed()) {

@@ -1269,6 +1269,12 @@ footer {
     display: inline-flex;
 }
 
+.transport-time-min,
+.transport-time-sec-digit {
+    font-feature-settings: inherit;
+    font-variant-numeric: inherit;
+}
+
 #mediaCntDn[hidden] {
     display: none !important;
     border-color: transparent;

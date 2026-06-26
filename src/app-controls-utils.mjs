@@ -321,3 +321,81 @@ export function formatTime(seconds) {
   const secs = Math.floor(seconds % 60);
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
+
+const TRANSPORT_TIME_DIGITS = Array.from({ length: 10 }, (_, digit) => String(digit));
+const transportTimeStateByEl = new WeakMap();
+
+/**
+ * Build M:SS display from cached digit strings (minutes text + ":" + two
+ * second digits). Minutes use textContent only when the minute value
+ * changes; seconds use fixed single-character strings from TRANSPORT_TIME_DIGITS.
+ */
+export function bindTransportTimeDisplay(displayEl) {
+  if (!displayEl) {
+    return null;
+  }
+  const existing = transportTimeStateByEl.get(displayEl);
+  if (existing) {
+    return existing;
+  }
+
+  displayEl.textContent = "";
+  const minEl = document.createElement("span");
+  minEl.className = "transport-time-min";
+  const colon = document.createTextNode(":");
+  const secTensEl = document.createElement("span");
+  secTensEl.className = "transport-time-sec-digit";
+  const secOnesEl = document.createElement("span");
+  secOnesEl.className = "transport-time-sec-digit";
+  displayEl.appendChild(minEl);
+  displayEl.appendChild(colon);
+  displayEl.appendChild(secTensEl);
+  displayEl.appendChild(secOnesEl);
+
+  const state = {
+    minEl,
+    secTensEl,
+    secOnesEl,
+    lastMinute: -1,
+    lastSecTens: -1,
+    lastSecOnes: -1,
+  };
+  transportTimeStateByEl.set(displayEl, state);
+  paintTransportTimeDisplay(displayEl, 0, state);
+  return state;
+}
+
+export function paintTransportTimeDisplay(displayEl, seconds, state = null) {
+  if (!displayEl) {
+    return;
+  }
+  const st =
+    state ?? transportTimeStateByEl.get(displayEl) ?? bindTransportTimeDisplay(displayEl);
+  if (!st) {
+    return;
+  }
+
+  let safeSeconds = seconds;
+  if (!Number.isFinite(safeSeconds) || safeSeconds < 0) {
+    safeSeconds = 0;
+  }
+
+  const totalSec = Math.floor(safeSeconds);
+  const minutes = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  const tens = Math.floor(sec / 10);
+  const ones = sec % 10;
+
+  if (st.lastMinute !== minutes) {
+    st.minEl.textContent = String(minutes);
+    st.lastMinute = minutes;
+  }
+  if (st.lastSecTens !== tens) {
+    st.secTensEl.textContent = TRANSPORT_TIME_DIGITS[tens];
+    st.lastSecTens = tens;
+  }
+  if (st.lastSecOnes !== ones) {
+    st.secOnesEl.textContent = TRANSPORT_TIME_DIGITS[ones];
+    st.lastSecOnes = ones;
+  }
+}
