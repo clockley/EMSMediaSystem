@@ -1697,6 +1697,7 @@ const PROJECT_FILE_EXTENSIONS = ["emproj", "zip"];
 const AUTOSAVE_PROJECT_FILENAME = "autosave.emproj";
 const AUTOSAVE_PROJECT_PATH_KEY = "autosaveProjectPath";
 const EMBEDDED_AUTOSAVE_STATE_KEY = "autosaveProjectState";
+const LAST_BIBLE_VERSION_KEY = "lastBibleVersion";
 
 function autosaveProjectFilePath() {
   return path.join(app.getPath("userData"), AUTOSAVE_PROJECT_FILENAME);
@@ -1799,6 +1800,12 @@ async function rememberProjectFolder(filePath) {
   const folder = path.dirname(filePath);
   if (!(await pathExists(folder))) return;
   await writeSettings({ lastProjectFolder: folder });
+}
+
+async function rememberLastBibleVersion(version) {
+  const normalized = typeof version === "string" ? version.trim() : "";
+  if (!normalized) return;
+  await writeSettings({ [LAST_BIBLE_VERSION_KEY]: normalized });
 }
 
 async function getInitialProjectFolder() {
@@ -2284,6 +2291,10 @@ async function handleRememberMediaFolder(_, paths) {
       return;
     }
   }
+}
+
+async function handleRememberLastBibleVersion(_, version) {
+  await rememberLastBibleVersion(version);
 }
 
 /** Filter renderer-supplied dropped paths to those with a recognized media extension. */
@@ -3954,6 +3965,7 @@ function setIPC() {
   ipcMain.handle("set-active-project-path", handleSetActiveProjectPath);
   ipcMain.handle("load-autosave-project-state", handleLoadAutosaveProjectState);
   ipcMain.handle("remember-media-folder", handleRememberMediaFolder);
+  ipcMain.handle("remember-last-bible-version", handleRememberLastBibleVersion);
   ipcMain.handle("filter-media-drop-paths", handleFilterMediaDropPaths);
   ipcMain.handle("read-file-as-arraybuffer", handleReadFileAsArrayBuffer);
   ipcMain.handle("check-media-paths-exist", handleCheckMediaPathsExist);
