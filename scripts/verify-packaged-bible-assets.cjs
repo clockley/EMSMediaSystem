@@ -123,13 +123,36 @@ function requireXxhashBinding(appOutDir, platform, arch) {
     throw new Error(`Unsupported xxhash architecture for packaging: ${platform}/${archName}`);
   }
 
-  const bindingPath = findPackagedFile(appOutDir, bindingName);
-  if (!bindingPath) {
-    throw new Error(
-      `${bindingName} is missing from packaged app output. ` +
-        "Cross-platform builds need supportedArchitectures in .yarnrc.yml " +
-        "so Yarn installs real @node-rs/xxhash optional bindings (not mocked stubs).",
-    );
+  const expectedUnpackedBindingPath = path.join(
+    appOutDir,
+    "resources",
+    "app.asar.unpacked",
+    "node_modules",
+    "@node-rs",
+    "xxhash",
+    bindingName,
+  );
+
+  let bindingPath = null;
+  if (fs.existsSync(expectedUnpackedBindingPath)) {
+    bindingPath = expectedUnpackedBindingPath;
+  } else {
+    // Keep a broad search to produce a better error when packaging put the file in the wrong place.
+    bindingPath = findPackagedFile(appOutDir, bindingName);
+    if (!bindingPath) {
+      throw new Error(
+        `${bindingName} is missing from packaged app output. ` +
+          "Cross-platform builds need supportedArchitectures in .yarnrc.yml " +
+          "so Yarn installs real @node-rs/xxhash optional bindings (not mocked stubs).",
+      );
+    }
+
+    if (!bindingPath.includes(`${path.sep}app.asar.unpacked${path.sep}`)) {
+      throw new Error(
+        `${bindingName} was packaged at an invalid path for a native addon: ${bindingPath}. ` +
+          "Native .node files must be unpacked under resources/app.asar.unpacked.",
+      );
+    }
   }
 
   const stat = fs.statSync(bindingPath);

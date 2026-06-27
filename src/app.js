@@ -1046,6 +1046,8 @@ const PREVIEW_SURFACE_CUE_IMAGE = "cue-image";
 const PREVIEW_SURFACE_CUE_AUDIO = "cue-audio";
 const PREVIEW_SURFACE_PPTX = "pptx";
 const PREVIEW_SURFACE_BIBLE = "bible";
+const PREVIEW_SURFACE_SLIDES = "slides";
+const ENABLE_SLIDES_WORKSPACE = false;
 
 function previewStackElement() {
   return document.getElementById("previewStack");
@@ -1064,7 +1066,9 @@ function setPreviewStackSurface(surface = PREVIEW_SURFACE_LIVE) {
 }
 
 function syncPreviewStackSurface() {
-  if (document.getElementById("bibleWorkspace")?.hidden === false) {
+  if (document.getElementById("slidesWorkspace")?.hidden === false) {
+    setPreviewStackSurface(PREVIEW_SURFACE_SLIDES);
+  } else if (document.getElementById("bibleWorkspace")?.hidden === false) {
     setPreviewStackSurface(PREVIEW_SURFACE_BIBLE);
   } else if (isPptxPreviewVisible()) {
     setPreviewStackSurface(PREVIEW_SURFACE_PPTX);
@@ -3515,8 +3519,14 @@ function updatePreviewEmptyState() {
   const hasImage = !!document.querySelector(".video-wrapper img#preview");
   const pptxVisible = isPptxPreviewVisible();
   const bibleVisible = document.getElementById("bibleWorkspace")?.hidden === false;
+  const slidesVisible = document.getElementById("slidesWorkspace")?.hidden === false;
   const empty =
-    mediaQueue.length === 0 && !hasPreviewSrc && !hasImage && !pptxVisible && !bibleVisible;
+    mediaQueue.length === 0 &&
+    !hasPreviewSrc &&
+    !hasImage &&
+    !pptxVisible &&
+    !bibleVisible &&
+    !slidesVisible;
   overlay.hidden = !empty;
 }
 
@@ -4053,6 +4063,7 @@ function showBibleWorkspace() {
   const workspace = document.getElementById("bibleWorkspace");
   const button = document.getElementById("openBibleWorkspaceBtn");
   if (!workspace) return;
+  hideSlidesWorkspace();
   syncLowerThirdFeatureAvailability();
   workspace.hidden = false;
   button?.setAttribute("data-active", "true");
@@ -4073,6 +4084,106 @@ function hideBibleWorkspace() {
 
 function hideBiblePreview() {
   hideBibleWorkspace();
+}
+
+let slidesWorkspaceMessageBridgeInstalled = false;
+
+function slidesWorkspaceFrameSourcePath() {
+  const path = String(window.location?.pathname || "").toLowerCase();
+  return path.endsWith(".prod.html")
+    ? "slide-editor-dialog.prod.html"
+    : "slide-editor-dialog.html";
+}
+
+function ensureSlidesWorkspaceFrameLoaded() {
+  const frame = document.getElementById("slidesWorkspaceFrame");
+  if (!frame) return;
+  if (!frame.dataset.loaded) {
+    frame.src = slidesWorkspaceFrameSourcePath();
+    frame.dataset.loaded = "1";
+  }
+}
+
+function postSlidesWorkspaceHostResponse(frame, response) {
+  try {
+    frame?.contentWindow?.postMessage(response, "*");
+  } catch (err) {
+    console.error("Failed to respond to slides workspace frame:", err);
+  }
+}
+
+async function handleSlidesWorkspaceMessage(event) {
+  const payload = event?.data;
+  if (!payload || payload.source !== "slide-editor") return;
+
+  const frame = document.getElementById("slidesWorkspaceFrame");
+  if (!frame || event.source !== frame.contentWindow) return;
+
+  if (payload.type === "request" && payload.action === "create-slide-document") {
+    try {
+      const result = await invoke("create-slide-document", payload.payload || {});
+      postSlidesWorkspaceHostResponse(frame, {
+        source: "slides-workspace-host",
+        type: "response",
+        requestId: payload.requestId,
+        ok: true,
+        result,
+      });
+      showGnomeToast("Slide added to schedule");
+    } catch (err) {
+      postSlidesWorkspaceHostResponse(frame, {
+        source: "slides-workspace-host",
+        type: "response",
+        requestId: payload.requestId,
+        ok: false,
+        error: err?.message || "Failed to create slide",
+      });
+    }
+    return;
+  }
+
+  if (payload.type === "request" && payload.action === "close") {
+    hideSlidesWorkspace();
+    postSlidesWorkspaceHostResponse(frame, {
+      source: "slides-workspace-host",
+      type: "response",
+      requestId: payload.requestId,
+      ok: true,
+      result: { closed: true },
+    });
+  }
+}
+
+function installSlidesWorkspaceMessageBridge() {
+  if (slidesWorkspaceMessageBridgeInstalled) return;
+  window.addEventListener("message", (event) => {
+    void handleSlidesWorkspaceMessage(event);
+  });
+  slidesWorkspaceMessageBridgeInstalled = true;
+}
+
+function showSlidesWorkspace() {
+  if (!ENABLE_SLIDES_WORKSPACE) return;
+  const workspace = document.getElementById("slidesWorkspace");
+  const button = document.getElementById("openSlidesWorkspaceBtn");
+  if (!workspace) return;
+  hideBibleWorkspace();
+  ensureSlidesWorkspaceFrameLoaded();
+  installSlidesWorkspaceMessageBridge();
+  workspace.hidden = false;
+  button?.setAttribute("data-active", "true");
+  document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
+  document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+  setPreviewStackSurface(PREVIEW_SURFACE_SLIDES);
+}
+
+function hideSlidesWorkspace() {
+  const workspace = document.getElementById("slidesWorkspace");
+  const button = document.getElementById("openSlidesWorkspaceBtn");
+  if (workspace) workspace.hidden = true;
+  button?.setAttribute("data-active", "false");
+  document.getElementById("customControls")?.style.setProperty("visibility", "");
+  syncPreviewStackSurface();
 }
 
 function installBibleWorkspaceEventGuards() {
@@ -6515,6 +6626,11 @@ async function jumpBibleReferenceToBrowser() {
   return true;
 }
 
+async function openSlidesWorkspaceFromButton() {
+  if (!ENABLE_SLIDES_WORKSPACE) return;
+  showSlidesWorkspace();
+}
+
 async function openBibleWorkspaceFromButton() {
   showBibleWorkspace();
   await bibleAPI.waitForReady();
@@ -6573,6 +6689,17 @@ function installBibleMediaControls() {
 
   document.getElementById("openBibleWorkspaceBtn")?.addEventListener("click", () => {
     void openBibleWorkspaceFromButton().catch(console.error);
+  });
+  const slidesButton = document.getElementById("openSlidesWorkspaceBtn");
+  if (slidesButton) {
+    slidesButton.disabled = !ENABLE_SLIDES_WORKSPACE;
+    slidesButton.setAttribute("aria-disabled", ENABLE_SLIDES_WORKSPACE ? "false" : "true");
+    if (!ENABLE_SLIDES_WORKSPACE) {
+      slidesButton.setAttribute("title", "Slides is temporarily disabled");
+    }
+  }
+  document.getElementById("openSlidesWorkspaceBtn")?.addEventListener("click", () => {
+    void openSlidesWorkspaceFromButton().catch(console.error);
   });
   ["biblePreviewText", "biblePreviewReference"].forEach((id) => {
     document.getElementById(id)?.addEventListener("contextmenu", showBibleTextContextMenu);
