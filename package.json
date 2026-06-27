@@ -36,7 +36,8 @@
     "write-file-atomic": "^7.0.0",
     "yauzl": "^3.3.2",
     "yazl": "^3.3.1",
-    "youtubei.js": "^17.2.0"
+    "youtubei.js": "^17.2.0",
+    "zod": "^4.4.3"
   },
   "build": {
     "appId": "com.ejaxmediasystem.app",
@@ -45,7 +46,8 @@
     "beforePack": "scripts/fix-cross-platform-native-bindings.cjs",
     "npmRebuild": false,
     "asarUnpack": [
-      "**/*.node"
+      "**/*.node",
+      "node_modules/@node-rs/**"
     ],
     "files": [
       "!src/**/*",

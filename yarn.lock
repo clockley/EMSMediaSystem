@@ -1808,13 +1808,14 @@ __metadata:
     electron-builder: "npm:26.11.1"
     esbuild: "npm:^0.28.1"
     fflate: "npm:^0.8.3"
-    hls.js: "npm:^1.6.15"
+    hls.js: "npm:^1.6.16"
     html-minifier-terser: "npm:^7.0.0"
     terser: "npm:^5.43.1"
     write-file-atomic: "npm:^7.0.0"
     yauzl: "npm:^3.3.2"
     yazl: "npm:^3.3.1"
     youtubei.js: "npm:^17.2.0"
+    zod: "npm:^4.4.3"
   languageName: unknown
   linkType: soft
 
@@ -2357,10 +2358,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"hls.js@npm:^1.6.15":
-  version: 1.6.15
-  resolution: "hls.js@npm:1.6.15"
-  checksum: 10c0/a3558909506b9d93420b395b1d9508df364f911ebc19b315f98bd4c1b94973ed996a95fe8662756a3fca96b762af741d13df81987bc68322f473acacbecbc6d9
+"hls.js@npm:^1.6.16":
+  version: 1.6.16
+  resolution: "hls.js@npm:1.6.16"
+  checksum: 10c0/dedf0255fdea857f29e46caab990b2bbdfde9410e64932466e03fc95018238b94486ce57e4b6a96aa4d0e8f9fd26c877e3905951f900fd58437f5eab2b284722
   languageName: node
   linkType: hard
 
@@ -4217,6 +4218,13 @@ __metadata:
     fflate: "npm:^0.8.2"
     meriyah: "npm:^6.1.4"
   checksum: 10c0/82ade381c6b1173b0fdb609a86c6a3c2d82db9c4add7dcaa06574507bb2586b885df4d5fd3f0d92e9cf67fd85a58158030f62bd576357432121785a52d167ab8
+  languageName: node
+  linkType: hard
+
+"zod@npm:^4.4.3":
+  version: 4.4.3
+  resolution: "zod@npm:4.4.3"
+  checksum: 10c0/7ea31b558e88f9faf44f31dd185e2e1cbf51fed3081787fb96cc2534749b50c0acfc6da7f0922a7353ed092dd358c7d50c28ea96c94d04af64191bd33152eca3
   languageName: node
   linkType: hard
 

@@ -78,6 +78,9 @@ let queueSwitchDialogResponseListener = null;
 let preflightDialogWindow = null;
 const PREFLIGHT_DIALOG_IPC_CHANNEL = "preflight-dialog-response";
 let preflightDialogResponseListener = null;
+let slideEditorDialogWindow = null;
+const SLIDE_EDITOR_DIALOG_IPC_CHANNEL = "slide-editor-dialog-response";
+let slideEditorDialogResponseListener = null;
 let allowMainWindowClose = false;
 const TIME_REMAINING_PORT_CHANNEL = "timeRemaining-port";
 let pendingProjectOpenPath = null;
@@ -3473,6 +3476,121 @@ function wireMainWindowCloseAutosave(mainWindow) {
   });
 }
 
+function createSlideEditorDialogWindow(parentWindow) {
+  return new Promise((resolve) => {
+    if (slideEditorDialogWindow && !slideEditorDialogWindow.isDestroyed()) {
+      if (!slideEditorDialogWindow.webContents.isDestroyed()) {
+        slideEditorDialogWindow.focus();
+        slideEditorDialogWindow.webContents.focus();
+        resolve(null);
+        return;
+      }
+      slideEditorDialogWindow = null;
+    }
+
+    let resolved = false;
+    const finish = (action = "dismiss") => {
+      if (resolved) return;
+      resolved = true;
+      if (slideEditorDialogResponseListener) {
+        ipcMain.removeListener(
+          SLIDE_EDITOR_DIALOG_IPC_CHANNEL,
+          slideEditorDialogResponseListener,
+        );
+        slideEditorDialogResponseListener = null;
+      }
+      resolve(action);
+    };
+
+    const onResponse = (_event, action) => {
+      const dlg = slideEditorDialogWindow;
+      if (!dlg || dlg.isDestroyed()) {
+        return false;
+      }
+      const normalizedAction = action === "ok" || action === "dismiss" ? action : "dismiss";
+      finish(normalizedAction);
+      if (!slideEditorDialogWindow.isDestroyed()) {
+        slideEditorDialogWindow.close();
+      }
+      return true;
+    };
+
+    if (slideEditorDialogResponseListener) {
+      ipcMain.removeListener(
+        SLIDE_EDITOR_DIALOG_IPC_CHANNEL,
+        slideEditorDialogResponseListener,
+      );
+    }
+    slideEditorDialogResponseListener = onResponse;
+    ipcMain.on(SLIDE_EDITOR_DIALOG_IPC_CHANNEL, onResponse);
+
+    slideEditorDialogWindow = new BrowserWindow({
+      parent: parentWindow,
+      modal: true,
+      width: 600,
+      height: 700,
+      minWidth: 500,
+      minHeight: 600,
+      resizable: true,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      frame: false,
+      transparent: true,
+      acceptFirstMouse: true,
+      show: false,
+      skipTaskbar: true,
+      title: "Slide Editor",
+      backgroundColor: "#00000000",
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: false,
+        webviewTag: false,
+        navigateOnDragDrop: false,
+        spellcheck: false,
+        devTools: isDevMode,
+        preload: path.join(import.meta.dirname, "slide-editor-dialog_preload.min.mjs"),
+      },
+    });
+
+    slideEditorDialogWindow.once("closed", () => {
+      if (slideEditorDialogResponseListener) {
+        ipcMain.removeListener(
+          SLIDE_EDITOR_DIALOG_IPC_CHANNEL,
+          slideEditorDialogResponseListener,
+        );
+        slideEditorDialogResponseListener = null;
+      }
+      slideEditorDialogWindow = null;
+      finish();
+    });
+
+    slideEditorDialogWindow.loadFile("derived/src/slide-editor-dialog.prod.html");
+
+    slideEditorDialogWindow.once("ready-to-show", () => {
+      if (!slideEditorDialogWindow || slideEditorDialogWindow.isDestroyed()) {
+        return;
+      }
+      const parentBounds = parentWindow.getBounds();
+      const w = 600;
+      const h = 700;
+      const x = parentBounds.x + (parentBounds.width - w) / 2;
+      const y = parentBounds.y + (parentBounds.height - h) / 2;
+      slideEditorDialogWindow.setBounds({ x, y, width: w, height: h });
+      slideEditorDialogWindow.show();
+      slideEditorDialogWindow.focus();
+      if (!slideEditorDialogWindow.webContents.isDestroyed()) {
+        slideEditorDialogWindow.webContents.focus();
+      }
+    });
+
+    slideEditorDialogWindow.webContents.setWindowOpenHandler(({ url }) => {
+      shell.openExternal(url);
+      return { action: "deny" };
+    });
+  });
+}
 function createPreflightDialogWindow(parentWindow, payload) {
   return new Promise((resolve) => {
     if (preflightDialogWindow && !preflightDialogWindow.isDestroyed()) {
@@ -3636,6 +3754,175 @@ async function handleShowPreflightSummaryDialog(event, opts = {}) {
   });
 }
 
+async function handleOpenSlideEditorDialog(event) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  
+  const result = await createSlideEditorDialogWindow(mainWindow);
+  return { result };
+}
+
+async function handleCreateSlideDocument(_event, slideData = {}) {
+  const requestedTitle =
+    typeof slideData?.title === "string" ? slideData.title.trim() : "";
+  const fallbackBackgroundColor =
+    typeof slideData?.backgroundColor === "string"
+      ? slideData.backgroundColor
+      : "#ffffff";
+  const inputSlides = Array.isArray(slideData?.slides) ? slideData.slides : [];
+  const fallbackObjects = Array.isArray(slideData?.objects) ? slideData.objects : [];
+
+  if (!activeProjectSnapshot) {
+    throw new Error("No active project");
+  }
+
+  // Generate a unique ID for the slide document
+  const slideDocId = `slide-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const now = new Date().toISOString();
+
+  // Convert editor objects to slide schema objects
+  const toSlideObjects = (objects = []) => objects.map((obj, idx) => {
+    if (obj.type === "text") {
+      return {
+        id: `text-${obj.id}`,
+        kind: "text",
+        frame: {
+          x: obj.x,
+          y: obj.y,
+          width: obj.width,
+          height: obj.height,
+        },
+        text: obj.text,
+        fontSize: obj.fontSize,
+        color: obj.color,
+        role: idx === 0 ? "title" : "body",
+      };
+    } else if (obj.type === "shape") {
+      return {
+        id: `shape-${obj.id}`,
+        kind: "shape",
+        frame: {
+          x: obj.x,
+          y: obj.y,
+          width: obj.width,
+          height: obj.height,
+        },
+        shapeType: obj.shapeType,
+        color: obj.color,
+        strokeColor: obj.strokeColor,
+        strokeWidth: obj.strokeWidth,
+        role: "background",
+      };
+    }
+  }).filter(Boolean);
+
+  const normalizedSlidesInput =
+    inputSlides.length > 0
+      ? inputSlides
+      : [
+          {
+            id: "slide-1",
+            title: requestedTitle || "Slide 1",
+            backgroundColor: fallbackBackgroundColor,
+            backgroundImageSrc: "",
+            objects: fallbackObjects,
+          },
+        ];
+
+  const normalizedSlides = normalizedSlidesInput.map((slide, index) => {
+    const slideObjects = toSlideObjects(
+      Array.isArray(slide?.objects) ? slide.objects : [],
+    );
+    return {
+      id:
+        typeof slide?.id === "string" && slide.id.trim()
+          ? slide.id.trim()
+          : `slide-${index + 1}`,
+      title:
+        typeof slide?.title === "string" && slide.title.trim()
+          ? slide.title.trim()
+          : `Slide ${index + 1}`,
+      backgroundColor:
+        typeof slide?.backgroundColor === "string" && slide.backgroundColor
+          ? slide.backgroundColor
+          : fallbackBackgroundColor,
+      backgroundImageSrc:
+        typeof slide?.backgroundImageSrc === "string"
+          ? slide.backgroundImageSrc
+          : "",
+      objects:
+        slideObjects.length > 0
+          ? slideObjects
+          : index === 0
+            ? [
+                {
+                  id: "default-title",
+                  kind: "text",
+                  frame: {
+                    x: 100,
+                    y: 100,
+                    width: 1720,
+                    height: 200,
+                  },
+                  text: requestedTitle || "Untitled Slide",
+                  fontSize: 64,
+                  fontWeight: 700,
+                  color: "#000000",
+                  role: "title",
+                },
+              ]
+            : [],
+    };
+  });
+
+  const title =
+    requestedTitle ||
+    normalizedSlides.find((slide) => slide.title && slide.title.trim())?.title ||
+    "Untitled Slide";
+
+  // Create a slide document with WYSIWYG objects
+  const slideDocument = {
+    schema: "ems.slideDocument.v1",
+    kind: "slideDocument",
+    id: slideDocId,
+    title,
+    createdAt: now,
+    modifiedAt: now,
+    canvas: {
+      width: 1920,
+      height: 1080,
+      backgroundColor: normalizedSlides[0]?.backgroundColor || fallbackBackgroundColor,
+    },
+    slides: normalizedSlides,
+  };
+
+  // Add to project's slide documents if not already there
+  if (!Array.isArray(activeProjectSnapshot.slideDocuments)) {
+    activeProjectSnapshot.slideDocuments = [];
+  }
+  activeProjectSnapshot.slideDocuments.push(slideDocument);
+
+  // Create a queue item for the slide
+  const queueItem = {
+    id: `queue-${Date.now()}`,
+    name: title,
+    type: "slide",
+    path: `slide://${slideDocId}`,
+    slideDocument: slideDocId,
+    duration: 0,
+  };
+
+  if (!Array.isArray(activeProjectSnapshot.mediaQueue)) {
+    activeProjectSnapshot.mediaQueue = [];
+  }
+  activeProjectSnapshot.mediaQueue.push(queueItem);
+
+  return {
+    ok: true,
+    slideDocumentId: slideDocId,
+    queueItemId: queueItem.id,
+  };
+}
 async function handleBibleRPC(_event, method, params = []) {
   if (typeof method !== "string" || !method.startsWith("bible.")) {
     throw new Error("Invalid Bible RPC method");
@@ -3681,6 +3968,8 @@ function setIPC() {
   ipcMain.handle("read-media-original-bytes", handleReadMediaOriginalBytes);
   ipcMain.handle("register-media-watches", handleRegisterMediaWatches);
   ipcMain.handle("show-preflight-summary-dialog", handleShowPreflightSummaryDialog);
+  ipcMain.handle("open-slide-editor-dialog", handleOpenSlideEditorDialog);
+  ipcMain.handle("create-slide-document", handleCreateSlideDocument);
   ipcMain.handle("bible-rpc", handleBibleRPC);
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);

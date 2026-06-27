@@ -107,6 +107,10 @@ export function generateMediaFormHTML() {
         Bible
       </button>
 
+      <!-- <button type="button" id="openSlidesWorkspaceBtn" class="sidebar-slides-button" disabled aria-disabled="true" title="Slides is temporarily disabled">
+        Slides
+      </button> -->
+
       <div id="confidenceMonitor" class="confidence-monitor" aria-label="Live audience output">
         <video id="confidenceMonitorPreview" class="confidence-monitor__video" autoplay muted playsinline disablePictureInPicture></video>
       </div>
@@ -351,6 +355,14 @@ export function generateMediaFormHTML() {
             </div>
           </div>
         </section>
+        </div>
+        <div id="slidesWorkspace" class="slides-workspace" hidden>
+          <iframe
+            id="slidesWorkspaceFrame"
+            class="slides-workspace__frame"
+            title="Slides editor workspace"
+            loading="lazy"
+          ></iframe>
         </div>
         <div id="pptxPreviewContainer"></div>
         <div id="previewEmptyState" class="preview-empty-state" hidden>
