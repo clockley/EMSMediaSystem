@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Media Preflight</title>
+  <link rel="stylesheet" type="text/css" href="main.css">
+  <style>
+    html,
+    body {
+      background: transparent;
+    }
+
+    .window-container {
+      display: flex;
+      flex-direction: column;
+      -webkit-app-region: no-drag;
+    }
+
+    .preflight_dialog_shell {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      margin-top: 48px;
+      padding: 0 0 20px;
+      box-sizing: border-box;
+      -webkit-app-region: no-drag;
+    }
+
+    #preflight_dialog_intro {
+      margin: 0;
+      padding: 16px 24px 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      color: color-mix(in srgb, var(--window-fg-color) 82%, transparent);
+    }
+
+    #preflight_dialog_body {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 0 12px;
+    }
+
+    .preflight-section + .preflight-section {
+      margin-top: 8px;
+    }
+
+    .preflight-section__title {
+      margin: 0;
+      padding: 8px 12px 6px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: color-mix(in srgb, var(--window-fg-color) 58%, transparent);
+    }
+
+    .preflight-list {
+      border: 1px solid var(--border-color);
+      border-radius: var(--adw-radius-md, 10px);
+      background: var(--card-bg-color);
+      overflow: hidden;
+    }
+
+    .preflight-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .preflight-row:last-child {
+      border-bottom: none;
+    }
+
+    .preflight-row__icon {
+      flex: 0 0 auto;
+      width: 20px;
+      height: 20px;
+      margin-top: 1px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .preflight-row--changed .preflight-row__icon {
+      color: var(--warning-bg-color, #e5a50a);
+    }
+
+    .preflight-row--missing .preflight-row__icon {
+      color: var(--destructive-bg-color, #c01c28);
+    }
+
+    .preflight-row__text {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .preflight-row__title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--window-fg-color);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .preflight-row__detail {
+      font-size: 12px;
+      line-height: 1.45;
+      color: color-mix(in srgb, var(--window-fg-color) 62%, transparent);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .preflight_dialog_actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 12px 24px 0;
+      flex-shrink: 0;
+    }
+
+    .preflight_dialog_actions button {
+      min-width: 96px;
+      padding: 8px 16px;
+      border-radius: var(--adw-radius-sm, 6px);
+      font-size: 14px;
+      cursor: default;
+      border: 1px solid var(--accent-bg-color);
+      background: var(--accent-bg-color);
+      color: #ffffff;
+      -webkit-app-region: no-drag;
+      pointer-events: auto;
+    }
+
+    .preflight_dialog_actions button:hover {
+      background: var(--accent-bg-color-hover);
+    }
+
+    .preflight_dialog_actions button.secondary {
+      border-color: var(--border-color);
+      background: var(--card-bg-color);
+      color: var(--window-fg-color);
+    }
+
+    .preflight_dialog_actions button.secondary:hover {
+      background: color-mix(in srgb, var(--window-fg-color) 10%, var(--card-bg-color));
+    }
+  </style>
+</head>
+
+<body>
+  <div class="window-container">
+    <header class="headerbar">
+      <div class="headerbar-start"></div>
+      <div id="WindowTitle">Media Preflight</div>
+      <div class="headerbar-end">
+        <div class="window-controls">
+          <button type="button" class="window-control close" tabindex="-1" aria-label="Close">
+            <svg width="16" height="16" viewBox="0 0 16 16">
+              <path d="M5 5l6 6m0-6l-6 6" stroke="currentColor" stroke-width="1.5" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+    <main class="preflight_dialog_shell">
+      <p id="preflight_dialog_intro"></p>
+      <div id="preflight_dialog_body"></div>
+      <div class="preflight_dialog_actions">
+        <button type="button" class="secondary" id="preflight_dialog_keep" hidden>Keep</button>
+        <button type="button" class="primary" id="preflight_dialog_reload" hidden>Reload</button>
+        <button type="button" class="primary" id="preflight_dialog_ok">OK</button>
+      </div>
+    </main>
+  </div>
+</body>
+
+</html>
