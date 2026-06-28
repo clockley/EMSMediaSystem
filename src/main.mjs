@@ -1852,7 +1852,7 @@ async function handleShowImportSongDialog(event) {
     defaultPath: await getInitialMediaFolder(),
     properties: ["openFile", "multiSelections"],
     filters: [
-      { name: "JSON Songs", extensions: ["json"] },
+      { name: "Song Files", extensions: ["json", "txt"] },
     ],
   });
   if (result.canceled || !result.filePaths?.length) {

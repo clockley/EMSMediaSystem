@@ -149,11 +149,6 @@ import {
   songRenderFromItem,
   songSnapshotForSchedule,
 } from "./app-song-utils.mjs";
-import {
-  importSongFromFileContents,
-  parseSongLyricsEditorText,
-  songLyricsTextFromSections as lyricsTextFromSongSections,
-} from "./song-import.mjs";
 
 let ipcRenderer;
 let bibleAPI;
@@ -7063,23 +7058,6 @@ async function ensureSongFolder(name) {
   return folder?.id || null;
 }
 
-async function resolveImportFolderId(imported) {
-  const songbookName =
-    imported?.metadata?.extra?.songbook ||
-    imported?.metadata?.hymnal?.name ||
-    null;
-  if (songbookName) {
-    return ensureSongFolder(songbookName);
-  }
-  if (
-    currentSongFolderFilter !== SONG_FOLDER_ALL &&
-    currentSongFolderFilter !== SONG_FOLDER_UNFILED
-  ) {
-    return currentSongFolderFilter;
-  }
-  return null;
-}
-
 function syncSongEditorFolderOptions(selectedFolderId = "") {
   const select = document.getElementById("songEditorFolder");
   if (!select) return;
@@ -7144,9 +7122,11 @@ function closeSongEditor() {
   restoreSongWorkspaceView();
 }
 
-async function refreshSongFolders() {
+async function refreshSongFolders(prefetchedFolders = null) {
   try {
-    songFoldersCache = asSongArray(await songsAPI.listFolders());
+    songFoldersCache = asSongArray(
+      prefetchedFolders ?? (await songsAPI.listFolders()),
+    );
   } catch (err) {
     console.error("Failed to load song folders:", err);
     songFoldersCache = [];
@@ -7584,40 +7564,38 @@ async function importSongFromDialog() {
           : [];
     if (filePaths.length === 0) return;
 
-    let importedCount = 0;
-    let failedCount = 0;
-    let lastSavedSong = null;
+    const searchInput = document.getElementById("songsSearchInput");
+    const defaultFolderId =
+      currentSongFolderFilter !== SONG_FOLDER_ALL &&
+      currentSongFolderFilter !== SONG_FOLDER_UNFILED
+        ? currentSongFolderFilter
+        : null;
 
-    for (const filePath of filePaths) {
-      try {
-        const text = await invoke("read-file-as-text", filePath);
-        const imported = importSongFromFileContents(text, filePath);
-        const folderId = await resolveImportFolderId(imported);
-        const librarySong = songForLibraryDatabase(imported);
-        if (folderId) {
-          librarySong.folderId = folderId;
-        }
-        lastSavedSong = await songsAPI.save(librarySong, text);
-        importedCount += 1;
-      } catch (err) {
-        failedCount += 1;
-        console.error(`Song import failed for ${filePath}:`, err);
-      }
-    }
+    const result = await songsAPI.importFiles(filePaths, {
+      defaultFolderId,
+      search: {
+        query: searchInput?.value || "",
+        ...songSearchOptionsForCurrentFolder(),
+      },
+    });
 
-    if (lastSavedSong) {
+    const importedCount = Array.isArray(result?.imported) ? result.imported.length : 0;
+    const failedCount = Array.isArray(result?.failed) ? result.failed.length : 0;
+
+    if (result?.lastSong) {
       currentSongRenderState = mergeSongRenderState(DEFAULT_SONG_RENDER, {
-        copyright: lastSavedSong.metadata?.copyright || "",
-        ccliNumber: lastSavedSong.metadata?.ccliNumber || null,
+        copyright: result.lastSong.metadata?.copyright || "",
+        ccliNumber: result.lastSong.metadata?.ccliNumber || null,
       });
-      await loadSongIntoWorkspace(lastSavedSong, {
+      await loadSongIntoWorkspace(result.lastSong, {
         render: currentSongRenderState,
       });
     }
 
-    await refreshSongFolders();
-    const searchInput = document.getElementById("songsSearchInput");
-    if (searchInput) await refreshSongsBrowser(searchInput.value);
+    await refreshSongFolders(result?.folders ?? null);
+    if (searchInput) {
+      await refreshSongsBrowser(searchInput.value, result?.searchResults ?? null);
+    }
 
     if (importedCount > 0 && failedCount === 0) {
       showGnomeToast(`Imported ${importedCount} song${importedCount === 1 ? "" : "s"}`);
@@ -7625,6 +7603,10 @@ async function importSongFromDialog() {
       showGnomeToast(`Imported ${importedCount} song(s), ${failedCount} failed`);
     } else {
       showGnomeToast("Import failed");
+    }
+
+    for (const failure of result?.failed || []) {
+      console.error(`Song import failed for ${failure.path}:`, failure.error);
     }
   } catch (err) {
     console.error("Song import failed:", err);
@@ -7689,7 +7671,7 @@ async function openSongEditor(song) {
     }
     authorInput.value = songToEdit.metadata?.authors?.join(", ") || "";
     if (folderInput) folderInput.value = songToEdit.folderId || "";
-    textarea.value = lyricsTextFromSongSections(songToEdit.sections || []);
+    textarea.value = await songsAPI.sectionsToLyricsText(songToEdit.sections || []);
     syncSongEditorRenderControls(
       mergeSongRenderState(currentSongRenderState, {
         copyright: currentSongRenderState.copyright || songToEdit.metadata?.copyright || "",
@@ -7727,7 +7709,7 @@ async function saveSongEditor() {
   const numberRaw = numberInput?.value?.trim() || "";
   const parsedNumber = numberRaw ? Number.parseInt(numberRaw, 10) : null;
   const songNumber = Number.isFinite(parsedNumber) && parsedNumber > 0 ? parsedNumber : null;
-  const sections = parseSongLyricsEditorText(textarea.value);
+  const sections = await songsAPI.parseLyricsText(textarea.value);
   currentSongRenderState = readSongEditorRenderState();
 
   const song = {
@@ -8004,11 +7986,12 @@ function showSongContextMenu(event, song) {
   menu.style.top = `${Math.round(top)}px`;
 }
 
-async function refreshSongsBrowser(query = "") {
+async function refreshSongsBrowser(query = "", prefetchedResults = null) {
   try {
     const trimmedQuery = String(query || "").trim();
     const results = asSongArray(
-      await songsAPI.search(trimmedQuery, songSearchOptionsForCurrentFolder()),
+      prefetchedResults ??
+        (await songsAPI.search(trimmedQuery, songSearchOptionsForCurrentFolder())),
     );
     const list = document.getElementById("songsList");
     if (!list) return;

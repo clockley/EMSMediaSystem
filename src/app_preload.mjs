@@ -106,6 +106,19 @@ const songsAPI = {
   renameFolder: (id, name) => callSongs("songs.folders.rename", [id, name]),
   deleteFolder: (id) => callSongs("songs.folders.delete", [id]),
   moveToFolder: (songId, folderId) => callSongs("songs.moveToFolder", [songId, folderId ?? null]),
+  importFiles: (paths, options = {}) =>
+    callSongs("songs.importFiles", [{
+      paths,
+      defaultFolderId: options.defaultFolderId ?? null,
+      search: {
+        query: options.search?.query ?? "",
+        folderId: options.search?.folderId ?? null,
+        all: options.search?.all === true,
+        unfiled: options.search?.unfiled === true,
+      },
+    }]),
+  parseLyricsText: (text) => callSongs("songs.parseLyricsText", [text]),
+  sectionsToLyricsText: (sections) => callSongs("songs.sectionsToLyricsText", [sections]),
 };
 
 contextBridge.exposeInMainWorld("electron", {

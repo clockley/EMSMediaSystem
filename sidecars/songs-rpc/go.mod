@@ -1,6 +1,6 @@
 module emsmediasystem/songs-rpc
 
-go 1.22.5
+go 1.22
 
 require modernc.org/sqlite v1.34.5
 

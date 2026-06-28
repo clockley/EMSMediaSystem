@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"emsmediasystem/songs-rpc/internal/songimport"
 	"emsmediasystem/songs-rpc/internal/songstore"
 )
 
@@ -32,6 +33,12 @@ type searchParams struct {
 	FolderID *string `json:"folderId"`
 	All      bool    `json:"all"`
 	Unfiled  bool    `json:"unfiled"`
+}
+
+type importFilesParams struct {
+	Paths           []string      `json:"paths"`
+	DefaultFolderID *string       `json:"defaultFolderId"`
+	Search          searchParams  `json:"search"`
 }
 
 func main() {
@@ -82,11 +89,15 @@ func parseSearchOptions(params json.RawMessage) songstore.SearchOptions {
 
 	var objectParams searchParams
 	if err := json.Unmarshal(params, &objectParams); err == nil && (objectParams.Query != "" || objectParams.FolderID != nil || objectParams.All || objectParams.Unfiled) {
-		opts.Query = objectParams.Query
-		opts.FolderID = objectParams.FolderID
-		opts.All = objectParams.All
-		opts.Unfiled = objectParams.Unfiled
-		return opts
+		return parseSearchOptionsFromParams(objectParams)
+	}
+
+	var objectList []searchParams
+	if err := json.Unmarshal(params, &objectList); err == nil && len(objectList) > 0 {
+		candidate := objectList[0]
+		if candidate.Query != "" || candidate.FolderID != nil || candidate.All || candidate.Unfiled {
+			return parseSearchOptionsFromParams(candidate)
+		}
 	}
 
 	var stringParams []string
@@ -94,6 +105,15 @@ func parseSearchOptions(params json.RawMessage) songstore.SearchOptions {
 		opts.Query = stringParams[0]
 	}
 	return opts
+}
+
+func parseSearchOptionsFromParams(params searchParams) songstore.SearchOptions {
+	return songstore.SearchOptions{
+		Query:    params.Query,
+		FolderID: params.FolderID,
+		All:      params.All,
+		Unfiled:  params.Unfiled,
+	}
 }
 
 func handleRequest(store *songstore.SongStore, req JSONRPCRequest) {
@@ -183,6 +203,37 @@ func handleRequest(store *songstore.SongStore, req JSONRPCRequest) {
 			err = store.MoveSongToFolder(songID, folderID)
 			if err == nil {
 				result, err = store.GetSong(songID)
+			}
+		} else {
+			err = fmt.Errorf("invalid parameters")
+		}
+	case "songs.importFiles":
+		var paramList []importFilesParams
+		if e := json.Unmarshal(req.Params, &paramList); e == nil && len(paramList) > 0 && len(paramList[0].Paths) > 0 {
+			params := paramList[0]
+			result, err = store.ImportFiles(songstore.ImportFilesOptions{
+				Paths:           params.Paths,
+				DefaultFolderID: params.DefaultFolderID,
+				Search:          parseSearchOptionsFromParams(params.Search),
+			})
+		} else {
+			err = fmt.Errorf("invalid parameters")
+		}
+	case "songs.parseLyricsText":
+		var params []string
+		if e := json.Unmarshal(req.Params, &params); e == nil && len(params) > 0 {
+			result = songimport.ParseLyricsEditorText(params[0])
+		} else {
+			err = fmt.Errorf("invalid parameters")
+		}
+	case "songs.sectionsToLyricsText":
+		var params []json.RawMessage
+		if e := json.Unmarshal(req.Params, &params); e == nil && len(params) > 0 {
+			var sections []songimport.ParsedSection
+			if e := json.Unmarshal(params[0], &sections); e == nil {
+				result = songimport.SectionsToLyricsText(sections)
+			} else {
+				err = fmt.Errorf("invalid sections")
 			}
 		} else {
 			err = fmt.Errorf("invalid parameters")
