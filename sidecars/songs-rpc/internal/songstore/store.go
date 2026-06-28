@@ -542,21 +542,57 @@ func (s *SongStore) folderFilterSQL(opts SearchOptions) (string, []interface{}) 
 
 func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchResult, error) {
 	folderSQL, folderArgs := s.folderFilterSQL(opts)
-	ftsQuery := query + "*"
-	orderBy := ` ORDER BY CASE WHEN s.song_number IS NULL THEN 1 ELSE 0 END, s.song_number, s.title`
+	
+	words := strings.Fields(query)
+	var escaped []string
+	var rawWords []string
+	for _, word := range words {
+		word = strings.ReplaceAll(word, `"`, `""`)
+		if word != "" {
+			escaped = append(escaped, `"`+word+`"*`)
+			rawWords = append(rawWords, word)
+		}
+	}
+	
+	var ftsQuery string
+	if len(escaped) == 0 {
+		ftsQuery = `""`
+	} else if len(escaped) == 1 {
+		ftsQuery = escaped[0]
+	} else {
+		phrase := `"` + strings.Join(rawWords, " ") + `"*`
+		andWords := strings.Join(escaped, " AND ")
+		ftsQuery = phrase + ` OR (` + andWords + `)`
+	}
 
-	if number, err := strconv.Atoi(query); err == nil {
+	queryClean := strings.TrimSpace(query)
+	if strings.HasPrefix(queryClean, "#") {
+		queryClean = strings.TrimSpace(queryClean[1:])
+	}
+
+	if number, err := strconv.Atoi(queryClean); err == nil {
 		sqlText := `
-			SELECT s.id, s.title, s.author, s.folder_id, s.song_number
-			FROM songs s
-			WHERE (
-				s.song_number = ?
-				OR s.id IN (
-					SELECT song_id FROM song_fts WHERE song_fts MATCH ?
-				)
-			)` + folderSQL + orderBy + sqlLimitClause(searchQueryResultLimit) + `
-		`
-		args := append([]interface{}{number, ftsQuery}, folderArgs...)
+			SELECT id, title, author, folder_id, song_number
+			FROM (
+				SELECT s.id, s.title, s.author, s.folder_id, s.song_number, -1000.0 as rank
+				FROM songs s
+				WHERE s.song_number = ? ` + folderSQL + `
+				UNION ALL
+				SELECT s.id, s.title, s.author, s.folder_id, s.song_number, bm25(song_fts, 100.0, 10.0, 1.0) as rank
+				FROM songs s
+				JOIN song_fts ON s.id = song_fts.song_id
+				WHERE song_fts MATCH ? ` + folderSQL + `
+			)
+			GROUP BY id
+			ORDER BY MIN(rank) ASC, CASE WHEN song_number IS NULL THEN 1 ELSE 0 END, song_number, title
+		` + sqlLimitClause(searchQueryResultLimit)
+		
+		var args []interface{}
+		args = append(args, number)
+		args = append(args, folderArgs...)
+		args = append(args, ftsQuery)
+		args = append(args, folderArgs...)
+		
 		rows, err := s.db.Query(sqlText, args...)
 		if err != nil {
 			return nil, err
@@ -567,9 +603,11 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 	sqlText := `
 		SELECT s.id, s.title, s.author, s.folder_id, s.song_number
 		FROM songs s
-		JOIN song_fts f ON s.id = f.song_id
-		WHERE song_fts MATCH ?` + folderSQL + orderBy + sqlLimitClause(searchQueryResultLimit) + `
-	`
+		JOIN song_fts ON s.id = song_fts.song_id
+		WHERE song_fts MATCH ?` + folderSQL + ` 
+		ORDER BY bm25(song_fts, 100.0, 10.0, 1.0) ASC, CASE WHEN s.song_number IS NULL THEN 1 ELSE 0 END, s.song_number, s.title
+	` + sqlLimitClause(searchQueryResultLimit)
+	
 	args := append([]interface{}{ftsQuery}, folderArgs...)
 	rows, err := s.db.Query(sqlText, args...)
 	if err != nil {
