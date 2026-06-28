@@ -4368,6 +4368,25 @@ function isBibleWorkspaceVisible() {
   return document.getElementById("bibleWorkspace")?.hidden === false;
 }
 
+function isSongsWorkspaceVisible() {
+  return document.getElementById("songsWorkspace")?.hidden === false;
+}
+
+function isSlidesWorkspaceVisible() {
+  return (
+    ENABLE_SLIDES_WORKSPACE &&
+    document.getElementById("slidesWorkspace")?.hidden === false
+  );
+}
+
+function isPreviewWorkspaceOverlayVisible() {
+  return (
+    isBibleWorkspaceVisible() ||
+    isSongsWorkspaceVisible() ||
+    isSlidesWorkspaceVisible()
+  );
+}
+
 function pauseInactivePreviewBehindBibleWorkspace() {
   if (!isBibleWorkspaceVisible()) return;
   if (
@@ -11966,6 +11985,7 @@ function setupCustomMediaControls() {
   playPauseBtn.addEventListener(
     "click",
     async () => {
+      if (isPreviewWorkspaceOverlayVisible()) return;
       const mediaEl = currentControlMedia();
       if (!mediaEl || mediaEl.src === "") return;
 
@@ -12284,8 +12304,7 @@ function setupCustomMediaControls() {
     clickTarget.addEventListener(
       "click",
       (event) => {
-        const bibleWorkspace = document.getElementById("bibleWorkspace");
-        if (bibleWorkspace && !bibleWorkspace.hidden && bibleWorkspace.contains(event.target)) {
+        if (isPreviewWorkspaceOverlayVisible()) {
           event.stopPropagation();
           return;
         }

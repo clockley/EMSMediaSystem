@@ -1093,6 +1093,23 @@ footer {
     z-index: 4;
 }
 
+/* Workspace overlays sit above the live preview mirror; keep the hidden
+   media layers from receiving stray clicks that would toggle playback. */
+.preview-stack:has(#bibleWorkspace:not([hidden]))>video#preview,
+.preview-stack:has(#bibleWorkspace:not([hidden]))>img#preview,
+.preview-stack:has(#bibleWorkspace:not([hidden]))>video#previewCue,
+.preview-stack:has(#bibleWorkspace:not([hidden]))>#pptxPreviewContainer,
+.preview-stack:has(#songsWorkspace:not([hidden]))>video#preview,
+.preview-stack:has(#songsWorkspace:not([hidden]))>img#preview,
+.preview-stack:has(#songsWorkspace:not([hidden]))>video#previewCue,
+.preview-stack:has(#songsWorkspace:not([hidden]))>#pptxPreviewContainer,
+.preview-stack:has(#slidesWorkspace:not([hidden]))>video#preview,
+.preview-stack:has(#slidesWorkspace:not([hidden]))>img#preview,
+.preview-stack:has(#slidesWorkspace:not([hidden]))>video#previewCue,
+.preview-stack:has(#slidesWorkspace:not([hidden]))>#pptxPreviewContainer {
+    pointer-events: none;
+}
+
 .slides-workspace {
     background: #0f1115;
     border-radius: 12px;
