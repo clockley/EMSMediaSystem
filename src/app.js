@@ -7170,7 +7170,6 @@ async function refreshSongFolders(prefetchedFolders = null) {
   list.innerHTML = "";
   const entries = [
     { id: SONG_FOLDER_ALL, name: "All Songs", count: null },
-    { id: SONG_FOLDER_UNFILED, name: "Unfiled", count: null },
     ...songFoldersCache.map((folder) => ({
       id: folder.id,
       name: folder.name,
