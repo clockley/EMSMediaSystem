@@ -40,6 +40,8 @@ import {
   pathToMediaUrl,
   pptxRegex,
   queueBasename,
+  songUriPrefix,
+  isSongPath,
 } from "./app-media-utils.mjs";
 import {
   waitForLoadedMetadata,
@@ -134,9 +136,28 @@ import {
   showGnomeToast,
   showPreviewWarningToast,
 } from "./app-toasts.mjs";
+import {
+  DEFAULT_SONG_RENDER,
+  arrangementSequenceEntries,
+  enabledSongSections,
+  mergeSongRenderState,
+  parseSongQueuePath,
+  queueEntryFromSong,
+  resolvedSongPresentation,
+  songForLibraryDatabase,
+  songQueuePath,
+  songRenderFromItem,
+  songSnapshotForSchedule,
+} from "./app-song-utils.mjs";
+import {
+  importSongFromFileContents,
+  parseSongLyricsEditorText,
+  songLyricsTextFromSections as lyricsTextFromSongSections,
+} from "./song-import.mjs";
 
 let ipcRenderer;
 let bibleAPI;
+let songsAPI;
 let webUtils;
 let attachCubicWaveShaper;
 let timeRemaining;
@@ -173,6 +194,7 @@ function attachElectronBridge() {
   }
   ipcRenderer = electron.ipcRenderer;
   bibleAPI = electron.bibleAPI;
+  songsAPI = electron.songsAPI;
   webUtils = electron.webUtils;
   attachCubicWaveShaper = electron.attachCubicWaveShaper;
   timeRemaining = electron.timeRemaining;
@@ -425,6 +447,7 @@ configureBibleScriptureRender({
   invoke: (...args) => invoke(...args),
   isQueueItemAudio: (item) => isQueueItemAudio(item),
   isQueueItemBible: (item) => isQueueItemBible(item),
+  isQueueItemSong: (item) => isQueueItemSong(item),
   isQueueItemImage: (item) => isQueueItemImage(item),
   isQueueItemPptx: (item) => isQueueItemPptx(item),
   resolvedBibleStyleDefaults: (...args) => resolvedBibleStyleDefaults(...args),
@@ -519,6 +542,10 @@ let ignoreNextQueueItemClick = false;
 let ignoreQueueItemClicksUntil = 0;
 let queueItemClickTimer = null;
 let queueDragFromIndex = -1;
+let songDragSongId = "";
+const SONG_DRAG_MIME = "application/x-ems-song-id";
+let queueDropIndicator = null;
+let queueDropIndicatorIndex = -1;
 /** Last <video> element that received cubic waveshaper wiring. */
 let cubicWaveShaperAttachedVideo = null;
 
@@ -933,7 +960,10 @@ async function playVideoSafely(mediaEl, context = "") {
   if (!mediaEl || typeof mediaEl.play !== "function") return false;
   if (
     mediaEl === video &&
-    (isBiblePath(mediaFile) || activeMediaWindowContentType === "bible")
+    (isBiblePath(mediaFile) ||
+      isSongPath(mediaFile) ||
+      activeMediaWindowContentType === "bible" ||
+      activeMediaWindowContentType === "song")
   ) {
     return false;
   }
@@ -1017,6 +1047,13 @@ function isQueueItemBible(item) {
   return Boolean(item && (item.type === "bible" || item.path?.startsWith?.(bibleUriPrefix)));
 }
 
+function isQueueItemSong(item) {
+  return Boolean(
+    item &&
+      (item.type === "song" || isSongPath(item.path) || item.songSnapshot),
+  );
+}
+
 function isQueueItemAudio(item) {
   return Boolean(
     item &&
@@ -1050,6 +1087,7 @@ const PREVIEW_SURFACE_CUE_AUDIO = "cue-audio";
 const PREVIEW_SURFACE_PPTX = "pptx";
 const PREVIEW_SURFACE_BIBLE = "bible";
 const PREVIEW_SURFACE_SLIDES = "slides";
+const PREVIEW_SURFACE_SONGS = "songs";
 const ENABLE_SLIDES_WORKSPACE = false;
 
 function previewStackElement() {
@@ -1071,6 +1109,8 @@ function setPreviewStackSurface(surface = PREVIEW_SURFACE_LIVE) {
 function syncPreviewStackSurface() {
   if (document.getElementById("slidesWorkspace")?.hidden === false) {
     setPreviewStackSurface(PREVIEW_SURFACE_SLIDES);
+  } else if (document.getElementById("songsWorkspace")?.hidden === false) {
+    setPreviewStackSurface(PREVIEW_SURFACE_SONGS);
   } else if (document.getElementById("bibleWorkspace")?.hidden === false) {
     setPreviewStackSurface(PREVIEW_SURFACE_BIBLE);
   } else if (isPptxPreviewVisible()) {
@@ -1801,7 +1841,7 @@ function currentPreviewSourcePath() {
 
 function mediaPathSupportsLoop(filePath) {
   if (!filePath || typeof filePath !== "string") return false;
-  if (isBiblePath(filePath) || pptxRegex.test(filePath) || isImg(filePath)) {
+  if (isBiblePath(filePath) || isSongPath(filePath) || pptxRegex.test(filePath) || isImg(filePath)) {
     return false;
   }
   if (isLiveStream(filePath)) return false;
@@ -1998,7 +2038,7 @@ function mediaElementHasTracks(mediaEl, trackName) {
 
 function mediaElementLoadedAudioOnly(mediaEl, filePath) {
   if (isLikelyAudioItem(filePath)) return true;
-  if (isBiblePath(filePath)) return false;
+  if (isBiblePath(filePath) || isSongPath(filePath)) return false;
   if (isImg(filePath)) return false;
 
   const videoTracks = mediaEl?.videoTracks;
@@ -2245,7 +2285,14 @@ function applyPinnedMediaSource(item, pinned, opts = {}) {
 }
 
 function mediaPinPayloadForItem(item, opts = {}) {
-  if (!item || isQueueItemBible(item) || !isFileBackedMediaPath(item.path)) return null;
+  if (
+    !item ||
+    isQueueItemBible(item) ||
+    isQueueItemSong(item) ||
+    !isFileBackedMediaPath(item.path)
+  ) {
+    return null;
+  }
   const liveSource = queueItemLiveSource(item) || createLiveSource(item.path, {
     type: item.type || classifyQueueMediaType(item.path),
     originalPath: item.originalPath || item.path,
@@ -2343,7 +2390,13 @@ function queueItemNeedsDefaultSnapshotPin(item) {
 
 async function pinQueueMediaSources(items, opts = {}) {
   const targets = (Array.isArray(items) ? items : [])
-    .filter((item) => item && !isQueueItemBible(item) && isFileBackedMediaPath(item.path))
+    .filter(
+      (item) =>
+        item &&
+        !isQueueItemBible(item) &&
+        !isQueueItemSong(item) &&
+        isFileBackedMediaPath(item.path),
+    )
     .filter(
       (item) =>
         opts.force === true ||
@@ -2383,6 +2436,9 @@ async function pinQueueMediaSources(items, opts = {}) {
 }
 
 async function resolveQueueItemMediaPath(item) {
+  if (!item || isQueueItemBible(item) || isQueueItemSong(item)) {
+    return item?.path || "";
+  }
   try {
     const payload = mediaPinPayloadForItem(item);
     if (!payload) return item?.path || "";
@@ -2428,7 +2484,7 @@ function queueItemMediaCacheBust(item) {
 }
 
 async function stagedMediaUrlForItem(item) {
-  if (!item || isQueueItemBible(item)) return "";
+  if (!item || isQueueItemBible(item) || isQueueItemSong(item)) return "";
   const resolvedPath = await resolveQueueItemMediaPath(item);
   return pathToMediaUrl(resolvedPath, queueItemMediaCacheBust(item));
 }
@@ -2465,7 +2521,8 @@ function queueItemOwnsControlPreview(item) {
     item &&
     isFileBackedMediaPath(item.path) &&
     !isQueueItemPptx(item) &&
-    !isQueueItemBible(item)
+    !isQueueItemBible(item) &&
+    !isQueueItemSong(item)
   );
 }
 
@@ -2493,7 +2550,8 @@ async function restoreStagedPreviewPlayback(isImgFile, queueIndex = currentQueue
     previewItem &&
     isFileBackedMediaPath(previewItem.path) &&
     !isQueueItemPptx(previewItem) &&
-    !isQueueItemBible(previewItem)
+    !isQueueItemBible(previewItem) &&
+    !isQueueItemSong(previewItem)
   ) {
     const resolvedPath = await resolveQueueItemMediaPath(previewItem);
     activePreviewResolvedMediaFile = resolvedPath;
@@ -3349,23 +3407,23 @@ function renderQueue() {
         if (isCued) {
           badges.push('<span class="state-badge state-badge--cued">Cued</span>');
         }
-        if (item.missing) {
+        if (item.missing && !isQueueItemSong(item)) {
           badges.push(
             '<span class="state-badge state-badge--missing" title="File could not be found">Missing</span>',
           );
-        } else if (item.pendingMediaUpdate?.status === "stabilizing") {
+        } else if (item.pendingMediaUpdate?.status === "stabilizing" && !isQueueItemSong(item)) {
           badges.push(
             '<span class="state-badge state-badge--changed" title="Source file is still being saved">Updating</span>',
           );
-        } else if (item.pendingMediaUpdate?.status === "error") {
+        } else if (item.pendingMediaUpdate?.status === "error" && !isQueueItemSong(item)) {
           badges.push(
             '<span class="state-badge state-badge--missing" title="EMS could not inspect the changed source file">Update Error</span>',
           );
-        } else if (item.pendingMediaUpdate?.status === "ready") {
+        } else if (item.pendingMediaUpdate?.status === "ready" && !isQueueItemSong(item)) {
           badges.push(
             '<span class="state-badge state-badge--changed" title="Source file changed outside EMS">Updated</span>',
           );
-        } else if (item.changedSinceSave) {
+        } else if (item.changedSinceSave && !isQueueItemSong(item)) {
           badges.push(
             '<span class="state-badge state-badge--changed" title="Source file changed since this project was last saved">Changed</span>',
           );
@@ -3480,6 +3538,70 @@ function insertQueueEntriesAfterSelection(entries) {
   mediaQueue.splice(insertIndex, 0, ...nextEntries);
   shiftQueueIndexesForInsertion(insertIndex, nextEntries.length);
   return insertIndex;
+}
+
+function insertQueueEntriesAt(entries, insertIndex) {
+  const nextEntries = Array.isArray(entries) ? entries.filter(Boolean) : [];
+  if (!nextEntries.length) return -1;
+  const index = Math.max(0, Math.min(insertIndex, mediaQueue.length));
+  mediaQueue.splice(index, 0, ...nextEntries);
+  shiftQueueIndexesForInsertion(index, nextEntries.length);
+  return index;
+}
+
+function queueDropInsertIndexFromEvent(list, event) {
+  const row = event.target.closest(".queue-item[data-queue-index]");
+  if (!row || !list.contains(row)) {
+    return mediaQueue.length;
+  }
+  const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+  if (Number.isNaN(idx)) return mediaQueue.length;
+  const rect = row.getBoundingClientRect();
+  return event.clientY > rect.top + rect.height / 2 ? idx + 1 : idx;
+}
+
+function ensureQueueDropIndicator(list) {
+  if (!queueDropIndicator) {
+    queueDropIndicator = document.createElement("div");
+    queueDropIndicator.className = "queue-drop-indicator";
+    queueDropIndicator.hidden = true;
+    queueDropIndicator.setAttribute("aria-hidden", "true");
+  }
+  if (queueDropIndicator.parentNode !== list) {
+    list.appendChild(queueDropIndicator);
+  }
+  return queueDropIndicator;
+}
+
+function updateQueueDropIndicator(list, insertIndex) {
+  const indicator = ensureQueueDropIndicator(list);
+  const rows = list.querySelectorAll(".queue-item[data-queue-index]");
+  if (rows.length === 0) {
+    indicator.style.top = "0px";
+  } else if (insertIndex >= rows.length) {
+    const lastRow = rows[rows.length - 1];
+    indicator.style.top = `${lastRow.offsetTop + lastRow.offsetHeight}px`;
+  } else {
+    indicator.style.top = `${rows[insertIndex].offsetTop}px`;
+  }
+  indicator.hidden = false;
+  queueDropIndicatorIndex = insertIndex;
+}
+
+function hideQueueDropIndicator() {
+  if (queueDropIndicator) queueDropIndicator.hidden = true;
+  queueDropIndicatorIndex = -1;
+}
+
+function clearSongDragVisualState() {
+  songDragSongId = "";
+  hideQueueDropIndicator();
+  document.querySelectorAll(".songs-list-item--dragging").forEach((el) => {
+    el.classList.remove("songs-list-item--dragging");
+  });
+  document.querySelectorAll(".songs-folder-item--drag-over").forEach((el) => {
+    el.classList.remove("songs-folder-item--drag-over");
+  });
 }
 
 function updateClearQueueButtonState() {
@@ -4067,6 +4189,7 @@ function showBibleWorkspace() {
   const button = document.getElementById("openBibleWorkspaceBtn");
   if (!workspace) return;
   hideSlidesWorkspace();
+  hideSongsWorkspace();
   syncLowerThirdFeatureAvailability();
   workspace.hidden = false;
   button?.setAttribute("data-active", "true");
@@ -4080,6 +4203,42 @@ function showBibleWorkspace() {
 function hideBibleWorkspace() {
   const workspace = document.getElementById("bibleWorkspace");
   const button = document.getElementById("openBibleWorkspaceBtn");
+  if (workspace) workspace.hidden = true;
+  button?.setAttribute("data-active", "false");
+  syncPreviewStackSurface();
+}
+
+function showSongsWorkspace() {
+  const workspace = document.getElementById("songsWorkspace");
+  const button = document.getElementById("openSongsWorkspaceBtn");
+  if (!workspace) return;
+  hideSlidesWorkspace();
+  hideBibleWorkspace();
+  workspace.hidden = false;
+  button?.setAttribute("data-active", "true");
+  document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
+  document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+  setPreviewStackSurface(PREVIEW_SURFACE_SONGS);
+  
+  setMediaCountdownOverlayVisible(false);
+  setMediaCountdownText("");
+
+  const launcher = document.getElementById("songsLauncher");
+  const slide = document.getElementById("songsPreviewSlide");
+  if (launcher && slide) {
+    if (typeof currentWorkspaceSong !== 'undefined' && currentWorkspaceSong) {
+      launcher.hidden = true;
+      slide.hidden = false;
+    } else {
+      launcher.hidden = false;
+      slide.hidden = true;
+    }
+  }
+}
+
+function hideSongsWorkspace() {
+  const workspace = document.getElementById("songsWorkspace");
+  const button = document.getElementById("openSongsWorkspaceBtn");
   if (workspace) workspace.hidden = true;
   button?.setAttribute("data-active", "false");
   syncPreviewStackSurface();
@@ -6719,6 +6878,1254 @@ async function openSlidesWorkspaceFromButton() {
   showSlidesWorkspace();
 }
 
+let currentWorkspaceSong = null;
+let currentEditingSongId = null;
+let currentSongRenderState = { ...DEFAULT_SONG_RENDER };
+let currentSongSectionId = null;
+let currentSongQueueItem = null;
+let currentSongFolderFilter = "__all__";
+let songFoldersCache = [];
+let selectedSongIds = new Set();
+let songsBulkDeleteArmed = false;
+
+const SONG_FOLDER_ALL = "__all__";
+const SONG_FOLDER_UNFILED = "__unfiled__";
+
+function asSongArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function formatSongListLabel(song) {
+  const authorSuffix = song.author ? ` (${song.author})` : "";
+  return `${song.title || "Untitled Song"}${authorSuffix}`;
+}
+
+function formatSongListNumber(song) {
+  return Number.isFinite(song.songNumber) && song.songNumber > 0 ? `#${song.songNumber}` : "";
+}
+
+function syncSongsBulkMoveFolderOptions() {
+  const select = document.getElementById("songsBulkMoveFolder");
+  if (!select) return;
+  const currentValue = select.value;
+  select.innerHTML =
+    '<option value="">Move to folder…</option><option value="__unfiled__">Unfiled</option>';
+  for (const folder of songFoldersCache) {
+    const option = document.createElement("option");
+    option.value = folder.id;
+    option.textContent = folder.name;
+    select.appendChild(option);
+  }
+  if (currentValue) select.value = currentValue;
+}
+
+function syncSongsBulkActions() {
+  const bar = document.getElementById("songsBulkActions");
+  const countEl = document.getElementById("songsBulkCount");
+  const deleteBtn = document.getElementById("songsBulkDeleteBtn");
+  const count = selectedSongIds.size;
+  if (bar) bar.hidden = count === 0;
+  if (countEl) countEl.textContent = `${count} selected`;
+  if (deleteBtn && songsBulkDeleteArmed) {
+    deleteBtn.textContent = `Confirm delete ${count}`;
+  } else if (deleteBtn) {
+    deleteBtn.textContent = "Delete";
+  }
+  syncSongsBulkMoveFolderOptions();
+}
+
+function clearSongSelection() {
+  selectedSongIds.clear();
+  songsBulkDeleteArmed = false;
+  syncSongsBulkActions();
+  document.querySelectorAll(".songs-list-item.is-checked").forEach((row) => {
+    row.classList.remove("is-checked");
+    const checkbox = row.querySelector(".songs-list-item__checkbox");
+    if (checkbox) checkbox.checked = false;
+  });
+}
+
+function setSongRowSelected(row, songId, checked) {
+  if (checked) selectedSongIds.add(songId);
+  else selectedSongIds.delete(songId);
+  row.classList.toggle("is-checked", checked);
+  songsBulkDeleteArmed = false;
+  syncSongsBulkActions();
+}
+
+async function bulkMoveSelectedSongs() {
+  const folderSelect = document.getElementById("songsBulkMoveFolder");
+  const value = folderSelect?.value || "";
+  if (!value || selectedSongIds.size === 0) {
+    showGnomeToast("Choose a folder and select songs to move");
+    return;
+  }
+  const folderId = value === SONG_FOLDER_UNFILED ? null : value;
+  const ids = [...selectedSongIds];
+  let moved = 0;
+  for (const id of ids) {
+    try {
+      await songsAPI.moveToFolder(id, folderId);
+      moved += 1;
+      if (currentWorkspaceSong?.id === id) {
+        currentWorkspaceSong.folderId = folderId;
+      }
+    } catch (err) {
+      console.error(`Failed to move song ${id}:`, err);
+    }
+  }
+  clearSongSelection();
+  await refreshSongFolders();
+  const searchInput = document.getElementById("songsSearchInput");
+  await refreshSongsBrowser(searchInput?.value || "");
+  syncSongsMoveFolderSelect(currentWorkspaceSong);
+  showGnomeToast(`Moved ${moved} song${moved === 1 ? "" : "s"}`);
+}
+
+async function bulkScheduleSelectedSongs() {
+  if (selectedSongIds.size === 0) {
+    showGnomeToast("Select songs to schedule");
+    return;
+  }
+  const entries = [];
+  for (const id of selectedSongIds) {
+    try {
+      const song = await songsAPI.get(id);
+      entries.push(
+        queueEntryFromSong({
+          song,
+          render: mergeSongRenderState(DEFAULT_SONG_RENDER, {
+            copyright: song.metadata?.copyright || "",
+            ccliNumber: song.metadata?.ccliNumber || null,
+          }),
+        }),
+      );
+    } catch (err) {
+      console.error(`Failed to load song ${id} for schedule:`, err);
+    }
+  }
+  if (entries.length === 0) {
+    showGnomeToast("Could not schedule selected songs");
+    return;
+  }
+  invalidateQueueUndoToastAfterMutation();
+  insertQueueEntriesAfterSelection(entries);
+  renderQueue();
+  saveMediaFile();
+  clearSongSelection();
+  showGnomeToast(`Scheduled ${entries.length} song${entries.length === 1 ? "" : "s"}`);
+}
+
+async function bulkDeleteSelectedSongs() {
+  const count = selectedSongIds.size;
+  if (count === 0) return;
+  if (!songsBulkDeleteArmed) {
+    songsBulkDeleteArmed = true;
+    syncSongsBulkActions();
+    return;
+  }
+  const ids = [...selectedSongIds];
+  let deleted = 0;
+  for (const id of ids) {
+    try {
+      await songsAPI.delete(id);
+      deleted += 1;
+      if (currentWorkspaceSong?.id === id) {
+        await loadSongIntoWorkspace(null);
+      }
+    } catch (err) {
+      console.error(`Failed to delete song ${id}:`, err);
+    }
+  }
+  songsBulkDeleteArmed = false;
+  clearSongSelection();
+  await refreshSongFolders();
+  const searchInput = document.getElementById("songsSearchInput");
+  await refreshSongsBrowser(searchInput?.value || "");
+  showGnomeToast(`Deleted ${deleted} song${deleted === 1 ? "" : "s"}`);
+}
+
+function songSearchOptionsForCurrentFolder() {
+  if (currentSongFolderFilter === SONG_FOLDER_ALL) {
+    return { all: true };
+  }
+  if (currentSongFolderFilter === SONG_FOLDER_UNFILED) {
+    return { unfiled: true };
+  }
+  return { folderId: currentSongFolderFilter };
+}
+
+async function ensureSongFolder(name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return null;
+  const folder = await songsAPI.createFolder(trimmed);
+  await refreshSongFolders();
+  return folder?.id || null;
+}
+
+async function resolveImportFolderId(imported) {
+  const songbookName =
+    imported?.metadata?.extra?.songbook ||
+    imported?.metadata?.hymnal?.name ||
+    null;
+  if (songbookName) {
+    return ensureSongFolder(songbookName);
+  }
+  if (
+    currentSongFolderFilter !== SONG_FOLDER_ALL &&
+    currentSongFolderFilter !== SONG_FOLDER_UNFILED
+  ) {
+    return currentSongFolderFilter;
+  }
+  return null;
+}
+
+function syncSongEditorFolderOptions(selectedFolderId = "") {
+  const select = document.getElementById("songEditorFolder");
+  if (!select) return;
+  const currentValue =
+    selectedFolderId ||
+    (typeof select.value === "string" ? select.value : "") ||
+    "";
+  select.innerHTML = '<option value="">Unfiled</option>';
+  for (const folder of songFoldersCache) {
+    const option = document.createElement("option");
+    option.value = folder.id;
+    option.textContent = folder.name;
+    select.appendChild(option);
+  }
+  select.value = currentValue;
+}
+
+function syncSongsMoveFolderSelect(song = currentWorkspaceSong) {
+  const select = document.getElementById("songsMoveFolderSelect");
+  if (!select) return;
+  const selectedFolderId = song?.folderId || "";
+  select.innerHTML =
+    '<option value="">Move to folder…</option><option value="__unfiled__">Unfiled</option>';
+  for (const folder of songFoldersCache) {
+    const option = document.createElement("option");
+    option.value = folder.id;
+    option.textContent = folder.name;
+    select.appendChild(option);
+  }
+  select.disabled = !song?.id;
+  select.value = selectedFolderId || "";
+}
+
+function restoreSongWorkspaceView() {
+  const launcher = document.getElementById("songsLauncher");
+  const slide = document.getElementById("songsPreviewSlide");
+  if (!launcher || !slide) return;
+  if (currentWorkspaceSong) {
+    launcher.hidden = true;
+    slide.hidden = false;
+  } else {
+    launcher.hidden = false;
+    slide.hidden = true;
+  }
+}
+
+function closeSongFolderPrompt() {
+  document.getElementById("songFolderPrompt")?.setAttribute("hidden", "");
+}
+
+function openSongFolderPrompt() {
+  const prompt = document.getElementById("songFolderPrompt");
+  const input = document.getElementById("songFolderPromptInput");
+  if (!prompt || !input) return;
+  input.value = "";
+  prompt.removeAttribute("hidden");
+  input.focus();
+}
+
+function closeSongEditor() {
+  document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
+  restoreSongWorkspaceView();
+}
+
+async function refreshSongFolders() {
+  try {
+    songFoldersCache = asSongArray(await songsAPI.listFolders());
+  } catch (err) {
+    console.error("Failed to load song folders:", err);
+    songFoldersCache = [];
+  }
+
+  const list = document.getElementById("songsFolderList");
+  if (!list) return;
+
+  list.innerHTML = "";
+  const entries = [
+    { id: SONG_FOLDER_ALL, name: "All Songs", count: null },
+    { id: SONG_FOLDER_UNFILED, name: "Unfiled", count: null },
+    ...songFoldersCache.map((folder) => ({
+      id: folder.id,
+      name: folder.name,
+      count: folder.songCount,
+    })),
+  ];
+
+  for (const entry of entries) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "songs-folder-item";
+    row.dataset.folderId = entry.id;
+    if (entry.id === currentSongFolderFilter) {
+      row.classList.add("is-selected");
+    }
+
+    const label = document.createElement("span");
+    label.textContent = entry.name;
+    row.appendChild(label);
+
+    if (Number.isFinite(entry.count)) {
+      const count = document.createElement("span");
+      count.className = "songs-folder-item__count";
+      count.textContent = String(entry.count);
+      row.appendChild(count);
+    }
+
+    row.addEventListener("click", () => {
+      currentSongFolderFilter = entry.id;
+      clearSongSelection();
+      list.querySelectorAll(".songs-folder-item").forEach((el) => {
+        el.classList.toggle("is-selected", el === row);
+      });
+      const searchInput = document.getElementById("songsSearchInput");
+      void refreshSongsBrowser(searchInput?.value || "").catch(console.error);
+    });
+
+    if (entry.id !== SONG_FOLDER_ALL) {
+      row.addEventListener("dragover", (event) => {
+        if (!songDragSongId) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        list.querySelectorAll(".songs-folder-item--drag-over").forEach((el) => {
+          if (el !== row) el.classList.remove("songs-folder-item--drag-over");
+        });
+        row.classList.add("songs-folder-item--drag-over");
+      });
+      row.addEventListener("dragleave", (event) => {
+        if (
+          typeof event.relatedTarget === "object" &&
+          event.relatedTarget &&
+          row.contains(event.relatedTarget)
+        ) {
+          return;
+        }
+        row.classList.remove("songs-folder-item--drag-over");
+      });
+      row.addEventListener("drop", (event) => {
+        if (!songDragSongId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        row.classList.remove("songs-folder-item--drag-over");
+        const songId = songDragSongId;
+        clearSongDragVisualState();
+        const folderId = entry.id === SONG_FOLDER_UNFILED ? null : entry.id;
+        void songsAPI
+          .moveToFolder(songId, folderId)
+          .then(async (updated) => {
+            if (updated && currentWorkspaceSong?.id === songId) {
+              currentWorkspaceSong = updated;
+            } else if (currentWorkspaceSong?.id === songId) {
+              currentWorkspaceSong.folderId = folderId;
+            }
+            syncSongsMoveFolderSelect(currentWorkspaceSong);
+            await refreshSongFolders();
+            const searchInput = document.getElementById("songsSearchInput");
+            await refreshSongsBrowser(searchInput?.value || "");
+            showGnomeToast("Song moved");
+          })
+          .catch((err) => {
+            console.error("Failed to move song to folder:", err);
+            showGnomeToast("Failed to move song");
+          });
+      });
+    }
+
+    list.appendChild(row);
+  }
+
+  syncSongEditorFolderOptions();
+  syncSongsMoveFolderSelect();
+  syncSongsBulkMoveFolderOptions();
+}
+
+function readSongEditorRenderState() {
+  const textColor = document.getElementById("songEditorTextColor")?.value;
+  const backgroundColor = document.getElementById("songEditorBackgroundColor")?.value;
+  const copyright = document.getElementById("songEditorCopyright")?.value?.trim() || "";
+  const ccliNumber = document.getElementById("songEditorCcli")?.value?.trim() || null;
+  return mergeSongRenderState(currentSongRenderState, {
+    color: textColor || DEFAULT_SONG_RENDER.color,
+    backgroundColor: backgroundColor || DEFAULT_SONG_RENDER.backgroundColor,
+    backgroundPath: currentSongRenderState.backgroundPath || "",
+    copyright,
+    ccliNumber,
+  });
+}
+
+function syncSongEditorRenderControls(render = currentSongRenderState) {
+  const textColorInput = document.getElementById("songEditorTextColor");
+  const backgroundColorInput = document.getElementById("songEditorBackgroundColor");
+  const copyrightInput = document.getElementById("songEditorCopyright");
+  const ccliInput = document.getElementById("songEditorCcli");
+  if (textColorInput) textColorInput.value = render.color || DEFAULT_SONG_RENDER.color;
+  if (backgroundColorInput) {
+    backgroundColorInput.value = render.backgroundColor || DEFAULT_SONG_RENDER.backgroundColor;
+  }
+  if (copyrightInput) copyrightInput.value = render.copyright || "";
+  if (ccliInput) ccliInput.value = render.ccliNumber || "";
+  syncSongBackgroundLabel(render.backgroundPath || "");
+}
+
+function syncSongBackgroundLabel(filePath = currentSongRenderState.backgroundPath) {
+  const label = document.getElementById("songEditorBackgroundLabel");
+  if (!label) return;
+  if (!filePath) {
+    label.textContent = "No background image";
+    return;
+  }
+  label.textContent = queueBasename(filePath);
+}
+
+function currentSongPresentationItem() {
+  if (!currentWorkspaceSong) return null;
+  return {
+    type: "song",
+    path: songQueuePath(currentWorkspaceSong.id),
+    songSnapshot: songSnapshotForSchedule(currentWorkspaceSong, {
+      copyright: currentSongRenderState.copyright,
+      ccliNumber: currentSongRenderState.ccliNumber,
+      defaultRender: {
+        themeId: "song_default",
+        background: {
+          mode: currentSongRenderState.backgroundPath ? "custom" : "color",
+          color: currentSongRenderState.backgroundColor,
+          path: currentSongRenderState.backgroundPath || "",
+        },
+        textColor: currentSongRenderState.color,
+        copyrightPlacement: currentSongRenderState.copyrightPlacement,
+      },
+    }),
+    sequence: {
+      arrangementId: currentWorkspaceSong.arrangements?.[0]?.id || "arr_default",
+      entries: arrangementSequenceEntries(currentWorkspaceSong),
+    },
+    render: {
+      ...currentSongRenderState,
+      currentSectionId: currentSongSectionId,
+    },
+  };
+}
+
+async function loadSongItemIntoWorkspace(item, token) {
+  currentSongQueueItem = item || null;
+  if (item?.songSnapshot) {
+    currentSongRenderState = songRenderFromItem(item);
+    currentSongSectionId = item.render?.currentSectionId || null;
+    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return;
+    await loadSongIntoWorkspace(item.songSnapshot);
+    return;
+  }
+  if (item?.source?.songId) {
+    const song = await songsAPI.get(item.source.songId);
+    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return;
+    currentSongRenderState = songRenderFromItem(item);
+    await loadSongIntoWorkspace(song);
+  }
+}
+
+async function loadSongIntoWorkspace(song, opts = {}) {
+  currentWorkspaceSong = song || null;
+
+  const launcher = document.getElementById("songsLauncher");
+  const slide = document.getElementById("songsPreviewSlide");
+  if (launcher && slide) {
+    if (currentWorkspaceSong) {
+      launcher.hidden = true;
+      slide.hidden = false;
+    } else {
+      launcher.hidden = false;
+      slide.hidden = true;
+    }
+  }
+
+  if (!song) {
+    document.getElementById("songsWorkspaceTitle").textContent = "Select a Song";
+    document.getElementById("songsShowNowBtn").disabled = true;
+    document.getElementById("songsAddScheduleBtn").disabled = true;
+    document.getElementById("songsEditBtn").disabled = true;
+    document.getElementById("songsDeleteBtn").disabled = true;
+    document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
+    document.getElementById("songArrangementStrip").innerHTML = "";
+    if (slide) slide.innerHTML = "";
+    currentSongSectionId = null;
+    currentSongQueueItem = null;
+    syncSongsMoveFolderSelect(null);
+    return;
+  }
+
+  if (opts.render) {
+    currentSongRenderState = mergeSongRenderState(currentSongRenderState, opts.render);
+  } else if (song.defaultRender) {
+    currentSongRenderState = mergeSongRenderState(currentSongRenderState, {
+      backgroundColor: song.defaultRender.background?.color,
+      backgroundPath: song.defaultRender.background?.path || "",
+      color: song.defaultRender.textColor,
+      copyrightPlacement: song.defaultRender.copyrightPlacement,
+    });
+  }
+
+  document.getElementById("songsWorkspaceTitle").textContent = song.title;
+  document.getElementById("songsShowNowBtn").disabled = false;
+  document.getElementById("songsAddScheduleBtn").disabled = false;
+  document.getElementById("songsEditBtn").disabled = false;
+  document.getElementById("songsDeleteBtn").disabled = false;
+  document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
+  syncSongsMoveFolderSelect(song);
+
+  const enabledSections = enabledSongSections(song);
+  if (!currentSongSectionId || !enabledSections.some((s) => s.id === currentSongSectionId)) {
+    currentSongSectionId = enabledSections[0]?.id || song.sections?.[0]?.id || null;
+  }
+
+  const strip = document.getElementById("songArrangementStrip");
+  if (strip) {
+    strip.innerHTML = "";
+    for (const section of enabledSections) {
+      const chip = document.createElement("button");
+      chip.className = "pill-button";
+      chip.type = "button";
+      chip.textContent = section.label;
+      if (section.id === currentSongSectionId) {
+        chip.classList.add("primary-action");
+      }
+      chip.addEventListener("click", () => {
+        currentSongSectionId = section.id;
+        renderSongSectionPreview(section);
+        if (currentSongQueueItem?.render) {
+          currentSongQueueItem.render.currentSectionId = section.id;
+        }
+        strip.querySelectorAll(".pill-button").forEach((btn) => {
+          btn.classList.toggle("primary-action", btn === chip);
+        });
+        void syncActiveScheduledSongPresentation().catch(console.error);
+      });
+      strip.appendChild(chip);
+    }
+  }
+
+  const activeSection =
+    enabledSections.find((s) => s.id === currentSongSectionId) ||
+    enabledSections[0] ||
+    song.sections?.[0] ||
+    null;
+  if (activeSection) {
+    renderSongSectionPreview(activeSection);
+  }
+}
+
+function renderSongSectionPreview(section) {
+  const preview = document.getElementById("songsPreviewSlide");
+  if (!preview || !section || !currentWorkspaceSong) return;
+  currentSongSectionId = section.id;
+
+  const presentation = resolvedSongPresentation({
+    type: "song",
+    songSnapshot: currentWorkspaceSong,
+    sequence: {
+      entries: arrangementSequenceEntries(currentWorkspaceSong),
+    },
+    render: {
+      ...currentSongRenderState,
+      currentSectionId: section.id,
+    },
+  });
+  const message = presentation?.message;
+  if (!message) return;
+
+  preview.style.backgroundColor = message.backgroundColor || "#000000";
+  if (message.backgroundImage) {
+    preview.style.backgroundImage = `url('${message.backgroundImage}')`;
+  } else {
+    preview.style.backgroundImage = "";
+  }
+
+  preview.innerHTML = "";
+  const lines = String(message.bodyText || "").split("\n");
+  for (const line of lines) {
+    const lineEl = document.createElement("div");
+    lineEl.className = line.length === 0 ? "song-preview-line song-preview-line--spacer" : "song-preview-line";
+    lineEl.style.color = message.color || "#ffffff";
+    if (line.length > 0) lineEl.textContent = line;
+    preview.appendChild(lineEl);
+  }
+
+  if (message.referenceText) {
+    const refEl = document.createElement("div");
+    refEl.className = "song-preview-reference";
+    refEl.style.color = message.referenceColor || message.color || "#ffffff";
+    refEl.textContent = message.referenceText;
+    preview.appendChild(refEl);
+  }
+
+  if (message.attributionText) {
+    const attrEl = document.createElement("div");
+    attrEl.className = "song-preview-attribution";
+    attrEl.textContent = message.attributionText;
+    preview.appendChild(attrEl);
+  }
+}
+
+async function sendSongTextToOutput(item = null) {
+  const presentation = resolvedSongPresentation(item || currentSongPresentationItem());
+  if (!presentation?.message) return;
+  send("update-text", presentation.message);
+}
+
+async function syncActiveScheduledSongPresentation() {
+  if (!isActiveMediaWindow() || activeMediaWindowContentType !== "song") return false;
+  const liveIndex = currentQueueIndex;
+  if (liveIndex < 0 || liveIndex >= mediaQueue.length) return false;
+  const item = mediaQueue[liveIndex];
+  if (!isQueueItemSong(item)) return false;
+  await sendSongTextToOutput(item);
+  return true;
+}
+
+async function showSongTextNow() {
+  if (!currentWorkspaceSong) {
+    showGnomeToast("Choose a song to show");
+    return false;
+  }
+  if (!hasAudienceOutputSelected()) {
+    showGnomeToast("Choose an audience output display");
+    return false;
+  }
+
+  const transientEntry = queueEntryFromSong({
+    song: currentWorkspaceSong,
+    render: currentSongRenderState,
+    currentSectionId: currentSongSectionId,
+  });
+
+  try {
+    mediaPlaybackEndedPending = false;
+    pendingQueueSwitchIndex = null;
+    pendingQueueSwitchStartTime = 0;
+    userStopPresentationPending = false;
+    currentQueueIndex = -1;
+
+    if (isActiveMediaWindow() && activeMediaWindowContentType === "song") {
+      await sendSongTextToOutput(transientEntry);
+      isPlaying = true;
+      isQueuePlaying = false;
+      activeMediaWindowContentType = "song";
+      isActiveMediaWindowCache = true;
+      updateDynUI();
+      renderQueue();
+      return true;
+    }
+
+    const audienceStarted = await createMediaWindow({
+      textItem: transientEntry,
+      transientText: true,
+      songItem: true,
+    });
+    if (!audienceStarted) {
+      showGnomeToast("No song output started");
+      return false;
+    }
+    activeMediaWindowContentType = "song";
+    isPlaying = true;
+    isQueuePlaying = false;
+    isActiveMediaWindowCache = true;
+    updateDynUI();
+    renderQueue();
+    return true;
+  } catch (err) {
+    console.error("Failed to show song:", err);
+    showGnomeToast("Failed to show song");
+    return false;
+  }
+}
+
+async function insertSongInSchedule() {
+  if (!currentWorkspaceSong) {
+    showGnomeToast("Choose a song to schedule");
+    return false;
+  }
+  const entry = queueEntryFromSong({
+    song: currentWorkspaceSong,
+    render: currentSongRenderState,
+    currentSectionId: currentSongSectionId,
+  });
+  invalidateQueueUndoToastAfterMutation();
+  insertQueueEntriesAfterSelection([entry]);
+  renderQueue();
+  saveMediaFile();
+  showGnomeToast(`Scheduled ${entry.name}`);
+  return true;
+}
+
+async function importSongFromDialog() {
+  try {
+    const res = await invoke("show-import-song-dialog");
+    if (!res || res.canceled) return;
+    const filePaths = Array.isArray(res.filePaths)
+      ? res.filePaths.filter(Boolean)
+      : typeof res.filePath === "string" && res.filePath
+        ? [res.filePath]
+        : typeof res.filePaths === "string" && res.filePaths
+          ? [res.filePaths]
+          : [];
+    if (filePaths.length === 0) return;
+
+    let importedCount = 0;
+    let failedCount = 0;
+    let lastSavedSong = null;
+
+    for (const filePath of filePaths) {
+      try {
+        const text = await invoke("read-file-as-text", filePath);
+        const imported = importSongFromFileContents(text, filePath);
+        const folderId = await resolveImportFolderId(imported);
+        const librarySong = songForLibraryDatabase(imported);
+        if (folderId) {
+          librarySong.folderId = folderId;
+        }
+        lastSavedSong = await songsAPI.save(librarySong, text);
+        importedCount += 1;
+      } catch (err) {
+        failedCount += 1;
+        console.error(`Song import failed for ${filePath}:`, err);
+      }
+    }
+
+    if (lastSavedSong) {
+      currentSongRenderState = mergeSongRenderState(DEFAULT_SONG_RENDER, {
+        copyright: lastSavedSong.metadata?.copyright || "",
+        ccliNumber: lastSavedSong.metadata?.ccliNumber || null,
+      });
+      await loadSongIntoWorkspace(lastSavedSong, {
+        render: currentSongRenderState,
+      });
+    }
+
+    await refreshSongFolders();
+    const searchInput = document.getElementById("songsSearchInput");
+    if (searchInput) await refreshSongsBrowser(searchInput.value);
+
+    if (importedCount > 0 && failedCount === 0) {
+      showGnomeToast(`Imported ${importedCount} song${importedCount === 1 ? "" : "s"}`);
+    } else if (importedCount > 0) {
+      showGnomeToast(`Imported ${importedCount} song(s), ${failedCount} failed`);
+    } else {
+      showGnomeToast("Import failed");
+    }
+  } catch (err) {
+    console.error("Song import failed:", err);
+    showGnomeToast(`Import failed: ${err.message}`);
+  }
+}
+
+async function openSongsWorkspaceFromButton() {
+  currentWorkspaceSong = null;
+  currentSongQueueItem = null;
+  document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
+  const launcher = document.getElementById("songsLauncher");
+  const slide = document.getElementById("songsPreviewSlide");
+  if (launcher) launcher.hidden = false;
+  if (slide) slide.hidden = true;
+
+  showSongsWorkspace();
+  await songsAPI.waitForReady();
+  await refreshSongFolders();
+  await refreshSongsBrowser();
+}
+
+async function openSongEditor(song) {
+  const drawer = document.getElementById("songEditorDrawer");
+  if (!drawer) return;
+
+  let songToEdit = song || null;
+  if (songToEdit?.id) {
+    try {
+      songToEdit = await songsAPI.get(songToEdit.id);
+      currentWorkspaceSong = songToEdit;
+      syncSongsMoveFolderSelect(songToEdit);
+    } catch (err) {
+      console.error("Failed to load song for editing:", err);
+      showGnomeToast("Failed to load song for editing");
+      return;
+    }
+  }
+
+  const launcher = document.getElementById("songsLauncher");
+  const slide = document.getElementById("songsPreviewSlide");
+  if (launcher) launcher.hidden = true;
+  if (slide) slide.hidden = true;
+  drawer.removeAttribute("hidden");
+
+  const titleInput = document.getElementById("songEditorTitle");
+  const authorInput = document.getElementById("songEditorAuthor");
+  const folderInput = document.getElementById("songEditorFolder");
+  const numberInput = document.getElementById("songEditorNumber");
+  const textarea = document.getElementById("songEditorTextarea");
+
+  syncSongEditorFolderOptions(songToEdit?.folderId || "");
+
+  if (songToEdit) {
+    currentEditingSongId = songToEdit.id;
+    titleInput.value = songToEdit.title || "";
+    if (numberInput) {
+      numberInput.value =
+        Number.isFinite(songToEdit.songNumber) && songToEdit.songNumber > 0
+          ? String(songToEdit.songNumber)
+          : "";
+    }
+    authorInput.value = songToEdit.metadata?.authors?.join(", ") || "";
+    if (folderInput) folderInput.value = songToEdit.folderId || "";
+    textarea.value = lyricsTextFromSongSections(songToEdit.sections || []);
+    syncSongEditorRenderControls(
+      mergeSongRenderState(currentSongRenderState, {
+        copyright: currentSongRenderState.copyright || songToEdit.metadata?.copyright || "",
+        ccliNumber: currentSongRenderState.ccliNumber || songToEdit.metadata?.ccliNumber || null,
+      }),
+    );
+  } else {
+    currentEditingSongId = null;
+    titleInput.value = "";
+    if (numberInput) numberInput.value = "";
+    authorInput.value = "";
+    if (folderInput) {
+      folderInput.value =
+        currentSongFolderFilter !== SONG_FOLDER_ALL &&
+        currentSongFolderFilter !== SONG_FOLDER_UNFILED
+          ? currentSongFolderFilter
+          : "";
+    }
+    textarea.value = "";
+    currentSongRenderState = { ...DEFAULT_SONG_RENDER };
+    syncSongEditorRenderControls();
+  }
+}
+
+async function saveSongEditor() {
+  const titleInput = document.getElementById("songEditorTitle");
+  const authorInput = document.getElementById("songEditorAuthor");
+  const folderInput = document.getElementById("songEditorFolder");
+  const numberInput = document.getElementById("songEditorNumber");
+  const textarea = document.getElementById("songEditorTextarea");
+
+  const title = titleInput.value.trim() || "Untitled Song";
+  const authorText = authorInput.value.trim();
+  const folderId = folderInput?.value?.trim() || null;
+  const numberRaw = numberInput?.value?.trim() || "";
+  const parsedNumber = numberRaw ? Number.parseInt(numberRaw, 10) : null;
+  const songNumber = Number.isFinite(parsedNumber) && parsedNumber > 0 ? parsedNumber : null;
+  const sections = parseSongLyricsEditorText(textarea.value);
+  currentSongRenderState = readSongEditorRenderState();
+
+  const song = {
+    schema: "ems.song.v1",
+    id: currentEditingSongId || `song_${crypto.randomUUID()}`,
+    title,
+    folderId,
+    ...(songNumber ? { songNumber } : {}),
+    metadata: {
+      authors: authorText ? authorText.split(",").map((a) => a.trim()).filter(Boolean) : [],
+      copyright: currentSongRenderState.copyright || "",
+      ccliNumber: currentSongRenderState.ccliNumber || null,
+    },
+    sections,
+    arrangements: [
+      {
+        id: "arr_default",
+        name: "Default",
+        sequence: sections.map((s) => ({
+          id: `seq_${s.id}`,
+          sectionId: s.id,
+          enabled: true,
+        })),
+      },
+    ],
+    defaultRender: {
+      themeId: "song_default",
+      background: {
+        mode: currentSongRenderState.backgroundPath ? "custom" : "color",
+        color: currentSongRenderState.backgroundColor,
+        path: currentSongRenderState.backgroundPath || "",
+      },
+      textColor: currentSongRenderState.color,
+      copyrightPlacement: currentSongRenderState.copyrightPlacement,
+    },
+  };
+
+  try {
+    const saved = await songsAPI.save(songForLibraryDatabase(song));
+    closeSongEditor();
+    const searchInput = document.getElementById("songsSearchInput");
+    await refreshSongFolders();
+    if (searchInput) await refreshSongsBrowser(searchInput.value);
+    await loadSongIntoWorkspace(saved || song, { render: currentSongRenderState });
+  } catch (err) {
+    console.error("Failed to save song:", err);
+    alert(`Failed to save song: ${err.message}`);
+  }
+}
+
+async function deleteSongFromLibrary(songId = currentWorkspaceSong?.id) {
+  const id = typeof songId === "string" ? songId.trim() : "";
+  if (!id) {
+    showGnomeToast("Select a song to delete");
+    return false;
+  }
+
+  const title = currentWorkspaceSong?.id === id
+    ? currentWorkspaceSong.title
+    : id;
+  const accepted = window.confirm(`Delete "${title}" from the song library? Scheduled project copies will not be removed.`);
+  if (!accepted) return false;
+
+  try {
+    await songsAPI.delete(id);
+    if (currentWorkspaceSong?.id === id) {
+      await loadSongIntoWorkspace(null);
+      const launcher = document.getElementById("songsLauncher");
+      const slide = document.getElementById("songsPreviewSlide");
+      if (launcher) launcher.hidden = false;
+      if (slide) slide.hidden = true;
+    }
+    const searchInput = document.getElementById("songsSearchInput");
+    await refreshSongFolders();
+    await refreshSongsBrowser(searchInput?.value || "");
+    showGnomeToast(`Deleted ${title}`);
+    return true;
+  } catch (err) {
+    console.error("Failed to delete song:", err);
+    showGnomeToast(`Delete failed: ${err.message}`);
+    return false;
+  }
+}
+
+function renderStateForLibrarySong(song) {
+  return mergeSongRenderState(DEFAULT_SONG_RENDER, {
+    copyright: song.metadata?.copyright || "",
+    ccliNumber: song.metadata?.ccliNumber || null,
+  });
+}
+
+async function loadFullLibrarySong(songSummary) {
+  if (songSummary?.sections?.length) return songSummary;
+  return songsAPI.get(songSummary.id);
+}
+
+async function activateSongFromLibrary(songSummary, { openEditor = true } = {}) {
+  try {
+    const fullSong = await loadFullLibrarySong(songSummary);
+    currentSongRenderState = renderStateForLibrarySong(fullSong);
+    await loadSongIntoWorkspace(fullSong);
+    document.querySelectorAll(".songs-list-item").forEach((el) => {
+      el.classList.toggle("is-selected", el.dataset.songId === fullSong.id);
+    });
+    if (openEditor) {
+      await openSongEditor(fullSong);
+    }
+    return fullSong;
+  } catch (err) {
+    console.error("Failed to load song details:", err);
+    showGnomeToast("Failed to load song");
+    return null;
+  }
+}
+
+async function scheduleSongFromLibrary(songSummary) {
+  try {
+    const song = await loadFullLibrarySong(songSummary);
+    const entry = queueEntryFromSong({
+      song,
+      render: renderStateForLibrarySong(song),
+    });
+    invalidateQueueUndoToastAfterMutation();
+    insertQueueEntriesAfterSelection([entry]);
+    renderQueue();
+    saveMediaFile();
+    showGnomeToast(`Scheduled ${entry.name}`);
+    return true;
+  } catch (err) {
+    console.error("Failed to schedule song:", err);
+    showGnomeToast("Failed to schedule song");
+    return false;
+  }
+}
+
+async function showSongFromLibraryNow(songSummary) {
+  try {
+    const song = await loadFullLibrarySong(songSummary);
+    currentSongRenderState = renderStateForLibrarySong(song);
+    await loadSongIntoWorkspace(song);
+    document.querySelectorAll(".songs-list-item").forEach((el) => {
+      el.classList.toggle("is-selected", el.dataset.songId === song.id);
+    });
+    return showSongTextNow();
+  } catch (err) {
+    console.error("Failed to show song:", err);
+    showGnomeToast("Failed to show song");
+    return false;
+  }
+}
+
+function hideSongContextMenu() {
+  document.getElementById("songContextMenu")?.setAttribute("hidden", "");
+}
+
+function buildSongContextMenuMarkup() {
+  const folderItems = [
+    `<button type="button" role="menuitem" data-song-action="move" data-folder-id="${SONG_FOLDER_UNFILED}">Unfiled</button>`,
+    ...songFoldersCache.map(
+      (folder) =>
+        `<button type="button" role="menuitem" data-song-action="move" data-folder-id="${escapeHtml(folder.id)}">${escapeHtml(folder.name)}</button>`,
+    ),
+  ].join("");
+  return `
+    <button type="button" role="menuitem" data-song-action="edit">Open Editor</button>
+    <button type="button" role="menuitem" data-song-action="schedule">Add to Schedule</button>
+    <button type="button" role="menuitem" data-song-action="show">Show Now</button>
+    <div class="song-context-menu__separator" role="separator"></div>
+    <div class="song-context-menu__submenu-host">
+      <button type="button" class="song-context-menu__submenu-trigger" aria-haspopup="true" aria-expanded="false">Move to Folder…</button>
+      <div class="song-context-menu__submenu" role="menu">${folderItems}</div>
+    </div>
+    <div class="song-context-menu__separator" role="separator"></div>
+    <button type="button" role="menuitem" data-song-action="delete" class="song-context-menu__destructive">Delete</button>
+  `;
+}
+
+function ensureSongContextMenu() {
+  let menu = document.getElementById("songContextMenu");
+  if (menu) return menu;
+
+  menu = document.createElement("div");
+  menu.id = "songContextMenu";
+  menu.className = "song-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+
+  menu.addEventListener("pointerdown", (event) => event.stopPropagation());
+  menu.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const moveBtn = event.target.closest("[data-song-action='move']");
+    if (moveBtn) {
+      const song = menu._targetSong;
+      hideSongContextMenu();
+      if (!song?.id) return;
+      const folderId =
+        moveBtn.getAttribute("data-folder-id") === SONG_FOLDER_UNFILED
+          ? null
+          : moveBtn.getAttribute("data-folder-id");
+      void songsAPI
+        .moveToFolder(song.id, folderId)
+        .then(async (updated) => {
+          if (updated && currentWorkspaceSong?.id === song.id) {
+            currentWorkspaceSong = updated;
+          } else if (currentWorkspaceSong?.id === song.id) {
+            currentWorkspaceSong.folderId = folderId;
+          }
+          syncSongsMoveFolderSelect(currentWorkspaceSong);
+          await refreshSongFolders();
+          const searchInput = document.getElementById("songsSearchInput");
+          await refreshSongsBrowser(searchInput?.value || "");
+          showGnomeToast("Song moved");
+        })
+        .catch((err) => {
+          console.error("Failed to move song:", err);
+          showGnomeToast("Failed to move song");
+        });
+      return;
+    }
+
+    const button = event.target.closest("[data-song-action]");
+    if (!button) return;
+    const song = menu._targetSong;
+    const action = button.getAttribute("data-song-action");
+    hideSongContextMenu();
+    if (!song) return;
+    if (action === "edit") {
+      void activateSongFromLibrary(song, { openEditor: true }).catch(console.error);
+    } else if (action === "schedule") {
+      void scheduleSongFromLibrary(song).catch(console.error);
+    } else if (action === "show") {
+      void showSongFromLibraryNow(song).catch(console.error);
+    } else if (action === "delete") {
+      void deleteSongFromLibrary(song.id).catch(console.error);
+    }
+  });
+
+  document.body.appendChild(menu);
+  if (document.body.dataset.songContextMenuBound !== "1") {
+    document.body.dataset.songContextMenuBound = "1";
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.target.closest?.("#songContextMenu")) return;
+        hideSongContextMenu();
+      },
+      true,
+    );
+    window.addEventListener("resize", hideSongContextMenu);
+    window.addEventListener("scroll", hideSongContextMenu, true);
+  }
+  return menu;
+}
+
+function showSongContextMenu(event, song) {
+  event.preventDefault();
+  event.stopPropagation();
+  const menu = ensureSongContextMenu();
+  menu.innerHTML = buildSongContextMenuMarkup();
+  menu._targetSong = song;
+  menu.hidden = false;
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.max(
+    8,
+    Math.min(event.clientX, window.innerWidth - menuRect.width - 8),
+  );
+  const top = Math.max(
+    8,
+    Math.min(event.clientY, window.innerHeight - menuRect.height - 8),
+  );
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+async function refreshSongsBrowser(query = "") {
+  try {
+    const trimmedQuery = String(query || "").trim();
+    const results = asSongArray(
+      await songsAPI.search(trimmedQuery, songSearchOptionsForCurrentFolder()),
+    );
+    const list = document.getElementById("songsList");
+    if (!list) return;
+
+    list.innerHTML = "";
+    if (results.length === 0) {
+      list.innerHTML = '<span class="list-placeholder-title">No songs found</span>';
+      syncSongsBulkActions();
+      return;
+    }
+
+    for (const song of results) {
+      const row = document.createElement("div");
+      row.className = "songs-list-item";
+      row.dataset.songId = song.id;
+      row.draggable = true;
+      if (currentWorkspaceSong?.id === song.id) {
+        row.classList.add("is-selected");
+      }
+      if (selectedSongIds.has(song.id)) {
+        row.classList.add("is-checked");
+      }
+
+      const dragHandle = document.createElement("span");
+      dragHandle.className = "songs-list-item__drag-handle";
+      dragHandle.setAttribute("aria-hidden", "true");
+      dragHandle.title = "Drag to schedule or folder";
+      dragHandle.textContent = "⠿";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "songs-list-item__checkbox";
+      checkbox.checked = selectedSongIds.has(song.id);
+      checkbox.setAttribute("aria-label", `Select ${song.title || "song"}`);
+      checkbox.addEventListener("click", (event) => {
+        event.stopPropagation();
+      });
+      checkbox.addEventListener("change", () => {
+        setSongRowSelected(row, song.id, checkbox.checked);
+      });
+
+      const numberEl = document.createElement("span");
+      numberEl.className = "songs-list-item__number";
+      numberEl.textContent = formatSongListNumber(song);
+
+      const label = document.createElement("div");
+      label.className = "songs-list-item__label";
+      label.textContent = formatSongListLabel(song);
+      label.title = `${formatSongListNumber(song) ? `${formatSongListNumber(song)} ` : ""}${label.textContent}`;
+      label.addEventListener("click", async (event) => {
+        if (event.shiftKey || event.ctrlKey || event.metaKey) {
+          checkbox.checked = !checkbox.checked;
+          setSongRowSelected(row, song.id, checkbox.checked);
+          return;
+        }
+        await activateSongFromLibrary(song, { openEditor: true });
+      });
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "songs-list-item__delete";
+      deleteBtn.title = `Delete ${song.title}`;
+      deleteBtn.setAttribute("aria-label", `Delete ${song.title}`);
+      deleteBtn.textContent = "✕";
+      deleteBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        void deleteSongFromLibrary(song.id).catch(console.error);
+      });
+
+      row.addEventListener("dblclick", (event) => {
+        if (
+          event.target.closest(
+            ".songs-list-item__checkbox, .songs-list-item__delete, .songs-list-item__drag-handle",
+          )
+        ) {
+          return;
+        }
+        event.preventDefault();
+        void scheduleSongFromLibrary(song).catch(console.error);
+      });
+
+      row.addEventListener("contextmenu", (event) => {
+        if (event.target.closest(".songs-list-item__checkbox, .songs-list-item__delete")) {
+          return;
+        }
+        showSongContextMenu(event, song);
+      });
+
+      row.addEventListener("dragstart", (event) => {
+        if (!event.target.closest(".songs-list-item__drag-handle")) {
+          event.preventDefault();
+          return;
+        }
+        songDragSongId = song.id;
+        event.dataTransfer.setData(SONG_DRAG_MIME, song.id);
+        event.dataTransfer.setData("text/plain", song.title || "Song");
+        event.dataTransfer.effectAllowed = "copyMove";
+        row.classList.add("songs-list-item--dragging");
+      });
+
+      row.addEventListener("dragend", () => {
+        clearSongDragVisualState();
+      });
+
+      row.appendChild(dragHandle);
+      row.appendChild(checkbox);
+      row.appendChild(numberEl);
+      row.appendChild(label);
+      row.appendChild(deleteBtn);
+      list.appendChild(row);
+    }
+    syncSongsBulkActions();
+  } catch (err) {
+    console.error("Failed to refresh songs browser:", err);
+  }
+}
+
 async function openBibleWorkspaceFromButton() {
   showBibleWorkspace();
   await bibleAPI.waitForReady();
@@ -6793,6 +8200,174 @@ function installBibleMediaControls() {
   document.getElementById("openBibleWorkspaceBtn")?.addEventListener("click", () => {
     void openBibleWorkspaceFromButton().catch(console.error);
   });
+
+  document.getElementById("openSongsWorkspaceBtn")?.addEventListener("click", () => {
+    void openSongsWorkspaceFromButton().catch(console.error);
+  });
+  
+  const handleNewSong = () => {
+    void openSongEditor(null).catch(console.error);
+  };
+  document.getElementById("newSongBtn")?.addEventListener("click", handleNewSong);
+  
+  // Launcher: Edit Songs opens a blank song editor
+  document.getElementById("launcherEditSongsBtn")?.addEventListener("click", () => {
+    const launcher = document.getElementById("songsLauncher");
+    if (launcher) launcher.hidden = true;
+    void openSongEditor(null).catch(console.error);
+  });
+  
+  // Launcher: Search Songs hides the launcher and focuses the search input
+  document.getElementById("launcherSearchSongsBtn")?.addEventListener("click", () => {
+    const launcher = document.getElementById("songsLauncher");
+    if (launcher) launcher.hidden = true;
+    const searchInput = document.getElementById("songsSearchInput");
+    if (searchInput) searchInput.focus();
+  });
+  
+  document.getElementById("importSongBtn")?.addEventListener("click", () => {
+    void importSongFromDialog().catch(console.error);
+  });
+
+  document.getElementById("newSongFolderBtn")?.addEventListener("click", () => {
+    openSongFolderPrompt();
+  });
+
+  document.getElementById("songFolderPromptCancel")?.addEventListener("click", () => {
+    closeSongFolderPrompt();
+  });
+
+  document.getElementById("songFolderPromptForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const name = document.getElementById("songFolderPromptInput")?.value?.trim();
+    if (!name) return;
+    closeSongFolderPrompt();
+    void ensureSongFolder(name)
+      .then(async (folderId) => {
+        if (!folderId) return;
+        currentSongFolderFilter = folderId;
+        await refreshSongFolders();
+        const searchInput = document.getElementById("songsSearchInput");
+        await refreshSongsBrowser(searchInput?.value || "");
+      })
+      .catch((err) => {
+        console.error("Failed to create song folder:", err);
+        showGnomeToast(`Failed to create folder: ${err.message}`);
+      });
+  });
+
+  document.getElementById("songsBulkMoveBtn")?.addEventListener("click", () => {
+    void bulkMoveSelectedSongs().catch(console.error);
+  });
+
+  document.getElementById("songsBulkScheduleBtn")?.addEventListener("click", () => {
+    void bulkScheduleSelectedSongs().catch(console.error);
+  });
+
+  document.getElementById("songsBulkDeleteBtn")?.addEventListener("click", () => {
+    void bulkDeleteSelectedSongs().catch(console.error);
+  });
+
+  document.getElementById("songsBulkClearBtn")?.addEventListener("click", () => {
+    clearSongSelection();
+  });
+
+  document.getElementById("songsShowNowBtn")?.addEventListener("click", () => {
+    void showSongTextNow().catch(console.error);
+  });
+
+  document.getElementById("songsAddScheduleBtn")?.addEventListener("click", () => {
+    void insertSongInSchedule().catch(console.error);
+  });
+  
+  document.getElementById("songsEditBtn")?.addEventListener("click", () => {
+    void openSongEditor(currentWorkspaceSong).catch(console.error);
+  });
+
+  document.getElementById("songsMoveFolderSelect")?.addEventListener("change", (event) => {
+    const songId = currentWorkspaceSong?.id;
+    const value = event.target.value;
+    if (!songId || !value) {
+      syncSongsMoveFolderSelect(currentWorkspaceSong);
+      return;
+    }
+    const folderId = value === SONG_FOLDER_UNFILED ? null : value;
+    const currentFolderId = currentWorkspaceSong?.folderId || null;
+    if (folderId === currentFolderId) return;
+    void songsAPI
+      .moveToFolder(songId, folderId)
+      .then(async (updated) => {
+        if (updated) {
+          currentWorkspaceSong = updated;
+        } else if (currentWorkspaceSong) {
+          currentWorkspaceSong.folderId = folderId;
+        }
+        syncSongsMoveFolderSelect(currentWorkspaceSong);
+        await refreshSongFolders();
+        const searchInput = document.getElementById("songsSearchInput");
+        await refreshSongsBrowser(searchInput?.value || "");
+        showGnomeToast("Song moved");
+      })
+      .catch((err) => {
+        console.error("Failed to move song:", err);
+        showGnomeToast("Failed to move song");
+        syncSongsMoveFolderSelect(currentWorkspaceSong);
+      });
+  });
+
+  document.getElementById("songsDeleteBtn")?.addEventListener("click", () => {
+    void deleteSongFromLibrary().catch(console.error);
+  });
+  
+  document.getElementById("songEditorCancelBtn")?.addEventListener("click", () => {
+    closeSongEditor();
+  });
+
+  document.getElementById("songEditorSaveBtn")?.addEventListener("click", () => {
+    void saveSongEditor().catch(console.error);
+  });
+
+  document.getElementById("songEditorBackgroundInput")?.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    currentSongRenderState.backgroundPath = file ? getPathForFile(file) : "";
+    syncSongBackgroundLabel();
+    if (currentWorkspaceSong) {
+      const section =
+        enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
+        currentWorkspaceSong.sections?.[0];
+      if (section) renderSongSectionPreview(section);
+    }
+  });
+
+  document.getElementById("songEditorClearBackgroundBtn")?.addEventListener("click", () => {
+    currentSongRenderState.backgroundPath = "";
+    const backgroundInput = document.getElementById("songEditorBackgroundInput");
+    if (backgroundInput) backgroundInput.value = "";
+    syncSongBackgroundLabel("");
+    if (currentWorkspaceSong) {
+      const section =
+        enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
+        currentWorkspaceSong.sections?.[0];
+      if (section) renderSongSectionPreview(section);
+    }
+  });
+
+  for (const id of ["songEditorTextColor", "songEditorBackgroundColor", "songEditorCopyright", "songEditorCcli"]) {
+    document.getElementById(id)?.addEventListener("input", () => {
+      currentSongRenderState = readSongEditorRenderState();
+      if (currentWorkspaceSong && document.getElementById("songEditorDrawer")?.hidden === false) {
+        const section =
+          enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
+          currentWorkspaceSong.sections?.[0];
+        if (section) renderSongSectionPreview(section);
+      }
+    });
+  }
+  
+  document.getElementById("songsSearchInput")?.addEventListener("input", (e) => {
+    void refreshSongsBrowser(e.target.value).catch(console.error);
+  });
+
   const slidesButton = document.getElementById("openSlidesWorkspaceBtn");
   if (slidesButton) {
     slidesButton.disabled = !ENABLE_SLIDES_WORKSPACE;
@@ -7089,36 +8664,47 @@ function buildProjectQueueItemSnapshot(item) {
   const bibleEntry = isQueueItemBible(item)
     ? projectBibleReferenceEntryForQueueItem(item)
     : null;
+  const songEntry = isQueueItemSong(item) ? item : null;
   const itemPath = bibleEntry
     ? bibleQueuePath(bibleEntry.reference, bibleEntry.version)
-    : item.path;
-  const itemName = bibleEntry ? projectBibleQueueName(bibleEntry) : item.name;
+    : songEntry
+      ? songQueuePath(songEntry.songSnapshot?.id || parseSongQueuePath(songEntry.path) || songEntry.source?.songId || "song")
+      : item.path;
+  const itemName = bibleEntry
+    ? projectBibleQueueName(bibleEntry)
+    : songEntry
+      ? songEntry.name || songEntry.songSnapshot?.title || "Song"
+      : item.name;
   return {
     path: itemPath,
     name: itemName,
-    type: bibleEntry ? "bible" : item.type,
-    missing: bibleEntry ? false : item.missing === true,
+    type: bibleEntry ? "bible" : songEntry ? "song" : item.type,
+    missing: bibleEntry || songEntry ? false : item.missing === true,
     originalPath:
-      typeof item.originalPath === "string" && item.originalPath.length > 0 && !bibleEntry
+      typeof item.originalPath === "string" && item.originalPath.length > 0 && !bibleEntry && !songEntry
         ? item.originalPath
         : itemPath,
     originalName:
-      typeof item.originalName === "string" && item.originalName.length > 0 && !bibleEntry
+      typeof item.originalName === "string" && item.originalName.length > 0 && !bibleEntry && !songEntry
         ? item.originalName
         : itemName || queueBasename(itemPath),
     ...queueItemFingerprintSnapshotFields(item, bibleEntry),
-    sizeBytes: Number.isFinite(item.sizeBytes) && !bibleEntry ? item.sizeBytes : undefined,
+    sizeBytes: Number.isFinite(item.sizeBytes) && !bibleEntry && !songEntry ? item.sizeBytes : undefined,
     modifiedTime:
-      typeof item.modifiedTime === "string" && !bibleEntry ? item.modifiedTime : undefined,
-    liveSource: !bibleEntry ? liveSourceSnapshotFields(item.liveSource) : undefined,
+      typeof item.modifiedTime === "string" && !bibleEntry && !songEntry ? item.modifiedTime : undefined,
+    liveSource: !bibleEntry && !songEntry ? liveSourceSnapshotFields(item.liveSource) : undefined,
     autoAdvance: item.autoAdvance !== false,
-    cueStartTime: bibleEntry ? 0 : queueItemCueStartTime(item),
+    cueStartTime: bibleEntry || songEntry ? 0 : queueItemCueStartTime(item),
     cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
-    loop: bibleEntry ? false : loopEnabledForQueueItem(item),
-    pptxSlideIndex: Number.isFinite(item.pptxSlideIndex) && !bibleEntry
+    loop: bibleEntry || songEntry ? false : loopEnabledForQueueItem(item),
+    pptxSlideIndex: Number.isFinite(item.pptxSlideIndex) && !bibleEntry && !songEntry
       ? item.pptxSlideIndex
       : undefined,
     bible: bibleEntry || undefined,
+    source: songEntry?.source,
+    songSnapshot: songEntry?.songSnapshot,
+    sequence: songEntry?.sequence,
+    render: songEntry?.render,
   };
 }
 
@@ -7239,6 +8825,10 @@ function applyProjectStateSnapshot(state, opts = {}) {
         x.type === "bible" ||
         isBiblePath(rawPath) ||
         (x.bible && typeof x.bible === "object");
+      const isSongItem =
+        x.type === "song" ||
+        isSongPath(rawPath) ||
+        (x.songSnapshot && typeof x.songSnapshot === "object");
       const bibleEntry = isBibleItem
         ? projectBibleReferenceOnlyEntry(x.bible || {}, {
             pathEntry: parseBibleQueuePath(rawPath),
@@ -7246,31 +8836,39 @@ function applyProjectStateSnapshot(state, opts = {}) {
         : null;
       const itemPath = bibleEntry
         ? bibleQueuePath(bibleEntry.reference, bibleEntry.version)
-        : rawPath;
+        : isSongItem
+          ? songQueuePath(
+              x.songSnapshot?.id || parseSongQueuePath(rawPath) || x.source?.songId || "song",
+            )
+          : rawPath;
       if (!itemPath) return null;
       const itemName = bibleEntry
         ? projectBibleQueueName(bibleEntry)
-        : typeof x.name === "string" && x.name.length > 0
-          ? x.name
-          : queueBasename(itemPath);
+        : isSongItem
+          ? typeof x.name === "string" && x.name.length > 0
+            ? x.name
+            : x.songSnapshot?.title || "Song"
+          : typeof x.name === "string" && x.name.length > 0
+            ? x.name
+            : queueBasename(itemPath);
       const item = {
         path: itemPath,
         name: itemName,
-        type: bibleEntry ? "bible" : classifyQueueMediaType(itemPath),
-        missing: bibleEntry ? false : x.missing === true,
+        type: bibleEntry ? "bible" : isSongItem ? "song" : classifyQueueMediaType(itemPath),
+        missing: bibleEntry || isSongItem ? false : x.missing === true,
         originalPath:
-          typeof x.originalPath === "string" && x.originalPath.length > 0 && !bibleEntry
+          typeof x.originalPath === "string" && x.originalPath.length > 0 && !bibleEntry && !isSongItem
             ? x.originalPath
             : itemPath,
         originalName:
-          typeof x.originalName === "string" && x.originalName.length > 0 && !bibleEntry
+          typeof x.originalName === "string" && x.originalName.length > 0 && !bibleEntry && !isSongItem
             ? x.originalName
             : itemName || queueBasename(itemPath),
         ...queueItemFingerprintSnapshotFields(x, bibleEntry),
-        sizeBytes: Number.isFinite(x.sizeBytes) && !bibleEntry ? x.sizeBytes : undefined,
+        sizeBytes: Number.isFinite(x.sizeBytes) && !bibleEntry && !isSongItem ? x.sizeBytes : undefined,
         modifiedTime:
-          typeof x.modifiedTime === "string" && !bibleEntry ? x.modifiedTime : undefined,
-        liveSource: !bibleEntry
+          typeof x.modifiedTime === "string" && !bibleEntry && !isSongItem ? x.modifiedTime : undefined,
+        liveSource: !bibleEntry && !isSongItem
           ? normalizeLiveSource(itemPath, x.liveSource, {
               type: classifyQueueMediaType(itemPath),
               originalPath:
@@ -7281,11 +8879,15 @@ function applyProjectStateSnapshot(state, opts = {}) {
             })
           : undefined,
         autoAdvance: x.autoAdvance !== false,
-        cueStartTime: bibleEntry ? 0 : Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
+        cueStartTime: bibleEntry || isSongItem ? 0 : Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
         cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
-        loop: bibleEntry ? false : x.loop === true && mediaPathSupportsLoop(itemPath),
-        pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) && !bibleEntry ? x.pptxSlideIndex : -1,
+        loop: bibleEntry || isSongItem ? false : x.loop === true && mediaPathSupportsLoop(itemPath),
+        pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) && !bibleEntry && !isSongItem ? x.pptxSlideIndex : -1,
         bible: bibleEntry || undefined,
+        source: isSongItem && x.source ? x.source : undefined,
+        songSnapshot: isSongItem && x.songSnapshot ? x.songSnapshot : undefined,
+        sequence: isSongItem && x.sequence ? x.sequence : undefined,
+        render: isSongItem && x.render ? x.render : undefined,
       };
       item.cueStartTime = queueItemCueStartTime(item);
       return item;
@@ -7468,9 +9070,17 @@ function acknowledgePreflightWarningForItem(item) {
 async function refreshMissingFlagsAndWarn(opts = {}) {
   const warn = opts?.warn !== false;
   if (!Array.isArray(mediaQueue) || mediaQueue.length === 0) return;
+  for (const item of mediaQueue) {
+    if (!isQueueItemSong(item)) continue;
+    item.missing = false;
+    item.changedSinceSave = false;
+    if (item.pendingMediaUpdate) {
+      delete item.pendingMediaUpdate;
+    }
+  }
   const fileItems = mediaQueue
     .map((item, index) => ({ item, index }))
-    .filter(({ item }) => !isQueueItemBible(item));
+    .filter(({ item }) => !isQueueItemBible(item) && !isQueueItemSong(item));
   if (fileItems.length === 0) return;
   const preflightItems = fileItems.map(({ item }) => queueItemPreflightCheckPayload(item));
   let results = [];
@@ -8396,6 +10006,7 @@ function installMediaQueueListDelegation() {
 
   list.addEventListener("dragend", (e) => {
     queueDragFromIndex = -1;
+    hideQueueDropIndicator();
     list.querySelectorAll(".queue-item-dragging").forEach((el) => {
       el.classList.remove("queue-item-dragging");
     });
@@ -8406,6 +10017,16 @@ function installMediaQueueListDelegation() {
 
   list.addEventListener("dragover", (e) => {
     const hasInternalQueueDrag = queueDragFromIndex >= 0;
+    const hasSongDrag = Boolean(songDragSongId);
+    if (hasSongDrag && !hasInternalQueueDrag) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
+        el.classList.remove("queue-item-drag-over");
+      });
+      updateQueueDropIndicator(list, queueDropInsertIndexFromEvent(list, e));
+      return;
+    }
     if (
       !hasInternalQueueDrag &&
       e.dataTransfer?.types &&
@@ -8426,6 +10047,9 @@ function installMediaQueueListDelegation() {
   });
 
   list.addEventListener("dragleave", (e) => {
+    if (songDragSongId && e.target === list) {
+      hideQueueDropIndicator();
+    }
     const row = e.target.closest(".queue-item[data-queue-index]");
     if (
       row &&
@@ -8440,6 +10064,30 @@ function installMediaQueueListDelegation() {
 
   list.addEventListener("drop", async (e) => {
     const hasInternalQueueDrag = queueDragFromIndex >= 0;
+    const droppedSongId = songDragSongId;
+    if (droppedSongId && !hasInternalQueueDrag) {
+      e.preventDefault();
+      e.stopPropagation();
+      hideQueueDropIndicator();
+      clearSongDragVisualState();
+      const insertIndex = queueDropInsertIndexFromEvent(list, e);
+      try {
+        const song = await songsAPI.get(droppedSongId);
+        const entry = queueEntryFromSong({
+          song,
+          render: renderStateForLibrarySong(song),
+        });
+        invalidateQueueUndoToastAfterMutation();
+        insertQueueEntriesAt([entry], insertIndex);
+        renderQueue();
+        saveMediaFile();
+        showGnomeToast(`Scheduled ${entry.name}`);
+      } catch (err) {
+        console.error("Failed to schedule dropped song:", err);
+        showGnomeToast("Failed to schedule song");
+      }
+      return;
+    }
     if (hasInternalQueueDrag) {
       const row = e.target.closest(".queue-item[data-queue-index]");
       if (!row || !list.contains(row)) return;
@@ -8565,6 +10213,9 @@ async function restorePreviewToLiveOutput(index) {
   if (!isQueueItemBible(item)) {
     hideBibleWorkspace();
   }
+  if (!isQueueItemSong(item)) {
+    hideSongsWorkspace();
+  }
   if (isQueueItemPptx(item)) {
     const liveSlide = await getLivePptxSlideFromMediaWindow(item.path);
     if (!isCurrentPreviewLoad(token)) return;
@@ -8615,7 +10266,30 @@ async function restorePreviewToLiveOutput(index) {
     syncMediaLoopState({ notify: false });
     updatePreviewCueUI();
     renderQueue();
-    syncPlayPauseIconToControlMedia();
+    return;
+  } else if (isQueueItemSong(item)) {
+    if (!isCurrentPreviewLoad(token)) return;
+    mediaFile = item.path;
+    mediaPlayerInputState.filePaths = [item.path];
+    updateQueueFileLabel(item.name);
+    commitActiveCueVolume();
+    previewCueIndex = -1;
+    pendingCueVolume = null;
+    cueVolumeDirty = false;
+    syncGtkSliderToCueState();
+    stopPreviewAudioCue();
+    clearVideoPreviewCueOverlay();
+    setMediaCountdownOverlayVisible(false);
+    setMediaCountdownText("");
+    
+    await loadSongItemIntoWorkspace(item, token);
+    
+    if (!isCurrentPreviewLoad(token)) return;
+    showSongsWorkspace();
+    document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+    syncMediaLoopState({ notify: false });
+    updatePreviewCueUI();
+    renderQueue();
     return;
   } else {
     restoreNonPptxPreviewSurface({ isImage: isQueueItemImage(item) });
@@ -8818,6 +10492,11 @@ async function loadQueueItemIntoPreviewCue(index) {
   if (bibleWorkspaceVisible && !isQueueItemBible(item)) {
     hideBibleWorkspace();
   }
+  const songsWorkspaceVisible =
+    document.getElementById("songsWorkspace")?.hidden === false;
+  if (songsWorkspaceVisible && !isQueueItemSong(item)) {
+    hideSongsWorkspace();
+  }
 
   if (isLocalAppWindowPresentationActive() && isQueueItemAudio(item)) {
     restoreNonPptxPreviewSurface();
@@ -8856,6 +10535,19 @@ async function loadQueueItemIntoPreviewCue(index) {
       previewLoadToken: token,
     });
     if (!loaded || !isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+    showBibleWorkspace();
+    document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+  } else if (isQueueItemSong(item)) {
+    hidePptxPreviewIfNeeded();
+    stopPreviewAudioCue();
+    clearVideoPreviewCueOverlay();
+    setMediaCountdownOverlayVisible(false);
+    setMediaCountdownText("");
+    
+    await loadSongItemIntoWorkspace(item, token);
+    
+    if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+    showSongsWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemImage(item)) {
     if (!isBiblePresentationActive()) {
@@ -9022,9 +10714,11 @@ function shouldConfirmLiveSwitch(targetItem) {
     currentLiveQueueItemForSwitchPrompt();
   if (!liveItem || !targetItem) return presentationActive;
 
-  // Scripture-to-scripture changes behave like advancing between slides in
-  // the same presentation: update in place without an extra confirmation.
+  // Scripture-to-scripture and song-to-song changes update in place without confirmation.
   if (isQueueItemBible(liveItem) && isQueueItemBible(targetItem)) {
+    return false;
+  }
+  if (isQueueItemSong(liveItem) && isQueueItemSong(targetItem)) {
     return false;
   }
 
@@ -9086,6 +10780,9 @@ async function onQueueItemActivate(index) {
 
   if (!isActiveMediaWindow() && !isLocalPresentation) {
     const activateIndex = index;
+    const item = mediaQueue[activateIndex];
+    if (!isQueueItemBible(item)) hideBibleWorkspace();
+    if (!isQueueItemSong(item)) hideSongsWorkspace();
     if (previewCueIndex >= 0) {
       clearPreviewCue();
     }
@@ -9345,7 +11042,25 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
     return;
   }
+  if (isQueueItemSong(item)) {
+    hidePptxPreviewIfNeeded();
+    restoreNonPptxPreviewSurface({ isImage: false });
+    if (localVideo) {
+      try {
+        localVideo.pause();
+        localVideo.removeAttribute("src");
+        localVideo.load();
+      } catch {}
+    }
+    audioOnlyFile = false;
+    playingMediaAudioOnly = false;
+    await loadSongItemIntoWorkspace(item, loadToken);
+    showSongsWorkspace();
+    document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+    return;
+  }
   hideBiblePreview();
+  hideSongsWorkspace();
   const resolvedItemPath = await resolveQueueItemMediaPath(item);
   activePreviewResolvedMediaFile = resolvedItemPath;
   const cacheBust = queueItemMediaCacheBust(item);
@@ -9472,6 +11187,20 @@ async function playCurrentQueueItem(opts) {
     return;
   }
 
+  if (isQueueItemSong(item)) {
+    const audienceStarted = hasAudienceOutputSelected()
+      ? await createMediaWindow({ textItem: item, songItem: true })
+      : false;
+    if (!audienceStarted) {
+      showGnomeToast("Choose an audience output display");
+      isPlaying = false;
+      isQueuePlaying = false;
+      updateDynUI();
+      renderQueue();
+    }
+    return;
+  }
+
   if (!audioOnlyFile && !hasAudienceOutputSelected()) {
     showGnomeToast("Choose an audience output display");
     isPlaying = false;
@@ -9583,7 +11312,12 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     isQueueItemBible(nextItem) &&
     activeMediaWindowContentType === "bible" &&
     isActiveMediaWindow();
-  if (!isQueuePlaying && !allowBibleInPlaceSwitch) return false;
+  const allowSongInPlaceSwitch =
+    Boolean(nextItem) &&
+    isQueueItemSong(nextItem) &&
+    activeMediaWindowContentType === "song" &&
+    isActiveMediaWindow();
+  if (!isQueuePlaying && !allowBibleInPlaceSwitch && !allowSongInPlaceSwitch) return false;
   if (!isActiveMediaWindow()) return false;
   if (index < 0 || index >= mediaQueue.length) return false;
   // Live streams are not slipstreamed. Fall back to the normal close/reopen
@@ -9603,7 +11337,8 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     const isImgFile = isImg(nextItem.path);
     const isPptxFile = isQueueItemPptx(nextItem);
     const isBibleItem = isQueueItemBible(nextItem);
-    const resolvedNextPath = isBibleItem
+    const isSongItem = isQueueItemSong(nextItem);
+    const resolvedNextPath = isBibleItem || isSongItem
       ? nextItem.path
       : await resolveQueueItemMediaPath(nextItem);
 
@@ -9623,7 +11358,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     resolveQueuePresentationVideo();
 
     // Audio must play in the local preview — destroy the media window as usual.
-    if (!isImgFile && !isPptxFile && !isBibleItem && (nextType === "audio" || audioOnlyFile)) {
+    if (!isImgFile && !isPptxFile && !isBibleItem && !isSongItem && (nextType === "audio" || audioOnlyFile)) {
       pendingQueueSwitchIndex = index;
       pendingQueueSwitchStartTime = requestedStart;
       mediaPlaybackEndedPending = false;
@@ -9640,7 +11375,13 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
             look: SCRIPTURE_LOOK_FULLSCREEN,
           }),
         }
-      : {
+      : isSongItem
+        ? {
+            isText: true,
+            mediaFile: nextItem.path,
+            textPayload: resolvedSongPresentation(nextItem)?.message || null,
+          }
+        : {
           mediaFile: resolvedNextPath,
           isImg: isImgFile,
           isPptx: isPptxFile,
@@ -9683,6 +11424,8 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       } else {
         await closeBibleLowerThirdOutput();
       }
+    } else if (isSongItem) {
+      await sendSongTextToOutput(nextItem);
     }
     renderQueue();
     if (opts.clearCue !== false) {
@@ -10811,7 +12554,12 @@ async function handlePlaybackState(event, playbackState) {
   if (!video) {
     return;
   }
-  if (activeMediaWindowContentType === "bible" || isBiblePath(mediaFile)) {
+  if (
+    activeMediaWindowContentType === "bible" ||
+    activeMediaWindowContentType === "song" ||
+    isBiblePath(mediaFile) ||
+    isSongPath(mediaFile)
+  ) {
     return;
   }
   // The main #preview is the live mirror at all times — including while a
@@ -12008,7 +13756,7 @@ function getConfidenceMonitorElement() {
 }
 
 function isNetworkStreamSource(source) {
-  if (source === undefined || source === null || isBiblePath(source)) {
+  if (source === undefined || source === null || isBiblePath(source) || isSongPath(source)) {
     return false;
   }
   const text = String(source).trim();
@@ -13499,7 +15247,12 @@ async function loadOpMode(mode) {
 }
 
 function isLiveStream(mediaFile) {
-  if (mediaFile === undefined || mediaFile === null || isBiblePath(mediaFile)) {
+  if (
+    mediaFile === undefined ||
+    mediaFile === null ||
+    isBiblePath(mediaFile) ||
+    isSongPath(mediaFile)
+  ) {
     return false;
   }
   return /(?:m3u8|mpd|youtube\.com|videoplayback|youtu\.be)/i.test(mediaFile);
@@ -13678,7 +15431,10 @@ async function createMediaWindow(options) {
       : mediaPlayerInputState.filePaths[0];
   let projectionMediaFile = mediaFile;
   if (!textItem && isQueuePlaybackContext) {
-    projectionMediaFile = await resolveQueueItemMediaPath(mediaQueue[currentQueueIndex]);
+    const queueItem = mediaQueue[currentQueueIndex];
+    if (!isQueueItemBible(queueItem) && !isQueueItemSong(queueItem)) {
+      projectionMediaFile = await resolveQueueItemMediaPath(queueItem);
+    }
   }
   var liveStreamMode = textItem ? false : isLiveStream(mediaFile);
   const displaySelectEl =
@@ -13704,7 +15460,12 @@ async function createMediaWindow(options) {
     }
   }
 
-  const isTextItem = Boolean(textItem || (isQueuePlaybackContext && isQueueItemBible(mediaQueue[currentQueueIndex])));
+  const isTextItem = Boolean(
+    textItem ||
+      (isQueuePlaybackContext &&
+        (isQueueItemBible(mediaQueue[currentQueueIndex]) ||
+          isQueueItemSong(mediaQueue[currentQueueIndex]))),
+  );
   const isImgFile = !isTextItem && isImg(mediaFile);
   const isPptxFile = !isTextItem && pptxRegex.test(mediaFile);
   const pptxStartSlide = isPptxFile
@@ -13800,20 +15561,25 @@ async function createMediaWindow(options) {
     throw err;
   }
   activeMediaWindowContentType = isTextItem
-    ? "bible"
+    ? options?.songItem || isQueueItemSong(textItem) || isQueueItemSong(mediaQueue[currentQueueIndex])
+      ? "song"
+      : "bible"
     : isPptxFile
       ? "pptx"
       : isImgFile
         ? "image"
         : "video";
-  bibleShowNowModeActive = Boolean(isTextItem && transientText);
+  bibleShowNowModeActive = Boolean(isTextItem && transientText && activeMediaWindowContentType === "bible");
   if (isTextItem) {
     window.setTimeout(() => {
       void (async () => {
-      const entry = textItem
-        ? await resolvedBibleEntryForItem(textItem)
-        : await resolvedBibleEntryForItem(mediaQueue[currentQueueIndex]);
-      await sendBibleTextToOutput(entry);
+        const queueItem = textItem || mediaQueue[currentQueueIndex];
+        if (isQueueItemSong(queueItem)) {
+          await sendSongTextToOutput(queueItem);
+        } else {
+          const entry = await resolvedBibleEntryForItem(queueItem);
+          await sendBibleTextToOutput(entry);
+        }
       })().catch(console.error);
     }, 150);
     syncStreamRendererPreviewCapture();

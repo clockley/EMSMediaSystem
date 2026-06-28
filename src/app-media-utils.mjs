@@ -23,8 +23,19 @@ export function isBiblePath(filePath) {
   return typeof filePath === "string" && filePath.startsWith(bibleUriPrefix);
 }
 
+export const songUriPrefix = "song://";
+
+export function isSongPath(filePath) {
+  return typeof filePath === "string" && filePath.startsWith(songUriPrefix);
+}
+
 export function isNonVideoPresentationPath(filePath, isImagePath) {
-  return isBiblePath(filePath) || pptxRegex.test(filePath || "") || isImagePath(filePath);
+  return (
+    isBiblePath(filePath) ||
+    isSongPath(filePath) ||
+    pptxRegex.test(filePath || "") ||
+    isImagePath(filePath)
+  );
 }
 
 export function isPlayInterruptedError(error) {
@@ -38,7 +49,7 @@ export function isPlayInterruptedError(error) {
 
 export function pathToMediaUrl(filePath, cacheBust) {
   if (!filePath || typeof filePath !== "string") return "";
-  if (isBiblePath(filePath)) return "";
+  if (isBiblePath(filePath) || isSongPath(filePath)) return "";
   if (/^(file|https?|blob):/i.test(filePath)) return filePath;
 
   const normalized = filePath.replace(/\\/g, "/");
@@ -72,6 +83,7 @@ export function clampQueueStartTime(time, duration) {
 
 export function classifyQueueMediaType(filePath) {
   if (typeof filePath === "string" && filePath.startsWith(bibleUriPrefix)) return "bible";
+  if (typeof filePath === "string" && filePath.startsWith(songUriPrefix)) return "song";
   if (imageRegex.test(filePath)) return "image";
   if (pptxRegex.test(filePath)) return "pptx";
   if (/\.(mp4|m4v|mov|mkv|webm|avi|wmv)$/i.test(filePath)) return "video";
@@ -96,6 +108,7 @@ export function isFileBackedMediaPath(filePath) {
     typeof filePath === "string" &&
     filePath.length > 0 &&
     !isBiblePath(filePath) &&
+    !isSongPath(filePath) &&
     !isRemoteMediaPath(filePath)
   );
 }

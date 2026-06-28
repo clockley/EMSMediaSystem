@@ -48,6 +48,7 @@ import {
   storedFileHashFromRecord,
 } from "./media-file-hash.min.mjs";
 import { BibleRpcClient } from "./bible_rpc_client.min.mjs";
+import { SongsRpcClient } from "./songs_rpc_client.min.mjs";
 import settings from "./settings.min.mjs";
 import {
   loadEmprojSnapshot,
@@ -85,6 +86,10 @@ let allowMainWindowClose = false;
 const TIME_REMAINING_PORT_CHANNEL = "timeRemaining-port";
 let pendingProjectOpenPath = null;
 const bibleRpcClient = new BibleRpcClient({
+  app,
+  devRoot: path.dirname(import.meta.dirname),
+});
+const songsRpcClient = new SongsRpcClient({
   app,
   devRoot: path.dirname(import.meta.dirname),
 });
@@ -1837,6 +1842,33 @@ async function handleShowMediaFilesDialog(event) {
   return { canceled: false, filePaths: result.filePaths };
 }
 
+async function handleShowImportSongDialog(event) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, filePaths: [] };
+  }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Import Songs",
+    defaultPath: await getInitialMediaFolder(),
+    properties: ["openFile", "multiSelections"],
+    filters: [
+      { name: "JSON Songs", extensions: ["json"] },
+    ],
+  });
+  if (result.canceled || !result.filePaths?.length) {
+    return { canceled: true, filePaths: [] };
+  }
+  await rememberMediaFolder(result.filePaths[0]);
+  return { canceled: false, filePaths: result.filePaths };
+}
+
+async function handleReadFileAsText(_, filePath) {
+  if (typeof filePath !== "string" || filePath.length === 0) {
+    throw new Error("File path is required");
+  }
+  return readFile(filePath, "utf8");
+}
+
 async function handleShowOpenProjectDialog(event) {
   const mainWindow = BrowserWindow.fromWebContents(event.sender);
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -2986,7 +3018,7 @@ async function pinMediaSource(payload = {}) {
       : typeof payload?.originalPath === "string"
         ? payload.originalPath
         : "";
-  if (!rawPath || isRemoteMediaPath(rawPath)) {
+  if (!rawPath || isRemoteMediaPath(rawPath) || isVirtualMediaPath(rawPath)) {
     return null;
   }
   const sourcePath = localFileSystemPathFromMediaPath(rawPath);
@@ -3166,7 +3198,7 @@ async function resolveStagedMediaPath(payload = {}) {
   const projectPath =
     typeof payload?.projectPath === "string" ? payload.projectPath : activeProjectPath;
   const projectGuid = normalizeProjectGuid(payload?.projectGuid) || activeProjectGuid;
-  if (!rawPath || isRemoteMediaPath(rawPath)) return rawPath;
+  if (!rawPath || isRemoteMediaPath(rawPath) || isVirtualMediaPath(rawPath)) return rawPath;
   const sourcePath = localFileSystemPathFromMediaPath(rawPath);
   if (
     liveSource.mode === "linked" &&
@@ -3314,8 +3346,12 @@ function isRemoteMediaPath(p) {
   return typeof p === "string" && /^(https?|m3u8|mpd|blob):/i.test(p);
 }
 
+function isVirtualMediaPath(p) {
+  return typeof p === "string" && /^(bible|song):\/\//i.test(p);
+}
+
 async function computeMediaBaseline(p) {
-  if (isRemoteMediaPath(p)) return null;
+  if (isRemoteMediaPath(p) || isVirtualMediaPath(p)) return null;
   let fsPath;
   let info;
   try {
@@ -3943,6 +3979,15 @@ async function handleBibleRPC(_event, method, params = []) {
   }
   return bibleRpcClient.call(method, params);
 }
+async function handleSongsRPC(_event, method, params = []) {
+  if (typeof method !== "string" || !method.startsWith("songs.")) {
+    throw new Error("Invalid Songs RPC method");
+  }
+  if (!Array.isArray(params)) {
+    throw new Error("Invalid Songs RPC params");
+  }
+  return songsRpcClient.call(method, params);
+}
 
 function setIPC() {
   ipcMain.handle("get-system-time", getSystemTIme);
@@ -3952,6 +3997,9 @@ function setIPC() {
   ipcMain.handle("get-setting", getSetting);
   ipcMain.handle("get-all-displays", handleGetAllDisplays);
   ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
+  ipcMain.handle("show-import-song-dialog", handleShowImportSongDialog);
+  ipcMain.handle("get-songs-database-path", () => songsRpcClient.databasePath());
+  ipcMain.handle("read-file-as-text", handleReadFileAsText);
   ipcMain.handle("show-open-project-dialog", handleShowOpenProjectDialog);
   ipcMain.handle("show-save-project-dialog", handleShowSaveProjectDialog);
   ipcMain.handle("show-export-project-dialog", handleShowExportProjectDialog);
@@ -3983,6 +4031,7 @@ function setIPC() {
   ipcMain.handle("open-slide-editor-dialog", handleOpenSlideEditorDialog);
   ipcMain.handle("create-slide-document", handleCreateSlideDocument);
   ipcMain.handle("bible-rpc", handleBibleRPC);
+  ipcMain.handle("songs-rpc", handleSongsRPC);
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);
