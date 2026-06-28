@@ -6899,6 +6899,19 @@ function formatSongListNumber(song) {
   return Number.isFinite(song.songNumber) && song.songNumber > 0 ? `#${song.songNumber}` : "";
 }
 
+function songListExcerpt(song) {
+  const sections = Array.isArray(song?.sections) ? song.sections : [];
+  for (const section of sections) {
+    const lines = Array.isArray(section?.lines) ? section.lines : [];
+    for (const line of lines) {
+      if (line.kind === "spacer") continue;
+      const text = (line.text || "").trim();
+      if (text.length > 0) return text.length > 60 ? text.slice(0, 57) + "…" : text;
+    }
+  }
+  return "";
+}
+
 function syncSongsBulkMoveFolderOptions() {
   const select = document.getElementById("songsBulkMoveFolder");
   if (!select) return;
@@ -7806,8 +7819,9 @@ async function loadFullLibrarySong(songSummary) {
   return songsAPI.get(songSummary.id);
 }
 
-async function activateSongFromLibrary(songSummary, { openEditor = true } = {}) {
+async function activateSongFromLibrary(songSummary, { openEditor = false } = {}) {
   try {
+    currentSongQueueItem = null;
     const fullSong = await loadFullLibrarySong(songSummary);
     currentSongRenderState = renderStateForLibrarySong(fullSong);
     await loadSongIntoWorkspace(fullSong);
@@ -8039,15 +8053,28 @@ async function refreshSongsBrowser(query = "", prefetchedResults = null) {
 
       const label = document.createElement("div");
       label.className = "songs-list-item__label";
-      label.textContent = formatSongListLabel(song);
-      label.title = `${formatSongListNumber(song) ? `${formatSongListNumber(song)} ` : ""}${label.textContent}`;
+
+      const titleSpan = document.createElement("span");
+      titleSpan.className = "songs-list-item__title";
+      titleSpan.textContent = formatSongListLabel(song);
+      label.appendChild(titleSpan);
+
+      const firstLyric = songListExcerpt(song);
+      if (firstLyric) {
+        const subtitleSpan = document.createElement("span");
+        subtitleSpan.className = "songs-list-item__subtitle";
+        subtitleSpan.textContent = firstLyric;
+        label.appendChild(subtitleSpan);
+      }
+
+      label.title = `${formatSongListNumber(song) ? `${formatSongListNumber(song)} ` : ""}${titleSpan.textContent}`;
       label.addEventListener("click", async (event) => {
         if (event.shiftKey || event.ctrlKey || event.metaKey) {
           checkbox.checked = !checkbox.checked;
           setSongRowSelected(row, song.id, checkbox.checked);
           return;
         }
-        await activateSongFromLibrary(song, { openEditor: true });
+        await activateSongFromLibrary(song);
       });
 
       const deleteBtn = document.createElement("button");
@@ -8081,7 +8108,7 @@ async function refreshSongsBrowser(query = "", prefetchedResults = null) {
       });
 
       row.addEventListener("dragstart", (event) => {
-        if (!event.target.closest(".songs-list-item__drag-handle")) {
+        if (event.target.closest(".songs-list-item__checkbox, .songs-list-item__delete")) {
           event.preventDefault();
           return;
         }
@@ -8349,6 +8376,19 @@ function installBibleMediaControls() {
   
   document.getElementById("songsSearchInput")?.addEventListener("input", (e) => {
     void refreshSongsBrowser(e.target.value).catch(console.error);
+    const clearBtn = document.getElementById("songsSearchClearBtn");
+    if (clearBtn) clearBtn.hidden = !e.target.value;
+  });
+
+  document.getElementById("songsSearchClearBtn")?.addEventListener("click", () => {
+    const searchInput = document.getElementById("songsSearchInput");
+    if (searchInput) {
+      searchInput.value = "";
+      searchInput.focus();
+    }
+    const clearBtn = document.getElementById("songsSearchClearBtn");
+    if (clearBtn) clearBtn.hidden = true;
+    void refreshSongsBrowser("").catch(console.error);
   });
 
   const slidesButton = document.getElementById("openSlidesWorkspaceBtn");
