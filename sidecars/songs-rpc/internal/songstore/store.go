@@ -84,6 +84,15 @@ type SearchOptions struct {
 	Unfiled  bool
 }
 
+const searchQueryResultLimit = 1000
+
+func sqlLimitClause(limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" LIMIT %d", limit)
+}
+
 func InitStore(dbPath string) (*SongStore, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, fmt.Errorf("failed to create db directory: %w", err)
@@ -294,6 +303,13 @@ func (s *SongStore) SaveSong(song Song, originalImportJSON string) error {
 	}
 	defer tx.Rollback()
 
+	if err := s.saveSongTx(tx, song, originalImportJSON); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SongStore) saveSongTx(tx *sql.Tx, song Song, originalImportJSON string) error {
 	songJSON, err := json.Marshal(song)
 	if err != nil {
 		return err
@@ -352,7 +368,7 @@ func (s *SongStore) SaveSong(song Song, originalImportJSON string) error {
 		VALUES (?, ?, ?, ?)
 	`, song.ID, song.Title, authorStr, allLyrics)
 
-	return tx.Commit()
+	return nil
 }
 
 func (s *SongStore) GetSong(id string) (*Song, error) {
@@ -484,9 +500,8 @@ func (s *SongStore) Search(opts SearchOptions) ([]SearchResult, error) {
 		rows, err := s.db.Query(`
 			SELECT id, title, author, folder_id, song_number
 			FROM songs
-			WHERE folder_id IS NULL` + orderBy + `
-			LIMIT 500
-		`)
+			WHERE folder_id IS NULL` + orderBy,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -497,16 +512,15 @@ func (s *SongStore) Search(opts SearchOptions) ([]SearchResult, error) {
 		rows, err := s.db.Query(`
 			SELECT id, title, author, folder_id, song_number
 			FROM songs
-			WHERE folder_id = ?`+orderBy+`
-			LIMIT 500
-		`, nullableString(opts.FolderID))
+			WHERE folder_id = ?`+orderBy,
+			nullableString(opts.FolderID))
 		if err != nil {
 			return nil, err
 		}
 		return scanSearchResults(rows)
 	}
 
-	rows, err := s.db.Query(`SELECT id, title, author, folder_id, song_number FROM songs` + orderBy + ` LIMIT 500`)
+	rows, err := s.db.Query(`SELECT id, title, author, folder_id, song_number FROM songs` + orderBy)
 	if err != nil {
 		return nil, err
 	}
@@ -540,8 +554,7 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 				OR s.id IN (
 					SELECT song_id FROM song_fts WHERE song_fts MATCH ?
 				)
-			)` + folderSQL + orderBy + `
-			LIMIT 200
+			)` + folderSQL + orderBy + sqlLimitClause(searchQueryResultLimit) + `
 		`
 		args := append([]interface{}{number, ftsQuery}, folderArgs...)
 		rows, err := s.db.Query(sqlText, args...)
@@ -555,8 +568,7 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 		SELECT s.id, s.title, s.author, s.folder_id, s.song_number
 		FROM songs s
 		JOIN song_fts f ON s.id = f.song_id
-		WHERE song_fts MATCH ?` + folderSQL + orderBy + `
-		LIMIT 200
+		WHERE song_fts MATCH ?` + folderSQL + orderBy + sqlLimitClause(searchQueryResultLimit) + `
 	`
 	args := append([]interface{}{ftsQuery}, folderArgs...)
 	rows, err := s.db.Query(sqlText, args...)

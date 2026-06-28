@@ -107,7 +107,7 @@ endif
 # Go source that produces the sidecar binary (edition independent).
 BIBLE_RPC_GO_SOURCES = $(BIBLE_RPC_ROOT)/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
 MEDIA_WATCHER_GO_SOURCES = $(MEDIA_WATCHER_ROOT)/main.go $(MEDIA_WATCHER_ROOT)/go.mod $(MEDIA_WATCHER_ROOT)/go.sum
-SONGS_RPC_GO_SOURCES = $(SONGS_RPC_ROOT)/main.go $(SONGS_RPC_ROOT)/internal/songstore/store.go $(SONGS_RPC_ROOT)/go.mod $(SONGS_RPC_ROOT)/go.sum
+SONGS_RPC_GO_SOURCES = $(wildcard $(SONGS_RPC_ROOT)/*.go) $(wildcard $(SONGS_RPC_ROOT)/internal/songstore/*.go) $(wildcard $(SONGS_RPC_ROOT)/internal/songimport/*.go) $(SONGS_RPC_ROOT)/go.mod $(SONGS_RPC_ROOT)/go.sum
 # Go source for the DB optimizer the asset builder runs via `go run`.
 BIBLE_OPTIMIZE_GO_SOURCES = $(BIBLE_RPC_ROOT)/cmd/bible-db-optimize/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
 
