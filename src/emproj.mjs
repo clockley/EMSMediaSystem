@@ -30,6 +30,7 @@ const PROJECT_DOCUMENTS_SCHEMA = "ems.documents.v1";
 const PROJECT_DOCUMENTS_INDEX_PATH = "documents.json";
 const PROJECT_DOCUMENT_DIR_PREFIX = "documents/";
 const BIBLE_URI_PREFIX = "bible://";
+const SONG_URI_PREFIX = "song://";
 const IMAGE_EXT = new Set([".bmp", ".gif", ".jpg", ".jpeg", ".png", ".webp", ".svg", ".ico"]);
 const VIDEO_EXT = new Set([".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".wmv"]);
 const AUDIO_EXT = new Set([".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma"]);
@@ -187,6 +188,22 @@ function parseBibleArchivePath(filePath) {
     };
   } catch {
     return null;
+  }
+}
+
+function songArchivePath(songId) {
+  const safeId = typeof songId === "string" ? songId.trim() : "";
+  return `${SONG_URI_PREFIX}${encodeURIComponent(safeId)}`;
+}
+
+function parseSongArchivePath(filePath) {
+  if (typeof filePath !== "string" || !filePath.startsWith(SONG_URI_PREFIX)) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(filePath.slice(SONG_URI_PREFIX.length));
+  } catch {
+    return filePath.slice(SONG_URI_PREFIX.length);
   }
 }
 
@@ -889,6 +906,46 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
   };
 }
 
+function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths) {
+  const snapshot = item?.songSnapshot;
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const songId =
+    typeof snapshot.id === "string"
+      ? snapshot.id
+      : typeof item?.source?.songId === "string"
+        ? item.source.songId
+        : "";
+  if (!songId) return null;
+  const backgroundAsset =
+    typeof item?.render?.backgroundAssetId === "string"
+      ? assetById.get(item.render.backgroundAssetId) || null
+      : null;
+  const backgroundPath =
+    typeof backgroundAsset?.path === "string"
+      ? extractedMediaPaths.get(backgroundAsset.path) || backgroundAsset.path
+      : typeof item?.render?.backgroundPath === "string"
+        ? item.render.backgroundPath
+        : "";
+  return {
+    path: songArchivePath(songId),
+    name: item?.label || snapshot.title || "Song",
+    type: "song",
+    missing: false,
+    originalPath: undefined,
+    originalName: undefined,
+    autoAdvance: item?.playback?.autoAdvance !== false,
+    cueStartTime: 0,
+    cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
+    source: item?.source,
+    songSnapshot: snapshot,
+    sequence: item?.sequence,
+    render: {
+      ...(item?.render && typeof item.render === "object" ? item.render : {}),
+      backgroundPath,
+    },
+  };
+}
+
 export async function loadEmprojSnapshot(projectPath) {
   const extractRoot = await mkdtemp(path.join(os.tmpdir(), "ems-emproj-"));
   try {
@@ -1082,6 +1139,9 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
       if (!item || typeof item !== "object") return null;
       if (item.type === "scripture" || item.scripture) {
         return buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPaths);
+      }
+      if (item.type === "song" || item.songSnapshot) {
+        return buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths);
       }
       let relPath = "";
       if (typeof item?.source?.path === "string") relPath = item.source.path;
@@ -1372,6 +1432,56 @@ export async function saveEmprojSnapshot(
           path: scripturePath,
         },
         scripture: projectScripture,
+        playback: {
+          startTime: 0,
+          volume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
+          loop: false,
+          autoAdvance: item.autoAdvance !== false,
+        },
+        routing: {
+          main: true,
+          stage: false,
+          stream: true,
+          ndi: false,
+          alpha: "none",
+        },
+      });
+      continue;
+    }
+    if (
+      item.type === "song" ||
+      (typeof item.path === "string" && item.path.startsWith(SONG_URI_PREFIX)) ||
+      item.songSnapshot
+    ) {
+      itemCounter += 1;
+      const snapshot = item.songSnapshot && typeof item.songSnapshot === "object"
+        ? item.songSnapshot
+        : null;
+      const songId =
+        snapshot?.id ||
+        parseSongArchivePath(item.path) ||
+        item.source?.songId ||
+        makeId("song", itemCounter);
+      const render = item.render && typeof item.render === "object" ? { ...item.render } : {};
+      const backgroundAsset = await registerAssetForPath(render.backgroundPath, {
+        originalPath: render.backgroundPath,
+        originalName: basenameAny(render.backgroundPath || ""),
+      });
+      if (backgroundAsset?.assetId) {
+        render.backgroundAssetId = backgroundAsset.assetId;
+      }
+      queueSequence.push({
+        id: makeId("item", itemCounter),
+        label: item.name || snapshot?.title || "Song",
+        type: "song",
+        source: {
+          kind: item.source?.kind || "library",
+          songId,
+          path: songArchivePath(songId),
+        },
+        songSnapshot: snapshot,
+        sequence: item.sequence,
+        render,
         playback: {
           startTime: 0,
           volume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,

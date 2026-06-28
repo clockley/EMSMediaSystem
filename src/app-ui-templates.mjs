@@ -106,6 +106,10 @@ export function generateMediaFormHTML() {
       <button type="button" id="openBibleWorkspaceBtn" class="sidebar-bible-button">
         Bible
       </button>
+      
+      <button type="button" id="openSongsWorkspaceBtn" class="sidebar-songs-button">
+        Songs
+      </button>
 
       <!-- <button type="button" id="openSlidesWorkspaceBtn" class="sidebar-slides-button" disabled aria-disabled="true" title="Slides is temporarily disabled">
         Slides
@@ -180,6 +184,117 @@ export function generateMediaFormHTML() {
           browser's stock <video> chrome — stacked on top of each other.
         -->
         <video id="previewCue" class="preview-cue-overlay" disablePictureInPicture muted hidden></video>
+        
+        <div id="songsWorkspace" class="songs-workspace" hidden>
+          <aside class="songs-workspace__navigator" aria-label="Songs navigator">
+            <div class="songs-workspace__heading">Songs</div>
+            <div class="songs-workspace__actions">
+              <button type="button" id="newSongBtn" class="pill-button">New Song</button>
+              <button type="button" id="importSongBtn" class="pill-button">Import</button>
+            </div>
+            <div class="songs-search-field">
+              <input type="text" id="songsSearchInput" placeholder="Search title, lyrics, or #…" aria-label="Search songs">
+            </div>
+            <div id="songsBulkActions" class="songs-bulk-actions" hidden>
+              <span id="songsBulkCount" class="songs-bulk-actions__count">0 selected</span>
+              <select id="songsBulkMoveFolder" aria-label="Move selected songs to folder">
+                <option value="">Move to folder…</option>
+                <option value="__unfiled__">Unfiled</option>
+              </select>
+              <button type="button" id="songsBulkMoveBtn" class="pill-button">Move</button>
+              <button type="button" id="songsBulkScheduleBtn" class="pill-button">Schedule</button>
+              <button type="button" id="songsBulkDeleteBtn" class="pill-button">Delete</button>
+              <button type="button" id="songsBulkClearBtn" class="pill-button">Clear</button>
+            </div>
+            <div class="songs-folder-panel" aria-label="Song folders">
+              <div class="songs-folder-panel__header">
+                <span class="songs-folder-panel__title">Folders</span>
+                <button type="button" id="newSongFolderBtn" class="pill-button songs-folder-panel__new" title="New folder">+</button>
+              </div>
+              <div id="songsFolderList" class="songs-folder-list" role="listbox" aria-label="Song folders"></div>
+            </div>
+            <div id="songsList" class="songs-list" role="listbox">
+               <span class="list-placeholder-title">No songs found</span>
+            </div>
+            <div id="songFolderPrompt" class="song-folder-prompt" hidden>
+              <form id="songFolderPromptForm" class="song-folder-prompt__card">
+                <label class="song-folder-prompt__label" for="songFolderPromptInput">New folder</label>
+                <input type="text" id="songFolderPromptInput" class="song-folder-prompt__input" placeholder="Songbook or hymnal name" aria-label="Folder name" required>
+                <div class="song-folder-prompt__actions">
+                  <button type="button" id="songFolderPromptCancel" class="pill-button">Cancel</button>
+                  <button type="submit" class="pill-button primary-action">Create</button>
+                </div>
+              </form>
+            </div>
+          </aside>
+          <section class="songs-workspace__main" aria-label="Songs preview">
+             <div class="songs-workspace__toolbar">
+               <span id="songsWorkspaceTitle" class="songs-workspace__title">Select a Song</span>
+               <div class="songs-workspace__actions-end">
+                 <label class="songs-folder-move-field">
+                   <span class="visually-hidden">Move to folder</span>
+                   <select id="songsMoveFolderSelect" aria-label="Move song to folder" disabled>
+                     <option value="">Move to folder…</option>
+                   </select>
+                 </label>
+                 <button type="button" id="songsShowNowBtn" class="pill-button primary-action" disabled>Show Now</button>
+                 <button type="button" id="songsAddScheduleBtn" class="pill-button" disabled>Add to Schedule</button>
+                 <button type="button" id="songsEditBtn" class="pill-button" disabled>Edit</button>
+                 <button type="button" id="songsDeleteBtn" class="pill-button" disabled>Delete</button>
+               </div>
+             </div>
+             <div id="songArrangementStrip" class="song-arrangement-strip"></div>
+             <div class="songs-preview-container">
+               <div id="songsLauncher" class="songs-launcher">
+                 <button class="songs-launcher-item" id="launcherEditSongsBtn">
+                   <div class="songs-launcher-icon">
+                     <svg viewBox="0 0 48 48" width="72" height="72"><path fill="currentColor" d="M6 34.5V42h7.5l22.13-22.13-7.5-7.5L6 34.5zm35.41-20.41c.78-.78.78-2.05 0-2.83l-4.67-4.67a2.003 2.003 0 0 0-2.83 0l-3.66 3.66 7.5 7.5 3.66-3.66z"/></svg>
+                   </div>
+                   <div class="songs-launcher-label">Edit Songs</div>
+                 </button>
+                 <button class="songs-launcher-item" id="launcherSearchSongsBtn">
+                   <div class="songs-launcher-icon">
+                     <svg viewBox="0 0 48 48" width="72" height="72"><path fill="currentColor" d="M31 28h-1.59l-.55-.55C30.82 25.18 32 22.23 32 19c0-7.18-5.82-13-13-13S6 11.82 6 19s5.82 13 13 13c3.23 0 6.18-1.18 8.45-3.13l.55.55V31l10 9.98L40.98 38 31 28zm-12 0c-4.97 0-9-4.03-9-9s4.03-9 9-9 9 4.03 9 9-4.03 9-9 9z"/></svg>
+                   </div>
+                   <div class="songs-launcher-label">Search Songs</div>
+                 </button>
+               </div>
+               <div id="songsPreviewSlide" class="songs-preview-slide" hidden></div>
+             </div>
+             <div id="songEditorDrawer" class="song-editor-drawer" hidden>
+               <div class="song-editor-header">
+                 <div class="song-editor-fields song-editor-fields--primary">
+                <input type="text" id="songEditorTitle" placeholder="Song Title" aria-label="Song Title">
+                <input type="number" id="songEditorNumber" class="song-editor-number" min="1" placeholder="#" aria-label="Song number">
+                <input type="text" id="songEditorAuthor" placeholder="Author (e.g., John Newton)" aria-label="Author">
+                   <select id="songEditorFolder" aria-label="Song folder">
+                     <option value="">Unfiled</option>
+                   </select>
+                 </div>
+                 <div class="song-editor-fields song-editor-fields--meta">
+                   <input type="text" id="songEditorCopyright" placeholder="Copyright" aria-label="Copyright">
+                   <input type="text" id="songEditorCcli" placeholder="CCLI #" aria-label="CCLI Number">
+                 </div>
+                 <div class="song-editor-fields song-editor-fields--style">
+                   <label class="song-editor-color-field">Text <input type="color" id="songEditorTextColor" value="#ffffff" aria-label="Song text color"></label>
+                   <label class="song-editor-color-field">Background <input type="color" id="songEditorBackgroundColor" value="#000000" aria-label="Song background color"></label>
+                   <label class="song-editor-file-field">
+                     <span>Background Image</span>
+                     <input type="file" id="songEditorBackgroundInput" accept="image/*,video/mp4,video/webm,video/quicktime" aria-label="Song background image or video">
+                   </label>
+                   <button type="button" id="songEditorClearBackgroundBtn" class="pill-button">Clear BG</button>
+                   <span id="songEditorBackgroundLabel" class="song-editor-background-label">No background image</span>
+                 </div>
+               </div>
+               <textarea id="songEditorTextarea" class="song-editor-textarea" placeholder="Type or paste lyrics here.&#10;&#10;[Verse 1]&#10;Amazing grace how sweet the sound&#10;That saved a wretch like me...&#10;&#10;[Chorus]&#10;I once was lost but now am found&#10;Was blind but now I see..." aria-label="Song Lyrics Editor"></textarea>
+               <div class="song-editor-actions">
+                 <button type="button" id="songEditorCancelBtn" class="pill-button">Cancel</button>
+                 <button type="button" id="songEditorSaveBtn" class="pill-button primary-action">Save</button>
+               </div>
+             </div>
+          </section>
+        </div>
+
         <div id="bibleWorkspace" class="bible-workspace" hidden>
         <aside class="bible-workspace__navigator" aria-label="Bible chapter navigator">
           <div class="bible-workspace__heading">Bible</div>
@@ -451,6 +566,8 @@ export function queueTypeIconMarkup(itemOrType) {
       return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M2 2h8l4 4v8H2V2zm8 1.2V6h2.8L10 3.2zM4 8h8v1H4V8zm0 2h8v1H4v-1z"/></svg>`;
     case "bible":
       return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 1.5h8.5A1.5 1.5 0 0 1 13 3v11.5H4.5A1.5 1.5 0 0 1 3 13V1.5zM4.5 12.5a.5.5 0 0 0 0 1H12v-1H4.5zM6 4h4v1H8.5v4H7.5V5H6V4z"/></svg>`;
+    case "song":
+      return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M6 1.5v9.2A2.3 2.3 0 1 0 8.3 8V3.5L13 2v7.2A2.3 2.3 0 1 0 15.3 7V1.5H6z"/></svg>`;
     default:
       return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2h10v12H3V2zm1 1v10h8V3H4zm1 1h6v1H5V4zm0 2h4v1H5V6zm0 2h6v1H5V8z"/></svg>`;
   }

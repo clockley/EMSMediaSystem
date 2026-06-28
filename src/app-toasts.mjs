@@ -279,6 +279,11 @@ export function showGnomeToast(message, durationOrOptions = 3000) {
 }
 
 export function showPreviewWarningToast() {
+  const songsWorkspace = document.getElementById("songsWorkspace");
+  const bibleWorkspace = document.getElementById("bibleWorkspace");
+  if (songsWorkspace && !songsWorkspace.hidden) return;
+  if (bibleWorkspace && !bibleWorkspace.hidden) return;
+
   const video = getPreviewVideo();
   // 1. Safety Check: Ensure video element exists
   if (!video) return;

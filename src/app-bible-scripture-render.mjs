@@ -52,6 +52,7 @@ const bibleScriptureDeps = {
   invoke: () => Promise.reject(new Error('Bible scripture render module is not configured')),
   isQueueItemAudio: () => false,
   isQueueItemBible: () => false,
+  isQueueItemSong: () => false,
   isQueueItemImage: () => false,
   isQueueItemPptx: () => false,
   resolvedBibleStyleDefaults: () => ({}),
@@ -96,6 +97,10 @@ function isQueueItemBible(item) {
   return bibleScriptureDeps.isQueueItemBible(item);
 }
 
+function isQueueItemSong(item) {
+  return bibleScriptureDeps.isQueueItemSong(item);
+}
+
 function isQueueItemImage(item) {
   return bibleScriptureDeps.isQueueItemImage(item);
 }
@@ -110,6 +115,7 @@ function resolvedBibleStyleDefaults(...args) {
 
 export function classifyPresentationType(item, opts = {}) {
   if (opts?.textItem || isQueueItemBible(item)) return "bible";
+  if (isQueueItemSong(item)) return "song";
   if (isQueueItemPptx(item)) return "pptx";
   if (isQueueItemImage(item)) return "image";
   if (isQueueItemAudio(item)) return "audio";

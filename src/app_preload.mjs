@@ -51,7 +51,10 @@ async function initialize() {
   if (!initPromise) {
     initPromise = (async () => {
       try {
-        await ipcRenderer.invoke("bible-rpc", "bible.ready", []);
+        await Promise.all([
+          ipcRenderer.invoke("bible-rpc", "bible.ready", []),
+          ipcRenderer.invoke("songs-rpc", "songs.ready", [])
+        ]);
         isInitialized = true;
       } catch (err) {
         initPromise = null;
@@ -65,6 +68,11 @@ async function initialize() {
 async function callBible(method, params = []) {
   await initialize();
   return ipcRenderer.invoke("bible-rpc", method, params);
+}
+
+async function callSongs(method, params = []) {
+  await initialize();
+  return ipcRenderer.invoke("songs-rpc", method, params);
 }
 
 const bibleAPI = {
@@ -86,6 +94,20 @@ const bibleAPI = {
       : callBible("bible.suggestReferences", [version, input]),
 };
 
+const songsAPI = {
+  waitForReady: () => initialize(),
+  search: (query = "", options = {}) =>
+    callSongs("songs.search", [{ query, folderId: options.folderId ?? null, all: options.all === true, unfiled: options.unfiled === true }]),
+  get: (id) => callSongs("songs.get", [id]),
+  save: (song, originalJSON) => callSongs("songs.save", [song, originalJSON]),
+  delete: (id) => callSongs("songs.delete", [id]),
+  listFolders: () => callSongs("songs.folders.list", []),
+  createFolder: (name) => callSongs("songs.folders.create", [name]),
+  renameFolder: (id, name) => callSongs("songs.folders.rename", [id, name]),
+  deleteFolder: (id) => callSongs("songs.folders.delete", [id]),
+  moveToFolder: (songId, folderId) => callSongs("songs.moveToFolder", [songId, folderId ?? null]),
+};
+
 contextBridge.exposeInMainWorld("electron", {
   ipcRenderer: {
     send: ipcRenderer.send.bind(ipcRenderer),
@@ -103,6 +125,7 @@ contextBridge.exposeInMainWorld("electron", {
   },
   __dirname: import.meta.dirname,
   bibleAPI,
+  songsAPI,
   webUtils,
   attachCubicWaveShaper,
 
