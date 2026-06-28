@@ -187,13 +187,23 @@ export function generateMediaFormHTML() {
         
         <div id="songsWorkspace" class="songs-workspace" hidden>
           <aside class="songs-workspace__navigator" aria-label="Songs navigator">
-            <div class="songs-workspace__heading">Songs</div>
-            <div class="songs-workspace__actions">
-              <button type="button" id="newSongBtn" class="pill-button">New Song</button>
-              <button type="button" id="importSongBtn" class="pill-button">Import</button>
+            <div class="songs-workspace__nav-header">
+              <span class="songs-workspace__heading">Songs</span>
+              <div class="songs-workspace__nav-actions">
+                <button type="button" id="importSongBtn" class="songs-icon-btn" title="Import songs" aria-label="Import songs">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1v10M4 7l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 12v2h12v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <button type="button" id="newSongBtn" class="songs-icon-btn songs-icon-btn--suggested" title="New song" aria-label="New song">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                </button>
+              </div>
             </div>
             <div class="songs-search-field">
-              <input type="text" id="songsSearchInput" placeholder="Search title, lyrics, or #…" aria-label="Search songs">
+              <svg class="songs-search-field__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              <input type="text" id="songsSearchInput" placeholder="Search songs…" aria-label="Search songs">
+              <button type="button" id="songsSearchClearBtn" class="songs-search-field__clear" aria-label="Clear search" hidden>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M4 4l6 6M10 4l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </button>
             </div>
             <div id="songsBulkActions" class="songs-bulk-actions" hidden>
               <span id="songsBulkCount" class="songs-bulk-actions__count">0 selected</span>
@@ -209,7 +219,9 @@ export function generateMediaFormHTML() {
             <div class="songs-folder-panel" aria-label="Song folders">
               <div class="songs-folder-panel__header">
                 <span class="songs-folder-panel__title">Folders</span>
-                <button type="button" id="newSongFolderBtn" class="pill-button songs-folder-panel__new" title="New folder">+</button>
+                <button type="button" id="newSongFolderBtn" class="songs-icon-btn songs-icon-btn--small" title="New folder" aria-label="New folder">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
               </div>
               <div id="songsFolderList" class="songs-folder-list" role="listbox" aria-label="Song folders"></div>
             </div>
@@ -237,10 +249,24 @@ export function generateMediaFormHTML() {
                      <option value="">Move to folder…</option>
                    </select>
                  </label>
-                 <button type="button" id="songsShowNowBtn" class="pill-button primary-action" disabled>Show Now</button>
-                 <button type="button" id="songsAddScheduleBtn" class="pill-button" disabled>Add to Schedule</button>
-                 <button type="button" id="songsEditBtn" class="pill-button" disabled>Edit</button>
-                 <button type="button" id="songsDeleteBtn" class="pill-button" disabled>Delete</button>
+                 <div class="songs-workspace__btn-group">
+                   <button type="button" id="songsShowNowBtn" class="songs-action-btn songs-action-btn--suggested" disabled title="Present this song on the audience display">
+                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 3h14v9H1z" stroke="currentColor" stroke-width="1.4"/><path d="M5 14h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M6.5 6l4 2.5-4 2.5z" fill="currentColor"/></svg>
+                     <span>Show Now</span>
+                   </button>
+                   <button type="button" id="songsAddScheduleBtn" class="songs-action-btn" disabled title="Add to the presentation schedule (or drag a song from the list)">
+                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                     <span>Schedule</span>
+                   </button>
+                 </div>
+                 <div class="songs-workspace__btn-group songs-workspace__btn-group--secondary">
+                   <button type="button" id="songsEditBtn" class="songs-icon-btn" disabled title="Edit song lyrics">
+                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M11.5 1.5l3 3L5 14H2v-3z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9.5 3.5l3 3" stroke="currentColor" stroke-width="1.4"/></svg>
+                   </button>
+                   <button type="button" id="songsDeleteBtn" class="songs-icon-btn songs-icon-btn--destructive" disabled title="Delete song">
+                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4h10l-1 10H4z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M2 4h12M6 2h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M6 7v4M8 7v4M10 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                   </button>
+                 </div>
                </div>
              </div>
              <div id="songArrangementStrip" class="song-arrangement-strip"></div>
@@ -262,6 +288,16 @@ export function generateMediaFormHTML() {
                <div id="songsPreviewSlide" class="songs-preview-slide" hidden></div>
              </div>
              <div id="songEditorDrawer" class="song-editor-drawer" hidden>
+               <div class="song-editor-drawer__headerbar">
+                 <button type="button" id="songEditorCancelBtn" class="songs-icon-btn" title="Cancel editing" aria-label="Cancel editing">
+                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                 </button>
+                 <span class="song-editor-drawer__title">Edit Song</span>
+                 <button type="button" id="songEditorSaveBtn" class="songs-action-btn songs-action-btn--suggested songs-action-btn--compact">
+                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                   <span>Save</span>
+                 </button>
+               </div>
                <div class="song-editor-header">
                  <div class="song-editor-fields song-editor-fields--primary">
                 <input type="text" id="songEditorTitle" placeholder="Song Title" aria-label="Song Title">
@@ -287,10 +323,6 @@ export function generateMediaFormHTML() {
                  </div>
                </div>
                <textarea id="songEditorTextarea" class="song-editor-textarea" placeholder="Type or paste lyrics here.&#10;&#10;[Verse 1]&#10;Amazing grace how sweet the sound&#10;That saved a wretch like me...&#10;&#10;[Chorus]&#10;I once was lost but now am found&#10;Was blind but now I see..." aria-label="Song Lyrics Editor"></textarea>
-               <div class="song-editor-actions">
-                 <button type="button" id="songEditorCancelBtn" class="pill-button">Cancel</button>
-                 <button type="button" id="songEditorSaveBtn" class="pill-button primary-action">Save</button>
-               </div>
              </div>
           </section>
         </div>
