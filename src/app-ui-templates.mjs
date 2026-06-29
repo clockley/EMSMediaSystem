@@ -191,7 +191,7 @@ export function generateMediaFormHTML() {
               <span class="songs-workspace__heading">Songs</span>
               <div class="songs-workspace__nav-actions">
                 <button type="button" id="importSongBtn" class="songs-icon-btn" title="Import songs" aria-label="Import songs">
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1v10M4 7l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 12v2h12v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 1.5h5.5L13 5v9.5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-13z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.5 1.5v3.5h3.5" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M1 8h5M4 5.5L6.5 8 4 10.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
                 <button type="button" id="newSongBtn" class="songs-icon-btn songs-icon-btn--suggested" title="New song" aria-label="New song">
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -209,7 +209,7 @@ export function generateMediaFormHTML() {
               <span id="songsBulkCount" class="songs-bulk-actions__count">0 selected</span>
               <select id="songsBulkMoveFolder" aria-label="Move selected songs to folder">
                 <option value="">Move to folder…</option>
-                <option value="__unfiled__">Unfiled</option>
+                <option value="__unfiled__">Default</option>
               </select>
               <button type="button" id="songsBulkMoveBtn" class="pill-button">Move</button>
               <button type="button" id="songsBulkScheduleBtn" class="pill-button">Schedule</button>
@@ -254,10 +254,14 @@ export function generateMediaFormHTML() {
                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 3h14v9H1z" stroke="currentColor" stroke-width="1.4"/><path d="M5 14h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M6.5 6l4 2.5-4 2.5z" fill="currentColor"/></svg>
                      <span>Show Now</span>
                    </button>
-                   <button type="button" id="songsAddScheduleBtn" class="songs-action-btn" disabled title="Add to the presentation schedule (or drag a song from the list)">
-                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-                     <span>Schedule</span>
-                   </button>
+                    <button type="button" id="songsAddScheduleBtn" class="songs-action-btn" disabled title="Add to the presentation schedule (or drag a song from the list)">
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                      <span>Schedule</span>
+                    </button>
+                    <button type="button" id="songsSaveToLibraryBtn" class="songs-action-btn" disabled title="Save this song to the song library" hidden>
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      <span>Save to Library</span>
+                    </button>
                  </div>
                  <div class="songs-workspace__btn-group songs-workspace__btn-group--secondary">
                    <button type="button" id="songsEditBtn" class="songs-icon-btn" disabled title="Edit song lyrics">
@@ -286,110 +290,190 @@ export function generateMediaFormHTML() {
                  </button>
                </div>
                <div id="songsPreviewSlide" class="songs-preview-slide" hidden></div>
-             </div>
-             <div id="songEditorDrawer" class="song-editor-drawer" hidden>
-               <div class="song-editor-drawer__headerbar">
-                 <button type="button" id="songEditorCancelBtn" class="songs-icon-btn" title="Cancel editing" aria-label="Cancel editing">
-                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-                 </button>
-                 <span class="song-editor-drawer__title">Edit Song</span>
-                 <button type="button" id="songEditorSaveBtn" class="songs-action-btn songs-action-btn--suggested songs-action-btn--compact">
-                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                   <span>Save</span>
-                 </button>
-               </div>
-               <div class="song-editor-drawer__body">
-                 <div class="song-editor-drawer__editor">
-                   <div class="song-editor-header">
-                     <div class="song-editor-fields song-editor-fields--primary">
-                       <input type="text" id="songEditorTitle" placeholder="Song Title" aria-label="Song Title">
-                       <input type="number" id="songEditorNumber" class="song-editor-number" min="1" placeholder="#" aria-label="Song number">
-                       <input type="text" id="songEditorAuthor" placeholder="Author (e.g., John Newton)" aria-label="Author">
-                       <select id="songEditorFolder" aria-label="Song folder">
-                         <option value="">Unfiled</option>
-                       </select>
-                     </div>
-                     <div class="song-editor-fields song-editor-fields--meta">
-                       <input type="text" id="songEditorCopyright" placeholder="Copyright" aria-label="Copyright">
-                       <input type="text" id="songEditorCcli" placeholder="CCLI #" aria-label="CCLI Number">
-                     </div>
-                     <div class="song-editor-fields song-editor-fields--style" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px;">
-                        <label class="song-editor-font-field" style="display: flex; align-items: center; gap: 4px;">
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" title="Font Family"><path d="M2 13h4M10 13h4M8 3l-4 10M8 3l4 10M5 10h6" stroke-width="1.5" stroke-linecap="round"/></svg>
-                          <select id="songEditorFontInput" class="display-select" style="width: auto;">
-                            <option value="'CMG Sans'">CMG Sans</option>
-                            <option value="'Adwaita'">Adwaita</option>
-                            <option value="'Arial'">Arial</option>
-                            <option value="'Calibri'">Calibri</option>
-                            <option value="'Cambria'">Cambria</option>
-                            <option value="'Georgia'">Georgia</option>
-                            <option value="'Segoe UI'">Segoe UI</option>
-                            <option value="'Tahoma'">Tahoma</option>
-                            <option value="'Times New Roman'">Times New Roman</option>
-                            <option value="'Verdana'">Verdana</option>
-                          </select>
-                        </label>
-                        <div class="song-editor-icon-input" title="Font Size" style="display: flex; align-items: center; gap: 4px;">
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor">
-                             <path d="M4 2v12m0-12l-2 2m2-2l2 2m-2 10l-2-2m2 2l2-2" stroke-width="1.5" stroke-linecap="round"/>
-                             <path d="M9 13V5l5 8V3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                          </svg>
-                          <input id="songEditorFontSizeInput" type="number" min="24" max="160" value="66" class="url-input" style="width: 60px;">
-                        </div>
-                        <label class="songs-icon-btn" title="Text Color" style="position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px;">
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                            <path d="M5.5 13L7 9m0 0l1.5 4m-1.5-4L8 6l1 3m0 0h-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                            <rect id="text-color-indicator" x="3" y="14" width="10" height="2" fill="#ffffff" />
-                          </svg>
-                          <input type="color" id="songEditorTextColor" value="#ffffff" aria-label="Song text color" style="opacity: 0; position: absolute; inset: -10px; width: 200%; height: 200%; cursor: pointer;">
-                        </label>
-                        <label class="songs-icon-btn" title="Background Color" style="position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px;">
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                            <path d="M4 10l6-6 3 3-6 6-3-3zm6-6l2 2" stroke="currentColor" stroke-width="1.5"/>
-                            <path d="M4 14h8" stroke="currentColor" stroke-width="2"/>
-                            <circle cx="10" cy="12" r="1.5"/>
-                          </svg>
-                          <input type="color" id="songEditorBackgroundColor" value="#000000" aria-label="Song background color" style="opacity: 0; position: absolute; inset: -10px; width: 200%; height: 200%; cursor: pointer;">
-                        </label>
-                        <label class="songs-icon-btn" title="Background Image" style="position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; width: 32px; height: 32px;">
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor">
-                            <rect x="2" y="3" width="12" height="10" rx="1.5" stroke-width="1.5"/>
-                            <circle cx="5.5" cy="6.5" r="1.5" fill="currentColor" stroke="none"/>
-                            <path d="M2 10l3-3 4 4 2-2 3 3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                          </svg>
-                          <input type="file" id="songEditorBackgroundInput" accept="image/*,video/mp4,video/webm,video/quicktime" aria-label="Song background image or video" style="opacity: 0; position: absolute; inset: -10px; width: 200%; height: 200%; cursor: pointer;">
-                        </label>
-                        <button type="button" id="songEditorClearBackgroundBtn" class="songs-icon-btn" title="Clear Background Image" aria-label="Clear background image">
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor">
-                            <path d="M12 4L4 12M4 4l8 8" stroke-width="1.5" stroke-linecap="round"/>
-                          </svg>
+                      <div id="songEditorDrawer" class="song-editor-drawer" hidden>
+                <div class="song-editor-drawer__headerbar">
+                  <button type="button" id="songEditorCancelBtn" class="songs-icon-btn" title="Cancel editing" aria-label="Cancel editing">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                  </button>
+                  <span class="song-editor-drawer__title" id="songEditorHeaderTitle">Edit Song</span>
+                  <button type="button" id="songEditorSaveScheduleBtn" class="songs-action-btn songs-action-btn--compact">
+                    <span>Save to Schedule</span>
+                  </button>
+                  <button type="button" id="songEditorSaveBtn" class="songs-action-btn songs-action-btn--suggested songs-action-btn--compact">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <span>Save to Library</span>
+                  </button>
+                </div>
+                <div class="song-editor-drawer__body">
+                  <!-- Left Sidebar (Navigator + Properties Tabs) -->
+                  <div class="song-editor-sidebar">
+                    <!-- Segmented Tabs Control -->
+                    <div class="song-editor-segmented-tabs">
+                      <button type="button" id="songEditorTabSlidesBtn" class="song-editor-tab-btn active">Slides</button>
+                      <button type="button" id="songEditorTabPropsBtn" class="song-editor-tab-btn">Properties</button>
+                    </div>
+
+                    <!-- Tab 1: Slides Navigator -->
+                    <div id="songEditorTabSlides" class="song-editor-sidebar__tab-content">
+                      <div id="songEditorSlideList" class="song-editor-slide-list"></div>
+                      <div class="song-editor-slide-controls">
+                        <button type="button" id="songEditorAddSlideBtn" title="Add slide/section">
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10" stroke-linecap="round"/></svg>
+                          <span>Add</span>
                         </button>
-                        <span id="songEditorBackgroundLabel" class="song-editor-background-label" style="font-size: 12px; color: var(--text-color-secondary); margin-left: auto;"></span>
-                     </div>
-                     <div class="song-editor-autofit-panel" aria-label="Song text autofit" style="display: flex; gap: 16px; margin-top: 4px; margin-bottom: 12px; align-items: center;">
-                        <label class="song-editor-autofit-field" style="display: flex; gap: 8px; align-items: center; color: var(--text-color-secondary);">Autofit
-                          <select id="songEditorAutosizeModeInput" class="display-select">
-                            <option value="fit">Fit</option>
-                            <option value="normalize">Normalize</option>
-                            <option value="none">Off</option>
-                          </select>
-                        </label>
-                        <label class="song-editor-autofit-field" style="display: flex; gap: 8px; align-items: center; color: var(--text-color-secondary);">Min
-                          <input id="songEditorMinFontSizeInput" type="number" min="20" max="160" value="38" class="url-input" style="width: 60px;">
-                        </label>
-                     </div>
-                   </div>
-                   <textarea id="songEditorTextarea" class="song-editor-textarea" placeholder="Type or paste lyrics here.&#10;&#10;[Verse 1]&#10;Amazing grace how sweet the sound&#10;That saved a wretch like me...&#10;&#10;[Chorus]&#10;I once was lost but now am found&#10;Was blind but now I see..." aria-label="Song Lyrics Editor"></textarea>
-                 </div>
-                 <div class="song-editor-drawer__preview">
-                   <div class="songs-preview-container" style="flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;">
-                     <div id="songEditorLivePreviewSlide" class="songs-preview-slide"></div>
-                   </div>
-                 </div>
-               </div>
-             </div>
-          </section>
-        </div>
+                        <button type="button" id="songEditorDeleteSlideBtn" title="Delete selected slide/section">
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 5h10M5 5v8a1 1 0 001 1h4a1 1 0 001-1V5M6.5 5V3a1 1 0 011-1h1a1 1 0 011 1v2" stroke-linecap="round"/></svg>
+                          <span>Delete</span>
+                        </button>
+                        <button type="button" id="songEditorMoveUpBtn" title="Move selected slide up">
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 13V3M4 7l4-4 4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                          <span>Up</span>
+                        </button>
+                        <button type="button" id="songEditorMoveDownBtn" title="Move selected slide down">
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M4 9l4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                          <span>Down</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <!-- Tab 2: Properties Editor -->
+                    <div id="songEditorTabProps" class="song-editor-sidebar__tab-content" style="display: none;">
+                      <!-- Song Info Boxed List -->
+                      <div class="boxed-list-group">
+                        <div class="boxed-list-title">Song Info</div>
+                        <div class="boxed-list">
+                          <div class="boxed-list-row">
+                            <label for="songEditorTitle">Title</label>
+                            <input type="text" id="songEditorTitle" placeholder="Song Title" aria-label="Song Title">
+                          </div>
+                          <div class="boxed-list-row">
+                            <label for="songEditorNumber">Number</label>
+                            <input type="number" id="songEditorNumber" class="song-editor-number" min="1" placeholder="#" aria-label="Song number">
+                          </div>
+                          <div class="boxed-list-row">
+                            <label for="songEditorAuthor">Author</label>
+                            <input type="text" id="songEditorAuthor" placeholder="Author (e.g., John Newton)" aria-label="Author">
+                          </div>
+                          <div class="boxed-list-row">
+                            <label for="songEditorFolder">Folder</label>
+                            <select id="songEditorFolder" aria-label="Song folder">
+                              <option value="">Default</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Metadata Boxed List -->
+                      <div class="boxed-list-group">
+                        <div class="boxed-list-title">Metadata</div>
+                        <div class="boxed-list">
+                          <div class="boxed-list-row">
+                            <label for="songEditorCopyright">Copyright</label>
+                            <input type="text" id="songEditorCopyright" placeholder="Copyright" aria-label="Copyright">
+                          </div>
+                          <div class="boxed-list-row">
+                            <label for="songEditorCcli">CCLI #</label>
+                            <input type="text" id="songEditorCcli" placeholder="CCLI #" aria-label="CCLI Number">
+                          </div>
+                          <div class="boxed-list-row">
+                            <label for="songEditorOneLicense">ONE LICENSE #</label>
+                            <input type="text" id="songEditorOneLicense" placeholder="ONE LICENSE #" aria-label="ONE LICENSE Number">
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Presentation Boxed List -->
+                      <div class="boxed-list-group">
+                        <div class="boxed-list-title">Theme & Styling</div>
+                        <div class="boxed-list">
+                          <div class="boxed-list-row">
+                            <label for="songEditorFontInput">Font Family</label>
+                            <select id="songEditorFontInput" class="display-select">
+                              <option value="'CMG Sans'">CMG Sans</option>
+                              <option value="'Adwaita'">Adwaita</option>
+                              <option value="'Arial'">Arial</option>
+                              <option value="'Calibri'">Calibri</option>
+                              <option value="'Cambria'">Cambria</option>
+                              <option value="'Georgia'">Georgia</option>
+                              <option value="'Segoe UI'">Segoe UI</option>
+                              <option value="'Tahoma'">Tahoma</option>
+                              <option value="'Times New Roman'">Times New Roman</option>
+                              <option value="'Verdana'">Verdana</option>
+                            </select>
+                          </div>
+                          <div class="boxed-list-row">
+                            <label for="songEditorFontSizeInput">Font Size</label>
+                            <input id="songEditorFontSizeInput" type="number" min="24" max="160" value="66">
+                          </div>
+                          <div class="boxed-list-row">
+                            <label for="songEditorTextColor">Text Color</label>
+                            <div style="position: relative; display: flex; align-items: center; gap: 8px; flex: 1;">
+                              <input type="color" id="songEditorTextColor" value="#ffffff" aria-label="Song text color" style="width: 40px; height: 28px; border: 1px solid var(--border-color); border-radius: 4px; padding: 0; cursor: pointer;">
+                              <span style="font-size: 12px; color: var(--text-color-secondary);">Select color</span>
+                            </div>
+                          </div>
+                          <div class="boxed-list-row">
+                            <label for="songEditorBackgroundColor">Background</label>
+                            <div style="position: relative; display: flex; align-items: center; gap: 8px; flex: 1;">
+                              <input type="color" id="songEditorBackgroundColor" value="#000000" aria-label="Song background color" style="width: 40px; height: 28px; border: 1px solid var(--border-color); border-radius: 4px; padding: 0; cursor: pointer;">
+                              <span style="font-size: 12px; color: var(--text-color-secondary);">Select color</span>
+                            </div>
+                          </div>
+                          <div class="boxed-list-row">
+                            <label>Image/Video</label>
+                            <div style="display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;">
+                              <button type="button" class="songs-icon-btn" title="Choose Background" style="position: relative; overflow: hidden; width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-color); border-radius: 6px;">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke-width="1.5"/><circle cx="5.5" cy="6.5" r="1.5" fill="currentColor" stroke="none"/><path d="M2 10l3-3 4 4 2-2 3 3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                <input type="file" id="songEditorBackgroundInput" accept="image/*,video/mp4,video/webm,video/quicktime" aria-label="Song background image or video" style="opacity: 0; position: absolute; inset: 0; cursor: pointer; width: 100%; height: 100%;">
+                              </button>
+                              <button type="button" id="songEditorClearBackgroundBtn" class="songs-icon-btn" title="Clear Background Image" aria-label="Clear background image" style="width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-color); border-radius: 6px;">
+                                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M12 4L4 12M4 4l8 8" stroke-width="1.5" stroke-linecap="round"/></svg>
+                              </button>
+                              <span id="songEditorBackgroundLabel" class="song-editor-background-label" style="font-size: 11px; margin-left: 4px;"></span>
+                            </div>
+                          </div>
+                          <div class="boxed-list-row">
+                            <label for="songEditorAutosizeModeInput">Autofit</label>
+                            <select id="songEditorAutosizeModeInput">
+                              <option value="fit">Fit</option>
+                              <option value="normalize">Normalize</option>
+                              <option value="none">Off</option>
+                            </select>
+                          </div>
+                          <div class="boxed-list-row">
+                            <label for="songEditorMinFontSizeInput">Min Size</label>
+                            <input id="songEditorMinFontSizeInput" type="number" min="20" max="160" value="38">
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Center Pane: WYSIWYG Slide Content Editor -->
+                  <div class="song-editor-workspace">
+
+
+                    <!-- WYSIWYG Editor Canvas -->
+                    <div class="song-editor-workspace__canvas-container">
+                      <div id="songEditorSlideCanvas" class="song-editor-slide-canvas">
+                        <textarea id="songEditorSlideTextarea" class="song-editor-slide-textarea" placeholder="Enter lyrics for this section..."></textarea>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Right Pane: Live Preview -->
+                  <div class="song-editor-preview-pane">
+                    <div class="song-editor-preview-pane__title">Audience Preview</div>
+                    <div class="song-editor-preview-pane__content">
+                      <div id="songEditorLivePreviewSlide" class="songs-preview-slide"></div>
+                    </div>
+                  </div>
+                </div>
+                <!-- Hidden original textarea to preserve background functionality -->
+                <textarea id="songEditorTextarea" style="display: none;"></textarea>
+              </div>
+           </section>
+         </div>
 
         <div id="bibleWorkspace" class="bible-workspace" hidden>
         <aside class="bible-workspace__navigator" aria-label="Bible chapter navigator">

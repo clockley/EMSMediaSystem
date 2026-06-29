@@ -1673,13 +1673,22 @@ button:focus-visible,
     }
 }
 
-/* Style individual options in modern mode */
+/* Style individual options globally and in modern mode */
+select option,
 .display-select option {
     padding: 6px 16px;
-    color: var(--window-fg-color);
-    background: transparent;
+    color: var(--window-fg-color) !important;
+    background-color: var(--card-bg-color) !important;
     cursor: pointer;
     font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+    select option,
+    .display-select option {
+        background-color: #2e2e32 !important;
+        color: #ffffff !important;
+    }
 }
 
 /* GTK-style subtle hover */
@@ -3170,6 +3179,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .song-folder-prompt__input {
+    box-sizing: border-box;
     width: 100%;
     padding: 8px 12px;
     border: 1px solid var(--border-color);
@@ -3483,10 +3493,31 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .song-arrangement-strip .pill-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border-radius: 9999px;
     font-size: 12px;
     padding: 4px 14px;
-    transition: background 0.12s, color 0.12s;
+    border: 1px solid var(--border-color);
+    background: color-mix(in srgb, var(--card-bg-color) 92%, var(--window-fg-color));
+    color: var(--window-fg-color);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.song-arrangement-strip .pill-button:hover {
+    background: color-mix(in srgb, var(--card-bg-color) 85%, var(--window-fg-color));
+}
+
+.song-arrangement-strip .pill-button.primary-action {
+    background: var(--accent-bg-color);
+    border-color: var(--accent-bg-color-hover);
+    color: #ffffff;
+}
+
+.song-arrangement-strip .pill-button.primary-action:hover {
+    background: var(--accent-bg-color-hover);
 }
 
 /* ── Preview container ────────────────────────────────────── */
@@ -3621,9 +3652,11 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 8px 12px;
+    padding: 8px 16px;
+    background: var(--card-bg-color);
     border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
+    height: 48px;
 }
 
 .song-editor-drawer__title {
@@ -3631,6 +3664,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     font-size: 14px;
     font-weight: 700;
     text-align: center;
+    color: var(--window-fg-color);
 }
 
 .song-editor-drawer__body {
@@ -3640,93 +3674,332 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     min-height: 0;
 }
 
-.song-editor-drawer__editor {
+/* Left Sidebar */
+.song-editor-sidebar {
+    display: flex;
+    flex-direction: column;
+    width: 320px;
+    border-right: 1px solid var(--border-color);
+    background: var(--window-bg-color);
+    flex-shrink: 0;
+    min-height: 0;
+}
+
+.song-editor-segmented-tabs {
+    display: flex;
+    background: color-mix(in srgb, var(--window-fg-color) 4%, transparent);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 2px;
+    margin: 12px 16px;
+    flex-shrink: 0;
+}
+
+.song-editor-tab-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--window-fg-color);
+    padding: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+}
+
+.song-editor-tab-btn.active {
+    background: var(--card-bg-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.song-editor-sidebar__tab-content {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Properties Tab */
+#songEditorTabProps {
+    padding: 4px 0;
+    overflow-y: auto;
+}
+
+.song-editor-sidebar .boxed-list-group {
+    margin: 0 16px 16px;
+}
+
+.song-editor-sidebar .boxed-list-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: color-mix(in srgb, var(--window-fg-color) 45%, transparent);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    padding-left: 4px;
+    letter-spacing: 0.5px;
+}
+
+.song-editor-sidebar .boxed-list {
+    background: var(--card-bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.song-editor-sidebar .boxed-list-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    gap: 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.song-editor-sidebar .boxed-list-row:last-child {
+    border-bottom: none;
+}
+
+.song-editor-sidebar .boxed-list-row label {
+    font-size: 13px;
+    color: var(--window-fg-color);
+    min-width: 90px;
+    flex-shrink: 0;
+}
+
+.song-editor-sidebar .boxed-list-row input[type="text"],
+.song-editor-sidebar .boxed-list-row input[type="number"],
+.song-editor-sidebar .boxed-list-row select {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--input-bg-color, rgba(255, 255, 255, 0.05));
+    color: var(--window-fg-color);
+    font-size: 13px;
+}
+
+.song-editor-sidebar .boxed-list-row input[type="text"]:focus,
+.song-editor-sidebar .boxed-list-row input[type="number"]:focus,
+.song-editor-sidebar .boxed-list-row select:focus {
+    outline: 2px solid var(--accent-bg-color);
+    border-color: transparent;
+}
+
+/* Slides Tab */
+#songEditorTabSlides {
     display: flex;
     flex-direction: column;
     flex: 1;
-    padding: 16px;
+    min-height: 0;
+}
+
+.song-editor-slide-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.song-editor-slide-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    gap: 10px;
+    background: var(--card-bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.song-editor-slide-item:hover {
+    background: color-mix(in srgb, var(--window-fg-color) 4%, var(--card-bg-color));
+}
+
+.song-editor-slide-item.active {
+    background: color-mix(in srgb, var(--accent-bg-color) 10%, var(--card-bg-color));
+    border-color: var(--accent-bg-color);
+    box-shadow: 0 0 0 1px var(--accent-bg-color);
+}
+
+.song-editor-slide-item__index {
+    font-size: 11px;
+    font-weight: 700;
+    color: color-mix(in srgb, var(--window-fg-color) 45%, transparent);
+    width: 18px;
+    text-align: center;
+}
+
+.song-editor-slide-item__details {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.song-editor-slide-item__label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--window-fg-color);
+}
+
+.song-editor-slide-item__snippet {
+    font-size: 11px;
+    color: color-mix(in srgb, var(--window-fg-color) 50%, transparent);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.song-editor-slide-controls {
+    display: flex;
+    gap: 6px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--border-color);
+    background: var(--window-bg-color);
+    flex-shrink: 0;
+}
+
+.song-editor-slide-controls button {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--card-bg-color);
+    color: var(--window-fg-color);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.song-editor-slide-controls button:hover {
+    background: color-mix(in srgb, var(--window-fg-color) 8%, var(--card-bg-color));
+}
+
+.song-editor-slide-controls button svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Center Workspace */
+.song-editor-workspace {
+    display: flex;
+    flex-direction: column;
+    flex: 2;
+    background: color-mix(in srgb, var(--window-bg-color) 96%, black);
     border-right: 1px solid var(--border-color);
     min-width: 0;
 }
 
-.song-editor-drawer__preview {
+.song-editor-workspace__toolbar {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--card-bg-color);
     display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-width: 0;
-    align-items: stretch;
-}
-
-.song-editor-header {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+    align-items: center;
+    gap: 8px;
     flex-shrink: 0;
-    padding: 12px 16px 0;
 }
 
-.song-editor-fields {
+.song-editor-slide-meta-row {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
-}
-
-.song-editor-fields > input[type="text"],
-.song-editor-fields > select {
-    flex: 1 1 180px;
-    min-width: 140px;
-    padding: 8px 12px;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    background-color: var(--input-bg-color, var(--card-bg-color));
-    color: var(--window-fg-color);
-    font-size: 13px;
-}
-
-.song-editor-color-field,
-.song-editor-file-field {
-    display: inline-flex;
     align-items: center;
     gap: 8px;
-    font-size: 13px;
-    color: var(--window-fg-color);
-}
-
-.song-editor-file-field input[type="file"] {
-    max-width: 220px;
-}
-
-.song-editor-background-label {
-    flex: 1 1 160px;
-    min-width: 120px;
-    font-size: 12px;
-    color: color-mix(in srgb, var(--window-fg-color) 55%, transparent);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.song-editor-textarea {
-    flex: 1 1 auto;
-    min-height: 0;
     width: 100%;
-    padding: 12px 16px;
-    border: none;
-    border-top: 1px solid var(--border-color);
-    border-radius: 0;
-    background-color: var(--input-bg-color, var(--card-bg-color));
-    color: var(--window-fg-color);
-    font-family: monospace;
-    font-size: 14px;
-    line-height: 1.5;
-    resize: none;
-    overflow-y: auto;
-    box-sizing: border-box;
 }
 
-.song-editor-textarea:focus {
+.song-editor-row-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: color-mix(in srgb, var(--window-fg-color) 60%, transparent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.song-editor-workspace__canvas-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    min-height: 0;
+    overflow: auto;
+}
+
+.song-editor-slide-canvas {
+    width: 100%;
+    max-width: 720px;
+    aspect-ratio: 16 / 9;
+    border-radius: 12px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+    padding: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    container-type: inline-size;
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position: center;
+}
+
+.song-editor-slide-textarea {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    border: none;
     outline: none;
+    resize: none;
+    text-align: center;
+    font-size: calc(var(--base-font-size, 66) * 100cqw / 1920);
+    font-family: var(--font-family, 'CMG Sans', sans-serif);
+    color: inherit;
+    line-height: 1.35;
+    padding: 0;
+    margin: 0;
+    overflow-y: auto;
+}
+
+/* Right Preview Column */
+.song-editor-preview-pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1.5;
+    min-width: 0;
+    background: var(--window-bg-color);
+}
+
+.song-editor-preview-pane__title {
+    padding: 10px 16px;
+    font-size: 11px;
+    font-weight: 700;
+    color: color-mix(in srgb, var(--window-fg-color) 50%, transparent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--card-bg-color);
+    flex-shrink: 0;
+}
+
+.song-editor-preview-pane__content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    min-height: 0;
 }
 
 .song-editor-actions {

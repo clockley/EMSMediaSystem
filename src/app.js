@@ -6936,7 +6936,7 @@ function syncSongsBulkMoveFolderOptions() {
   if (!select) return;
   const currentValue = select.value;
   select.innerHTML =
-    '<option value="">Move to folder…</option><option value="__unfiled__">Unfiled</option>';
+    '<option value="">Move to folder…</option><option value="__unfiled__">Default</option>';
   for (const folder of songFoldersCache) {
     const option = document.createElement("option");
     option.value = folder.id;
@@ -7097,7 +7097,7 @@ function syncSongEditorFolderOptions(selectedFolderId = "") {
     selectedFolderId ||
     (typeof select.value === "string" ? select.value : "") ||
     "";
-  select.innerHTML = '<option value="">Unfiled</option>';
+  select.innerHTML = '<option value="">Default</option>';
   for (const folder of songFoldersCache) {
     const option = document.createElement("option");
     option.value = folder.id;
@@ -7107,19 +7107,19 @@ function syncSongEditorFolderOptions(selectedFolderId = "") {
   select.value = currentValue;
 }
 
-function syncSongsMoveFolderSelect(song = currentWorkspaceSong) {
+function syncSongsMoveFolderSelect(song = currentWorkspaceSong, inLibrary = true) {
   const select = document.getElementById("songsMoveFolderSelect");
   if (!select) return;
   const selectedFolderId = song?.folderId || "";
   select.innerHTML =
-    '<option value="">Move to folder…</option><option value="__unfiled__">Unfiled</option>';
+    '<option value="">Move to folder…</option><option value="__unfiled__">Default</option>';
   for (const folder of songFoldersCache) {
     const option = document.createElement("option");
     option.value = folder.id;
     option.textContent = folder.name;
     select.appendChild(option);
   }
-  select.disabled = !song?.id;
+  select.disabled = !song?.id || !inLibrary;
   select.value = selectedFolderId || "";
 }
 
@@ -7147,6 +7147,274 @@ function openSongFolderPrompt() {
   input.value = "";
   prompt.removeAttribute("hidden");
   input.focus();
+}
+
+// Visual WYSIWYG Song Editor state and helpers
+let songEditorSections = [];
+let songEditorActiveIndex = 0;
+
+function renderSongEditorSlideList() {
+  const list = document.getElementById("songEditorSlideList");
+  if (!list) return;
+
+  list.innerHTML = "";
+  songEditorSections.forEach((section, i) => {
+    const item = document.createElement("div");
+    item.className = "song-editor-slide-item";
+    if (i === songEditorActiveIndex) {
+      item.classList.add("active");
+    }
+    item.setAttribute("data-index", i);
+    item.setAttribute("title", "Double-click to rename");
+    item.addEventListener("click", () => {
+      selectSongEditorSlide(i);
+    });
+    item.addEventListener("dblclick", () => {
+      const newLabel = prompt("Enter section label (e.g. Verse 1, Chorus):", section.label);
+      if (newLabel !== null) {
+        const trimmed = newLabel.trim();
+        if (trimmed) {
+          section.label = trimmed;
+          labelEl.textContent = trimmed;
+          syncSongEditorHiddenTextarea();
+          if (currentWorkspaceSong) {
+            currentWorkspaceSong.sections = songEditorSections;
+            renderSongSectionPreview(section);
+          }
+        }
+      }
+    });
+
+    const indexEl = document.createElement("div");
+    indexEl.className = "song-editor-slide-item__index";
+    indexEl.textContent = i + 1;
+
+    const detailsEl = document.createElement("div");
+    detailsEl.className = "song-editor-slide-item__details";
+
+    const labelEl = document.createElement("div");
+    labelEl.className = "song-editor-slide-item__label";
+    labelEl.textContent = section.label || `Section ${i + 1}`;
+
+    const snippetEl = document.createElement("div");
+    snippetEl.className = "song-editor-slide-item__snippet";
+    const linesText = (section.lines || [])
+      .map(l => l.text || "")
+      .filter(t => t.trim() !== "")
+      .slice(0, 2)
+      .join(" / ");
+    snippetEl.textContent = linesText || "Empty slide";
+
+    detailsEl.appendChild(labelEl);
+    detailsEl.appendChild(snippetEl);
+    item.appendChild(indexEl);
+    item.appendChild(detailsEl);
+    list.appendChild(item);
+  });
+}
+
+function selectSongEditorSlide(index) {
+  if (index < 0 || index >= songEditorSections.length) return;
+  songEditorActiveIndex = index;
+
+  const items = document.querySelectorAll(".song-editor-slide-item");
+  items.forEach((item, i) => {
+    if (i === index) {
+      item.classList.add("active");
+    } else {
+      item.classList.remove("active");
+    }
+  });
+
+  const section = songEditorSections[index];
+  const textarea = document.getElementById("songEditorSlideTextarea");
+  if (textarea) {
+    textarea.value = (section.lines || []).map(l => l.text || "").join("\n");
+  }
+
+  const label = section.label || "";
+  const match = label.match(/^(Verse|Chorus|Bridge|Pre-Chorus|Tag)\s*(\d*)$/i);
+  const typeSelect = document.getElementById("songEditorSectionType");
+  const numInput = document.getElementById("songEditorSectionNumber");
+  const customInput = document.getElementById("songEditorSectionCustomLabel");
+
+  if (typeSelect && numInput && customInput) {
+    if (match) {
+      typeSelect.value = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+      numInput.value = match[2] || "1";
+      numInput.style.display = "block";
+      customInput.style.display = "none";
+    } else {
+      typeSelect.value = "Custom";
+      customInput.value = label;
+      numInput.style.display = "none";
+      customInput.style.display = "block";
+    }
+  }
+
+  if (currentWorkspaceSong) {
+    currentWorkspaceSong.sections = songEditorSections;
+    currentSongSectionId = section.id;
+    renderSongSectionPreview(section);
+  }
+}
+
+function syncSongEditorWorkspaceStyles() {
+  const preview = document.getElementById("songEditorLivePreviewSlide");
+  const canvas = document.getElementById("songEditorSlideCanvas");
+  if (preview && canvas) {
+    canvas.style.backgroundColor = preview.style.backgroundColor;
+    canvas.style.backgroundImage = preview.style.backgroundImage;
+    canvas.style.color = preview.style.color;
+    canvas.style.fontFamily = preview.style.fontFamily;
+    canvas.style.setProperty('--base-font-size', preview.style.getPropertyValue('--base-font-size'));
+    canvas.style.setProperty('--font-family', preview.style.getPropertyValue('--font-family'));
+  }
+}
+
+function handleSongEditorCanvasTextInput(text) {
+  const activeSection = songEditorSections[songEditorActiveIndex];
+  if (!activeSection) return;
+
+  const lines = text.split("\n").map((line, idx) => {
+    const trimmed = line.trimRight();
+    return {
+      id: `line_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+      kind: trimmed === "" ? "spacer" : "lyric",
+      text: trimmed
+    };
+  });
+
+  activeSection.lines = lines;
+
+  syncSongEditorHiddenTextarea();
+
+  if (currentWorkspaceSong) {
+    currentWorkspaceSong.sections = songEditorSections;
+    currentSongSectionId = activeSection.id;
+    renderSongSectionPreview(activeSection);
+  }
+
+  const snippetEl = document.querySelector(`.song-editor-slide-item[data-index="${songEditorActiveIndex}"] .song-editor-slide-item__snippet`);
+  if (snippetEl) {
+    snippetEl.textContent = lines.map(l => l.text).filter(t => t.trim() !== "").slice(0, 2).join(" / ") || "Empty slide";
+  }
+}
+
+function syncSongEditorHiddenTextarea() {
+  const parts = [];
+  for (const section of songEditorSections) {
+    const label = (section.label || "").trim();
+    if (label) {
+      parts.push(`[${label}]`);
+    } else {
+      parts.push("");
+    }
+    for (const line of section.lines) {
+      if (line.kind === "spacer" || (line.text || "").trim() === "") {
+        parts.push("");
+      } else {
+        parts.push(line.text);
+      }
+    }
+    parts.push("");
+  }
+  const text = parts.join("\n").trim();
+  const hiddenTextarea = document.getElementById("songEditorTextarea");
+  if (hiddenTextarea) {
+    hiddenTextarea.value = text;
+  }
+}
+
+function handleSongEditorSectionMetaChange() {
+  const activeSection = songEditorSections[songEditorActiveIndex];
+  if (!activeSection) return;
+
+  const typeSelect = document.getElementById("songEditorSectionType");
+  const numInput = document.getElementById("songEditorSectionNumber");
+  const customInput = document.getElementById("songEditorSectionCustomLabel");
+
+  if (!typeSelect || !numInput || !customInput) return;
+
+  let label = "";
+  if (typeSelect.value === "Custom") {
+    customInput.style.display = "block";
+    numInput.style.display = "none";
+    label = customInput.value.trim();
+    activeSection.role = "custom";
+  } else {
+    customInput.style.display = "none";
+    numInput.style.display = "block";
+    const type = typeSelect.value;
+    const num = numInput.value;
+    label = `${type} ${num}`.trim();
+    activeSection.role = type.toLowerCase();
+    activeSection.number = Number(num) || 1;
+  }
+
+  activeSection.label = label || "Untitled Section";
+
+  const labelEl = document.querySelector(`.song-editor-slide-item[data-index="${songEditorActiveIndex}"] .song-editor-slide-item__label`);
+  if (labelEl) {
+    labelEl.textContent = activeSection.label;
+  }
+
+  syncSongEditorHiddenTextarea();
+  if (currentWorkspaceSong) {
+    currentWorkspaceSong.sections = songEditorSections;
+    currentSongSectionId = activeSection.id;
+    renderSongSectionPreview(activeSection);
+  }
+}
+
+function handleSongEditorAddSection() {
+  const verseCount = songEditorSections.filter(s => s.role === "verse").length;
+  const newSection = {
+    id: `sec_${crypto.randomUUID().slice(0, 8)}`,
+    role: "verse",
+    number: verseCount + 1,
+    label: `Verse ${verseCount + 1}`,
+    lines: []
+  };
+  songEditorSections.splice(songEditorActiveIndex + 1, 0, newSection);
+  syncSongEditorHiddenTextarea();
+  renderSongEditorSlideList();
+  selectSongEditorSlide(songEditorActiveIndex + 1);
+}
+
+function handleSongEditorDeleteSection() {
+  if (songEditorSections.length <= 1) {
+    showGnomeToast("Cannot delete the only section.");
+    return;
+  }
+  const indexToDelete = songEditorActiveIndex;
+  songEditorSections.splice(indexToDelete, 1);
+  syncSongEditorHiddenTextarea();
+  renderSongEditorSlideList();
+  const nextIndex = Math.min(indexToDelete, songEditorSections.length - 1);
+  selectSongEditorSlide(nextIndex);
+}
+
+function handleSongEditorMoveSectionUp() {
+  if (songEditorActiveIndex <= 0) return;
+  const idx = songEditorActiveIndex;
+  const temp = songEditorSections[idx];
+  songEditorSections[idx] = songEditorSections[idx - 1];
+  songEditorSections[idx - 1] = temp;
+  syncSongEditorHiddenTextarea();
+  renderSongEditorSlideList();
+  selectSongEditorSlide(idx - 1);
+}
+
+function handleSongEditorMoveSectionDown() {
+  if (songEditorActiveIndex >= songEditorSections.length - 1) return;
+  const idx = songEditorActiveIndex;
+  const temp = songEditorSections[idx];
+  songEditorSections[idx] = songEditorSections[idx + 1];
+  songEditorSections[idx + 1] = temp;
+  syncSongEditorHiddenTextarea();
+  renderSongEditorSlideList();
+  selectSongEditorSlide(idx + 1);
 }
 
 function closeSongEditor() {
@@ -7273,6 +7541,7 @@ function readSongEditorRenderState() {
   const backgroundColor = document.getElementById("songEditorBackgroundColor")?.value;
   const copyright = document.getElementById("songEditorCopyright")?.value?.trim() || "";
   const ccliNumber = document.getElementById("songEditorCcli")?.value?.trim() || null;
+  const oneLicense = document.getElementById("songEditorOneLicense")?.value?.trim() || null;
   return mergeSongRenderState(currentSongRenderState, {
     fontFamily: fontInput ? fontInput.value : DEFAULT_SONG_RENDER.fontFamily,
     fontSize: fontSizeInput && fontSizeInput.value ? Number(fontSizeInput.value) : DEFAULT_SONG_RENDER.fontSize,
@@ -7283,6 +7552,7 @@ function readSongEditorRenderState() {
     backgroundPath: currentSongRenderState.backgroundPath || "",
     copyright,
     ccliNumber,
+    oneLicense,
   });
 }
 
@@ -7295,6 +7565,7 @@ function syncSongEditorRenderControls(render = currentSongRenderState) {
   const backgroundColorInput = document.getElementById("songEditorBackgroundColor");
   const copyrightInput = document.getElementById("songEditorCopyright");
   const ccliInput = document.getElementById("songEditorCcli");
+  const oneLicenseInput = document.getElementById("songEditorOneLicense");
 
   if (fontInput) fontInput.value = render.fontFamily || DEFAULT_SONG_RENDER.fontFamily;
   if (fontSizeInput) fontSizeInput.value = render.fontSize || DEFAULT_SONG_RENDER.fontSize;
@@ -7307,6 +7578,7 @@ function syncSongEditorRenderControls(render = currentSongRenderState) {
   }
   if (copyrightInput) copyrightInput.value = render.copyright || "";
   if (ccliInput) ccliInput.value = render.ccliNumber || "";
+  if (oneLicenseInput) oneLicenseInput.value = render.oneLicense || "";
   syncSongBackgroundLabel(render.backgroundPath || "");
 }
 
@@ -7328,6 +7600,7 @@ function currentSongPresentationItem() {
     songSnapshot: songSnapshotForSchedule(currentWorkspaceSong, {
       copyright: currentSongRenderState.copyright,
       ccliNumber: currentSongRenderState.ccliNumber,
+      oneLicense: currentSongRenderState.oneLicense,
       defaultRender: {
         themeId: "song_default",
         background: {
@@ -7388,6 +7661,11 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     document.getElementById("songsAddScheduleBtn").disabled = true;
     document.getElementById("songsEditBtn").disabled = true;
     document.getElementById("songsDeleteBtn").disabled = true;
+    const saveToLibraryBtn = document.getElementById("songsSaveToLibraryBtn");
+    if (saveToLibraryBtn) {
+      saveToLibraryBtn.disabled = true;
+      saveToLibraryBtn.hidden = true;
+    }
     document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
     document.getElementById("songArrangementStrip").innerHTML = "";
     if (slide) slide.innerHTML = "";
@@ -7408,13 +7686,20 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     });
   }
 
+  const inLibrary = await checkIfSongInLibrary(song.id);
+  const saveToLibraryBtn = document.getElementById("songsSaveToLibraryBtn");
+  if (saveToLibraryBtn) {
+    saveToLibraryBtn.hidden = inLibrary;
+    saveToLibraryBtn.disabled = inLibrary;
+  }
+
   document.getElementById("songsWorkspaceTitle").textContent = song.title;
   document.getElementById("songsShowNowBtn").disabled = false;
   document.getElementById("songsAddScheduleBtn").disabled = false;
   document.getElementById("songsEditBtn").disabled = false;
-  document.getElementById("songsDeleteBtn").disabled = false;
+  document.getElementById("songsDeleteBtn").disabled = !inLibrary;
   document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
-  syncSongsMoveFolderSelect(song);
+  syncSongsMoveFolderSelect(song, inLibrary);
 
   const enabledSections = enabledSongSections(song);
   if (!currentSongSectionId || !enabledSections.some((s) => s.id === currentSongSectionId)) {
@@ -7521,6 +7806,10 @@ function renderSongSectionPreview(section) {
     attrEl.className = "song-preview-attribution";
     attrEl.textContent = message.attributionText;
     preview.appendChild(attrEl);
+  }
+
+  if (isEditing) {
+    syncSongEditorWorkspaceStyles();
   }
   } catch (err) {
      try {
@@ -7705,14 +7994,21 @@ async function openSongEditor(song) {
 
   let songToEdit = song || null;
   if (songToEdit?.id) {
-    try {
-      songToEdit = await songsAPI.get(songToEdit.id);
+    const exists = await checkIfSongInLibrary(songToEdit.id);
+    if (exists) {
+      try {
+        songToEdit = await songsAPI.get(songToEdit.id);
+        currentWorkspaceSong = songToEdit;
+        syncSongsMoveFolderSelect(songToEdit);
+      } catch (err) {
+        console.error("Failed to load song for editing:", err);
+        showGnomeToast("Failed to load song for editing");
+        return;
+      }
+    } else {
+      console.warn("Song not found in library, editing local/schedule snapshot instead");
       currentWorkspaceSong = songToEdit;
-      syncSongsMoveFolderSelect(songToEdit);
-    } catch (err) {
-      console.error("Failed to load song for editing:", err);
-      showGnomeToast("Failed to load song for editing");
-      return;
+      syncSongsMoveFolderSelect(songToEdit, false);
     }
   }
 
@@ -7729,6 +8025,31 @@ async function openSongEditor(song) {
   const textarea = document.getElementById("songEditorTextarea");
 
   syncSongEditorFolderOptions(songToEdit?.folderId || "");
+
+  // Initialize visual editor state
+  songEditorSections = songToEdit ? (structuredClone(songToEdit.sections) || []) : [];
+  if (songEditorSections.length === 0) {
+    songEditorSections.push({
+      id: `sec_${crypto.randomUUID().slice(0, 8)}`,
+      role: "verse",
+      number: 1,
+      label: "Verse 1",
+      lines: []
+    });
+  }
+  songEditorActiveIndex = 0;
+
+  // Set default tab to "Slides"
+  document.getElementById("songEditorTabSlidesBtn")?.classList.add("active");
+  document.getElementById("songEditorTabPropsBtn")?.classList.remove("active");
+  document.getElementById("songEditorTabSlides")?.removeAttribute("style");
+  document.getElementById("songEditorTabProps")?.setAttribute("style", "display: none;");
+
+  // Set Header Title
+  const headerTitle = document.getElementById("songEditorHeaderTitle");
+  if (headerTitle) {
+    headerTitle.textContent = songToEdit ? `Edit: ${songToEdit.title}` : "New Song";
+  }
 
   if (songToEdit) {
     currentEditingSongId = songToEdit.id;
@@ -7764,6 +8085,46 @@ async function openSongEditor(song) {
     currentSongRenderState = { ...DEFAULT_SONG_RENDER };
     syncSongEditorRenderControls();
   }
+
+  // Build the list and select the first slide
+  renderSongEditorSlideList();
+  selectSongEditorSlide(0);
+}
+
+async function checkIfSongInLibrary(songId) {
+  if (!songId) return false;
+  try {
+    const results = await songsAPI.search("", { all: true });
+    return results.some(song => song.id === songId);
+  } catch (err) {
+    return false;
+  }
+}
+
+async function updateScheduleSongsWithUpdatedSong(song) {
+  let updatedCount = 0;
+  for (let i = 0; i < mediaQueue.length; i++) {
+    const item = mediaQueue[i];
+    if (
+      item.type === "song" &&
+      (item.source?.songId === song.id || parseSongQueuePath(item.path) === song.id)
+    ) {
+      const updatedEntry = queueEntryFromSong({
+        song,
+        render: currentSongRenderState,
+        currentSectionId: item.render?.currentSectionId || currentSongSectionId,
+      });
+      updatedEntry.autoAdvance = item.autoAdvance;
+      updatedEntry.cueStartTime = item.cueStartTime;
+      mediaQueue[i] = updatedEntry;
+      updatedCount++;
+    }
+  }
+  if (updatedCount > 0) {
+    invalidateQueueUndoToastAfterMutation();
+    renderQueue();
+    saveMediaFile();
+  }
 }
 
 async function saveSongEditor() {
@@ -7792,6 +8153,7 @@ async function saveSongEditor() {
       authors: authorText ? authorText.split(",").map((a) => a.trim()).filter(Boolean) : [],
       copyright: currentSongRenderState.copyright || "",
       ccliNumber: currentSongRenderState.ccliNumber || null,
+      oneLicense: currentSongRenderState.oneLicense || null,
     },
     sections,
     arrangements: [
@@ -7820,6 +8182,10 @@ async function saveSongEditor() {
   try {
     const saved = await songsAPI.save(songForLibraryDatabase(song));
     closeSongEditor();
+    
+    // Update schedule items with the saved song
+    await updateScheduleSongsWithUpdatedSong(saved || song);
+
     const searchInput = document.getElementById("songsSearchInput");
     await refreshSongFolders();
     if (searchInput) await refreshSongsBrowser(searchInput.value);
@@ -7828,6 +8194,102 @@ async function saveSongEditor() {
     console.error("Failed to save song:", err);
     alert(`Failed to save song: ${err.message}`);
   }
+}
+
+async function saveSongToSchedule() {
+  const titleInput = document.getElementById("songEditorTitle");
+  const authorInput = document.getElementById("songEditorAuthor");
+  const folderInput = document.getElementById("songEditorFolder");
+  const numberInput = document.getElementById("songEditorNumber");
+  const textarea = document.getElementById("songEditorTextarea");
+
+  const title = titleInput.value.trim() || "Untitled Song";
+  const authorText = authorInput.value.trim();
+  const folderId = folderInput?.value?.trim() || null;
+  const numberRaw = numberInput?.value?.trim() || "";
+  const parsedNumber = numberRaw ? Number.parseInt(numberRaw, 10) : null;
+  const songNumber = Number.isFinite(parsedNumber) && parsedNumber > 0 ? parsedNumber : null;
+  const sections = await songsAPI.parseLyricsText(textarea.value);
+  currentSongRenderState = readSongEditorRenderState();
+
+  const songId = currentEditingSongId || `song_${crypto.randomUUID()}`;
+  currentEditingSongId = songId;
+
+  const song = {
+    schema: "ems.song.v1",
+    id: songId,
+    title,
+    folderId,
+    ...(songNumber ? { songNumber } : {}),
+    metadata: {
+      authors: authorText ? authorText.split(",").map((a) => a.trim()).filter(Boolean) : [],
+      copyright: currentSongRenderState.copyright || "",
+      ccliNumber: currentSongRenderState.ccliNumber || null,
+      oneLicense: currentSongRenderState.oneLicense || null,
+    },
+    sections,
+    arrangements: [
+      {
+        id: "arr_default",
+        name: "Default",
+        sequence: sections.map((s) => ({
+          id: `seq_${s.id}`,
+          sectionId: s.id,
+          enabled: true,
+        })),
+      },
+    ],
+    defaultRender: {
+      themeId: "song_default",
+      background: {
+        mode: currentSongRenderState.backgroundPath ? "custom" : "color",
+        color: currentSongRenderState.backgroundColor,
+        path: currentSongRenderState.backgroundPath || "",
+      },
+      textColor: currentSongRenderState.color,
+      copyrightPlacement: currentSongRenderState.copyrightPlacement,
+    },
+  };
+
+  const entry = queueEntryFromSong({
+    song,
+    render: currentSongRenderState,
+    currentSectionId: currentSongSectionId,
+  });
+
+  let updatedCount = 0;
+  for (let i = 0; i < mediaQueue.length; i++) {
+    const item = mediaQueue[i];
+    if (
+      item.type === "song" &&
+      (item.source?.songId === songId || parseSongQueuePath(item.path) === songId)
+    ) {
+      const updatedEntry = queueEntryFromSong({
+        song,
+        render: currentSongRenderState,
+        currentSectionId: item.render?.currentSectionId || currentSongSectionId,
+      });
+      updatedEntry.autoAdvance = item.autoAdvance;
+      updatedEntry.cueStartTime = item.cueStartTime;
+      mediaQueue[i] = updatedEntry;
+      updatedCount++;
+    }
+  }
+
+  if (updatedCount > 0) {
+    showGnomeToast(`Updated ${entry.name} in schedule`);
+  } else {
+    insertQueueEntriesAfterSelection([entry]);
+    showGnomeToast(`Scheduled ${entry.name}`);
+  }
+
+  closeSongEditor();
+  currentWorkspaceSong = song;
+  await loadSongIntoWorkspace(song, { render: currentSongRenderState });
+
+  invalidateQueueUndoToastAfterMutation();
+  renderQueue();
+  saveMediaFile();
 }
 
 async function deleteSongFromLibrary(songId = currentWorkspaceSong?.id) {
@@ -7865,9 +8327,15 @@ async function deleteSongFromLibrary(songId = currentWorkspaceSong?.id) {
 }
 
 function renderStateForLibrarySong(song) {
+  const defaultRender = song?.defaultRender || {};
   return mergeSongRenderState(DEFAULT_SONG_RENDER, {
-    copyright: song.metadata?.copyright || "",
-    ccliNumber: song.metadata?.ccliNumber || null,
+    copyright: song?.metadata?.copyright || "",
+    ccliNumber: song?.metadata?.ccliNumber || null,
+    oneLicense: song?.metadata?.oneLicense || null,
+    backgroundColor: defaultRender.background?.color,
+    backgroundPath: defaultRender.background?.path || "",
+    color: defaultRender.textColor,
+    copyrightPlacement: defaultRender.copyrightPlacement,
   });
 }
 
@@ -7938,7 +8406,7 @@ function hideSongContextMenu() {
 
 function buildSongContextMenuMarkup() {
   const folderItems = [
-    `<button type="button" role="menuitem" data-song-action="move" data-folder-id="${SONG_FOLDER_UNFILED}">Unfiled</button>`,
+    `<button type="button" role="menuitem" data-song-action="move" data-folder-id="${SONG_FOLDER_UNFILED}">Default</button>`,
     ...songFoldersCache.map(
       (folder) =>
         `<button type="button" role="menuitem" data-song-action="move" data-folder-id="${escapeHtml(folder.id)}">${escapeHtml(folder.name)}</button>`,
@@ -8346,6 +8814,22 @@ function installBibleMediaControls() {
   document.getElementById("songsAddScheduleBtn")?.addEventListener("click", () => {
     void insertSongInSchedule().catch(console.error);
   });
+
+  document.getElementById("songsSaveToLibraryBtn")?.addEventListener("click", async () => {
+    if (!currentWorkspaceSong) return;
+    try {
+      const saved = await songsAPI.save(songForLibraryDatabase(currentWorkspaceSong));
+      await updateScheduleSongsWithUpdatedSong(saved || currentWorkspaceSong);
+      const searchInput = document.getElementById("songsSearchInput");
+      await refreshSongFolders();
+      if (searchInput) await refreshSongsBrowser(searchInput.value);
+      await loadSongIntoWorkspace(saved || currentWorkspaceSong, { render: currentSongRenderState });
+      showGnomeToast(`Saved "${currentWorkspaceSong.title}" to library`);
+    } catch (err) {
+      console.error("Failed to save song to library:", err);
+      showGnomeToast(`Failed to save song: ${err.message}`);
+    }
+  });
   
   document.getElementById("songsEditBtn")?.addEventListener("click", () => {
     void openSongEditor(currentWorkspaceSong).catch(console.error);
@@ -8394,6 +8878,60 @@ function installBibleMediaControls() {
     void saveSongEditor().catch(console.error);
   });
 
+  document.getElementById("songEditorSaveScheduleBtn")?.addEventListener("click", () => {
+    void saveSongToSchedule().catch(console.error);
+  });
+
+  // Tab Switching
+  document.getElementById("songEditorTabSlidesBtn")?.addEventListener("click", () => {
+    document.getElementById("songEditorTabSlidesBtn").classList.add("active");
+    document.getElementById("songEditorTabPropsBtn").classList.remove("active");
+    document.getElementById("songEditorTabSlides").removeAttribute("style");
+    document.getElementById("songEditorTabProps").setAttribute("style", "display: none;");
+  });
+
+  document.getElementById("songEditorTabPropsBtn")?.addEventListener("click", () => {
+    document.getElementById("songEditorTabPropsBtn").classList.add("active");
+    document.getElementById("songEditorTabSlidesBtn").classList.remove("active");
+    document.getElementById("songEditorTabProps").removeAttribute("style");
+    document.getElementById("songEditorTabSlides").setAttribute("style", "display: none;");
+  });
+
+  // Slide Navigator List Events
+  document.getElementById("songEditorAddSlideBtn")?.addEventListener("click", () => {
+    handleSongEditorAddSection();
+  });
+
+  document.getElementById("songEditorDeleteSlideBtn")?.addEventListener("click", () => {
+    handleSongEditorDeleteSection();
+  });
+
+  document.getElementById("songEditorMoveUpBtn")?.addEventListener("click", () => {
+    handleSongEditorMoveSectionUp();
+  });
+
+  document.getElementById("songEditorMoveDownBtn")?.addEventListener("click", () => {
+    handleSongEditorMoveSectionDown();
+  });
+
+  // Slide editor live WYSIWYG text input
+  document.getElementById("songEditorSlideTextarea")?.addEventListener("input", (e) => {
+    handleSongEditorCanvasTextInput(e.target.value);
+  });
+
+  // Meta change events (Type dropdown, Number input, Custom label input)
+  document.getElementById("songEditorSectionType")?.addEventListener("change", () => {
+    handleSongEditorSectionMetaChange();
+  });
+
+  document.getElementById("songEditorSectionNumber")?.addEventListener("input", () => {
+    handleSongEditorSectionMetaChange();
+  });
+
+  document.getElementById("songEditorSectionCustomLabel")?.addEventListener("input", () => {
+    handleSongEditorSectionMetaChange();
+  });
+
   document.getElementById("songEditorBackgroundInput")?.addEventListener("change", (event) => {
     const file = event.target.files?.[0];
     currentSongRenderState.backgroundPath = file ? getPathForFile(file) : "";
@@ -8419,7 +8957,7 @@ function installBibleMediaControls() {
     }
   });
 
-  for (const id of ["songEditorFontInput", "songEditorFontSizeInput", "songEditorAutosizeModeInput", "songEditorMinFontSizeInput", "songEditorTextColor", "songEditorBackgroundColor", "songEditorCopyright", "songEditorCcli"]) {
+  for (const id of ["songEditorFontInput", "songEditorFontSizeInput", "songEditorAutosizeModeInput", "songEditorMinFontSizeInput", "songEditorTextColor", "songEditorBackgroundColor", "songEditorCopyright", "songEditorCcli", "songEditorOneLicense"]) {
     document.getElementById(id)?.addEventListener("input", () => {
       currentSongRenderState = readSongEditorRenderState();
       if (currentWorkspaceSong && document.getElementById("songEditorDrawer")?.hidden === false) {
