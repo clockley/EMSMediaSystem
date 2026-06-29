@@ -45,7 +45,150 @@ export const DEFAULT_SONG_RENDER = Object.freeze({
   copyrightPlacement: "firstSlide",
 });
 
+export function songBlockText(block) {
+  if (!block || typeof block !== "object") return "";
+  if (block.type !== "lyricLine" || !Array.isArray(block.primary?.segments)) return "";
+  return block.primary.segments.map((segment) => segment?.text || "").join("");
+}
+
+export function songSectionBlockTexts(section) {
+  if (!section || !Array.isArray(section.blocks)) return [];
+  return section.blocks.map(songBlockText);
+}
+
+export function normalizeToSongAST(song) {
+  if (!song || typeof song !== "object") return null;
+
+  const id = song.id || "";
+  const title = song.title || "Untitled Song";
+  const songNumber = Number.isFinite(song.songNumber) && song.songNumber > 0 ? song.songNumber : undefined;
+  const folderId = typeof song.folderId === "string" && song.folderId.trim() ? song.folderId.trim() : null;
+
+  const authors = Array.isArray(song.metadata?.authors) ? song.metadata.authors : [];
+  const copyright = song.metadata?.copyright || "";
+  const ccliNumber = song.metadata?.ccliNumber || song.metadata?.ccli_number || "";
+  const oneLicense = song.metadata?.oneLicense || song.metadata?.one_license || "";
+  const hymnal = song.metadata?.hymnal || { name: null, number: null, display: null };
+
+  const sections = (Array.isArray(song.sections) ? song.sections : []).map(sec => {
+    const kind = (sec.kind || "verse").toLowerCase();
+    const label = sec.label || "";
+
+    let blocks = [];
+    if (Array.isArray(sec.blocks)) {
+      blocks = sec.blocks.map(block => ({
+        type: block.type || "lyricLine",
+        id: block.id || `block_${Math.random().toString(36).substring(2, 9)}`,
+        primary: {
+          lang: block.primary?.lang || "en",
+          segments: Array.isArray(block.primary?.segments) ? block.primary.segments : [
+            { type: "text", text: block.primary?.text || "" }
+          ]
+        },
+        translations: Array.isArray(block.translations) ? block.translations : [],
+        annotations: Array.isArray(block.annotations) ? block.annotations : []
+      }));
+    }
+
+    return {
+      id: sec.id || `sec_${Math.random().toString(36).substring(2, 9)}`,
+      kind,
+      label,
+      blocks
+    };
+  });
+
+  const playOrder = [];
+  if (Array.isArray(song.playOrder)) {
+    for (const item of song.playOrder) {
+      const sectionId =
+        typeof item === "string"
+          ? item
+          : typeof item?.sectionId === "string"
+            ? item.sectionId
+            : typeof item?.id === "string"
+              ? item.id
+              : "";
+      if (sectionId) {
+        playOrder.push({
+          ...(typeof item?.id === "string" ? { id: item.id } : {}),
+          sectionId,
+          enabled: item?.enabled !== false,
+        });
+      }
+    }
+  } else if (Array.isArray(song.arrangements?.[0]?.sequence)) {
+    for (const entry of song.arrangements[0].sequence) {
+      const sectionId =
+        typeof entry === "string"
+          ? entry
+          : typeof entry?.sectionId === "string"
+            ? entry.sectionId
+            : typeof entry?.id === "string"
+              ? entry.id
+              : "";
+      if (sectionId) {
+        playOrder.push({ sectionId, enabled: entry?.enabled !== false });
+      }
+    }
+  } else {
+    for (const sec of sections) {
+      playOrder.push({ sectionId: sec.id });
+    }
+  }
+
+  const defaultRender = song.defaultRender || undefined;
+
+  return {
+    schema: "ems.song.v1",
+    id,
+    title,
+    songNumber,
+    folderId,
+    metadata: {
+      authors,
+      copyright,
+      ccliNumber,
+      oneLicense,
+      hymnal
+    },
+    languages: song.languages || [
+      { id: "en", name: "English", default: true }
+    ],
+    sections,
+    playOrder,
+    presentation: song.presentation || {
+      defaultChunking: {
+        mode: "blocksPerSlide",
+        maxBlocks: 4
+      }
+    },
+    defaultRender
+  };
+}
+
 export function arrangementSequenceEntries(song, arrangementId = "arr_default") {
+  if (song?.schema === "ems.song.v1") {
+    const playOrder = Array.isArray(song.playOrder) ? song.playOrder : [];
+    return playOrder
+      .map((entry, idx) => {
+        const sectionId =
+          typeof entry === "string"
+            ? entry
+            : typeof entry?.sectionId === "string"
+              ? entry.sectionId
+              : typeof entry?.id === "string"
+                ? entry.id
+                : "";
+        if (!sectionId) return null;
+        return {
+          id: typeof entry?.id === "string" ? entry.id : `play_${idx}`,
+          sectionId,
+          enabled: entry?.enabled !== false,
+        };
+      })
+      .filter(Boolean);
+  }
   const arrangement =
     song?.arrangements?.find((a) => a.id === arrangementId) ||
     song?.arrangements?.[0];
@@ -82,8 +225,7 @@ export function enabledSongSections(song, sequenceEntries = null) {
 
 export function songSectionLyricsText(section) {
   if (!section) return "";
-  return (section.lines || [])
-    .map((line) => (line.kind === "spacer" ? "" : line.text || ""))
+  return songSectionBlockTexts(section)
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -107,12 +249,59 @@ export function songCopyrightAttribution(metadata = {}, placement = "firstSlide"
   return parts.join(" · ");
 }
 
+function definedRenderValues(value = {}) {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined),
+  );
+}
+
 export function mergeSongRenderState(base = {}, overrides = {}) {
   return {
     ...DEFAULT_SONG_RENDER,
-    ...(base && typeof base === "object" ? base : {}),
-    ...(overrides && typeof overrides === "object" ? overrides : {}),
+    ...definedRenderValues(base),
+    ...definedRenderValues(overrides),
   };
+}
+
+export function songDefaultRenderFromRender(render = {}) {
+  const style = mergeSongRenderState({}, render);
+  return {
+    themeId: "song_default",
+    background: {
+      mode: style.backgroundPath ? "custom" : "color",
+      color: style.backgroundColor || DEFAULT_SONG_RENDER.backgroundColor,
+      path: style.backgroundPath || "",
+    },
+    textColor: style.color || DEFAULT_SONG_RENDER.color,
+    fontFamily: style.fontFamily || DEFAULT_SONG_RENDER.fontFamily,
+    fontSize: Number.isFinite(style.fontSize) ? style.fontSize : DEFAULT_SONG_RENDER.fontSize,
+    autosizeMode: style.autosizeMode || DEFAULT_SONG_RENDER.autosizeMode,
+    minFontSize: Number.isFinite(style.minFontSize)
+      ? style.minFontSize
+      : DEFAULT_SONG_RENDER.minFontSize,
+    copyrightPlacement: style.copyrightPlacement || DEFAULT_SONG_RENDER.copyrightPlacement,
+    textBoxPosition: style.textBoxPosition || null,
+  };
+}
+
+export function songRenderStateFromDefaultRender(defaultRender = {}) {
+  if (!defaultRender || typeof defaultRender !== "object") {
+    return mergeSongRenderState();
+  }
+  const fontSize = Number(defaultRender.fontSize);
+  const minFontSize = Number(defaultRender.minFontSize);
+  return mergeSongRenderState(DEFAULT_SONG_RENDER, {
+    backgroundColor: defaultRender.background?.color || defaultRender.backgroundColor,
+    backgroundPath: defaultRender.background?.path || defaultRender.backgroundPath || "",
+    color: defaultRender.textColor || defaultRender.color,
+    fontFamily: defaultRender.fontFamily,
+    fontSize: Number.isFinite(fontSize) && fontSize > 0 ? fontSize : undefined,
+    autosizeMode: defaultRender.autosizeMode,
+    minFontSize: Number.isFinite(minFontSize) && minFontSize > 0 ? minFontSize : undefined,
+    copyrightPlacement: defaultRender.copyrightPlacement,
+    textBoxPosition: defaultRender.textBoxPosition || null,
+  });
 }
 
 export function songRenderFromItem(item) {
@@ -121,26 +310,28 @@ export function songRenderFromItem(item) {
     item?.songSnapshot?.defaultRender && typeof item.songSnapshot.defaultRender === "object"
       ? item.songSnapshot.defaultRender
       : {};
+  const snapshotStyle = songRenderStateFromDefaultRender(snapshotRender);
   return mergeSongRenderState(
     {
       backgroundColor:
         render.backgroundColor ||
-        snapshotRender.background?.color ||
+        snapshotStyle.backgroundColor ||
         DEFAULT_SONG_RENDER.backgroundColor,
-      backgroundPath: render.backgroundPath || snapshotRender.background?.path || "",
-      color: render.color || snapshotRender.textColor || DEFAULT_SONG_RENDER.color,
-      fontFamily: render.fontFamily || DEFAULT_SONG_RENDER.fontFamily,
+      backgroundPath: render.backgroundPath || snapshotStyle.backgroundPath || "",
+      color: render.color || snapshotStyle.color || DEFAULT_SONG_RENDER.color,
+      fontFamily: render.fontFamily || snapshotStyle.fontFamily || DEFAULT_SONG_RENDER.fontFamily,
       fontSize: Number.isFinite(render.fontSize)
         ? render.fontSize
-        : DEFAULT_SONG_RENDER.fontSize,
-      autosizeMode: render.autosizeMode || DEFAULT_SONG_RENDER.autosizeMode,
+        : snapshotStyle.fontSize,
+      autosizeMode: render.autosizeMode || snapshotStyle.autosizeMode || DEFAULT_SONG_RENDER.autosizeMode,
       minFontSize: Number.isFinite(render.minFontSize)
         ? render.minFontSize
-        : DEFAULT_SONG_RENDER.minFontSize,
+        : snapshotStyle.minFontSize,
       copyrightPlacement:
         render.copyrightPlacement ||
-        snapshotRender.copyrightPlacement ||
+        snapshotStyle.copyrightPlacement ||
         DEFAULT_SONG_RENDER.copyrightPlacement,
+      textBoxPosition: render.textBoxPosition || snapshotStyle.textBoxPosition || null,
     },
     {},
   );
@@ -170,6 +361,7 @@ export function buildSongTextMessage({
   );
 
   return {
+    blocks: section?.blocks || [],
     text: bodyText,
     bodyText,
     reference: referenceText,
@@ -194,6 +386,7 @@ export function buildSongTextMessage({
     lineHeight: SCRIPTURE_LINE_HEIGHT,
     look: SCRIPTURE_LOOK_FULLSCREEN,
     position: { vertical: "center", horizontal: "center" },
+    textBoxPosition: style.textBoxPosition || null,
   };
 }
 
@@ -217,42 +410,12 @@ function arrangementSequenceIdsForLibrary(sequence, sections = []) {
 }
 
 export function songForLibraryDatabase(song) {
-  if (!song || typeof song !== "object") return song;
-  const sections = Array.isArray(song.sections) ? song.sections : [];
-  const arrangements = (Array.isArray(song.arrangements) ? song.arrangements : []).map(
-    (arrangement, index) => ({
-      id: arrangement?.id || (index === 0 ? "arr_default" : `arr_${index + 1}`),
-      name: arrangement?.name || "Default",
-      sequence: arrangementSequenceIdsForLibrary(arrangement?.sequence, sections),
-    }),
-  );
-  if (arrangements.length === 0) {
-    arrangements.push({
-      id: "arr_default",
-      name: "Default",
-      sequence: arrangementSequenceIdsForLibrary(null, sections),
-    });
-  }
-  return {
-    schema: song.schema || "ems.song.v1",
-    id: song.id,
-    title: song.title || "Untitled Song",
-    folderId: typeof song.folderId === "string" && song.folderId.trim() ? song.folderId.trim() : null,
-    ...(Number.isFinite(song.songNumber) && song.songNumber > 0 ? { songNumber: song.songNumber } : {}),
-    metadata: {
-      authors: Array.isArray(song.metadata?.authors) ? song.metadata.authors : [],
-      copyright: song.metadata?.copyright || "",
-      ccliNumber: song.metadata?.ccliNumber || null,
-      oneLicense: song.metadata?.oneLicense || null,
-    },
-    sections,
-    arrangements,
-    ...(song.defaultRender ? { defaultRender: song.defaultRender } : {}),
-  };
+  return normalizeToSongAST(song);
 }
 
 export function songSnapshotForSchedule(song, projectMetadata = {}) {
-  const snapshot = structuredClone(song);
+  const astSong = normalizeToSongAST(song);
+  const snapshot = structuredClone(astSong);
   snapshot.metadata = {
     ...(snapshot.metadata || {}),
     authors: Array.isArray(snapshot.metadata?.authors) ? snapshot.metadata.authors : [],
@@ -299,14 +462,7 @@ export function queueEntryFromSong({
       ccliNumber: render.ccliNumber,
       oneLicense: render.oneLicense,
       defaultRender: {
-        themeId: "song_default",
-        background: {
-          mode: render.backgroundPath ? "custom" : "color",
-          color: render.backgroundColor || DEFAULT_SONG_RENDER.backgroundColor,
-          path: render.backgroundPath || "",
-        },
-        textColor: render.color || DEFAULT_SONG_RENDER.color,
-        copyrightPlacement: render.copyrightPlacement || "firstSlide",
+        ...songDefaultRenderFromRender(render),
       },
     }),
     sequence: {
@@ -320,7 +476,10 @@ export function queueEntryFromSong({
       color: render.color || DEFAULT_SONG_RENDER.color,
       fontFamily: render.fontFamily || DEFAULT_SONG_RENDER.fontFamily,
       fontSize: render.fontSize || DEFAULT_SONG_RENDER.fontSize,
+      autosizeMode: render.autosizeMode || DEFAULT_SONG_RENDER.autosizeMode,
+      minFontSize: render.minFontSize || DEFAULT_SONG_RENDER.minFontSize,
       copyrightPlacement: render.copyrightPlacement || "firstSlide",
+      textBoxPosition: render.textBoxPosition || null,
       ccliNumber:
         render.ccliNumber != null && String(render.ccliNumber).trim()
           ? String(render.ccliNumber).trim()
