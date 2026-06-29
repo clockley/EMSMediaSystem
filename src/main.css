@@ -3633,6 +3633,30 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     text-align: center;
 }
 
+.song-editor-drawer__body {
+    display: flex;
+    flex-direction: row;
+    flex: 1;
+    min-height: 0;
+}
+
+.song-editor-drawer__editor {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    padding: 16px;
+    border-right: 1px solid var(--border-color);
+    min-width: 0;
+}
+
+.song-editor-drawer__preview {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    align-items: stretch;
+}
+
 .song-editor-header {
     display: flex;
     flex-direction: column;
@@ -3698,7 +3722,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     line-height: 1.5;
     resize: none;
     overflow-y: auto;
-    margin-top: 12px;
+    box-sizing: border-box;
 }
 
 .song-editor-textarea:focus {
@@ -5387,4 +5411,34 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .gtk-volume-slider-vertical:focus::-webkit-slider-thumb {
     box-shadow: 0 0 0 3px rgba(52, 131, 235, 0.5),
         0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* Fix duplicate slide visibility */
+.songs-preview-slide[hidden] {
+    display: none !important;
+}
+
+/* Fix Live Preview Sizing */
+#songEditorLivePreviewSlide {
+    container-type: inline-size;
+    flex: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    margin: 0 auto;
+}
+
+#songEditorLivePreviewSlide .song-preview-line {
+    font-size: calc(var(--base-font-size, 66) * 100cqw / 1920) !important;
+    font-family: var(--font-family, 'CMG Sans', sans-serif) !important;
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    line-height: 1.35;
+    text-align: center;
+    color: #ffffff;
 }

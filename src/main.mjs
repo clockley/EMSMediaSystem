@@ -4109,6 +4109,10 @@ function setIPC() {
       timestamp: Date.now(),
     });
   });
+  ipcMain.on("log-to-file", (event, data) => {
+    writeFile('/home/christian/EMSMediaSystem/derived/renderer_log.txt', data + "\n", { flag: 'a' })
+      .catch(err => console.error("failed to log to file", err));
+  });
   ipcMain.on("minimize-window", (event) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
     senderWindow.minimize();
