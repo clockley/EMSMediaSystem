@@ -22,6 +22,7 @@ type SongMetadata struct {
 	Authors    []string `json:"authors"`
 	Copyright  string   `json:"copyright"`
 	CCLINumber string   `json:"ccliNumber"`
+	OneLicense string   `json:"oneLicense"`
 }
 
 type Song struct {
