@@ -3485,6 +3485,38 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 
 /* ── Arrangement strip ────────────────────────────────────── */
 
+.song-arrangement-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.song-arrangement-wrapper .songs-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    padding: 6px;
+    min-width: 26px;
+    height: 26px;
+    border: 1px solid var(--border-color);
+    background: color-mix(in srgb, var(--card-bg-color) 92%, var(--window-fg-color));
+    color: var(--window-fg-color);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+    flex-shrink: 0;
+}
+
+.song-arrangement-wrapper .songs-nav-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--card-bg-color) 85%, var(--window-fg-color));
+}
+
+.song-arrangement-wrapper .songs-nav-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .song-arrangement-strip {
     display: flex;
     gap: 6px;

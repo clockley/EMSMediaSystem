@@ -7668,6 +7668,10 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     }
     document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
     document.getElementById("songArrangementStrip").innerHTML = "";
+    const prevBtn = document.getElementById("songPrevSecBtn");
+    const nextBtn = document.getElementById("songNextSecBtn");
+    if (prevBtn) prevBtn.disabled = true;
+    if (nextBtn) nextBtn.disabled = true;
     if (slide) slide.innerHTML = "";
     currentSongSectionId = null;
     currentSongQueueItem = null;
@@ -7727,6 +7731,7 @@ async function loadSongIntoWorkspace(song, opts = {}) {
           btn.classList.toggle("primary-action", btn === chip);
         });
         void syncActiveScheduledSongPresentation().catch(console.error);
+        updateSongNavButtonsState();
       });
       strip.appendChild(chip);
     }
@@ -7739,6 +7744,52 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     null;
   if (activeSection) {
     renderSongSectionPreview(activeSection);
+  }
+  updateSongNavButtonsState();
+}
+
+function updateSongNavButtonsState() {
+  const prevBtn = document.getElementById("songPrevSecBtn");
+  const nextBtn = document.getElementById("songNextSecBtn");
+  if (!prevBtn || !nextBtn || !currentWorkspaceSong) {
+    if (prevBtn) prevBtn.disabled = true;
+    if (nextBtn) nextBtn.disabled = true;
+    return;
+  }
+  const enabledSections = enabledSongSections(currentWorkspaceSong);
+  if (enabledSections.length <= 1) {
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+    return;
+  }
+  const currentIndex = enabledSections.findIndex((s) => s.id === currentSongSectionId);
+  prevBtn.disabled = currentIndex <= 0;
+  nextBtn.disabled = currentIndex >= enabledSections.length - 1 || currentIndex === -1;
+}
+
+function navigateSongSection(direction) {
+  if (!currentWorkspaceSong) return;
+  const enabledSections = enabledSongSections(currentWorkspaceSong);
+  if (enabledSections.length === 0) return;
+  const currentIndex = enabledSections.findIndex((s) => s.id === currentSongSectionId);
+  if (currentIndex === -1) return;
+  const nextIndex = currentIndex + direction;
+  if (nextIndex >= 0 && nextIndex < enabledSections.length) {
+    const nextSection = enabledSections[nextIndex];
+    currentSongSectionId = nextSection.id;
+    renderSongSectionPreview(nextSection);
+    if (currentSongQueueItem?.render) {
+      currentSongQueueItem.render.currentSectionId = nextSection.id;
+    }
+    const strip = document.getElementById("songArrangementStrip");
+    if (strip) {
+      const buttons = strip.querySelectorAll(".pill-button");
+      buttons.forEach((btn, idx) => {
+        btn.classList.toggle("primary-action", idx === nextIndex);
+      });
+    }
+    void syncActiveScheduledSongPresentation().catch(console.error);
+    updateSongNavButtonsState();
   }
 }
 
@@ -8805,6 +8856,14 @@ function installBibleMediaControls() {
 
   document.getElementById("songsBulkClearBtn")?.addEventListener("click", () => {
     clearSongSelection();
+  });
+
+  document.getElementById("songPrevSecBtn")?.addEventListener("click", () => {
+    navigateSongSection(-1);
+  });
+
+  document.getElementById("songNextSecBtn")?.addEventListener("click", () => {
+    navigateSongSection(1);
   });
 
   document.getElementById("songsShowNowBtn")?.addEventListener("click", () => {

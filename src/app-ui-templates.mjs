@@ -273,7 +273,15 @@ export function generateMediaFormHTML() {
                  </div>
                </div>
              </div>
-             <div id="songArrangementStrip" class="song-arrangement-strip"></div>
+              <div class="song-arrangement-wrapper">
+                <button type="button" id="songPrevSecBtn" class="pill-button songs-nav-btn" disabled title="Previous slide">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <div id="songArrangementStrip" class="song-arrangement-strip"></div>
+                <button type="button" id="songNextSecBtn" class="pill-button songs-nav-btn" disabled title="Next slide">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
              <div class="songs-preview-container">
                <div id="songsLauncher" class="songs-launcher">
                  <button class="songs-launcher-item" id="launcherEditSongsBtn">
@@ -451,6 +459,21 @@ export function generateMediaFormHTML() {
 
                   <!-- Center Pane: WYSIWYG Slide Content Editor -->
                   <div class="song-editor-workspace">
+                    <div class="song-editor-workspace__toolbar">
+                      <div class="song-editor-slide-meta-row">
+                        <span class="song-editor-row-label">Slide Label</span>
+                        <select id="songEditorSectionType" class="display-select" style="width: 120px;">
+                          <option value="Verse">Verse</option>
+                          <option value="Chorus">Chorus</option>
+                          <option value="Bridge">Bridge</option>
+                          <option value="Pre-Chorus">Pre-Chorus</option>
+                          <option value="Tag">Tag</option>
+                          <option value="Custom">Custom</option>
+                        </select>
+                        <input type="number" id="songEditorSectionNumber" min="1" value="1" style="width: 60px; height: 28px; border: 1px solid var(--border-color); border-radius: 4px; padding: 0 6px; background: var(--input-bg-color); color: var(--text-color);">
+                        <input type="text" id="songEditorSectionCustomLabel" placeholder="Custom label..." style="display: none; flex: 1; height: 28px; border: 1px solid var(--border-color); border-radius: 4px; padding: 0 8px; background: var(--input-bg-color); color: var(--text-color);">
+                      </div>
+                    </div>
 
 
                     <!-- WYSIWYG Editor Canvas -->
