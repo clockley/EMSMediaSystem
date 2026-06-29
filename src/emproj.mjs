@@ -22,6 +22,97 @@ import { safeParseEmsSlideDocument } from "./schemas/slide-document.schema.min.m
 import yauzl from "yauzl";
 import yazl from "yazl";
 
+function normalizeToSongAST(song) {
+  if (!song || typeof song !== "object") return null;
+
+  const id = song.id || "";
+  const title = song.title || "Untitled Song";
+  const songNumber = Number.isFinite(song.songNumber) && song.songNumber > 0 ? song.songNumber : undefined;
+  const folderId = typeof song.folderId === "string" && song.folderId.trim() ? song.folderId.trim() : null;
+
+  const authors = Array.isArray(song.metadata?.authors) ? song.metadata.authors : [];
+  const copyright = song.metadata?.copyright || "";
+  const ccliNumber = song.metadata?.ccliNumber || song.metadata?.ccli_number || "";
+  const oneLicense = song.metadata?.oneLicense || song.metadata?.one_license || "";
+  const hymnal = song.metadata?.hymnal || { name: null, number: null, display: null };
+
+  const sections = (Array.isArray(song.sections) ? song.sections : []).map(sec => {
+    const kind = (sec.kind || "verse").toLowerCase();
+    const label = sec.label || "";
+
+    let blocks = [];
+    if (Array.isArray(sec.blocks)) {
+      blocks = sec.blocks.map(block => ({
+        type: block.type || "lyricLine",
+        id: block.id || `block_${Math.random().toString(36).substring(2, 9)}`,
+        primary: {
+          lang: block.primary?.lang || "en",
+          segments: Array.isArray(block.primary?.segments) ? block.primary.segments : [
+            { type: "text", text: block.primary?.text || "" }
+          ]
+        },
+        translations: Array.isArray(block.translations) ? block.translations : [],
+        annotations: Array.isArray(block.annotations) ? block.annotations : []
+      }));
+    }
+
+    return {
+      id: sec.id || `sec_${Math.random().toString(36).substring(2, 9)}`,
+      kind,
+      label,
+      blocks
+    };
+  });
+
+  const playOrder = [];
+  if (Array.isArray(song.playOrder)) {
+    for (const item of song.playOrder) {
+      if (typeof item === "string") {
+        playOrder.push({ sectionId: item });
+      } else if (item && typeof item === "object") {
+        playOrder.push({ sectionId: item.sectionId || item.id });
+      }
+    }
+  } else if (Array.isArray(song.arrangements?.[0]?.sequence)) {
+    for (const secId of song.arrangements[0].sequence) {
+      playOrder.push({ sectionId: secId });
+    }
+  } else {
+    for (const sec of sections) {
+      playOrder.push({ sectionId: sec.id });
+    }
+  }
+
+  const defaultRender = song.defaultRender || undefined;
+
+  return {
+    schema: "ems.song.v1",
+    id,
+    title,
+    songNumber,
+    folderId,
+    metadata: {
+      authors,
+      copyright,
+      ccliNumber,
+      oneLicense,
+      hymnal
+    },
+    languages: song.languages || [
+      { id: "en", name: "English", default: true }
+    ],
+    sections,
+    playOrder,
+    presentation: song.presentation || {
+      defaultChunking: {
+        mode: "blocksPerSlide",
+        maxBlocks: 4
+      }
+    },
+    defaultRender
+  };
+}
+
 const MIME_TYPE = "application/vnd.ems.project+zip";
 const ARCHIVE_COMMENT_FORMAT = "application/vnd.ems.project.comment+json";
 const ARCHIVE_COMMENT_VERSION = 1;
@@ -906,16 +997,32 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
   };
 }
 
-function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths) {
-  const snapshot = item?.songSnapshot;
-  if (!snapshot || typeof snapshot !== "object") return null;
+function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths, songFiles) {
+  let snapshot = item?.songSnapshot;
   const songId =
-    typeof snapshot.id === "string"
+    typeof snapshot?.id === "string"
       ? snapshot.id
       : typeof item?.source?.songId === "string"
         ? item.source.songId
         : "";
   if (!songId) return null;
+
+  if (!snapshot && songFiles) {
+    const rawSong = songFiles.get(`songs/${songId}.json`);
+    if (rawSong) {
+      try {
+        snapshot = JSON.parse(rawSong.toString("utf8"));
+      } catch (err) {
+        console.error(`Failed to parse embedded song ${songId}:`, err);
+      }
+    }
+  }
+
+  if (snapshot) {
+    snapshot = normalizeToSongAST(snapshot);
+  }
+
+  if (!snapshot || typeof snapshot !== "object") return null;
   const backgroundAsset =
     typeof item?.render?.backgroundAssetId === "string"
       ? assetById.get(item.render.backgroundAssetId) || null
@@ -968,6 +1075,7 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   const extractedMediaPaths = new Map();
   const rootFiles = new Map();
   const documentFiles = new Map();
+  const songFiles = new Map();
   const entryHashes = new Map();
 
   await new Promise((resolve, reject) => {
@@ -996,6 +1104,13 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
         if (isSlideDocumentArchivePath(inZipPath)) {
           const buffer = await readEntryBuffer(zipfile, entry);
           documentFiles.set(inZipPath, buffer);
+          entryHashes.set(inZipPath, await sha256Buffer(buffer));
+          zipfile.readEntry();
+          return;
+        }
+        if (inZipPath.startsWith("songs/") && inZipPath.endsWith(".json")) {
+          const buffer = await readEntryBuffer(zipfile, entry);
+          songFiles.set(inZipPath, buffer);
           entryHashes.set(inZipPath, await sha256Buffer(buffer));
           zipfile.readEntry();
           return;
@@ -1141,7 +1256,7 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
         return buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPaths);
       }
       if (item.type === "song" || item.songSnapshot) {
-        return buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths);
+        return buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths, songFiles);
       }
       let relPath = "";
       if (typeof item?.source?.path === "string") relPath = item.source.path;
@@ -1708,6 +1823,24 @@ export async function saveEmprojSnapshot(
     buffer: Buffer.from(canonicalJson(doc), "utf8"),
   }));
 
+  const songBuffers = [];
+  const processedSongs = new Set();
+  for (const item of queue) {
+    if (!item) continue;
+    if (item.type === "song" || item.songSnapshot) {
+      const songSnap = item.songSnapshot;
+      const songId = songSnap?.id || parseSongArchivePath(item.path) || item.source?.songId;
+      if (songId && !processedSongs.has(songId) && songSnap) {
+        processedSongs.add(songId);
+        const normalized = normalizeToSongAST(songSnap);
+        songBuffers.push({
+          path: `songs/${songId}.json`,
+          buffer: Buffer.from(canonicalJson(normalized), "utf8"),
+        });
+      }
+    }
+  }
+
   const hashes = {
     "queue.json": await sha256Buffer(queueBuf),
     "assets.json": await sha256Buffer(assetsBuf),
@@ -1716,6 +1849,9 @@ export async function saveEmprojSnapshot(
     [PROJECT_DOCUMENTS_INDEX_PATH]: await sha256Buffer(documentsIndexBuf),
   };
   for (const entry of documentBuffers) {
+    hashes[entry.path] = await sha256Buffer(entry.buffer);
+  }
+  for (const entry of songBuffers) {
     hashes[entry.path] = await sha256Buffer(entry.buffer);
   }
   for (const entry of assets) {
@@ -1780,6 +1916,11 @@ export async function saveEmprojSnapshot(
     { path: "diagnostics.json", buffer: diagnosticsBuf, compress: true },
     { path: PROJECT_DOCUMENTS_INDEX_PATH, buffer: documentsIndexBuf, compress: true },
     ...documentBuffers.map((entry) => ({
+      path: entry.path,
+      buffer: entry.buffer,
+      compress: true,
+    })),
+    ...songBuffers.map((entry) => ({
       path: entry.path,
       buffer: entry.buffer,
       compress: true,

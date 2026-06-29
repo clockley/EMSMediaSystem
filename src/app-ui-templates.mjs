@@ -414,6 +414,14 @@ export function generateMediaFormHTML() {
                             <input id="songEditorFontSizeInput" type="number" min="24" max="160" value="66">
                           </div>
                           <div class="boxed-list-row">
+                            <label for="songEditorStyleScope">Apply To</label>
+                            <select id="songEditorStyleScope" class="display-select">
+                              <option value="allSlides">All Slides</option>
+                              <option value="page">Current Slide</option>
+                              <option value="selection">Current Text</option>
+                            </select>
+                          </div>
+                          <div class="boxed-list-row">
                             <label for="songEditorTextColor">Text Color</label>
                             <div style="position: relative; display: flex; align-items: center; gap: 8px; flex: 1;">
                               <input type="color" id="songEditorTextColor" value="#ffffff" aria-label="Song text color" style="width: 40px; height: 28px; border: 1px solid var(--border-color); border-radius: 4px; padding: 0; cursor: pointer;">
@@ -479,7 +487,13 @@ export function generateMediaFormHTML() {
                     <!-- WYSIWYG Editor Canvas -->
                     <div class="song-editor-workspace__canvas-container">
                       <div id="songEditorSlideCanvas" class="song-editor-slide-canvas">
-                        <textarea id="songEditorSlideTextarea" class="song-editor-slide-textarea" placeholder="Enter lyrics for this section..."></textarea>
+                        <div id="snapGuideV" class="snap-guide-line snap-guide-line--v" style="display: none;"></div>
+                        <div id="snapGuideH" class="snap-guide-line snap-guide-line--h" style="display: none;"></div>
+                        <div id="songEditorTextBox" class="draggable-text-box" style="position: absolute; left: 10%; top: 10%; width: 80%; height: 80%; cursor: default;">
+                          <div id="songEditorDragHandle" class="draggable-text-box__handle"></div>
+                          <textarea id="songEditorSlideTextarea" class="song-editor-slide-textarea" placeholder="Enter lyrics for this section..."></textarea>
+                          <div id="songEditorResizeHandle" class="draggable-text-box__resize-handle" aria-hidden="true"></div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -494,6 +508,8 @@ export function generateMediaFormHTML() {
                 </div>
                 <!-- Hidden original textarea to preserve background functionality -->
                 <textarea id="songEditorTextarea" style="display: none;"></textarea>
+                <!-- Custom Context Menu for styling shortcuts -->
+                <div id="songEditorContextMenu" class="song-editor-context-menu" style="display: none; position: fixed; z-index: 10000;"></div>
               </div>
            </section>
          </div>

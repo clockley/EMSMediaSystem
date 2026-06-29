@@ -1554,11 +1554,39 @@ function applyTextMessage(message) {
   }
   textPresentationState.signature = signature;
   const shell = ensureScriptureTextShell(textContent);
+  if (shell.box) {
+    if (safeMessage.textBoxPosition) {
+      shell.box.style.position = "absolute";
+      shell.box.style.left = safeMessage.textBoxPosition.left;
+      shell.box.style.top = safeMessage.textBoxPosition.top;
+      shell.box.style.width = safeMessage.textBoxPosition.width;
+      shell.box.style.height = safeMessage.textBoxPosition.height;
+      shell.box.style.display = "flex";
+      shell.box.style.flexDirection = "column";
+      shell.box.style.justifyContent = "center";
+    } else {
+      shell.box.style.position = "";
+      shell.box.style.left = "";
+      shell.box.style.top = "";
+      shell.box.style.width = "";
+      shell.box.style.height = "";
+      shell.box.style.display = "";
+      shell.box.style.flexDirection = "";
+      shell.box.style.justifyContent = "";
+    }
+  }
   textContent.classList.toggle("scripture-render--fullscreen", look === SCRIPTURE_LOOK_FULLSCREEN);
   textContent.classList.toggle("scripture-render--lower-third", look === SCRIPTURE_LOOK_LOWER_THIRD);
   textContent.dataset.scriptureLook = look;
   applyScriptureRenderVariables(textContent, safeMessage);
-  if (shell.body) shell.body.textContent = bodyText;
+  if (shell.body) {
+    const html = renderSongSectionHTML(safeMessage.blocks);
+    if (html) {
+      shell.body.innerHTML = html;
+    } else {
+      shell.body.textContent = bodyText;
+    }
+  }
   if (shell.reference) {
     shell.reference.textContent = referenceText;
     shell.reference.hidden = !referenceText;
@@ -1745,3 +1773,49 @@ async function bootstrapMediaWindow() {
 bootstrapMediaWindow().catch((error) => {
   reportProjectionError("Failed to load projection media", error);
 });
+
+function renderSongSectionHTML(blocks) {
+  if (Array.isArray(blocks) && blocks.length > 0) {
+    return blocks
+      .map(block => {
+        if (block.type === "lyricLine" && block.primary?.segments) {
+          const html = block.primary.segments
+            .map((segment) => renderSongSegmentHTML(segment))
+            .join("");
+          return `<div class="song-block">${html || "&nbsp;"}</div>`;
+        }
+        return `<div class="song-block song-block--spacer">&nbsp;</div>`;
+      })
+      .join("");
+  }
+  return "";
+}
+
+function renderSongSegmentHTML(segment) {
+  const text = segment?.text || "";
+  const style = songSegmentStyleAttribute(segment?.style);
+  return `<span${style ? ` style="${escapeHtml(style)}"` : ""}>${escapeHtml(text)}</span>`;
+}
+
+function songSegmentStyleAttribute(style) {
+  if (!style || typeof style !== "object") return "";
+  const declarations = [];
+  const color = typeof style.color === "string" ? style.color.trim() : "";
+  const fontFamily = typeof style.fontFamily === "string" ? style.fontFamily.trim() : "";
+  if (/^(#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|[a-z]+)$/i.test(color)) {
+    declarations.push(`color: ${color}`);
+  }
+  if (fontFamily && !/[;{}<>]/.test(fontFamily)) {
+    declarations.push(`font-family: ${fontFamily}`);
+  }
+  return declarations.join("; ");
+}
+
+function escapeHtml(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}

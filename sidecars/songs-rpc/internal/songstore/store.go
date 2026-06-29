@@ -26,41 +26,54 @@ type SongMetadata struct {
 }
 
 type Song struct {
-	Schema       string          `json:"schema"`
-	ID           string          `json:"id"`
-	Title        string          `json:"title"`
-	SongNumber   *int            `json:"songNumber,omitempty"`
-	FolderID     *string         `json:"folderId,omitempty"`
-	Metadata     SongMetadata    `json:"metadata"`
-	Sections     []SongSection   `json:"sections"`
-	Arrangements []Arrangement   `json:"arrangements"`
-	DefaultRender map[string]any `json:"defaultRender,omitempty"`
+	Schema        string           `json:"schema"`
+	ID            string           `json:"id"`
+	Title         string           `json:"title"`
+	SongNumber    *int             `json:"songNumber,omitempty"`
+	FolderID      *string          `json:"folderId,omitempty"`
+	Metadata      SongMetadata     `json:"metadata"`
+	Sections      []SongSection    `json:"sections"`
+	Arrangements  []Arrangement    `json:"arrangements"`
+	PlayOrder     []PlayOrderEntry `json:"playOrder,omitempty"`
+	DefaultRender map[string]any   `json:"defaultRender,omitempty"`
 }
 
 type SongSection struct {
-	ID    string     `json:"id"`
-	Role  string     `json:"role"`
-	Label string     `json:"label"`
-	Lines []SongLine `json:"lines"`
+	ID     string      `json:"id"`
+	Kind   string      `json:"kind"`
+	Label  string      `json:"label"`
+	Blocks []SongBlock `json:"blocks"`
 }
 
-type SongLine struct {
-	ID          string           `json:"id"`
-	Text        string           `json:"text"`
-	Annotations []SongAnnotation `json:"annotations"`
+type SongBlock struct {
+	Type         string           `json:"type"`
+	ID           string           `json:"id"`
+	Primary      SongBlockPrimary `json:"primary"`
+	Translations []any            `json:"translations,omitempty"`
+	Annotations  []any            `json:"annotations,omitempty"`
 }
 
-type SongAnnotation struct {
-	ID     string `json:"id"`
-	Type   string `json:"type"`
-	Symbol string `json:"symbol"`
-	Offset int    `json:"offset"`
+type SongBlockPrimary struct {
+	Lang     string        `json:"lang"`
+	Segments []SongSegment `json:"segments"`
+}
+
+type SongSegment struct {
+	Type  string         `json:"type"`
+	Text  string         `json:"text"`
+	Style map[string]any `json:"style,omitempty"`
 }
 
 type Arrangement struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
 	Sequence []string `json:"sequence"`
+}
+
+type PlayOrderEntry struct {
+	ID        string `json:"id,omitempty"`
+	SectionID string `json:"sectionId"`
+	Enabled   *bool  `json:"enabled,omitempty"`
 }
 
 type Folder struct {
@@ -143,37 +156,6 @@ func (s *SongStore) createSchema() error {
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
-	CREATE TABLE IF NOT EXISTS song_sections (
-		song_id TEXT,
-		section_id TEXT,
-		role TEXT,
-		label TEXT,
-		sort_order INTEGER,
-		lyrics_text TEXT,
-		PRIMARY KEY (song_id, section_id)
-	);
-
-	CREATE TABLE IF NOT EXISTS song_lines (
-		song_id TEXT,
-		section_id TEXT,
-		line_id TEXT,
-		line_index INTEGER,
-		text TEXT,
-		PRIMARY KEY (song_id, section_id, line_id)
-	);
-
-	CREATE TABLE IF NOT EXISTS song_annotations (
-		song_id TEXT,
-		section_id TEXT,
-		line_id TEXT,
-		annotation_id TEXT,
-		type TEXT,
-		offset INTEGER,
-		length INTEGER,
-		data_json TEXT,
-		PRIMARY KEY (song_id, section_id, line_id, annotation_id)
-	);
-
 	CREATE VIRTUAL TABLE IF NOT EXISTS song_fts USING fts5(
 		song_id UNINDEXED,
 		title,
@@ -197,6 +179,8 @@ func (s *SongStore) migrateSchema() error {
 
 	hasFolderID := false
 	hasSongNumber := false
+	hasASTJSON := false
+	hasSchemaVersion := false
 	for rows.Next() {
 		var cid int
 		var name, ctype string
@@ -212,7 +196,15 @@ func (s *SongStore) migrateSchema() error {
 		if name == "song_number" {
 			hasSongNumber = true
 		}
+		if name == "ast_json" {
+			hasASTJSON = true
+		}
+		if name == "schema_version" {
+			hasSchemaVersion = true
+		}
 	}
+	rows.Close()
+
 	if !hasFolderID {
 		if _, err := s.db.Exec(`ALTER TABLE songs ADD COLUMN folder_id TEXT`); err != nil {
 			return fmt.Errorf("failed to add folder_id column: %w", err)
@@ -223,7 +215,166 @@ func (s *SongStore) migrateSchema() error {
 			return fmt.Errorf("failed to add song_number column: %w", err)
 		}
 	}
-	return s.backfillSongNumbersFromJSON()
+	if !hasASTJSON {
+		if _, err := s.db.Exec(`ALTER TABLE songs ADD COLUMN ast_json TEXT`); err != nil {
+			return fmt.Errorf("failed to add ast_json column: %w", err)
+		}
+	}
+	if !hasSchemaVersion {
+		if _, err := s.db.Exec(`ALTER TABLE songs ADD COLUMN schema_version TEXT`); err != nil {
+			return fmt.Errorf("failed to add schema_version column: %w", err)
+		}
+	}
+	if err := s.backfillSongNumbersFromJSON(); err != nil {
+		return err
+	}
+	return s.backfillASTJSONFromJSON()
+}
+
+func (s *SongStore) ConvertToAST(song Song) map[string]interface{} {
+	authors := song.Metadata.Authors
+	if authors == nil {
+		authors = []string{}
+	}
+
+	metadata := map[string]interface{}{
+		"authors":    authors,
+		"copyright":  song.Metadata.Copyright,
+		"ccliNumber": song.Metadata.CCLINumber,
+		"hymnal": map[string]interface{}{
+			"name":   "",
+			"number": "",
+		},
+	}
+	if song.SongNumber != nil {
+		metadata["hymnal"].(map[string]interface{})["number"] = fmt.Sprintf("%d", *song.SongNumber)
+	}
+
+	sections := []map[string]interface{}{}
+	for _, sec := range song.Sections {
+		blocks := sec.Blocks
+		if blocks == nil {
+			blocks = []SongBlock{}
+		}
+
+		sections = append(sections, map[string]interface{}{
+			"id":     sec.ID,
+			"kind":   songSectionKind(sec),
+			"label":  sec.Label,
+			"blocks": blocks,
+		})
+	}
+
+	playOrder := []map[string]interface{}{}
+	if len(song.PlayOrder) > 0 {
+		for _, entry := range song.PlayOrder {
+			if strings.TrimSpace(entry.SectionID) == "" {
+				continue
+			}
+			item := map[string]interface{}{
+				"sectionId": entry.SectionID,
+			}
+			if strings.TrimSpace(entry.ID) != "" {
+				item["id"] = entry.ID
+			}
+			if entry.Enabled != nil {
+				item["enabled"] = *entry.Enabled
+			}
+			playOrder = append(playOrder, item)
+		}
+	} else if len(song.Arrangements) > 0 && len(song.Arrangements[0].Sequence) > 0 {
+		for _, secID := range song.Arrangements[0].Sequence {
+			playOrder = append(playOrder, map[string]interface{}{
+				"sectionId": secID,
+			})
+		}
+	} else {
+		for _, sec := range song.Sections {
+			playOrder = append(playOrder, map[string]interface{}{
+				"sectionId": sec.ID,
+			})
+		}
+	}
+
+	ast := map[string]interface{}{
+		"schema":   "ems.song.v1",
+		"id":       song.ID,
+		"title":    song.Title,
+		"metadata": metadata,
+		"languages": []map[string]interface{}{
+			{
+				"id":      "en",
+				"name":    "English",
+				"default": true,
+			},
+		},
+		"sections":  sections,
+		"playOrder": playOrder,
+		"presentation": map[string]interface{}{
+			"defaultChunking": map[string]interface{}{
+				"mode":      "blocksPerSlide",
+				"maxBlocks": 4,
+			},
+		},
+	}
+
+	if song.SongNumber != nil {
+		ast["songNumber"] = *song.SongNumber
+	}
+	if song.FolderID != nil {
+		ast["folderId"] = *song.FolderID
+	}
+	if len(song.DefaultRender) > 0 {
+		ast["defaultRender"] = song.DefaultRender
+	}
+
+	return ast
+}
+
+func (s *SongStore) backfillASTJSONFromJSON() error {
+	rows, err := s.db.Query(`SELECT id, song_json, folder_id, song_number FROM songs WHERE ast_json IS NULL OR ast_json = ''`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type backfillItem struct {
+		id         string
+		songJSON   string
+		folderID   sql.NullString
+		songNumber sql.NullInt64
+	}
+
+	var items []backfillItem
+	for rows.Next() {
+		var item backfillItem
+		if err := rows.Scan(&item.id, &item.songJSON, &item.folderID, &item.songNumber); err != nil {
+			return err
+		}
+		items = append(items, item)
+	}
+	rows.Close()
+
+	for _, item := range items {
+		var song Song
+		if err := json.Unmarshal([]byte(item.songJSON), &song); err != nil {
+			continue
+		}
+		song.FolderID = scanNullableString(item.folderID)
+		if dbNumber := scanNullableInt(item.songNumber); dbNumber != nil {
+			song.SongNumber = dbNumber
+		}
+		ast := s.ConvertToAST(song)
+		astJSON, err := json.Marshal(ast)
+		if err != nil {
+			continue
+		}
+
+		if _, err := s.db.Exec(`UPDATE songs SET ast_json = ?, schema_version = ? WHERE id = ?`, string(astJSON), "ems.song.v1", item.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *SongStore) backfillSongNumbersFromJSON() error {
@@ -298,6 +449,46 @@ func scanNullableString(value sql.NullString) *string {
 	return &trimmed
 }
 
+func songSectionKind(section SongSection) string {
+	kind := strings.TrimSpace(section.Kind)
+	if kind == "" {
+		kind = "verse"
+	}
+	return strings.ToLower(kind)
+}
+
+func songBlockText(block SongBlock) string {
+	if block.Type != "lyricLine" {
+		return ""
+	}
+	var builder strings.Builder
+	for _, segment := range block.Primary.Segments {
+		builder.WriteString(segment.Text)
+	}
+	return builder.String()
+}
+
+func songSectionBlockTexts(section SongSection) []string {
+	texts := make([]string, 0, len(section.Blocks))
+	for _, block := range section.Blocks {
+		texts = append(texts, songBlockText(block))
+	}
+	return texts
+}
+
+func songSectionLyricsText(section SongSection) string {
+	return strings.Join(songSectionBlockTexts(section), "\n")
+}
+
+func songHasBlocks(song Song) bool {
+	for _, section := range song.Sections {
+		if len(section.Blocks) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *SongStore) SaveSong(song Song, originalImportJSON string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -317,14 +508,20 @@ func (s *SongStore) saveSongTx(tx *sql.Tx, song Song, originalImportJSON string)
 		return err
 	}
 
+	ast := s.ConvertToAST(song)
+	astJSON, err := json.Marshal(ast)
+	if err != nil {
+		return err
+	}
+
 	authorStr := ""
 	if len(song.Metadata.Authors) > 0 {
 		authorStr = song.Metadata.Authors[0]
 	}
 
 	_, err = tx.Exec(`
-		INSERT INTO songs (id, title, normalized_title, author, ccli_number, copyright, folder_id, song_number, original_import_json, song_json, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO songs (id, title, normalized_title, author, ccli_number, copyright, folder_id, song_number, original_import_json, song_json, ast_json, schema_version, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
 			title=excluded.title,
 			normalized_title=excluded.normalized_title,
@@ -335,33 +532,20 @@ func (s *SongStore) saveSongTx(tx *sql.Tx, song Song, originalImportJSON string)
 			song_number=excluded.song_number,
 			original_import_json=excluded.original_import_json,
 			song_json=excluded.song_json,
+			ast_json=excluded.ast_json,
+			schema_version=excluded.schema_version,
 			updated_at=CURRENT_TIMESTAMP
-	`, song.ID, song.Title, song.Title, authorStr, song.Metadata.CCLINumber, song.Metadata.Copyright, nullableString(song.FolderID), songNumberArg(song.SongNumber), originalImportJSON, string(songJSON))
+	`, song.ID, song.Title, song.Title, authorStr, song.Metadata.CCLINumber, song.Metadata.Copyright, nullableString(song.FolderID), songNumberArg(song.SongNumber), originalImportJSON, string(songJSON), string(astJSON), "ems.song.v1")
 
 	if err != nil {
 		return err
 	}
 
-	tx.Exec("DELETE FROM song_sections WHERE song_id = ?", song.ID)
-	tx.Exec("DELETE FROM song_lines WHERE song_id = ?", song.ID)
-	tx.Exec("DELETE FROM song_annotations WHERE song_id = ?", song.ID)
 	tx.Exec("DELETE FROM song_fts WHERE song_id = ?", song.ID)
 
 	var allLyrics string
-	for i, section := range song.Sections {
-		var sectionLyrics string
-		for j, line := range section.Lines {
-			sectionLyrics += line.Text + "\n"
-			tx.Exec(`
-				INSERT INTO song_lines (song_id, section_id, line_id, line_index, text)
-				VALUES (?, ?, ?, ?, ?)
-			`, song.ID, section.ID, line.ID, j, line.Text)
-		}
-
-		tx.Exec(`
-			INSERT INTO song_sections (song_id, section_id, role, label, sort_order, lyrics_text)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, song.ID, section.ID, section.Role, section.Label, i, sectionLyrics)
+	for _, section := range song.Sections {
+		sectionLyrics := songSectionLyricsText(section)
 		allLyrics += sectionLyrics + "\n"
 	}
 
@@ -373,11 +557,12 @@ func (s *SongStore) saveSongTx(tx *sql.Tx, song Song, originalImportJSON string)
 	return nil
 }
 
-func (s *SongStore) GetSong(id string) (*Song, error) {
-	var songJSON string
+func (s *SongStore) GetSong(id string) (interface{}, error) {
+	var astJSON sql.NullString
+	var songJSON sql.NullString
 	var folderID sql.NullString
 	var songNumber sql.NullInt64
-	err := s.db.QueryRow("SELECT song_json, folder_id, song_number FROM songs WHERE id = ?", id).Scan(&songJSON, &folderID, &songNumber)
+	err := s.db.QueryRow("SELECT ast_json, song_json, folder_id, song_number FROM songs WHERE id = ?", id).Scan(&astJSON, &songJSON, &folderID, &songNumber)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("song not found")
@@ -385,8 +570,23 @@ func (s *SongStore) GetSong(id string) (*Song, error) {
 		return nil, err
 	}
 
+	if astJSON.Valid && astJSON.String != "" {
+		var ast map[string]interface{}
+		var astSong Song
+		if err := json.Unmarshal([]byte(astJSON.String), &astSong); err == nil && songHasBlocks(astSong) {
+			if err := json.Unmarshal([]byte(astJSON.String), &ast); err == nil {
+				ast["folderId"] = scanNullableString(folderID)
+				if dbNumber := scanNullableInt(songNumber); dbNumber != nil {
+					ast["songNumber"] = dbNumber
+				}
+				return ast, nil
+			}
+		}
+	}
+
+	// Fallback to song_json and convert to AST
 	var song Song
-	if err := json.Unmarshal([]byte(songJSON), &song); err != nil {
+	if err := json.Unmarshal([]byte(songJSON.String), &song); err != nil {
 		return nil, err
 	}
 	song.FolderID = scanNullableString(folderID)
@@ -394,56 +594,8 @@ func (s *SongStore) GetSong(id string) (*Song, error) {
 		song.SongNumber = dbNumber
 	}
 
-	if len(song.Sections) == 0 {
-		sections, loadErr := s.loadSectionsFromTables(id)
-		if loadErr == nil && len(sections) > 0 {
-			song.Sections = sections
-		}
-	}
-
-	return &song, nil
-}
-
-func (s *SongStore) loadSectionsFromTables(songID string) ([]SongSection, error) {
-	rows, err := s.db.Query(`
-		SELECT section_id, role, label, sort_order
-		FROM song_sections
-		WHERE song_id = ?
-		ORDER BY sort_order
-	`, songID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var sections []SongSection
-	for rows.Next() {
-		var section SongSection
-		var sortOrder int
-		if err := rows.Scan(&section.ID, &section.Role, &section.Label, &sortOrder); err != nil {
-			return nil, err
-		}
-		lineRows, err := s.db.Query(`
-			SELECT line_id, text
-			FROM song_lines
-			WHERE song_id = ? AND section_id = ?
-			ORDER BY line_index
-		`, songID, section.ID)
-		if err != nil {
-			return nil, err
-		}
-		for lineRows.Next() {
-			var line SongLine
-			if err := lineRows.Scan(&line.ID, &line.Text); err != nil {
-				lineRows.Close()
-				return nil, err
-			}
-			section.Lines = append(section.Lines, line)
-		}
-		lineRows.Close()
-		sections = append(sections, section)
-	}
-	return sections, nil
+	ast := s.ConvertToAST(song)
+	return ast, nil
 }
 
 func (s *SongStore) DeleteSong(id string) error {
@@ -465,18 +617,6 @@ func (s *SongStore) DeleteSong(id string) error {
 		return err
 	}
 
-	_, err = tx.Exec("DELETE FROM song_annotations WHERE song_id = ?", id)
-	if err != nil {
-		return err
-	}
-	_, err = tx.Exec("DELETE FROM song_lines WHERE song_id = ?", id)
-	if err != nil {
-		return err
-	}
-	_, err = tx.Exec("DELETE FROM song_sections WHERE song_id = ?", id)
-	if err != nil {
-		return err
-	}
 	_, err = tx.Exec("DELETE FROM song_fts WHERE song_id = ?", id)
 	if err != nil {
 		return err
@@ -544,7 +684,7 @@ func (s *SongStore) folderFilterSQL(opts SearchOptions) (string, []interface{}) 
 
 func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchResult, error) {
 	folderSQL, folderArgs := s.folderFilterSQL(opts)
-	
+
 	words := strings.Fields(query)
 	var escaped []string
 	var rawWords []string
@@ -555,7 +695,7 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 			rawWords = append(rawWords, word)
 		}
 	}
-	
+
 	var ftsQuery string
 	if len(escaped) == 0 {
 		ftsQuery = `""`
@@ -588,13 +728,13 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 			GROUP BY id
 			ORDER BY MIN(rank) ASC, CASE WHEN song_number IS NULL THEN 1 ELSE 0 END, song_number, title
 		` + sqlLimitClause(searchQueryResultLimit)
-		
+
 		var args []interface{}
 		args = append(args, number)
 		args = append(args, folderArgs...)
 		args = append(args, ftsQuery)
 		args = append(args, folderArgs...)
-		
+
 		rows, err := s.db.Query(sqlText, args...)
 		if err != nil {
 			return nil, err
@@ -609,7 +749,7 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 		WHERE song_fts MATCH ?` + folderSQL + ` 
 		ORDER BY bm25(song_fts, 100.0, 10.0, 1.0) ASC, CASE WHEN s.song_number IS NULL THEN 1 ELSE 0 END, s.song_number, s.title
 	` + sqlLimitClause(searchQueryResultLimit)
-	
+
 	args := append([]interface{}{ftsQuery}, folderArgs...)
 	rows, err := s.db.Query(sqlText, args...)
 	if err != nil {

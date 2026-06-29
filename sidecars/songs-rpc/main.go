@@ -36,9 +36,9 @@ type searchParams struct {
 }
 
 type importFilesParams struct {
-	Paths           []string      `json:"paths"`
-	DefaultFolderID *string       `json:"defaultFolderId"`
-	Search          searchParams  `json:"search"`
+	Paths           []string     `json:"paths"`
+	DefaultFolderID *string      `json:"defaultFolderId"`
+	Search          searchParams `json:"search"`
 }
 
 func main() {
@@ -223,18 +223,6 @@ func handleRequest(store *songstore.SongStore, req JSONRPCRequest) {
 		var params []string
 		if e := json.Unmarshal(req.Params, &params); e == nil && len(params) > 0 {
 			result = songimport.ParseLyricsEditorText(params[0])
-		} else {
-			err = fmt.Errorf("invalid parameters")
-		}
-	case "songs.sectionsToLyricsText":
-		var params []json.RawMessage
-		if e := json.Unmarshal(req.Params, &params); e == nil && len(params) > 0 {
-			var sections []songimport.ParsedSection
-			if e := json.Unmarshal(params[0], &sections); e == nil {
-				result = songimport.SectionsToLyricsText(sections)
-			} else {
-				err = fmt.Errorf("invalid sections")
-			}
 		} else {
 			err = fmt.Errorf("invalid parameters")
 		}

@@ -118,7 +118,6 @@ const songsAPI = {
       },
     }]),
   parseLyricsText: (text) => callSongs("songs.parseLyricsText", [text]),
-  sectionsToLyricsText: (sections) => callSongs("songs.sectionsToLyricsText", [sections]),
 };
 
 contextBridge.exposeInMainWorld("electron", {

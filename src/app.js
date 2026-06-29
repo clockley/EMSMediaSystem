@@ -141,11 +141,16 @@ import {
   arrangementSequenceEntries,
   enabledSongSections,
   mergeSongRenderState,
+  normalizeToSongAST,
   parseSongQueuePath,
   queueEntryFromSong,
   resolvedSongPresentation,
+  songDefaultRenderFromRender,
+  songSectionBlockTexts,
+  songSectionLyricsText,
   songForLibraryDatabase,
   songQueuePath,
+  songRenderStateFromDefaultRender,
   songRenderFromItem,
   songSnapshotForSchedule,
 } from "./app-song-utils.mjs";
@@ -6918,13 +6923,282 @@ function formatSongListNumber(song) {
   return Number.isFinite(song.songNumber) && song.songNumber > 0 ? `#${song.songNumber}` : "";
 }
 
+function songFontFamilyCSS(fontFamily = DEFAULT_SONG_RENDER.fontFamily) {
+  const family = String(fontFamily || DEFAULT_SONG_RENDER.fontFamily).trim();
+  if (!family) return `${DEFAULT_SONG_RENDER.fontFamily}, sans-serif`;
+  return family.includes(",") ? family : `${family}, sans-serif`;
+}
+
+function songSectionsFromParsedSections(sections) {
+  return normalizeToSongAST({
+    id: "editor_song",
+    title: "Editor Song",
+    metadata: {},
+    sections: Array.isArray(sections) ? sections : [],
+  })?.sections || [];
+}
+
+function songEditorTextFromSections(sections) {
+  const parts = [];
+  for (const section of Array.isArray(sections) ? sections : []) {
+    const label = (section.label || "").trim();
+    parts.push(label ? `[${label}]` : "");
+    for (const text of songSectionBlockTexts(section)) {
+      parts.push(text.trim() === "" ? "" : text);
+    }
+    parts.push("");
+  }
+  return parts.join("\n").trim();
+}
+
+function renderSongBlocksIntoPreview(preview, blocks, color = "#ffffff", textBoxPosition = null) {
+  preview.innerHTML = "";
+  const container = document.createElement("div");
+  container.className = "song-preview-text-box";
+  if (textBoxPosition) {
+    container.style.position = "absolute";
+    container.style.left = textBoxPosition.left || "10%";
+    container.style.top = textBoxPosition.top || "10%";
+    container.style.width = textBoxPosition.width || "80%";
+    container.style.height = textBoxPosition.height || "80%";
+  }
+  container.style.display = "flex";
+  container.style.flexDirection = "column";
+  container.style.alignItems = "center";
+  container.style.justifyContent = "center";
+  container.style.pointerEvents = "none";
+
+  const astBlocks = Array.isArray(blocks) ? blocks : [];
+  for (const block of astBlocks) {
+    const lineEl = document.createElement("div");
+    const text = block?.type === "lyricLine"
+      ? block.primary?.segments?.map((segment) => segment?.text || "").join("") || ""
+      : "";
+    lineEl.className = text.trim() === ""
+      ? "song-preview-block song-preview-block--spacer"
+      : "song-preview-block";
+    lineEl.style.color = color;
+    if (text.trim() === "") {
+      lineEl.innerHTML = "&nbsp;";
+    } else {
+      const segments = Array.isArray(block.primary?.segments) ? block.primary.segments : [];
+      for (const segment of segments) {
+        const span = document.createElement("span");
+        span.textContent = segment?.text || "";
+        if (segment?.style?.color) span.style.color = segment.style.color;
+        if (segment?.style?.fontFamily) span.style.fontFamily = segment.style.fontFamily;
+        lineEl.appendChild(span);
+      }
+    }
+    container.appendChild(lineEl);
+  }
+  preview.appendChild(container);
+}
+
+function textStyleFromSegment(segment) {
+  const style = segment?.style && typeof segment.style === "object" ? segment.style : {};
+  const normalized = {};
+  if (typeof style.color === "string" && style.color.trim()) normalized.color = style.color.trim();
+  if (typeof style.fontFamily === "string" && style.fontFamily.trim()) normalized.fontFamily = style.fontFamily.trim();
+  return normalized;
+}
+
+function mergeSongSegmentStyle(baseStyle = {}, overrideStyle = {}) {
+  const merged = { ...textStyleFromSegment({ style: baseStyle }) };
+  if (typeof overrideStyle.color === "string" && overrideStyle.color.trim()) {
+    merged.color = overrideStyle.color.trim();
+  }
+  if (typeof overrideStyle.fontFamily === "string" && overrideStyle.fontFamily.trim()) {
+    merged.fontFamily = overrideStyle.fontFamily.trim();
+  }
+  return merged;
+}
+
+function sameSongSegmentStyle(a = {}, b = {}) {
+  const left = textStyleFromSegment({ style: a });
+  const right = textStyleFromSegment({ style: b });
+  return left.color === right.color && left.fontFamily === right.fontFamily;
+}
+
+function normalizeSongSegments(segments = []) {
+  const merged = [];
+  for (const segment of Array.isArray(segments) ? segments : []) {
+    const text = typeof segment?.text === "string" ? segment.text : "";
+    if (!text) continue;
+    const style = textStyleFromSegment(segment);
+    const normalized = {
+      type: segment?.type || "text",
+      text,
+      ...(Object.keys(style).length > 0 ? { style } : {}),
+    };
+    const previous = merged[merged.length - 1];
+    if (previous && previous.type === normalized.type && sameSongSegmentStyle(previous.style, normalized.style)) {
+      previous.text += normalized.text;
+    } else {
+      merged.push(normalized);
+    }
+  }
+  return merged;
+}
+
+function applySongStyleToBlockRange(block, start, end, style) {
+  if (!block || block.type !== "lyricLine" || !Array.isArray(block.primary?.segments)) return block;
+  if (end <= start) return block;
+
+  const nextSegments = [];
+  let offset = 0;
+  for (const segment of block.primary.segments) {
+    const text = typeof segment?.text === "string" ? segment.text : "";
+    const segmentStart = offset;
+    const segmentEnd = segmentStart + text.length;
+    offset = segmentEnd;
+
+    if (!text || end <= segmentStart || start >= segmentEnd) {
+      nextSegments.push(segment);
+      continue;
+    }
+
+    const localStart = Math.max(0, start - segmentStart);
+    const localEnd = Math.min(text.length, end - segmentStart);
+    if (localStart > 0) {
+      nextSegments.push({ ...segment, text: text.slice(0, localStart) });
+    }
+    const styledText = text.slice(localStart, localEnd);
+    if (styledText) {
+      const nextStyle = mergeSongSegmentStyle(segment.style, style);
+      nextSegments.push({
+        ...segment,
+        text: styledText,
+        ...(Object.keys(nextStyle).length > 0 ? { style: nextStyle } : {}),
+      });
+    }
+    if (localEnd < text.length) {
+      nextSegments.push({ ...segment, text: text.slice(localEnd) });
+    }
+  }
+
+  return {
+    ...block,
+    primary: {
+      ...(block.primary || {}),
+      segments: normalizeSongSegments(nextSegments),
+    },
+  };
+}
+
+function applySongStyleToWholeBlock(block, style) {
+  const text = songBlockText(block);
+  return applySongStyleToBlockRange(block, 0, text.length, style);
+}
+
+function applySongStyleToSectionRange(section, start, end, style) {
+  if (!section || !Array.isArray(section.blocks)) return section;
+  let offset = 0;
+  return {
+    ...section,
+    blocks: section.blocks.map((block, blockIndex) => {
+      const blockText = songBlockText(block);
+      const blockStart = offset;
+      const blockEnd = blockStart + blockText.length;
+      offset = blockEnd + (blockIndex < section.blocks.length - 1 ? 1 : 0);
+      if (end <= blockStart || start >= blockEnd) return block;
+      return applySongStyleToBlockRange(
+        block,
+        Math.max(0, start - blockStart),
+        Math.min(blockText.length, end - blockStart),
+        style,
+      );
+    }),
+  };
+}
+
+function applySongStyleToWholeSection(section, style) {
+  if (!section || !Array.isArray(section.blocks)) return section;
+  return {
+    ...section,
+    blocks: section.blocks.map((block) => applySongStyleToWholeBlock(block, style)),
+  };
+}
+
+function currentSongEditorStyleScope() {
+  const scope = document.getElementById("songEditorStyleScope")?.value;
+  return scope === "selection" || scope === "page" || scope === "allSlides" ? scope : "allSlides";
+}
+
+function setSongEditorStyleScope(scope) {
+  const select = document.getElementById("songEditorStyleScope");
+  if (select && (scope === "selection" || scope === "page" || scope === "allSlides")) {
+    select.value = scope;
+  }
+}
+
+function selectedSongEditorTextRange(textarea) {
+  const value = textarea?.value || "";
+  let start = Number.isFinite(textarea?.selectionStart) ? textarea.selectionStart : 0;
+  let end = Number.isFinite(textarea?.selectionEnd) ? textarea.selectionEnd : start;
+  if (start !== end) return { start: Math.min(start, end), end: Math.max(start, end) };
+  if (!value) return null;
+  if (start < value.length && value[start] !== "\n") return { start, end: start + 1 };
+  if (start > 0 && value[start - 1] !== "\n") return { start: start - 1, end: start };
+  return null;
+}
+
+function updateSongEditorSection(index, section) {
+  if (index < 0 || index >= songEditorSections.length || !section) return;
+  songEditorSections[index] = section;
+  if (currentWorkspaceSong) {
+    currentWorkspaceSong.sections = songEditorSections;
+  }
+}
+
+function refreshSongEditorAfterStyleChange() {
+  syncSongEditorHiddenTextarea();
+  const activeSection = songEditorSections[songEditorActiveIndex];
+  if (activeSection) {
+    renderSongSectionPreview(activeSection);
+  }
+  renderSongEditorSlideList();
+  const textarea = document.getElementById("songEditorSlideTextarea");
+  if (textarea && activeSection) {
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+    textarea.value = songSectionBlockTexts(activeSection).join("\n");
+    if (Number.isFinite(selectionStart) && Number.isFinite(selectionEnd)) {
+      textarea.setSelectionRange(
+        Math.min(selectionStart, textarea.value.length),
+        Math.min(selectionEnd, textarea.value.length),
+      );
+    }
+  }
+}
+
+function applySongEditorTextStyle(style, scope = currentSongEditorStyleScope()) {
+  if (!style || typeof style !== "object") return;
+  const textarea = document.getElementById("songEditorSlideTextarea");
+  if (scope === "allSlides") {
+    songEditorSections = songEditorSections.map((section) => applySongStyleToWholeSection(section, style));
+    if (currentWorkspaceSong) currentWorkspaceSong.sections = songEditorSections;
+  } else if (scope === "page") {
+    const activeSection = songEditorSections[songEditorActiveIndex];
+    updateSongEditorSection(songEditorActiveIndex, applySongStyleToWholeSection(activeSection, style));
+  } else {
+    const activeSection = songEditorSections[songEditorActiveIndex];
+    const range = selectedSongEditorTextRange(textarea);
+    if (!activeSection || !range) return;
+    updateSongEditorSection(
+      songEditorActiveIndex,
+      applySongStyleToSectionRange(activeSection, range.start, range.end, style),
+    );
+  }
+  syncCurrentWorkspaceSongDefaultRender();
+  refreshSongEditorAfterStyleChange();
+}
+
 function songListExcerpt(song) {
   const sections = Array.isArray(song?.sections) ? song.sections : [];
   for (const section of sections) {
-    const lines = Array.isArray(section?.lines) ? section.lines : [];
-    for (const line of lines) {
-      if (line.kind === "spacer") continue;
-      const text = (line.text || "").trim();
+    for (const blockText of songSectionBlockTexts(section)) {
+      const text = blockText.trim();
       if (text.length > 0) return text.length > 60 ? text.slice(0, 57) + "…" : text;
     }
   }
@@ -7198,8 +7472,8 @@ function renderSongEditorSlideList() {
 
     const snippetEl = document.createElement("div");
     snippetEl.className = "song-editor-slide-item__snippet";
-    const linesText = (section.lines || [])
-      .map(l => l.text || "")
+    const textContent = songSectionLyricsText(section);
+    const linesText = textContent.split("\n")
       .filter(t => t.trim() !== "")
       .slice(0, 2)
       .join(" / ");
@@ -7229,7 +7503,7 @@ function selectSongEditorSlide(index) {
   const section = songEditorSections[index];
   const textarea = document.getElementById("songEditorSlideTextarea");
   if (textarea) {
-    textarea.value = (section.lines || []).map(l => l.text || "").join("\n");
+    textarea.value = songSectionBlockTexts(section).join("\n");
   }
 
   const label = section.label || "";
@@ -7259,16 +7533,483 @@ function selectSongEditorSlide(index) {
   }
 }
 
-function syncSongEditorWorkspaceStyles() {
+function syncSongEditorWorkspaceStyles(message = null) {
+  const style = mergeSongRenderState(currentSongRenderState, {
+    backgroundColor: message?.backgroundColor,
+    backgroundPath: message?.backgroundPath,
+    color: message?.color,
+    fontFamily: message?.fontFamily,
+    fontSize: message?.fontSize,
+    textBoxPosition: message?.textBoxPosition,
+  });
   const preview = document.getElementById("songEditorLivePreviewSlide");
   const canvas = document.getElementById("songEditorSlideCanvas");
-  if (preview && canvas) {
-    canvas.style.backgroundColor = preview.style.backgroundColor;
-    canvas.style.backgroundImage = preview.style.backgroundImage;
-    canvas.style.color = preview.style.color;
-    canvas.style.fontFamily = preview.style.fontFamily;
-    canvas.style.setProperty('--base-font-size', preview.style.getPropertyValue('--base-font-size'));
-    canvas.style.setProperty('--font-family', preview.style.getPropertyValue('--font-family'));
+  if (canvas) {
+    canvas.style.backgroundColor = style.backgroundColor || DEFAULT_SONG_RENDER.backgroundColor;
+    if (message?.backgroundImage) {
+      canvas.style.backgroundImage = `url('${message.backgroundImage}')`;
+    } else {
+      canvas.style.backgroundImage = "";
+    }
+    canvas.style.color = style.color || DEFAULT_SONG_RENDER.color;
+    canvas.style.fontFamily = songFontFamilyCSS(style.fontFamily);
+    canvas.style.setProperty("--base-font-size", style.fontSize || DEFAULT_SONG_RENDER.fontSize);
+    canvas.style.setProperty("--font-family", songFontFamilyCSS(style.fontFamily));
+  } else if (preview) {
+    preview.style.setProperty("--base-font-size", style.fontSize || DEFAULT_SONG_RENDER.fontSize);
+    preview.style.setProperty("--font-family", songFontFamilyCSS(style.fontFamily));
+  }
+  const textBox = document.getElementById("songEditorTextBox");
+  if (textBox) {
+    textBox.style.color = style.color || DEFAULT_SONG_RENDER.color;
+    textBox.style.fontFamily = songFontFamilyCSS(style.fontFamily);
+    textBox.style.setProperty("--base-font-size", style.fontSize || DEFAULT_SONG_RENDER.fontSize);
+    textBox.style.setProperty("--font-family", songFontFamilyCSS(style.fontFamily));
+  }
+  const textarea = document.getElementById("songEditorSlideTextarea");
+  if (textarea) {
+    textarea.style.color = style.color || DEFAULT_SONG_RENDER.color;
+    textarea.style.fontFamily = songFontFamilyCSS(style.fontFamily);
+  }
+  if (textBox && style.textBoxPosition) {
+    const pos = style.textBoxPosition;
+    textBox.style.left = pos.left;
+    textBox.style.top = pos.top;
+    textBox.style.width = pos.width;
+    textBox.style.height = pos.height;
+  }
+}
+
+function initSongEditorTextBoxDragAndDrop() {
+  const textBox = document.getElementById("songEditorTextBox");
+  const canvas = document.getElementById("songEditorSlideCanvas");
+  const handle = document.getElementById("songEditorDragHandle");
+  const resizeHandle = document.getElementById("songEditorResizeHandle");
+
+  if (!textBox || !canvas || !handle) return;
+
+  let isDragging = false;
+  let isResizing = false;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  let startWidth = 0;
+  let startHeight = 0;
+  let resizeStartLeft = 0;
+  let resizeStartTop = 0;
+
+  const snapThreshold = 10;
+  const minResizeWidth = 72;
+  const minResizeHeight = 48;
+
+  const clamp = (value, min, max) => {
+    if (!Number.isFinite(max) || max <= 0) return min;
+    if (max < min) return max;
+    return Math.max(min, Math.min(value, max));
+  };
+
+  const toPercent = (value, total) => {
+    if (!total) return "0%";
+    return `${(value / total) * 100}%`;
+  };
+
+  const renderActiveSongEditorSection = () => {
+    if (!currentWorkspaceSong) return;
+    const section =
+      enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
+      currentWorkspaceSong.sections?.[0];
+    if (section) renderSongSectionPreview(section);
+  };
+
+  const saveTextBoxPosition = () => {
+    if (!currentSongRenderState) return;
+    currentSongRenderState.textBoxPosition = {
+      left: textBox.style.left || "10%",
+      top: textBox.style.top || "10%",
+      width: textBox.style.width || "80%",
+      height: textBox.style.height || "80%",
+    };
+    syncCurrentWorkspaceSongDefaultRender();
+    renderActiveSongEditorSection();
+  };
+
+  handle.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isDragging = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startLeft = textBox.offsetLeft;
+    startTop = textBox.offsetTop;
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  });
+
+  function onMouseMove(e) {
+    if (!isDragging) return;
+
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+
+    let newLeft = startLeft + dx;
+    let newTop = startTop + dy;
+
+    const canvasWidth = canvas.clientWidth;
+    const canvasHeight = canvas.clientHeight;
+    const boxWidth = textBox.offsetWidth;
+    const boxHeight = textBox.offsetHeight;
+
+    const guideV = document.getElementById("snapGuideV");
+    const guideH = document.getElementById("snapGuideH");
+    let showGuideV = false;
+    let showGuideH = false;
+
+    const boxCenterH = newLeft + boxWidth / 2;
+    const canvasCenterH = canvasWidth / 2;
+    const marginL = canvasWidth * 0.1;
+    const marginR = canvasWidth * 0.9;
+
+    if (Math.abs(boxCenterH - canvasCenterH) < snapThreshold) {
+      newLeft = canvasCenterH - boxWidth / 2;
+      showGuideV = true;
+      if (guideV) guideV.style.left = `${canvasCenterH}px`;
+    } else if (Math.abs(newLeft - marginL) < snapThreshold) {
+      newLeft = marginL;
+      showGuideV = true;
+      if (guideV) guideV.style.left = `${marginL}px`;
+    } else if (Math.abs((newLeft + boxWidth) - marginR) < snapThreshold) {
+      newLeft = marginR - boxWidth;
+      showGuideV = true;
+      if (guideV) guideV.style.left = `${marginR}px`;
+    }
+
+    const boxCenterV = newTop + boxHeight / 2;
+    const canvasCenterV = canvasHeight / 2;
+    const marginT = canvasHeight * 0.1;
+    const marginB = canvasHeight * 0.9;
+
+    if (Math.abs(boxCenterV - canvasCenterV) < snapThreshold) {
+      newTop = canvasCenterV - boxHeight / 2;
+      showGuideH = true;
+      if (guideH) guideH.style.top = `${canvasCenterV}px`;
+    } else if (Math.abs(newTop - marginT) < snapThreshold) {
+      newTop = marginT;
+      showGuideH = true;
+      if (guideH) guideH.style.top = `${marginT}px`;
+    } else if (Math.abs((newTop + boxHeight) - marginB) < snapThreshold) {
+      newTop = marginB - boxHeight;
+      showGuideH = true;
+      if (guideH) guideH.style.top = `${marginB}px`;
+    }
+
+    if (guideV) guideV.style.display = showGuideV ? "block" : "none";
+    if (guideH) guideH.style.display = showGuideH ? "block" : "none";
+
+    newLeft = Math.max(0, Math.min(newLeft, canvasWidth - boxWidth));
+    newTop = Math.max(0, Math.min(newTop, canvasHeight - boxHeight));
+
+    const leftPct = (newLeft / canvasWidth) * 100;
+    const topPct = (newTop / canvasHeight) * 100;
+
+    textBox.style.left = `${leftPct}%`;
+    textBox.style.top = `${topPct}%`;
+  }
+
+  function onMouseUp() {
+    if (!isDragging) return;
+    isDragging = false;
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+
+    const guideV = document.getElementById("snapGuideV");
+    const guideH = document.getElementById("snapGuideH");
+    if (guideV) guideV.style.display = "none";
+    if (guideH) guideH.style.display = "none";
+
+    saveTextBoxPosition();
+  }
+
+  if (resizeHandle) {
+    resizeHandle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      isResizing = true;
+      startX = e.clientX;
+      startY = e.clientY;
+
+      const textBoxRect = textBox.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      startWidth = textBoxRect.width;
+      startHeight = textBoxRect.height;
+      resizeStartLeft = textBoxRect.left - canvasRect.left;
+      resizeStartTop = textBoxRect.top - canvasRect.top;
+
+      document.addEventListener("mousemove", onResizeMove);
+      document.addEventListener("mouseup", onResizeUp);
+    });
+  }
+
+  function onResizeMove(e) {
+    if (!isResizing) return;
+
+    const canvasWidth = canvas.clientWidth;
+    const canvasHeight = canvas.clientHeight;
+    if (!canvasWidth || !canvasHeight) return;
+
+    const maxWidth = Math.max(0, canvasWidth - resizeStartLeft);
+    const maxHeight = Math.max(0, canvasHeight - resizeStartTop);
+    const width = clamp(
+      startWidth + e.clientX - startX,
+      Math.min(minResizeWidth, maxWidth),
+      maxWidth,
+    );
+    const height = clamp(
+      startHeight + e.clientY - startY,
+      Math.min(minResizeHeight, maxHeight),
+      maxHeight,
+    );
+
+    textBox.style.width = toPercent(width, canvasWidth);
+    textBox.style.height = toPercent(height, canvasHeight);
+  }
+
+  function onResizeUp() {
+    if (!isResizing) return;
+    isResizing = false;
+    document.removeEventListener("mousemove", onResizeMove);
+    document.removeEventListener("mouseup", onResizeUp);
+    saveTextBoxPosition();
+  }
+}
+
+function getOrCreateBodyColorInput(id, realInputId) {
+  let input = document.getElementById(id);
+  if (!input) {
+    input = document.createElement("input");
+    input.type = "color";
+    input.id = id;
+    input.style.position = "fixed";
+    input.style.left = "-100px";
+    input.style.top = "-100px";
+    input.style.width = "32px";
+    input.style.height = "32px";
+    input.style.opacity = "0.01";
+    input.style.pointerEvents = "none";
+    input.style.zIndex = "999999";
+    input.style.border = "0";
+    input.style.margin = "0";
+    input.style.padding = "0";
+    document.body.appendChild(input);
+
+    const updateRealInput = (e) => {
+      const realInput = document.getElementById(realInputId);
+      if (realInput) {
+        realInput.value = e.target.value;
+        realInput.dispatchEvent(new Event("input"));
+        realInput.dispatchEvent(new Event("change"));
+      }
+    };
+    input.addEventListener("input", updateRealInput);
+    input.addEventListener("change", updateRealInput);
+  }
+  return input;
+}
+
+function initSongEditorContextMenu() {
+  const canvas = document.getElementById("songEditorSlideCanvas");
+  const textarea = document.getElementById("songEditorSlideTextarea");
+  const menu = document.getElementById("songEditorContextMenu");
+
+  if (!canvas || !textarea || !menu) return;
+
+  let menuAnchor = { x: 0, y: 0 };
+
+  const hideMenu = () => {
+    menu.style.display = "none";
+    menu.style.visibility = "";
+  };
+
+  const positionColorInput = (input, fallbackEvent) => {
+    const anchorX = Number.isFinite(menuAnchor.x) && menuAnchor.x > 0
+      ? menuAnchor.x
+      : fallbackEvent?.clientX || 0;
+    const anchorY = Number.isFinite(menuAnchor.y) && menuAnchor.y > 0
+      ? menuAnchor.y
+      : fallbackEvent?.clientY || 0;
+    const x = Math.max(0, Math.min(anchorX, window.innerWidth - input.offsetWidth));
+    const y = Math.max(0, Math.min(anchorY, window.innerHeight - input.offsetHeight));
+    input.style.left = `${x}px`;
+    input.style.top = `${y}px`;
+    input.getBoundingClientRect();
+  };
+
+  const showColorInputPicker = (input) => {
+    input.focus({ preventScroll: true });
+    try {
+      if (typeof input.showPicker === "function") {
+        input.showPicker();
+        return;
+      }
+    } catch (err) {
+      console.debug("Color input showPicker failed, falling back to click:", err);
+    }
+    input.click();
+  };
+
+  const openColorPickerFromMenu = (event, inputId, realInputId) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const colorInput = getOrCreateBodyColorInput(inputId, realInputId);
+    const realInput = document.getElementById(realInputId);
+    if (realInput) {
+      colorInput.value = realInput.value;
+    }
+    positionColorInput(colorInput, event);
+    hideMenu();
+    showColorInputPicker(colorInput);
+  };
+
+  document.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || menu.style.display === "none") return;
+    if (menu.contains(event.target)) return;
+    hideMenu();
+  }, true);
+
+  document.addEventListener("click", (event) => {
+    if (menu.contains(event.target)) return;
+    hideMenu();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") hideMenu();
+  });
+
+  textarea.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSongEditorStyleScope("selection");
+
+    menu.innerHTML = "";
+
+    const header = document.createElement("div");
+    header.className = "song-editor-context-menu__header";
+    header.textContent = "Text Format";
+    menu.appendChild(header);
+
+    const colorOpt = document.createElement("div");
+    colorOpt.className = "song-editor-context-menu__item";
+    colorOpt.innerHTML = `<span class="icon">🎨</span> Change Text Color`;
+    colorOpt.addEventListener("click", (evt) => {
+      setSongEditorStyleScope("selection");
+      openColorPickerFromMenu(evt, "tempBodyTextColorInput", "songEditorTextColor");
+    });
+    menu.appendChild(colorOpt);
+
+    menu.appendChild(document.createElement("div")).className = "song-editor-context-menu__separator";
+
+    const fontHeader = document.createElement("div");
+    fontHeader.className = "song-editor-context-menu__header";
+    fontHeader.textContent = "Font Family";
+    menu.appendChild(fontHeader);
+
+    const fontInput = document.getElementById("songEditorFontInput");
+    const fonts = fontInput
+      ? Array.from(fontInput.options).map((option) => ({
+          label: option.textContent || option.value,
+          value: option.value,
+        }))
+      : [
+          { label: "CMG Sans", value: "'CMG Sans'" },
+          { label: "Arial", value: "'Arial'" },
+          { label: "Times New Roman", value: "'Times New Roman'" },
+          { label: "Georgia", value: "'Georgia'" },
+        ];
+    for (const font of fonts) {
+      const fontOpt = document.createElement("div");
+      fontOpt.className = "song-editor-context-menu__item";
+      fontOpt.textContent = font.label;
+      if (currentSongRenderState.fontFamily === font.value) {
+        fontOpt.classList.add("song-editor-context-menu__item--active");
+      }
+      fontOpt.addEventListener("click", () => {
+        if (fontInput) {
+          setSongEditorStyleScope("selection");
+          fontInput.value = font.value;
+          fontInput.dispatchEvent(new Event("change"));
+        }
+        hideMenu();
+      });
+      menu.appendChild(fontOpt);
+    }
+
+    showMenu(e.clientX, e.clientY);
+  });
+
+  canvas.addEventListener("contextmenu", (e) => {
+    if (e.target === textarea) return;
+    e.preventDefault();
+    e.stopPropagation();
+    showBackgroundMenu(e.clientX, e.clientY);
+  });
+
+  function showBackgroundMenu(x, y) {
+    menu.innerHTML = "";
+
+    const header = document.createElement("div");
+    header.className = "song-editor-context-menu__header";
+    header.textContent = "Background Options";
+    menu.appendChild(header);
+
+    const colorOpt = document.createElement("div");
+    colorOpt.className = "song-editor-context-menu__item";
+    colorOpt.innerHTML = `<span class="icon">🎨</span> Change Background Color`;
+    colorOpt.addEventListener("click", (evt) => {
+      openColorPickerFromMenu(evt, "tempBodyBackgroundColorInput", "songEditorBackgroundColor");
+    });
+    menu.appendChild(colorOpt);
+
+    const graphicOpt = document.createElement("div");
+    graphicOpt.className = "song-editor-context-menu__item";
+    graphicOpt.innerHTML = `<span class="icon">🖼️</span> Choose Background Graphic`;
+    graphicOpt.addEventListener("click", (evt) => {
+      evt.preventDefault();
+      evt.stopPropagation();
+      hideMenu();
+      document.getElementById("songEditorBackgroundInput")?.click();
+    });
+    menu.appendChild(graphicOpt);
+
+    if (currentSongRenderState.backgroundPath) {
+      const clearOpt = document.createElement("div");
+      clearOpt.className = "song-editor-context-menu__item";
+      clearOpt.innerHTML = `<span class="icon">❌</span> Clear Background`;
+      clearOpt.addEventListener("click", (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        hideMenu();
+        document.getElementById("songEditorClearBackgroundBtn")?.click();
+      });
+      menu.appendChild(clearOpt);
+    }
+
+    showMenu(x, y);
+  }
+
+  function showMenu(x, y) {
+    menuAnchor = { x, y };
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+    menu.style.visibility = "hidden";
+    menu.style.display = "block";
+
+    const rect = menu.getBoundingClientRect();
+    const left = Math.max(8, Math.min(x, Math.max(8, window.innerWidth - rect.width - 8)));
+    const top = Math.max(8, Math.min(y, Math.max(8, window.innerHeight - rect.height - 8)));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.style.visibility = "";
   }
 }
 
@@ -7276,16 +8017,26 @@ function handleSongEditorCanvasTextInput(text) {
   const activeSection = songEditorSections[songEditorActiveIndex];
   if (!activeSection) return;
 
-  const lines = text.split("\n").map((line, idx) => {
+  const previousBlocks = Array.isArray(activeSection.blocks) ? activeSection.blocks : [];
+  const blocks = text.split("\n").map((line, idx) => {
     const trimmed = line.trimRight();
+    const previousBlock = previousBlocks[idx];
+    if (previousBlock && songBlockText(previousBlock) === trimmed) {
+      return previousBlock;
+    }
     return {
-      id: `line_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
-      kind: trimmed === "" ? "spacer" : "lyric",
-      text: trimmed
+      type: trimmed === "" ? "spacer" : "lyricLine",
+      id: previousBlock?.id || `block_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
+      primary: {
+        lang: "en",
+        segments: trimmed === "" ? [] : [{ type: "text", text: trimmed }],
+      },
+      translations: [],
+      annotations: [],
     };
   });
 
-  activeSection.lines = lines;
+  activeSection.blocks = blocks;
 
   syncSongEditorHiddenTextarea();
 
@@ -7297,32 +8048,14 @@ function handleSongEditorCanvasTextInput(text) {
 
   const snippetEl = document.querySelector(`.song-editor-slide-item[data-index="${songEditorActiveIndex}"] .song-editor-slide-item__snippet`);
   if (snippetEl) {
-    snippetEl.textContent = lines.map(l => l.text).filter(t => t.trim() !== "").slice(0, 2).join(" / ") || "Empty slide";
+    snippetEl.textContent = songSectionBlockTexts(activeSection).filter(t => t.trim() !== "").slice(0, 2).join(" / ") || "Empty slide";
   }
 }
 
 function syncSongEditorHiddenTextarea() {
-  const parts = [];
-  for (const section of songEditorSections) {
-    const label = (section.label || "").trim();
-    if (label) {
-      parts.push(`[${label}]`);
-    } else {
-      parts.push("");
-    }
-    for (const line of section.lines) {
-      if (line.kind === "spacer" || (line.text || "").trim() === "") {
-        parts.push("");
-      } else {
-        parts.push(line.text);
-      }
-    }
-    parts.push("");
-  }
-  const text = parts.join("\n").trim();
   const hiddenTextarea = document.getElementById("songEditorTextarea");
   if (hiddenTextarea) {
-    hiddenTextarea.value = text;
+    hiddenTextarea.value = songEditorTextFromSections(songEditorSections);
   }
 }
 
@@ -7341,14 +8074,14 @@ function handleSongEditorSectionMetaChange() {
     customInput.style.display = "block";
     numInput.style.display = "none";
     label = customInput.value.trim();
-    activeSection.role = "custom";
+    activeSection.kind = "custom";
   } else {
     customInput.style.display = "none";
     numInput.style.display = "block";
     const type = typeSelect.value;
     const num = numInput.value;
     label = `${type} ${num}`.trim();
-    activeSection.role = type.toLowerCase();
+    activeSection.kind = type.toLowerCase();
     activeSection.number = Number(num) || 1;
   }
 
@@ -7368,13 +8101,13 @@ function handleSongEditorSectionMetaChange() {
 }
 
 function handleSongEditorAddSection() {
-  const verseCount = songEditorSections.filter(s => s.role === "verse").length;
+  const verseCount = songEditorSections.filter(s => s.kind === "verse").length;
   const newSection = {
     id: `sec_${crypto.randomUUID().slice(0, 8)}`,
-    role: "verse",
+    kind: "verse",
     number: verseCount + 1,
     label: `Verse ${verseCount + 1}`,
-    lines: []
+    blocks: []
   };
   songEditorSections.splice(songEditorActiveIndex + 1, 0, newSection);
   syncSongEditorHiddenTextarea();
@@ -7553,6 +8286,7 @@ function readSongEditorRenderState() {
     copyright,
     ccliNumber,
     oneLicense,
+    textBoxPosition: currentSongRenderState.textBoxPosition || null,
   });
 }
 
@@ -7592,6 +8326,25 @@ function syncSongBackgroundLabel(filePath = currentSongRenderState.backgroundPat
   label.textContent = queueBasename(filePath);
 }
 
+function syncCurrentWorkspaceSongDefaultRender() {
+  if (!currentWorkspaceSong) return;
+  currentWorkspaceSong.defaultRender = songDefaultRenderFromRender(currentSongRenderState);
+}
+
+function flushSongEditorStateForSave() {
+  const slideTextarea = document.getElementById("songEditorSlideTextarea");
+  const activeSection = songEditorSections[songEditorActiveIndex];
+  if (slideTextarea && activeSection) {
+    handleSongEditorCanvasTextInput(slideTextarea.value);
+  }
+  currentSongRenderState = readSongEditorRenderState();
+  if (currentWorkspaceSong) {
+    currentWorkspaceSong.sections = songEditorSections;
+  }
+  syncCurrentWorkspaceSongDefaultRender();
+  return currentSongRenderState;
+}
+
 function currentSongPresentationItem() {
   if (!currentWorkspaceSong) return null;
   return {
@@ -7601,16 +8354,7 @@ function currentSongPresentationItem() {
       copyright: currentSongRenderState.copyright,
       ccliNumber: currentSongRenderState.ccliNumber,
       oneLicense: currentSongRenderState.oneLicense,
-      defaultRender: {
-        themeId: "song_default",
-        background: {
-          mode: currentSongRenderState.backgroundPath ? "custom" : "color",
-          color: currentSongRenderState.backgroundColor,
-          path: currentSongRenderState.backgroundPath || "",
-        },
-        textColor: currentSongRenderState.color,
-        copyrightPlacement: currentSongRenderState.copyrightPlacement,
-      },
+      defaultRender: songDefaultRenderFromRender(currentSongRenderState),
     }),
     sequence: {
       arrangementId: currentWorkspaceSong.arrangements?.[0]?.id || "arr_default",
@@ -7682,12 +8426,10 @@ async function loadSongIntoWorkspace(song, opts = {}) {
   if (opts.render) {
     currentSongRenderState = mergeSongRenderState(currentSongRenderState, opts.render);
   } else if (song.defaultRender) {
-    currentSongRenderState = mergeSongRenderState(currentSongRenderState, {
-      backgroundColor: song.defaultRender.background?.color,
-      backgroundPath: song.defaultRender.background?.path || "",
-      color: song.defaultRender.textColor,
-      copyrightPlacement: song.defaultRender.copyrightPlacement,
-    });
+    currentSongRenderState = mergeSongRenderState(
+      currentSongRenderState,
+      songRenderStateFromDefaultRender(song.defaultRender),
+    );
   }
 
   const inLibrary = await checkIfSongInLibrary(song.id);
@@ -7816,9 +8558,15 @@ function renderSongSectionPreview(section) {
   if (!message) return;
 
   preview.style.backgroundColor = message.backgroundColor || "#000000";
-  preview.style.setProperty('--base-font-size', message.fontSize || 66);
+  const outputFontSize = Number(message.fontSize) || DEFAULT_SONG_RENDER.fontSize;
+  const scaledPreviewFontSize = Math.max(
+    12,
+    outputFontSize * Math.max(preview.clientWidth || 1920, 1) / 1920,
+  );
+  preview.style.setProperty('--base-font-size', outputFontSize);
+  preview.style.setProperty('--song-preview-font-size', `${scaledPreviewFontSize}px`);
   if (message.fontFamily) {
-    preview.style.setProperty('--font-family', `"${message.fontFamily}", sans-serif`);
+    preview.style.setProperty('--font-family', songFontFamilyCSS(message.fontFamily));
   }
   if (message.backgroundImage) {
     preview.style.backgroundImage = `url('${message.backgroundImage}')`;
@@ -7826,23 +8574,12 @@ function renderSongSectionPreview(section) {
     preview.style.backgroundImage = "";
   }
 
-  preview.innerHTML = "";
-  const lines = String(message.bodyText || "").split("\n");
-  for (const line of lines) {
-    const lineEl = document.createElement("div");
-    lineEl.className = line.length === 0 ? "song-preview-line song-preview-line--spacer" : "song-preview-line";
-    lineEl.style.color = message.color || "#ffffff";
-    if (line.length > 0) lineEl.textContent = line;
-    preview.appendChild(lineEl);
-  }
-  
-  if (isEditing) {
-     try {
-       window.electron?.ipcRenderer?.send("log-to-file", `[DEBUG] targetId: ${targetId}, section: ${JSON.stringify(section)}, message: ${JSON.stringify(message)}, HTML: ${preview.outerHTML}`);
-     } catch (e) {
-       console.error("log-to-file failed", e);
-     }
-  }
+  renderSongBlocksIntoPreview(
+    preview,
+    message.blocks,
+    message.color || "#ffffff",
+    message.textBoxPosition || null,
+  );
 
   if (message.referenceText) {
     const refEl = document.createElement("div");
@@ -7860,7 +8597,7 @@ function renderSongSectionPreview(section) {
   }
 
   if (isEditing) {
-    syncSongEditorWorkspaceStyles();
+    syncSongEditorWorkspaceStyles(message);
   }
   } catch (err) {
      try {
@@ -8078,14 +8815,16 @@ async function openSongEditor(song) {
   syncSongEditorFolderOptions(songToEdit?.folderId || "");
 
   // Initialize visual editor state
-  songEditorSections = songToEdit ? (structuredClone(songToEdit.sections) || []) : [];
+  songEditorSections = songToEdit
+    ? (normalizeToSongAST(songToEdit)?.sections || [])
+    : [];
   if (songEditorSections.length === 0) {
     songEditorSections.push({
       id: `sec_${crypto.randomUUID().slice(0, 8)}`,
-      role: "verse",
+      kind: "verse",
       number: 1,
       label: "Verse 1",
-      lines: []
+      blocks: []
     });
   }
   songEditorActiveIndex = 0;
@@ -8113,13 +8852,16 @@ async function openSongEditor(song) {
     }
     authorInput.value = songToEdit.metadata?.authors?.join(", ") || "";
     if (folderInput) folderInput.value = songToEdit.folderId || "";
-    textarea.value = await songsAPI.sectionsToLyricsText(songToEdit.sections || []);
-    syncSongEditorRenderControls(
-      mergeSongRenderState(currentSongRenderState, {
-        copyright: currentSongRenderState.copyright || songToEdit.metadata?.copyright || "",
-        ccliNumber: currentSongRenderState.ccliNumber || songToEdit.metadata?.ccliNumber || null,
-      }),
+    textarea.value = songEditorTextFromSections(songEditorSections);
+    currentSongRenderState = mergeSongRenderState(
+      songRenderStateFromDefaultRender(songToEdit.defaultRender),
+      {
+        copyright: songToEdit.metadata?.copyright || "",
+        ccliNumber: songToEdit.metadata?.ccliNumber || null,
+        oneLicense: songToEdit.metadata?.oneLicense || null,
+      },
     );
+    syncSongEditorRenderControls(currentSongRenderState);
   } else {
     currentEditingSongId = null;
     titleInput.value = "";
@@ -8135,7 +8877,18 @@ async function openSongEditor(song) {
     textarea.value = "";
     currentSongRenderState = { ...DEFAULT_SONG_RENDER };
     syncSongEditorRenderControls();
+    syncSongEditorWorkspaceStyles();
   }
+
+  const textBox = document.getElementById("songEditorTextBox");
+  if (textBox) {
+    const pos = currentSongRenderState.textBoxPosition || { left: "10%", top: "10%", width: "80%", height: "80%" };
+    textBox.style.left = pos.left;
+    textBox.style.top = pos.top;
+    textBox.style.width = pos.width;
+    textBox.style.height = pos.height;
+  }
+  syncSongEditorWorkspaceStyles();
 
   // Build the list and select the first slide
   renderSongEditorSlideList();
@@ -8191,8 +8944,13 @@ async function saveSongEditor() {
   const numberRaw = numberInput?.value?.trim() || "";
   const parsedNumber = numberRaw ? Number.parseInt(numberRaw, 10) : null;
   const songNumber = Number.isFinite(parsedNumber) && parsedNumber > 0 ? parsedNumber : null;
-  const sections = await songsAPI.parseLyricsText(textarea.value);
-  currentSongRenderState = readSongEditorRenderState();
+  currentSongRenderState = flushSongEditorStateForSave();
+  const sections = normalizeToSongAST({
+    id: currentEditingSongId || "editor_song",
+    title,
+    metadata: {},
+    sections: songEditorSections,
+  })?.sections || [];
 
   const song = {
     schema: "ems.song.v1",
@@ -8207,26 +8965,13 @@ async function saveSongEditor() {
       oneLicense: currentSongRenderState.oneLicense || null,
     },
     sections,
-    arrangements: [
-      {
-        id: "arr_default",
-        name: "Default",
-        sequence: sections.map((s) => ({
-          id: `seq_${s.id}`,
-          sectionId: s.id,
-          enabled: true,
-        })),
-      },
-    ],
+    playOrder: sections.map((s) => ({
+      id: `seq_${s.id}`,
+      sectionId: s.id,
+      enabled: true,
+    })),
     defaultRender: {
-      themeId: "song_default",
-      background: {
-        mode: currentSongRenderState.backgroundPath ? "custom" : "color",
-        color: currentSongRenderState.backgroundColor,
-        path: currentSongRenderState.backgroundPath || "",
-      },
-      textColor: currentSongRenderState.color,
-      copyrightPlacement: currentSongRenderState.copyrightPlacement,
+      ...songDefaultRenderFromRender(currentSongRenderState),
     },
   };
 
@@ -8260,8 +9005,13 @@ async function saveSongToSchedule() {
   const numberRaw = numberInput?.value?.trim() || "";
   const parsedNumber = numberRaw ? Number.parseInt(numberRaw, 10) : null;
   const songNumber = Number.isFinite(parsedNumber) && parsedNumber > 0 ? parsedNumber : null;
-  const sections = await songsAPI.parseLyricsText(textarea.value);
-  currentSongRenderState = readSongEditorRenderState();
+  currentSongRenderState = flushSongEditorStateForSave();
+  const sections = normalizeToSongAST({
+    id: currentEditingSongId || "editor_song",
+    title,
+    metadata: {},
+    sections: songEditorSections,
+  })?.sections || [];
 
   const songId = currentEditingSongId || `song_${crypto.randomUUID()}`;
   currentEditingSongId = songId;
@@ -8279,26 +9029,13 @@ async function saveSongToSchedule() {
       oneLicense: currentSongRenderState.oneLicense || null,
     },
     sections,
-    arrangements: [
-      {
-        id: "arr_default",
-        name: "Default",
-        sequence: sections.map((s) => ({
-          id: `seq_${s.id}`,
-          sectionId: s.id,
-          enabled: true,
-        })),
-      },
-    ],
+    playOrder: sections.map((s) => ({
+      id: `seq_${s.id}`,
+      sectionId: s.id,
+      enabled: true,
+    })),
     defaultRender: {
-      themeId: "song_default",
-      background: {
-        mode: currentSongRenderState.backgroundPath ? "custom" : "color",
-        color: currentSongRenderState.backgroundColor,
-        path: currentSongRenderState.backgroundPath || "",
-      },
-      textColor: currentSongRenderState.color,
-      copyrightPlacement: currentSongRenderState.copyrightPlacement,
+      ...songDefaultRenderFromRender(currentSongRenderState),
     },
   };
 
@@ -8378,15 +9115,10 @@ async function deleteSongFromLibrary(songId = currentWorkspaceSong?.id) {
 }
 
 function renderStateForLibrarySong(song) {
-  const defaultRender = song?.defaultRender || {};
-  return mergeSongRenderState(DEFAULT_SONG_RENDER, {
+  return mergeSongRenderState(songRenderStateFromDefaultRender(song?.defaultRender), {
     copyright: song?.metadata?.copyright || "",
     ccliNumber: song?.metadata?.ccliNumber || null,
     oneLicense: song?.metadata?.oneLicense || null,
-    backgroundColor: defaultRender.background?.color,
-    backgroundPath: defaultRender.background?.path || "",
-    color: defaultRender.textColor,
-    copyrightPlacement: defaultRender.copyrightPlacement,
   });
 }
 
@@ -8877,6 +9609,7 @@ function installBibleMediaControls() {
   document.getElementById("songsSaveToLibraryBtn")?.addEventListener("click", async () => {
     if (!currentWorkspaceSong) return;
     try {
+      syncCurrentWorkspaceSongDefaultRender();
       const saved = await songsAPI.save(songForLibraryDatabase(currentWorkspaceSong));
       await updateScheduleSongsWithUpdatedSong(saved || currentWorkspaceSong);
       const searchInput = document.getElementById("songsSearchInput");
@@ -8994,7 +9727,9 @@ function installBibleMediaControls() {
   document.getElementById("songEditorBackgroundInput")?.addEventListener("change", (event) => {
     const file = event.target.files?.[0];
     currentSongRenderState.backgroundPath = file ? getPathForFile(file) : "";
+    syncCurrentWorkspaceSongDefaultRender();
     syncSongBackgroundLabel();
+    syncSongEditorWorkspaceStyles();
     if (currentWorkspaceSong) {
       const section =
         enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
@@ -9005,9 +9740,11 @@ function installBibleMediaControls() {
 
   document.getElementById("songEditorClearBackgroundBtn")?.addEventListener("click", () => {
     currentSongRenderState.backgroundPath = "";
+    syncCurrentWorkspaceSongDefaultRender();
     const backgroundInput = document.getElementById("songEditorBackgroundInput");
     if (backgroundInput) backgroundInput.value = "";
     syncSongBackgroundLabel("");
+    syncSongEditorWorkspaceStyles();
     if (currentWorkspaceSong) {
       const section =
         enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
@@ -9016,17 +9753,42 @@ function installBibleMediaControls() {
     }
   });
 
-  for (const id of ["songEditorFontInput", "songEditorFontSizeInput", "songEditorAutosizeModeInput", "songEditorMinFontSizeInput", "songEditorTextColor", "songEditorBackgroundColor", "songEditorCopyright", "songEditorCcli", "songEditorOneLicense"]) {
-    document.getElementById(id)?.addEventListener("input", () => {
-      currentSongRenderState = readSongEditorRenderState();
-      if (currentWorkspaceSong && document.getElementById("songEditorDrawer")?.hidden === false) {
-        const section =
-          enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
-          currentWorkspaceSong.sections?.[0];
-        if (section) renderSongSectionPreview(section);
+  const syncSongEditorRenderChange = (event) => {
+    const controlId = event?.currentTarget?.id || "";
+    const isTextStyleControl =
+      controlId === "songEditorTextColor" || controlId === "songEditorFontInput";
+    const scope = currentSongEditorStyleScope();
+
+    if (isTextStyleControl) {
+      const style =
+        controlId === "songEditorTextColor"
+          ? { color: event.currentTarget.value }
+          : { fontFamily: event.currentTarget.value };
+      if (scope === "allSlides") {
+        currentSongRenderState = readSongEditorRenderState();
       }
-    });
+      applySongEditorTextStyle(style, scope);
+    } else {
+      currentSongRenderState = readSongEditorRenderState();
+    }
+
+    syncCurrentWorkspaceSongDefaultRender();
+    syncSongEditorWorkspaceStyles();
+    if (currentWorkspaceSong && document.getElementById("songEditorDrawer")?.hidden === false) {
+      const section =
+        enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
+        currentWorkspaceSong.sections?.[0];
+      if (section) renderSongSectionPreview(section);
+    }
+  };
+  for (const id of ["songEditorFontInput", "songEditorFontSizeInput", "songEditorAutosizeModeInput", "songEditorMinFontSizeInput", "songEditorTextColor", "songEditorBackgroundColor", "songEditorCopyright", "songEditorCcli", "songEditorOneLicense"]) {
+    const input = document.getElementById(id);
+    input?.addEventListener("input", syncSongEditorRenderChange);
+    input?.addEventListener("change", syncSongEditorRenderChange);
   }
+
+  initSongEditorTextBoxDragAndDrop();
+  initSongEditorContextMenu();
 
   let editorPreviewDebounce;
   document.getElementById("songEditorTextarea")?.addEventListener("input", (e) => {
@@ -9035,15 +9797,14 @@ function installBibleMediaControls() {
       if (!currentWorkspaceSong) return;
       const text = e.target.value;
       try {
-        const sections = await songsAPI.parseLyricsText(text);
-        // Temporarily mutate currentWorkspaceSong's sections for preview
+        const sections = songSectionsFromParsedSections(await songsAPI.parseLyricsText(text));
         currentWorkspaceSong.sections = sections;
         const section = sections.find((s) => s.id === currentSongSectionId) || sections[0];
         if (section) {
-           renderSongSectionPreview(section);
+          renderSongSectionPreview(section);
         } else {
-           const slide = document.getElementById("songEditorLivePreviewSlide");
-           if (slide) slide.innerHTML = "";
+          const slide = document.getElementById("songEditorLivePreviewSlide");
+          if (slide) slide.innerHTML = "";
         }
       } catch (err) {
         console.error("Live preview parse error:", err);
