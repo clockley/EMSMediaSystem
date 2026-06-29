@@ -33,6 +33,7 @@ type Song struct {
 	Metadata     SongMetadata    `json:"metadata"`
 	Sections     []SongSection   `json:"sections"`
 	Arrangements []Arrangement   `json:"arrangements"`
+	DefaultRender map[string]any `json:"defaultRender,omitempty"`
 }
 
 type SongSection struct {
