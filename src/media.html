@@ -48,6 +48,174 @@
             font-style: normal;
         }
 
+        @font-face {
+            font-family: 'Adwaita';
+            font-display: swap;
+            src: url('../../fonts/Adwaita/AdwaitaSans-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Adwaita Sans';
+            font-display: swap;
+            src: url('../../fonts/Adwaita/AdwaitaSans-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Arial';
+            font-display: swap;
+            src: local('Arial'),
+                url('../../fonts/OfficeFallbacks/Arimo-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Arial';
+            font-display: swap;
+            src: local('Arial Bold'),
+                local('Arial'),
+                url('../../fonts/OfficeFallbacks/Arimo-Bold.ttf') format('truetype');
+            font-weight: 700;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Calibri';
+            font-display: swap;
+            src: local('Calibri'),
+                url('../../fonts/OfficeFallbacks/Carlito-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Calibri';
+            font-display: swap;
+            src: local('Calibri Bold'),
+                local('Calibri'),
+                url('../../fonts/OfficeFallbacks/Carlito-Bold.ttf') format('truetype');
+            font-weight: 700;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Cambria';
+            font-display: swap;
+            src: local('Cambria'),
+                url('../../fonts/OfficeFallbacks/Caladea-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Cambria';
+            font-display: swap;
+            src: local('Cambria Bold'),
+                local('Cambria'),
+                url('../../fonts/OfficeFallbacks/Caladea-Bold.ttf') format('truetype');
+            font-weight: 700;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Georgia';
+            font-display: swap;
+            src: local('Georgia'),
+                url('../../fonts/OfficeFallbacks/Gelasio-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Georgia';
+            font-display: swap;
+            src: local('Georgia Bold'),
+                local('Georgia'),
+                url('../../fonts/OfficeFallbacks/Gelasio-Bold.ttf') format('truetype');
+            font-weight: 700;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Segoe UI';
+            font-display: swap;
+            src: local('Segoe UI'),
+                url('../../fonts/OfficeFallbacks/Selawik-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Segoe UI';
+            font-display: swap;
+            src: local('Segoe UI Bold'),
+                local('Segoe UI'),
+                url('../../fonts/OfficeFallbacks/Selawik-Bold.ttf') format('truetype');
+            font-weight: 700;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Tahoma';
+            font-display: swap;
+            src: local('Tahoma'),
+                url('../../fonts/OfficeFallbacks/WineTahoma-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Tahoma';
+            font-display: swap;
+            src: local('Tahoma Bold'),
+                local('Tahoma'),
+                url('../../fonts/OfficeFallbacks/WineTahoma-Bold.ttf') format('truetype');
+            font-weight: 700;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Times New Roman';
+            font-display: swap;
+            src: local('Times New Roman'),
+                url('../../fonts/OfficeFallbacks/Tinos-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Times New Roman';
+            font-display: swap;
+            src: local('Times New Roman Bold'),
+                local('Times New Roman'),
+                url('../../fonts/OfficeFallbacks/Tinos-Bold.ttf') format('truetype');
+            font-weight: 700;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Verdana';
+            font-display: swap;
+            src: local('Verdana'),
+                url('../../fonts/OfficeFallbacks/Arimo-Regular.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'Verdana';
+            font-display: swap;
+            src: local('Verdana Bold'),
+                local('Verdana'),
+                url('../../fonts/OfficeFallbacks/Arimo-Bold.ttf') format('truetype');
+            font-weight: 700;
+            font-style: normal;
+        }
+
         body {
             margin: 0;
             padding: 0;
@@ -218,6 +386,74 @@
 
         .scripture-render--fullscreen .scripture-render__attribution {
             margin-top: 0;
+        }
+
+        .scripture-render--slide-objects {
+            display: block;
+            position: relative;
+            text-align: initial;
+        }
+
+        .slide-text-output-object {
+            position: absolute;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .slide-output-object--image,
+        .slide-output-object--shape {
+            display: block;
+        }
+
+        .slide-output-object__image {
+            width: 100%;
+            height: 100%;
+            display: block;
+            object-fit: cover;
+        }
+
+        .slide-output-object__shape {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+        }
+
+        .slide-output-object__shape--line {
+            inset: 50% 0 auto 0;
+            height: 0;
+            transform: translateY(-50%);
+        }
+
+        .slide-text-output-object__background {
+            position: absolute;
+            inset: 0;
+            z-index: 0;
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            pointer-events: none;
+        }
+
+        .slide-text-output-object__background video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .slide-text-output-object__body {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            overflow-wrap: anywhere;
+            white-space: pre-wrap;
+            text-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
+        }
+
+        .slide-text-output-object__body .song-block {
+            white-space: pre-wrap;
         }
 
         .scripture-render--lower-third {

@@ -554,6 +554,55 @@ function contentLocationForKind(kind) {
   return kind === "presentation" ? "presentations" : "media";
 }
 
+function cloneJsonValue(value) {
+  if (value == null) return value;
+  try {
+    return structuredClone(value);
+  } catch {
+    return JSON.parse(JSON.stringify(value));
+  }
+}
+
+function resolveAssetPath(asset, extractedMediaPaths) {
+  if (!asset || typeof asset.path !== "string") return "";
+  return extractedMediaPaths.get(asset.path) || asset.path;
+}
+
+function resolveDeckSnapshotAssetPaths(deck, assetById, extractedMediaPaths) {
+  const copy = cloneJsonValue(deck);
+  if (!copy || typeof copy !== "object") return copy;
+  const resolveBackground = (bg) => {
+    if (!bg || typeof bg !== "object") return;
+    if (typeof bg.assetId === "string") {
+      const resolved = resolveAssetPath(assetById.get(bg.assetId), extractedMediaPaths);
+      if (resolved) bg.path = resolved;
+    } else if (typeof bg.path === "string" && extractedMediaPaths.has(bg.path)) {
+      bg.path = extractedMediaPaths.get(bg.path);
+    }
+  };
+  const resolveImageObject = (obj) => {
+    if (!obj?.image || typeof obj.image !== "object") return;
+    if (typeof obj.image.assetId === "string") {
+      const resolved = resolveAssetPath(assetById.get(obj.image.assetId), extractedMediaPaths);
+      if (resolved) obj.image.path = resolved;
+    } else if (typeof obj.image.path === "string" && extractedMediaPaths.has(obj.image.path)) {
+      obj.image.path = extractedMediaPaths.get(obj.image.path);
+    }
+  };
+  if (copy.theme && typeof copy.theme === "object" && typeof copy.theme.backgroundAssetId === "string") {
+    const resolved = resolveAssetPath(assetById.get(copy.theme.backgroundAssetId), extractedMediaPaths);
+    if (resolved) copy.theme.backgroundPath = resolved;
+  }
+  for (const page of Array.isArray(copy.pages) ? copy.pages : []) {
+    resolveBackground(page?.background);
+    for (const obj of Array.isArray(page?.objects) ? page.objects : []) {
+      resolveBackground(obj?.background);
+      resolveImageObject(obj);
+    }
+  }
+  return copy;
+}
+
 async function sha256Buffer(buf) {
   const hash = createHash(SHA256_HASH_ALG);
   hash.update(buf);
@@ -1000,11 +1049,18 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
 
 function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths, songFiles) {
   let snapshot = item?.songSnapshot;
+  const deckSnapshot = item?.deckSnapshot && typeof item.deckSnapshot === "object"
+    ? item.deckSnapshot
+    : null;
   const songId =
     typeof snapshot?.id === "string"
       ? snapshot.id
+      : typeof deckSnapshot?.id === "string"
+        ? deckSnapshot.id
       : typeof item?.source?.songId === "string"
         ? item.source.songId
+        : typeof item?.source?.deckId === "string"
+          ? item.source.deckId
         : "";
   if (!songId) return null;
 
@@ -1023,7 +1079,7 @@ function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths
     snapshot = normalizeToSongAST(snapshot);
   }
 
-  if (!snapshot || typeof snapshot !== "object") return null;
+  if ((!snapshot || typeof snapshot !== "object") && !deckSnapshot) return null;
   const backgroundAsset =
     typeof item?.render?.backgroundAssetId === "string"
       ? assetById.get(item.render.backgroundAssetId) || null
@@ -1035,9 +1091,9 @@ function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths
         ? item.render.backgroundPath
         : "";
   return {
-    path: songArchivePath(songId),
-    name: item?.label || snapshot.title || "Song",
-    type: "song",
+    path: item?.type === "deck" ? `deck://${encodeURIComponent(songId)}` : songArchivePath(songId),
+    name: item?.label || snapshot?.title || deckSnapshot?.title || "Song",
+    type: item?.type === "deck" ? "deck" : "song",
     missing: false,
     originalPath: undefined,
     originalName: undefined,
@@ -1046,12 +1102,13 @@ function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
     transition: projectSlideTransitionOverride(item?.transition),
     source: item?.source,
-    songSnapshot: snapshot,
+    songSnapshot: deckSnapshot ? undefined : snapshot,
     sequence: item?.sequence,
     render: {
       ...(item?.render && typeof item.render === "object" ? item.render : {}),
       backgroundPath,
     },
+    ...(deckSnapshot ? { deckSnapshot } : {}),
   };
 }
 
@@ -1077,6 +1134,7 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   const extractedMediaPaths = new Map();
   const rootFiles = new Map();
   const songFiles = new Map();
+  const deckFiles = new Map();
   const entryHashes = new Map();
 
   await new Promise((resolve, reject) => {
@@ -1110,6 +1168,13 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
         if (inZipPath.startsWith("songs/") && inZipPath.endsWith(".json")) {
           const buffer = await readEntryBuffer(zipfile, entry);
           songFiles.set(inZipPath, buffer);
+          entryHashes.set(inZipPath, await sha256Buffer(buffer));
+          zipfile.readEntry();
+          return;
+        }
+        if (inZipPath.startsWith("slides/") && inZipPath.endsWith(".json")) {
+          const buffer = await readEntryBuffer(zipfile, entry);
+          deckFiles.set(inZipPath, buffer);
           entryHashes.set(inZipPath, await sha256Buffer(buffer));
           zipfile.readEntry();
           return;
@@ -1255,7 +1320,35 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
         return buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPaths);
       }
       if (item.type === "song" || item.songSnapshot) {
-        return buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths, songFiles);
+        const built = buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths, songFiles);
+        if (built) {
+          // If the source is actually a deck, attach the embedded deck snapshot so
+          // the renderer can reconstruct the deck-specific editor on demand.
+          if (item?.source?.kind === "deck" || item?.source?.deckId || item?.deckSnapshot) {
+            const deckId = item.source?.deckId || item.deckSnapshot?.id || built.songSnapshot?.id;
+            const rawDeck = deckId ? deckFiles.get(`slides/${deckId}.json`) : null;
+            if (rawDeck) {
+              try {
+                built.deckSnapshot = resolveDeckSnapshotAssetPaths(
+                  JSON.parse(rawDeck.toString("utf8")),
+                  assetById,
+                  extractedMediaPaths,
+                );
+                built.source = item.source;
+              } catch (err) {
+                console.error(`Failed to parse embedded deck ${deckId}:`, err);
+              }
+            } else if (item.deckSnapshot && typeof item.deckSnapshot === "object") {
+              built.deckSnapshot = resolveDeckSnapshotAssetPaths(
+                item.deckSnapshot,
+                assetById,
+                extractedMediaPaths,
+              );
+              built.source = item.source;
+            }
+          }
+        }
+        return built;
       }
       let relPath = "";
       if (typeof item?.source?.path === "string") relPath = item.source.path;
@@ -1472,6 +1565,49 @@ export async function saveEmprojSnapshot(
     }
   }
 
+  const deckSnapshotsForExport = new Map();
+
+  async function registerDeckMediaRef(holder, key = "path") {
+    if (!holder || typeof holder !== "object" || typeof holder[key] !== "string") return;
+    const originalPath = holder[key];
+    const asset = await registerAssetForPath(originalPath, {
+      originalPath,
+      originalName: basenameAny(originalPath),
+    });
+    if (!asset?.assetId) return;
+    holder.assetId = asset.assetId;
+    if (packMedia && asset.bundledPath) holder[key] = asset.bundledPath;
+  }
+
+  async function deckSnapshotForArchive(item) {
+    const deck = item?.deckSnapshot;
+    if (!deck || typeof deck !== "object") return null;
+    const deckId = deck.id || item.source?.deckId || "";
+    if (deckId && deckSnapshotsForExport.has(deckId)) {
+      return deckSnapshotsForExport.get(deckId);
+    }
+    const copy = cloneJsonValue(deck);
+    if (copy?.theme && typeof copy.theme.backgroundPath === "string") {
+      const asset = await registerAssetForPath(copy.theme.backgroundPath, {
+        originalPath: copy.theme.backgroundPath,
+        originalName: basenameAny(copy.theme.backgroundPath),
+      });
+      if (asset?.assetId) {
+        copy.theme.backgroundAssetId = asset.assetId;
+        if (packMedia && asset.bundledPath) copy.theme.backgroundPath = asset.bundledPath;
+      }
+    }
+    for (const page of Array.isArray(copy?.pages) ? copy.pages : []) {
+      await registerDeckMediaRef(page?.background);
+      for (const obj of Array.isArray(page?.objects) ? page.objects : []) {
+        await registerDeckMediaRef(obj?.background);
+        await registerDeckMediaRef(obj?.image);
+      }
+    }
+    if (deckId) deckSnapshotsForExport.set(deckId, copy);
+    return copy;
+  }
+
   for (const item of queue) {
     if (
       !item ||
@@ -1526,8 +1662,10 @@ export async function saveEmprojSnapshot(
     }
     if (
       item.type === "song" ||
+      item.type === "deck" ||
       (typeof item.path === "string" && item.path.startsWith(SONG_URI_PREFIX)) ||
-      item.songSnapshot
+      item.songSnapshot ||
+      item.deckSnapshot
     ) {
       itemCounter += 1;
       const snapshot = item.songSnapshot && typeof item.songSnapshot === "object"
@@ -1535,8 +1673,10 @@ export async function saveEmprojSnapshot(
         : null;
       const songId =
         snapshot?.id ||
+        item.deckSnapshot?.id ||
         parseSongArchivePath(item.path) ||
         item.source?.songId ||
+        item.source?.deckId ||
         makeId("song", itemCounter);
       const render = item.render && typeof item.render === "object" ? { ...item.render } : {};
       const backgroundAsset = await registerAssetForPath(render.backgroundPath, {
@@ -1546,16 +1686,26 @@ export async function saveEmprojSnapshot(
       if (backgroundAsset?.assetId) {
         render.backgroundAssetId = backgroundAsset.assetId;
       }
+      const deckSnapshot = await deckSnapshotForArchive(item);
+      const source = {
+        kind: item.source?.kind || (item.type === "deck" ? "deck" : "library"),
+        songId,
+        path: item.type === "deck" ? `deck://${encodeURIComponent(songId)}` : songArchivePath(songId),
+      };
+      if (item.type === "deck" && (item.source?.deckId || deckSnapshot?.id)) {
+        source.kind = "deck";
+        source.deckId = item.source?.deckId || deckSnapshot.id;
+      }
+      if (item.source?.pageId || item.render?.currentSectionId) {
+        source.pageId = item.source?.pageId || item.render.currentSectionId;
+      }
       queueSequence.push({
         id: makeId("item", itemCounter),
         label: item.name || snapshot?.title || "Song",
-        type: "song",
-        source: {
-          kind: item.source?.kind || "library",
-          songId,
-          path: songArchivePath(songId),
-        },
-        songSnapshot: snapshot,
+        type: item.type === "deck" ? "deck" : "song",
+        source,
+        songSnapshot: deckSnapshot ? undefined : snapshot,
+        deckSnapshot: deckSnapshot || undefined,
         sequence: item.sequence,
         render,
         transition: projectSlideTransitionOverride(item.transition),
@@ -1772,6 +1922,8 @@ export async function saveEmprojSnapshot(
 
   const songBuffers = [];
   const processedSongs = new Set();
+  const deckBuffers = [];
+  const processedDecks = new Set();
   for (const item of queue) {
     if (!item) continue;
     if (item.type === "song" || item.songSnapshot) {
@@ -1786,6 +1938,14 @@ export async function saveEmprojSnapshot(
         });
       }
     }
+    const deckSnap = await deckSnapshotForArchive(item);
+    if (deckSnap && deckSnap.id && !processedDecks.has(deckSnap.id)) {
+      processedDecks.add(deckSnap.id);
+      deckBuffers.push({
+        path: `slides/${deckSnap.id}.json`,
+        buffer: Buffer.from(canonicalJson(deckSnap), "utf8"),
+      });
+    }
   }
 
   const hashes = {
@@ -1795,6 +1955,9 @@ export async function saveEmprojSnapshot(
     "diagnostics.json": await sha256Buffer(diagnosticsBuf),
   };
   for (const entry of songBuffers) {
+    hashes[entry.path] = await sha256Buffer(entry.buffer);
+  }
+  for (const entry of deckBuffers) {
     hashes[entry.path] = await sha256Buffer(entry.buffer);
   }
   for (const entry of assets) {
@@ -1857,6 +2020,11 @@ export async function saveEmprojSnapshot(
     { path: "outputs.json", buffer: outputsBuf, compress: true },
     { path: "diagnostics.json", buffer: diagnosticsBuf, compress: true },
     ...songBuffers.map((entry) => ({
+      path: entry.path,
+      buffer: entry.buffer,
+      compress: true,
+    })),
+    ...deckBuffers.map((entry) => ({
       path: entry.path,
       buffer: entry.buffer,
       compress: true,

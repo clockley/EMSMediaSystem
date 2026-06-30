@@ -120,6 +120,20 @@ const songsAPI = {
   parseLyricsText: (text) => callSongs("songs.parseLyricsText", [text]),
 };
 
+const slidesAPI = {
+  waitForReady: () => ipcRenderer.invoke("slides:ready"),
+  list: (options = {}) => ipcRenderer.invoke("slides:list", options),
+  get: (id) => ipcRenderer.invoke("slides:get", id),
+  save: (deck) => ipcRenderer.invoke("slides:save", deck),
+  delete: (id) => ipcRenderer.invoke("slides:delete", id),
+  duplicate: (id, options = {}) => ipcRenderer.invoke("slides:duplicate", id, options),
+  listFolders: () => ipcRenderer.invoke("slides:list-folders"),
+  createFolder: (name) => ipcRenderer.invoke("slides:create-folder", name),
+  renameFolder: (id, name) => ipcRenderer.invoke("slides:rename-folder", id, name),
+  deleteFolder: (id) => ipcRenderer.invoke("slides:delete-folder", id),
+  moveToFolder: (deckId, folderId) => ipcRenderer.invoke("slides:move-to-folder", deckId, folderId ?? null),
+};
+
 contextBridge.exposeInMainWorld("electron", {
   ipcRenderer: {
     send: ipcRenderer.send.bind(ipcRenderer),
@@ -138,6 +152,7 @@ contextBridge.exposeInMainWorld("electron", {
   __dirname: import.meta.dirname,
   bibleAPI,
   songsAPI,
+  slidesAPI,
   webUtils,
   attachCubicWaveShaper,
 

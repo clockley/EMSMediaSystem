@@ -1,5 +1,9 @@
 /*
 Copyright (C) 2024 Christian Lockley
+
+Song file import (TXT, JSON, hymnal, future third-party formats) is handled
+only by songs-rpc (Go). This module normalizes already-imported canonical AST
+for rendering, projects, and the editor — it does not parse import files.
 */
 
 import {
@@ -105,7 +109,13 @@ export function normalizeToSongAST(song) {
       id: sec.id || `sec_${Math.random().toString(36).substring(2, 9)}`,
       kind,
       label,
-      blocks
+      blocks,
+      ...(Array.isArray(sec.slideObjects)
+        ? { slideObjects: structuredClone(sec.slideObjects) }
+        : {}),
+      ...(Array.isArray(sec.slideTextObjects)
+        ? { slideTextObjects: structuredClone(sec.slideTextObjects) }
+        : {}),
     };
   });
 
@@ -177,6 +187,78 @@ export function normalizeToSongAST(song) {
     },
     defaultRender
   };
+}
+
+/**
+ * Build a flat search-text string from a canonical EMS song AST.
+ *
+ * Includes (per Section 8 of the EMS song plan): title, song number,
+ * authors, hymnal number, CCLI number, OneLicense number, meter,
+ * section labels, lyric text, and translation text.
+ *
+ * The returned string is whitespace-collapsed and safe to feed into
+ * full-text search indexes (sqlite FTS5, lunr, etc.).
+ *
+ * @param {EmsSong|Object} song
+ * @returns {string}
+ */
+export function songAstToSearchText(song) {
+  if (!song || typeof song !== "object") return "";
+  const parts = [];
+
+  if (song.title) parts.push(String(song.title));
+  if (Number.isFinite(song.songNumber) && song.songNumber > 0) {
+    parts.push(`#${song.songNumber}`);
+    parts.push(String(song.songNumber));
+  }
+
+  const metadata = song.metadata && typeof song.metadata === "object" ? song.metadata : {};
+  if (Array.isArray(metadata.authors)) {
+    for (const author of metadata.authors) {
+      if (author) parts.push(String(author));
+    }
+  }
+  if (metadata.ccliNumber) parts.push(`CCLI ${metadata.ccliNumber}`);
+  if (metadata.oneLicense) parts.push(`OneLicense ${metadata.oneLicense}`);
+  if (metadata.meter) parts.push(String(metadata.meter));
+
+  const hymnal = metadata.hymnal && typeof metadata.hymnal === "object" ? metadata.hymnal : null;
+  if (hymnal) {
+    if (hymnal.name) parts.push(String(hymnal.name));
+    if (hymnal.number) parts.push(String(hymnal.number));
+    if (hymnal.meter && hymnal.meter !== metadata.meter) parts.push(String(hymnal.meter));
+  }
+
+  if (Array.isArray(metadata.tags)) {
+    for (const tag of metadata.tags) {
+      if (tag) parts.push(String(tag));
+    }
+  }
+
+  const sections = Array.isArray(song.sections) ? song.sections : [];
+  for (const section of sections) {
+    if (section?.label) parts.push(String(section.label));
+    const blocks = Array.isArray(section?.blocks) ? section.blocks : [];
+    for (const block of blocks) {
+      if (!block || typeof block !== "object") continue;
+      if (block.type !== "lyricLine") continue;
+      const primarySegs = Array.isArray(block.primary?.segments) ? block.primary.segments : [];
+      const lineText = primarySegs.map((seg) => seg?.text || "").join("");
+      if (lineText.trim()) parts.push(lineText);
+      const translations = Array.isArray(block.translations) ? block.translations : [];
+      for (const translation of translations) {
+        const segs = Array.isArray(translation?.segments) ? translation.segments : [];
+        const text = segs.map((seg) => seg?.text || "").join("");
+        if (text.trim()) parts.push(text);
+      }
+    }
+  }
+
+  return parts
+    .join("\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
 }
 
 export function arrangementSequenceEntries(song, arrangementId = "arr_default") {
@@ -424,6 +506,43 @@ export function buildSongTextMessage({
     style.backgroundColor,
     { forceLight: Boolean(style.backgroundPath || backgroundVideo) },
   );
+  const sourceSlideObjects = Array.isArray(section?.slideObjects) && section.slideObjects.length > 0
+    ? section.slideObjects
+    : Array.isArray(section?.slideTextObjects)
+      ? section.slideTextObjects
+      : [];
+  const slideObjects = sourceSlideObjects.map((object) => {
+    const kind = object?.kind === "image" || object?.kind === "shape" ? object.kind : "text";
+    const bg = object?.background && typeof object.background === "object"
+      ? { ...object.background }
+      : null;
+    if (bg?.path) {
+      const url = pathToMediaUrl(bg.path);
+      if (
+        bg.type === "video" ||
+        (!imageRegex.test(bg.path) && /\.(mp4|m4v|mov|mkv|webm)$/i.test(bg.path))
+      ) {
+        bg.backgroundVideo = url;
+      } else {
+        bg.backgroundImage = url;
+      }
+    }
+    if (kind === "image") {
+      const image = object?.image && typeof object.image === "object" ? { ...object.image } : {};
+      if (image.path) image.imageUrl = pathToMediaUrl(image.path);
+      return {
+        ...object,
+        kind,
+        image,
+      };
+    }
+    return {
+      ...object,
+      kind,
+      ...(bg ? { background: bg } : {}),
+    };
+  });
+  const slideTextObjects = slideObjects.filter((object) => object?.kind === "text");
 
   return {
     blocks: section?.blocks || [],
@@ -453,6 +572,8 @@ export function buildSongTextMessage({
     look: SCRIPTURE_LOOK_FULLSCREEN,
     position: { vertical: "center", horizontal: "center" },
     textBoxPosition: style.textBoxPosition || null,
+    ...(slideObjects.length > 0 ? { slideObjects } : {}),
+    ...(slideTextObjects.length > 0 ? { slideTextObjects } : {}),
   };
 }
 

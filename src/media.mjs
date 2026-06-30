@@ -1435,6 +1435,157 @@ function renderTextCopyrightOverlay(textCanvas, copyrightText) {
   copyright.hidden = false;
 }
 
+function renderSlideTextObjectBackground(box, object) {
+  const bg = object?.background && typeof object.background === "object" ? object.background : null;
+  if (!bg) return;
+  const bgEl = document.createElement("div");
+  bgEl.className = "slide-text-output-object__background";
+  if (bg.type === "color") {
+    bgEl.style.backgroundColor = bg.color || "transparent";
+  } else if (bg.backgroundVideo) {
+    const videoEl = document.createElement("video");
+    videoEl.src = bg.backgroundVideo;
+    videoEl.autoplay = true;
+    videoEl.loop = true;
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+    bgEl.appendChild(videoEl);
+    void videoEl.play().catch(() => {});
+  } else if (bg.backgroundImage) {
+    bgEl.style.backgroundImage = `url('${bg.backgroundImage}')`;
+  } else if (bg.path) {
+    const src = /^[a-z]+:\/\//i.test(bg.path) ? bg.path : `file://${String(bg.path).replace(/\\/g, "/")}`;
+    if (bg.type === "video") {
+      const videoEl = document.createElement("video");
+      videoEl.src = src;
+      videoEl.autoplay = true;
+      videoEl.loop = true;
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      bgEl.appendChild(videoEl);
+      void videoEl.play().catch(() => {});
+    } else {
+      bgEl.style.backgroundImage = `url('${src}')`;
+    }
+  }
+  box.appendChild(bgEl);
+}
+
+function fitTextElementToBox(box, textEl, { baseSize, minSize, mode = "fit" } = {}) {
+  if (!box || !textEl || mode === "none") return;
+  const boxWidth = Math.max(1, box.clientWidth || box.getBoundingClientRect().width || 0);
+  const boxHeight = Math.max(1, box.clientHeight || box.getBoundingClientRect().height || 0);
+  if (!boxWidth || !boxHeight) return;
+  let size = Math.max(1, Number(baseSize) || 1);
+  const min = Math.max(1, Math.min(size, Number(minSize) || size));
+  textEl.style.fontSize = `${size}px`;
+  while (
+    size > min &&
+    (textEl.scrollHeight > Math.ceil(boxHeight) + 1 || textEl.scrollWidth > Math.ceil(boxWidth) + 1)
+  ) {
+    size = Math.max(min, Math.floor(size * 0.92));
+    textEl.style.fontSize = `${size}px`;
+  }
+}
+
+function renderSlideObjects(textContent, objects, message) {
+  textContent.textContent = "";
+  textContent.classList.add("scripture-render--slide-objects");
+  const safeObjects = (Array.isArray(objects) ? objects : [])
+    .map((object, index) => ({ object, index }))
+    .sort((a, b) => {
+      const az = Number.isFinite(a.object?.zIndex) ? a.object.zIndex : 0;
+      const bz = Number.isFinite(b.object?.zIndex) ? b.object.zIndex : 0;
+      return az === bz ? a.index - b.index : az - bz;
+    })
+    .map(({ object }) => object);
+  for (const object of safeObjects) {
+    if (!object) continue;
+    const kind = object.kind === "image" || object.kind === "shape" ? object.kind : "text";
+    const position = object?.textBoxPosition || {};
+    const box = document.createElement("div");
+    box.className = `slide-text-output-object slide-output-object slide-output-object--${kind}`;
+    box.style.left = position.left || "10%";
+    box.style.top = position.top || "10%";
+    box.style.width = position.width || "80%";
+    box.style.height = position.height || "80%";
+    box.style.zIndex = String(Number.isFinite(object.zIndex) ? object.zIndex : 0);
+    box.style.opacity = String(Math.max(0, Math.min(1, Number.isFinite(Number(object.opacity)) ? Number(object.opacity) : 1)));
+
+    if (kind === "image") {
+      const image = object.image && typeof object.image === "object" ? object.image : {};
+      const src = image.imageUrl || image.url || image.src || "";
+      if (src) {
+        const img = document.createElement("img");
+        img.className = "slide-output-object__image";
+        img.src = src;
+        img.alt = "";
+        img.draggable = false;
+        img.style.objectFit = image.fit === "cover" || image.fit === "fill" ? image.fit : "contain";
+        box.appendChild(img);
+      }
+      textContent.appendChild(box);
+      continue;
+    }
+
+    if (kind === "shape") {
+      const shape = object.shape && typeof object.shape === "object" ? object.shape : {};
+      const shapeEl = document.createElement("div");
+      shapeEl.className = "slide-output-object__shape";
+      if (shape.type === "ellipse") {
+        shapeEl.style.borderRadius = "999px";
+      } else if (Number.isFinite(shape.radius) && shape.radius > 0) {
+        shapeEl.style.borderRadius = `${shape.radius}px`;
+      }
+      shapeEl.style.backgroundColor = shape.type === "line" ? "transparent" : (shape.fill || "#ffffff");
+      if (shape.stroke || Number.isFinite(shape.strokeWidth)) {
+        const strokeWidth = Number.isFinite(shape.strokeWidth) ? shape.strokeWidth : 1;
+        shapeEl.style.border = `${strokeWidth}px solid ${shape.stroke || shape.fill || "#ffffff"}`;
+      }
+      if (shape.type === "line") {
+        const strokeWidth = Number.isFinite(shape.strokeWidth) && shape.strokeWidth > 0 ? shape.strokeWidth : 4;
+        shapeEl.classList.add("slide-output-object__shape--line");
+        shapeEl.style.border = "none";
+        shapeEl.style.borderTop = `${strokeWidth}px solid ${shape.stroke || shape.fill || "#ffffff"}`;
+      }
+      box.appendChild(shapeEl);
+      textContent.appendChild(box);
+      continue;
+    }
+
+    box.style.textAlign = object.align || "center";
+    box.style.alignItems =
+      object.align === "left" ? "flex-start" : object.align === "right" ? "flex-end" : "center";
+    box.style.justifyContent =
+      object.verticalAlign === "top"
+        ? "flex-start"
+        : object.verticalAlign === "bottom"
+          ? "flex-end"
+          : "center";
+
+    renderSlideTextObjectBackground(box, object);
+
+    const body = document.createElement("div");
+    body.className = "slide-text-output-object__body";
+    const bodyFontSize = normalizeScriptureFontSize(object.fontSize, message.fontSize);
+    body.style.color = object.color || message.color || "#ffffff";
+    body.style.fontFamily = object.fontFamily || message.fontFamily || SCRIPTURE_FONT_FAMILY;
+    body.style.fontSize = `${bodyFontSize}px`;
+    body.style.fontWeight = object.fontWeight || message.fontWeight || SCRIPTURE_FONT_WEIGHT;
+    body.style.fontStyle = object.fontStyle || "";
+    body.style.textDecoration = object.textDecoration || "";
+    body.style.lineHeight = String(object.lineHeight || message.lineHeight || SCRIPTURE_LINE_HEIGHT);
+    body.innerHTML = renderSongSectionHTML(object.blocks);
+    box.appendChild(body);
+    textContent.appendChild(box);
+    fitTextElementToBox(box, body, {
+      baseSize: bodyFontSize,
+      minSize: normalizeScriptureFontSize(object.minFontSize, message.minFontSize || SCRIPTURE_MIN_BODY_FONT_SIZE),
+      mode: object.autofit || message.autosizeMode || "fit",
+    });
+  }
+}
+
 function textPresentationSignature(message, bodyText, referenceText, attributionText, copyrightText) {
   const position =
     message && typeof message.position === "object"
@@ -1487,6 +1638,12 @@ function textPresentationSignature(message, bodyText, referenceText, attribution
     lowerThirdSegments: Array.isArray(message.lowerThirdSegments)
       ? message.lowerThirdSegments.map((segment) => segment?.text || segment).join("|")
       : "",
+    slideObjects: Array.isArray(message.slideObjects)
+      ? JSON.stringify(message.slideObjects)
+      : "",
+    slideTextObjects: Array.isArray(message.slideTextObjects)
+      ? JSON.stringify(message.slideTextObjects)
+      : "",
     textBoxPosition: message.textBoxPosition && message.textBoxPosition.left !== undefined 
       ? `${message.textBoxPosition.left},${message.textBoxPosition.top},${message.textBoxPosition.width},${message.textBoxPosition.height}`
       : "",
@@ -1499,6 +1656,35 @@ function textPresentationSignature(message, bodyText, referenceText, attribution
     vertical: position.vertical || "",
     horizontal: position.horizontal || "",
   });
+}
+
+function applyTextCanvasBackground(textCanvas, safeMessage, lowerThirdOutput, look) {
+  textCanvas.style.alignItems = safeMessage.position.vertical;
+  textCanvas.style.justifyContent = safeMessage.position.horizontal;
+  textCanvas.style.backgroundColor =
+    lowerThirdOutput
+      ? safeMessage.chromaKeyColor || "#00ff00"
+      : look === SCRIPTURE_LOOK_LOWER_THIRD
+      ? "transparent"
+      : safeMessage.backgroundColor;
+  textCanvas.style.backgroundRepeat = "no-repeat";
+
+  if (!lowerThirdOutput && look !== SCRIPTURE_LOOK_LOWER_THIRD && safeMessage.backgroundImage) {
+    textCanvas.style.backgroundImage = `url('${safeMessage.backgroundImage}')`;
+    textCanvas.style.backgroundSize = "cover";
+    textCanvas.style.backgroundPosition = "center";
+  } else {
+    textCanvas.style.backgroundImage = "";
+    textCanvas.style.backgroundSize = "";
+    textCanvas.style.backgroundPosition = "";
+  }
+
+  if (lowerThirdOutput || look === SCRIPTURE_LOOK_LOWER_THIRD) {
+    const backgroundVideo = document.getElementById("textBackgroundVideo");
+    if (backgroundVideo) resetTextBackgroundVideo(backgroundVideo);
+  } else {
+    applyTextBackgroundVideoState(safeMessage, textCanvas);
+  }
 }
 
 function seekTextBackgroundVideoToPreview(backgroundVideo, sync) {
@@ -1625,6 +1811,12 @@ function applyTextMessage(message) {
   const look = lowerThirdOutput
     ? SCRIPTURE_LOOK_LOWER_THIRD
     : normalizeScriptureLook(safeMessage.look);
+  const slideObjects =
+    !lowerThirdOutput && Array.isArray(safeMessage.slideObjects) && safeMessage.slideObjects.length > 0
+      ? safeMessage.slideObjects
+      : !lowerThirdOutput && Array.isArray(safeMessage.slideTextObjects)
+        ? safeMessage.slideTextObjects
+        : [];
   if (signature === textPresentationState.signature) {
     if (normalizeScriptureLook(safeMessage.look) === SCRIPTURE_LOOK_LOWER_THIRD) {
       const backgroundVideo = document.getElementById("textBackgroundVideo");
@@ -1638,6 +1830,19 @@ function applyTextMessage(message) {
     return;
   }
   textPresentationState.signature = signature;
+  if (slideObjects.length > 0) {
+    textContent.classList.toggle("scripture-render--fullscreen", true);
+    textContent.classList.toggle("scripture-render--lower-third", false);
+    textContent.dataset.scriptureLook = look;
+    applyScriptureRenderVariables(textContent, safeMessage);
+    renderSlideObjects(textContent, slideObjects, safeMessage);
+    renderTextCopyrightOverlay(textCanvas, copyrightText);
+    textPresentationState.lastMessage = { ...safeMessage, look };
+    applyTextCanvasBackground(textCanvas, safeMessage, lowerThirdOutput, look);
+    applySlideTransition(textCanvas, safeMessage.transition);
+    return;
+  }
+  textContent.classList.remove("scripture-render--slide-objects");
   const shell = ensureScriptureTextShell(textContent);
   if (shell.box) {
     if (safeMessage.textBoxPosition) {
@@ -1684,32 +1889,7 @@ function applyTextMessage(message) {
   textPresentationState.lastMessage = { ...safeMessage, look };
   refitCurrentTextPresentation();
 
-  textCanvas.style.alignItems = safeMessage.position.vertical;
-  textCanvas.style.justifyContent = safeMessage.position.horizontal;
-  textCanvas.style.backgroundColor =
-    lowerThirdOutput
-      ? safeMessage.chromaKeyColor || "#00ff00"
-      : look === SCRIPTURE_LOOK_LOWER_THIRD
-      ? "transparent"
-      : safeMessage.backgroundColor;
-  textCanvas.style.backgroundRepeat = "no-repeat";
-
-  if (!lowerThirdOutput && look !== SCRIPTURE_LOOK_LOWER_THIRD && safeMessage.backgroundImage) {
-    textCanvas.style.backgroundImage = `url('${safeMessage.backgroundImage}')`;
-    textCanvas.style.backgroundSize = "cover";
-    textCanvas.style.backgroundPosition = "center";
-  } else {
-    textCanvas.style.backgroundImage = "";
-    textCanvas.style.backgroundSize = "";
-    textCanvas.style.backgroundPosition = "";
-  }
-
-  if (lowerThirdOutput || look === SCRIPTURE_LOOK_LOWER_THIRD) {
-    const backgroundVideo = document.getElementById("textBackgroundVideo");
-    if (backgroundVideo) resetTextBackgroundVideo(backgroundVideo);
-  } else {
-    applyTextBackgroundVideoState(safeMessage, textCanvas);
-  }
+  applyTextCanvasBackground(textCanvas, safeMessage, lowerThirdOutput, look);
 
   applySlideTransition(textCanvas, safeMessage.transition);
 }
@@ -1890,11 +2070,29 @@ function songSegmentStyleAttribute(style) {
   const declarations = [];
   const color = typeof style.color === "string" ? style.color.trim() : "";
   const fontFamily = typeof style.fontFamily === "string" ? style.fontFamily.trim() : "";
+  const backgroundColor = typeof style.backgroundColor === "string" ? style.backgroundColor.trim() : "";
+  const fontWeight = typeof style.fontWeight === "string" || Number.isFinite(Number(style.fontWeight))
+    ? String(style.fontWeight).trim()
+    : "";
+  const fontStyle = typeof style.fontStyle === "string" ? style.fontStyle.trim() : "";
+  const textDecoration = typeof style.textDecoration === "string" ? style.textDecoration.trim() : "";
   if (/^(#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|[a-z]+)$/i.test(color)) {
     declarations.push(`color: ${color}`);
   }
+  if (/^(#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|[a-z]+)$/i.test(backgroundColor)) {
+    declarations.push(`background-color: ${backgroundColor}`);
+  }
   if (fontFamily && !/[;{}<>]/.test(fontFamily)) {
     declarations.push(`font-family: ${fontFamily}`);
+  }
+  if (/^(normal|bold|bolder|lighter|[1-9]00)$/i.test(fontWeight)) {
+    declarations.push(`font-weight: ${fontWeight}`);
+  }
+  if (/^(normal|italic|oblique)$/i.test(fontStyle)) {
+    declarations.push(`font-style: ${fontStyle}`);
+  }
+  if (/^(none|underline|line-through|overline)(\s+(underline|line-through|overline))*$/i.test(textDecoration)) {
+    declarations.push(`text-decoration: ${textDecoration}`);
   }
   return declarations.join("; ");
 }

@@ -49,6 +49,7 @@ import {
 } from "./media-file-hash.min.mjs";
 import { BibleRpcClient } from "./bible_rpc_client.min.mjs";
 import { SongsRpcClient } from "./songs_rpc_client.min.mjs";
+import { SlidesStore } from "./slides_store.min.mjs";
 import settings from "./settings.min.mjs";
 import {
   loadEmprojSnapshot,
@@ -89,6 +90,9 @@ const bibleRpcClient = new BibleRpcClient({
 const songsRpcClient = new SongsRpcClient({
   app,
   devRoot: path.dirname(import.meta.dirname),
+});
+const slidesStore = new SlidesStore({
+  userDataPath: app.getPath("userData"),
 });
 
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
@@ -3743,6 +3747,17 @@ function setIPC() {
   ipcMain.handle("show-preflight-summary-dialog", handleShowPreflightSummaryDialog);
   ipcMain.handle("bible-rpc", handleBibleRPC);
   ipcMain.handle("songs-rpc", handleSongsRPC);
+  ipcMain.handle("slides:list", (_e, opts) => slidesStore.list(opts || {}));
+  ipcMain.handle("slides:get", (_e, id) => slidesStore.get(id));
+  ipcMain.handle("slides:save", (_e, deck) => slidesStore.save(deck));
+  ipcMain.handle("slides:delete", (_e, id) => slidesStore.delete(id));
+  ipcMain.handle("slides:duplicate", (_e, id, opts) => slidesStore.duplicate(id, opts || {}));
+  ipcMain.handle("slides:list-folders", () => slidesStore.listFolders());
+  ipcMain.handle("slides:create-folder", (_e, name) => slidesStore.createFolder(name));
+  ipcMain.handle("slides:rename-folder", (_e, id, name) => slidesStore.renameFolder(id, name));
+  ipcMain.handle("slides:delete-folder", (_e, id) => slidesStore.deleteFolder(id));
+  ipcMain.handle("slides:move-to-folder", (_e, deckId, folderId) => slidesStore.moveToFolder(deckId, folderId));
+  ipcMain.handle("slides:ready", () => slidesStore.ready());
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);

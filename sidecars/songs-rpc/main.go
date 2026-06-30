@@ -136,15 +136,17 @@ func handleRequest(store *songstore.SongStore, req JSONRPCRequest) {
 		var params []interface{}
 		if e := json.Unmarshal(req.Params, &params); e == nil && len(params) >= 1 {
 			songJSON, _ := json.Marshal(params[0])
-			var song songstore.Song
-			if e := json.Unmarshal(songJSON, &song); e == nil {
+			var document map[string]interface{}
+			if e := json.Unmarshal(songJSON, &document); e == nil {
 				originalImportJSON := ""
 				if len(params) > 1 {
 					originalImportJSON = fmt.Sprintf("%v", params[1])
 				}
-				err = store.SaveSong(song, originalImportJSON)
+				err = store.SaveSongDocument(document, originalImportJSON)
 				if err == nil {
-					result, err = store.GetSong(song.ID)
+					if id, _ := document["id"].(string); id != "" {
+						result, err = store.GetSong(id)
+					}
 				}
 			} else {
 				err = fmt.Errorf("invalid song object")

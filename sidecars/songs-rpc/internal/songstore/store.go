@@ -102,6 +102,7 @@ type SearchOptions struct {
 }
 
 const searchQueryResultLimit = 1000
+const slideDeckSchemaVersion = "ems.slideDeck.v1"
 
 func sqlLimitClause(limit int) string {
 	if limit <= 0 {
@@ -247,6 +248,10 @@ func (s *SongStore) migrateSchema() error {
 }
 
 func (s *SongStore) ConvertToAST(song Song) map[string]interface{} {
+	return s.ConvertToDeck(song)
+}
+
+func (s *SongStore) ConvertToDeck(song Song) map[string]interface{} {
 	authors := song.Metadata.Authors
 	if authors == nil {
 		authors = []string{}
@@ -268,85 +273,155 @@ func (s *SongStore) ConvertToAST(song Song) map[string]interface{} {
 		metadata["hymnal"].(map[string]interface{})["number"] = fmt.Sprintf("%d", *song.SongNumber)
 	}
 
-	sections := []map[string]interface{}{}
+	pages := []map[string]interface{}{}
 	for _, sec := range song.Sections {
 		blocks := sec.Blocks
 		if blocks == nil {
 			blocks = []SongBlock{}
 		}
+		textFrame := importedSongTextFrame(blocks)
+		fontSize := importedSongFontSize(blocks)
 
-		sections = append(sections, map[string]interface{}{
-			"id":     sec.ID,
-			"kind":   songSectionKind(sec),
-			"label":  sec.Label,
-			"blocks": blocks,
+		pages = append(pages, map[string]interface{}{
+			"id":          sec.ID,
+			"label":       sec.Label,
+			"kind":        songSectionKind(sec),
+			"durationMs":  0,
+			"autoAdvance": false,
+			"background": map[string]interface{}{
+				"type":  "color",
+				"color": "#000000",
+			},
+			"notes": "",
+			"objects": []map[string]interface{}{
+				{
+					"id":      "obj_" + sec.ID,
+					"kind":    "text",
+					"role":    "body",
+					"zIndex":  1,
+					"opacity": 1,
+					"autofit": "fit",
+					"frame":   textFrame,
+					"style": map[string]interface{}{
+						"fontFamily":    "Adwaita Sans",
+						"fontSize":      fontSize,
+						"minFontSize":   38,
+						"color":         "#ffffff",
+						"align":         "center",
+						"verticalAlign": "center",
+					},
+					"blocks": blocks,
+				},
+			},
 		})
 	}
 
-	playOrder := []map[string]interface{}{}
-	if len(song.PlayOrder) > 0 {
-		for _, entry := range song.PlayOrder {
-			if strings.TrimSpace(entry.SectionID) == "" {
-				continue
-			}
-			item := map[string]interface{}{
-				"sectionId": entry.SectionID,
-			}
-			if strings.TrimSpace(entry.ID) != "" {
-				item["id"] = entry.ID
-			}
-			if entry.Enabled != nil {
-				item["enabled"] = *entry.Enabled
-			}
-			playOrder = append(playOrder, item)
-		}
-	} else if len(song.Arrangements) > 0 && len(song.Arrangements[0].Sequence) > 0 {
-		for _, secID := range song.Arrangements[0].Sequence {
-			playOrder = append(playOrder, map[string]interface{}{
-				"sectionId": secID,
-			})
-		}
-	} else {
-		for _, sec := range song.Sections {
-			playOrder = append(playOrder, map[string]interface{}{
-				"sectionId": sec.ID,
-			})
-		}
-	}
-
-	ast := map[string]interface{}{
-		"schema":   "ems.song.v1",
-		"id":       song.ID,
-		"title":    song.Title,
-		"metadata": metadata,
-		"languages": []map[string]interface{}{
-			{
-				"id":      "en",
-				"name":    "English",
-				"default": true,
-			},
+	deck := map[string]interface{}{
+		"schema":       slideDeckSchemaVersion,
+		"id":           song.ID,
+		"title":        song.Title,
+		"documentType": "song",
+		"type":         "song",
+		"metadata":     metadata,
+		"canvas": map[string]interface{}{
+			"width":  1920,
+			"height": 1080,
 		},
-		"sections":  sections,
-		"playOrder": playOrder,
-		"presentation": map[string]interface{}{
-			"defaultChunking": map[string]interface{}{
-				"mode":      "blocksPerSlide",
-				"maxBlocks": 4,
-			},
+		"theme": map[string]interface{}{
+			"fontFamily":      "Adwaita Sans",
+			"fontSize":        96,
+			"minFontSize":     38,
+			"autosizeMode":    "fit",
+			"textColor":       "#ffffff",
+			"backgroundColor": "#000000",
 		},
+		"pages": pages,
 	}
 
 	if song.SongNumber != nil {
-		ast["songNumber"] = *song.SongNumber
+		deck["songNumber"] = *song.SongNumber
 	}
 	if song.FolderID != nil {
-		ast["folderId"] = *song.FolderID
+		deck["folderId"] = *song.FolderID
 	}
 	if len(song.DefaultRender) > 0 {
-		ast["defaultRender"] = song.DefaultRender
+		if theme, ok := deck["theme"].(map[string]interface{}); ok {
+			applyDefaultRenderToDeckTheme(theme, song.DefaultRender)
+		}
 	}
 
-	return ast
+	return deck
+}
+
+func applyDefaultRenderToDeckTheme(theme map[string]interface{}, render map[string]any) {
+	if value, ok := render["fontFamily"].(string); ok && strings.TrimSpace(value) != "" {
+		theme["fontFamily"] = value
+	}
+	if value, ok := numericAny(render["fontSize"]); ok && value > 0 {
+		theme["fontSize"] = value
+	}
+	if value, ok := numericAny(render["minFontSize"]); ok && value > 0 {
+		theme["minFontSize"] = value
+	}
+	if value, ok := render["autosizeMode"].(string); ok && strings.TrimSpace(value) != "" {
+		theme["autosizeMode"] = value
+	}
+	if value, ok := render["textColor"].(string); ok && strings.TrimSpace(value) != "" {
+		theme["textColor"] = value
+	} else if value, ok := render["color"].(string); ok && strings.TrimSpace(value) != "" {
+		theme["textColor"] = value
+	}
+	if value, ok := render["backgroundColor"].(string); ok && strings.TrimSpace(value) != "" {
+		theme["backgroundColor"] = value
+	}
+	if background, ok := render["background"].(map[string]any); ok {
+		if value, ok := background["color"].(string); ok && strings.TrimSpace(value) != "" {
+			theme["backgroundColor"] = value
+		}
+		if value, ok := background["path"].(string); ok && strings.TrimSpace(value) != "" {
+			theme["backgroundPath"] = value
+		}
+	}
+	if value, ok := render["backgroundPath"].(string); ok && strings.TrimSpace(value) != "" {
+		theme["backgroundPath"] = value
+	}
+}
+
+func importedSongLineCount(blocks []SongBlock) int {
+	count := 0
+	for _, block := range blocks {
+		if block.Type == "lyricLine" {
+			count++
+		}
+	}
+	if count < 1 {
+		return 1
+	}
+	return count
+}
+
+func importedSongTextFrame(blocks []SongBlock) map[string]interface{} {
+	lineCount := importedSongLineCount(blocks)
+	switch {
+	case lineCount >= 8:
+		return map[string]interface{}{"x": 0.04, "y": 0.04, "width": 0.92, "height": 0.9}
+	case lineCount >= 5:
+		return map[string]interface{}{"x": 0.05, "y": 0.07, "width": 0.9, "height": 0.84}
+	default:
+		return map[string]interface{}{"x": 0.06, "y": 0.14, "width": 0.88, "height": 0.72}
+	}
+}
+
+func importedSongFontSize(blocks []SongBlock) int {
+	lineCount := importedSongLineCount(blocks)
+	switch {
+	case lineCount >= 8:
+		return 76
+	case lineCount >= 5:
+		return 86
+	default:
+		return 96
+	}
 }
 
 func (s *SongStore) backfillASTJSONFromJSON() error {
@@ -392,7 +467,7 @@ func (s *SongStore) backfillASTJSONFromJSON() error {
 			continue
 		}
 
-		if _, err := s.db.Exec(`UPDATE songs SET ast_json = ?, schema_version = ? WHERE id = ?`, string(astJSON), "ems.song.v1", item.id); err != nil {
+		if _, err := s.db.Exec(`UPDATE songs SET ast_json = ?, schema_version = ? WHERE id = ?`, string(astJSON), slideDeckSchemaVersion, item.id); err != nil {
 			return err
 		}
 	}
@@ -565,6 +640,42 @@ func nullableString(value *string) interface{} {
 	return strings.TrimSpace(*value)
 }
 
+func stringPtrFromAny(value any) *string {
+	text, ok := value.(string)
+	if !ok || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(text)
+	return &trimmed
+}
+
+func numericAny(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case json.Number:
+		n, err := v.Float64()
+		return n, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func intFromAny(value any) *int {
+	n, ok := numericAny(value)
+	if !ok || n <= 0 {
+		return nil
+	}
+	number := int(n)
+	return &number
+}
+
 func scanNullableString(value sql.NullString) *string {
 	if !value.Valid || strings.TrimSpace(value.String) == "" {
 		return nil
@@ -599,6 +710,92 @@ func setASTMetadataString(ast map[string]interface{}, key string, value string) 
 		}
 		hymnal["meter"] = trimmed
 	}
+}
+
+func metadataFromDocument(document map[string]interface{}) map[string]interface{} {
+	metadata, ok := document["metadata"].(map[string]interface{})
+	if !ok {
+		metadata = map[string]interface{}{}
+		document["metadata"] = metadata
+	}
+	return metadata
+}
+
+func documentAuthors(document map[string]interface{}) []string {
+	metadata := metadataFromDocument(document)
+	switch authors := metadata["authors"].(type) {
+	case []string:
+		return authors
+	case []interface{}:
+		values := make([]string, 0, len(authors))
+		for _, author := range authors {
+			if text, ok := author.(string); ok && strings.TrimSpace(text) != "" {
+				values = append(values, strings.TrimSpace(text))
+			}
+		}
+		return values
+	default:
+		return []string{}
+	}
+}
+
+func documentString(document map[string]interface{}, key string) string {
+	if value, ok := document[key].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func metadataString(document map[string]interface{}, key string) string {
+	if value, ok := metadataFromDocument(document)[key].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func documentMeter(document map[string]interface{}) string {
+	if meter := metadataString(document, "meter"); meter != "" {
+		return normalizedSongMeter(meter)
+	}
+	if hymnal, ok := metadataFromDocument(document)["hymnal"].(map[string]interface{}); ok {
+		if meter, ok := hymnal["meter"].(string); ok {
+			return normalizedSongMeter(meter)
+		}
+	}
+	return ""
+}
+
+func normalizeSongDocument(raw map[string]interface{}) (map[string]interface{}, error) {
+	if raw == nil {
+		return nil, fmt.Errorf("song document is required")
+	}
+	if documentString(raw, "schema") == slideDeckSchemaVersion {
+		raw["schema"] = slideDeckSchemaVersion
+		raw["documentType"] = "song"
+		raw["type"] = "song"
+		if documentString(raw, "id") == "" {
+			return nil, fmt.Errorf("song id is required")
+		}
+		if documentString(raw, "title") == "" {
+			raw["title"] = "Untitled Song"
+		}
+		if _, ok := raw["pages"].([]interface{}); !ok {
+			if _, ok := raw["pages"].([]map[string]interface{}); !ok {
+				raw["pages"] = []interface{}{}
+			}
+		}
+		return raw, nil
+	}
+
+	payload, err := json.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	var song Song
+	if err := json.Unmarshal(payload, &song); err != nil {
+		return nil, err
+	}
+	return (&SongStore{}).ConvertToDeck(song), nil
 }
 
 func songSectionKind(section SongSection) string {
@@ -641,36 +838,133 @@ func songHasBlocks(song Song) bool {
 	return false
 }
 
+func normalizedDocumentMap(document map[string]interface{}) map[string]interface{} {
+	payload, err := json.Marshal(document)
+	if err != nil {
+		return document
+	}
+	var normalized map[string]interface{}
+	if err := json.Unmarshal(payload, &normalized); err != nil {
+		return document
+	}
+	return normalized
+}
+
+func textFromGenericBlock(block map[string]interface{}) string {
+	if blockType, _ := block["type"].(string); blockType != "" && blockType != "lyricLine" {
+		return ""
+	}
+	primary, ok := block["primary"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	segments, ok := primary["segments"].([]interface{})
+	if !ok {
+		return ""
+	}
+	var builder strings.Builder
+	for _, segmentValue := range segments {
+		segment, ok := segmentValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if text, ok := segment["text"].(string); ok {
+			builder.WriteString(text)
+		}
+	}
+	return builder.String()
+}
+
+func textFromGenericBlocks(blocksValue interface{}) string {
+	blocks, ok := blocksValue.([]interface{})
+	if !ok {
+		return ""
+	}
+	var builder strings.Builder
+	for _, blockValue := range blocks {
+		block, ok := blockValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		builder.WriteString(textFromGenericBlock(block))
+		builder.WriteString("\n")
+	}
+	return builder.String()
+}
+
+func documentLyricsText(document map[string]interface{}) string {
+	normalized := normalizedDocumentMap(document)
+	var builder strings.Builder
+	if pages, ok := normalized["pages"].([]interface{}); ok {
+		for _, pageValue := range pages {
+			page, ok := pageValue.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			objects, _ := page["objects"].([]interface{})
+			for _, objectValue := range objects {
+				object, ok := objectValue.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if kind, _ := object["kind"].(string); kind != "" && kind != "text" {
+					continue
+				}
+				builder.WriteString(textFromGenericBlocks(object["blocks"]))
+			}
+		}
+	}
+	if sections, ok := normalized["sections"].([]interface{}); ok {
+		for _, sectionValue := range sections {
+			section, ok := sectionValue.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			builder.WriteString(textFromGenericBlocks(section["blocks"]))
+		}
+	}
+	return builder.String()
+}
+
 func (s *SongStore) SaveSong(song Song, originalImportJSON string) error {
+	return s.SaveSongDocument(s.ConvertToDeck(song), originalImportJSON)
+}
+
+func (s *SongStore) SaveSongDocument(raw map[string]interface{}, originalImportJSON string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if err := s.saveSongTx(tx, song, originalImportJSON); err != nil {
+	document, err := normalizeSongDocument(raw)
+	if err != nil {
+		return err
+	}
+	if err := s.saveSongDocumentTx(tx, document, originalImportJSON); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (s *SongStore) saveSongTx(tx *sql.Tx, song Song, originalImportJSON string) error {
-	songJSON, err := json.Marshal(song)
-	if err != nil {
-		return err
-	}
-
-	ast := s.ConvertToAST(song)
-	astJSON, err := json.Marshal(ast)
+func (s *SongStore) saveSongDocumentTx(tx *sql.Tx, document map[string]interface{}, originalImportJSON string) error {
+	documentJSON, err := json.Marshal(document)
 	if err != nil {
 		return err
 	}
 
 	authorStr := ""
-	if len(song.Metadata.Authors) > 0 {
-		authorStr = song.Metadata.Authors[0]
+	authors := documentAuthors(document)
+	if len(authors) > 0 {
+		authorStr = authors[0]
 	}
-	meter := normalizedSongMeter(song.Metadata.Meter)
+	id := documentString(document, "id")
+	title := documentString(document, "title")
+	ccliNumber := metadataString(document, "ccliNumber")
+	copyright := metadataString(document, "copyright")
+	meter := documentMeter(document)
+	folderID := stringPtrFromAny(document["folderId"])
+	songNumber := intFromAny(document["songNumber"])
 
 	_, err = tx.Exec(`
 		INSERT INTO songs (id, title, normalized_title, author, ccli_number, copyright, meter, folder_id, song_number, original_import_json, song_json, ast_json, schema_version, updated_at)
@@ -689,19 +983,15 @@ func (s *SongStore) saveSongTx(tx *sql.Tx, song Song, originalImportJSON string)
 			ast_json=excluded.ast_json,
 			schema_version=excluded.schema_version,
 			updated_at=CURRENT_TIMESTAMP
-	`, song.ID, song.Title, song.Title, authorStr, song.Metadata.CCLINumber, song.Metadata.Copyright, songMeterArg(meter), nullableString(song.FolderID), songNumberArg(song.SongNumber), originalImportJSON, string(songJSON), string(astJSON), "ems.song.v1")
+	`, id, title, title, authorStr, ccliNumber, copyright, songMeterArg(meter), nullableString(folderID), songNumberArg(songNumber), originalImportJSON, string(documentJSON), string(documentJSON), slideDeckSchemaVersion)
 
 	if err != nil {
 		return err
 	}
 
-	tx.Exec("DELETE FROM song_fts WHERE song_id = ?", song.ID)
+	tx.Exec("DELETE FROM song_fts WHERE song_id = ?", id)
 
-	var allLyrics string
-	for _, section := range song.Sections {
-		sectionLyrics := songSectionLyricsText(section)
-		allLyrics += sectionLyrics + "\n"
-	}
+	allLyrics := documentLyricsText(document)
 	if meter != "" {
 		allLyrics += meter + "\n"
 	}
@@ -709,7 +999,7 @@ func (s *SongStore) saveSongTx(tx *sql.Tx, song Song, originalImportJSON string)
 	tx.Exec(`
 		INSERT INTO song_fts (song_id, title, author, lyrics)
 		VALUES (?, ?, ?, ?)
-	`, song.ID, song.Title, authorStr, allLyrics)
+	`, id, title, authorStr, allLyrics)
 
 	return nil
 }
@@ -729,21 +1019,18 @@ func (s *SongStore) GetSong(id string) (interface{}, error) {
 	}
 
 	if astJSON.Valid && astJSON.String != "" {
-		var ast map[string]interface{}
-		var astSong Song
-		if err := json.Unmarshal([]byte(astJSON.String), &astSong); err == nil && songHasBlocks(astSong) {
-			if err := json.Unmarshal([]byte(astJSON.String), &ast); err == nil {
-				ast["folderId"] = scanNullableString(folderID)
-				if dbNumber := scanNullableInt(songNumber); dbNumber != nil {
-					ast["songNumber"] = dbNumber
-				}
-				setASTMetadataString(ast, "meter", scanNullableText(meter))
-				return ast, nil
+		var document map[string]interface{}
+		if err := json.Unmarshal([]byte(astJSON.String), &document); err == nil {
+			document["folderId"] = scanNullableString(folderID)
+			if dbNumber := scanNullableInt(songNumber); dbNumber != nil {
+				document["songNumber"] = *dbNumber
 			}
+			setASTMetadataString(document, "meter", scanNullableText(meter))
+			return document, nil
 		}
 	}
 
-	// Fallback to song_json and convert to AST
+	// Fallback to song_json and convert to the deck document.
 	var song Song
 	if err := json.Unmarshal([]byte(songJSON.String), &song); err != nil {
 		return nil, err
@@ -756,8 +1043,8 @@ func (s *SongStore) GetSong(id string) (interface{}, error) {
 		song.Metadata.Meter = scanNullableText(meter)
 	}
 
-	ast := s.ConvertToAST(song)
-	return ast, nil
+	document := s.ConvertToDeck(song)
+	return document, nil
 }
 
 func (s *SongStore) DeleteSong(id string) error {

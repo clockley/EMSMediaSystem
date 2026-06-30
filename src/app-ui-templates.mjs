@@ -111,6 +111,10 @@ export function generateMediaFormHTML() {
         Songs
       </button>
 
+      <button type="button" id="openSlidesWorkspaceBtn" class="sidebar-slides-button">
+        Slides
+      </button>
+
       <div id="confidenceMonitor" class="confidence-monitor" aria-label="Live audience output">
         <video id="confidenceMonitorPreview" class="confidence-monitor__video" autoplay muted playsinline disablePictureInPicture></video>
       </div>
@@ -177,7 +181,7 @@ export function generateMediaFormHTML() {
 
     <div class="video-wrapper">
       <div id="previewStack" class="preview-stack" data-active-surface="live">
-        <video id="preview" disablePictureInPicture controls=false></video>
+        <video id="preview" disablePictureInPicture></video>
         <!--
           Dedicated cue scrub element. The main #preview element used to be
           re-loaded with the cued media's src when the operator clicked a
@@ -189,7 +193,7 @@ export function generateMediaFormHTML() {
         <!--
           controls is a boolean HTML attribute: any value (even "false") turns
           the native scrubber on. We omit the attribute entirely and re-assert
-          controls=false in JS (see ensurePreviewCueVideoElement) so the
+          native controls disabled in JS (see ensurePreviewCueVideoElement) so the
           operator never sees two scrubbers — the custom controls bar and the
           browser's stock <video> chrome — stacked on top of each other.
         -->
@@ -521,6 +525,197 @@ export function generateMediaFormHTML() {
            </section>
          </div>
 
+        <div id="slidesWorkspace" class="slides-workspace" hidden>
+          <aside class="slides-workspace__navigator" aria-label="Slide deck navigator">
+            <div class="slides-workspace__nav-header">
+              <span class="slides-workspace__heading">Slides</span>
+              <div class="slides-workspace__nav-actions">
+                <button type="button" id="newDeckBtn" class="songs-icon-btn songs-icon-btn--suggested" title="New slide deck" aria-label="New slide deck">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="songs-search-field">
+              <svg class="songs-search-field__icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              <input type="text" id="slidesSearchInput" placeholder="Search decks…" aria-label="Search slide decks">
+              <button type="button" id="slidesSearchClearBtn" class="songs-search-field__clear" aria-label="Clear search" hidden>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M4 4l6 6M10 4l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              </button>
+            </div>
+            <div class="songs-folder-panel" aria-label="Deck folders">
+              <div class="songs-folder-panel__header">
+                <span class="songs-folder-panel__title">Folders</span>
+                <button type="button" id="newDeckFolderBtn" class="songs-icon-btn songs-icon-btn--small" title="New folder" aria-label="New folder">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                </button>
+              </div>
+              <div id="slidesFolderList" class="songs-folder-list" role="listbox" aria-label="Deck folders"></div>
+            </div>
+            <div id="slidesList" class="songs-list" role="listbox">
+              <span class="list-placeholder-title">No decks yet</span>
+            </div>
+          </aside>
+          <section class="slides-workspace__main" aria-label="Deck editor">
+            <div class="songs-workspace__toolbar">
+              <button type="button" id="slidesWorkspaceTitleButton" class="songs-workspace__title slides-workspace__title-button" disabled title="Rename deck">
+                <span id="slidesWorkspaceTitle">Select or Create a Deck</span>
+              </button>
+              <div class="songs-workspace__actions-end">
+                <div class="songs-workspace__btn-group">
+                  <button type="button" id="slidesShowNowBtn" class="songs-action-btn songs-action-btn--suggested" disabled title="Present current page on audience display">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1 3h14v9H1z" stroke="currentColor" stroke-width="1.4"/><path d="M5 14h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M6.5 6l4 2.5-4 2.5z" fill="currentColor"/></svg>
+                    <span>Show Now</span>
+                  </button>
+                  <button type="button" id="slidesAddScheduleBtn" class="songs-action-btn" disabled title="Add deck to schedule">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                    <span>Schedule</span>
+                  </button>
+                  <button type="button" id="slidesSaveDeckBtn" class="songs-action-btn" disabled title="Save deck to library">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    <span>Save</span>
+                  </button>
+                </div>
+                <div class="songs-workspace__btn-group songs-workspace__btn-group--secondary">
+                  <button type="button" id="slidesUndoBtn" class="songs-icon-btn" disabled title="Undo slide edit" aria-label="Undo slide edit">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 4L3 7l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 7H10a3 3 0 1 1 0 6H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                  </button>
+                  <button type="button" id="slidesRedoBtn" class="songs-icon-btn" disabled title="Redo slide edit" aria-label="Redo slide edit">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M12.5 7H6a3 3 0 1 0 0 6h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                  </button>
+                  <button type="button" id="slidesDuplicateDeckBtn" class="songs-icon-btn" disabled title="Duplicate deck">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="3" width="9" height="9" rx="1" stroke="currentColor" stroke-width="1.4"/><rect x="5.5" y="5.5" width="9" height="9" rx="1" stroke="currentColor" stroke-width="1.4" fill="var(--card-bg-color)"/></svg>
+                  </button>
+                  <button type="button" id="slidesDeleteDeckBtn" class="songs-icon-btn songs-icon-btn--destructive" disabled title="Delete deck">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4h10l-1 10H4z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M2 4h12M6 2h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="slides-workspace__editor">
+              <aside class="slides-workspace__pages" aria-label="Pages">
+                <div class="slides-workspace__pages-header">
+                  <span>Pages</span>
+                  <div class="slides-workspace__pages-actions">
+                    <button type="button" id="slidesAddPageBtn" class="songs-icon-btn songs-icon-btn--small" title="Add page" disabled>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                    </button>
+                    <button type="button" id="slidesDuplicatePageBtn" class="songs-icon-btn songs-icon-btn--small" title="Duplicate page" disabled>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="2" y="2" width="6" height="6" stroke="currentColor" stroke-width="1.2"/><rect x="4" y="4" width="6" height="6" stroke="currentColor" stroke-width="1.2" fill="var(--card-bg-color)"/></svg>
+                    </button>
+                    <button type="button" id="slidesDeletePageBtn" class="songs-icon-btn songs-icon-btn--small songs-icon-btn--destructive" title="Delete page" disabled>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                    </button>
+                    <button type="button" id="slidesAddTextBoxBtn" class="songs-icon-btn songs-icon-btn--small" title="Add text box" disabled>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 3h8M6 3v6M4 9h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                    </button>
+                    <button type="button" id="slidesAddImageBtn" class="songs-icon-btn songs-icon-btn--small" title="Add image" disabled>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="1.5" y="2" width="9" height="8" rx="1" stroke="currentColor" stroke-width="1.2"/><circle cx="4" cy="4.5" r="1" fill="currentColor"/><path d="M2 8l2.5-2 2 1.8L8 6.5 10 8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
+                    <button type="button" id="slidesAddRectBtn" class="songs-icon-btn songs-icon-btn--small" title="Add rectangle" disabled>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><rect x="2" y="3" width="8" height="6" rx="1" stroke="currentColor" stroke-width="1.3"/></svg>
+                    </button>
+                    <button type="button" id="slidesAddEllipseBtn" class="songs-icon-btn songs-icon-btn--small" title="Add ellipse" disabled>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><ellipse cx="6" cy="6" rx="4" ry="3" stroke="currentColor" stroke-width="1.3"/></svg>
+                    </button>
+                    <button type="button" id="slidesAddLineBtn" class="songs-icon-btn songs-icon-btn--small" title="Add line" disabled>
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 8l8-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <div id="slidesPageList" class="slides-page-list" role="listbox" aria-label="Deck pages"></div>
+              </aside>
+              <div class="slides-workspace__canvas-wrap">
+                <div id="slidesCanvasFrame" class="slides-canvas-frame">
+                  <div id="slidesCanvas" class="slides-canvas" aria-label="Slide canvas">
+                    <div id="slidesCanvasBackground" class="slides-canvas-background"></div>
+                    <div id="slidesTextLayer" class="slides-canvas-text-layer" aria-label="Slide text objects"></div>
+                  </div>
+                </div>
+              </div>
+              <aside class="slides-workspace__properties" aria-label="Slide templates and page properties">
+                <div class="boxed-list-group">
+                  <div class="boxed-list-title">Templates</div>
+                  <div id="slidesTemplateList" class="slides-template-grid" role="listbox" aria-label="Slide templates"></div>
+                </div>
+                <div class="boxed-list-group">
+                  <div class="boxed-list-title">Page</div>
+                  <div class="boxed-list">
+                    <div class="boxed-list-row">
+                      <label for="slidesPageLabelInput">Label</label>
+                      <input type="text" id="slidesPageLabelInput" placeholder="Page 1" aria-label="Page label">
+                    </div>
+                    <div class="boxed-list-row">
+                      <label for="slidesPageBackgroundColor">Background</label>
+                      <input type="color" id="slidesPageBackgroundColor" value="#000000">
+                    </div>
+                    <div class="boxed-list-row">
+                      <label>Image / Video</label>
+                      <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;">
+                        <button type="button" class="songs-icon-btn" title="Choose background" style="position: relative; overflow: hidden; width: 32px; height: 32px; flex-shrink: 0;">
+                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke-width="1.5"/><circle cx="5.5" cy="6.5" r="1.5" fill="currentColor" stroke="none"/><path d="M2 10l3-3 4 4 2-2 3 3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                          <input type="file" id="slidesPageBackgroundInput" accept="image/*,video/mp4,video/webm" aria-label="Page background image or video" style="opacity:0;position:absolute;inset:0;cursor:pointer;width:100%;height:100%;">
+                        </button>
+                        <span id="slidesPageBackgroundLabel" style="font-size:12px;color:var(--text-color-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">None</span>
+                        <button type="button" id="slidesPageBackgroundClearBtn" class="songs-icon-btn songs-icon-btn--small" title="Clear background">
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <div class="boxed-list-row">
+                      <label for="slidesPageNotes">Notes</label>
+                      <textarea id="slidesPageNotes" rows="3" placeholder="Speaker notes (not shown to audience)" style="width:100%;resize:vertical;"></textarea>
+                    </div>
+                  </div>
+                </div>
+                <div class="boxed-list-group">
+                  <div class="boxed-list-title">Transition</div>
+                  <div class="boxed-list">
+                    <div class="boxed-list-row">
+                      <label for="slidesPageTransitionEffect">Effect</label>
+                      <select id="slidesPageTransitionEffect" class="display-select" aria-label="Slide transition effect">
+                        <option value="inherit">Use Global</option>
+                        <option value="none">Off</option>
+                        <option value="fade">Fade</option>
+                        <option value="slide-left">Slide Left</option>
+                        <option value="slide-right">Slide Right</option>
+                        <option value="zoom">Zoom</option>
+                      </select>
+                    </div>
+                    <div class="boxed-list-row">
+                      <label for="slidesPageTransitionDuration">Duration</label>
+                      <input id="slidesPageTransitionDuration" class="url-input transition-duration-input" type="number" min="0" max="3000" step="50" value="350" aria-label="Slide transition duration in milliseconds">
+                    </div>
+                  </div>
+                </div>
+              </aside>
+              <div class="slides-hidden-settings" hidden>
+                <input type="text" id="slidesDeckTitleInput" placeholder="Untitled Deck" aria-label="Deck title">
+                <select id="slidesDeckFolderSelect" aria-label="Deck folder">
+                  <option value="">Default</option>
+                </select>
+                <select id="slidesDeckFontFamily" class="display-select">
+                  <option value="Adwaita Sans">Adwaita Sans</option>
+                  <option value="CMG Sans">CMG Sans</option>
+                  <option value="Arial">Arial</option>
+                  <option value="Calibri">Calibri</option>
+                  <option value="Cambria">Cambria</option>
+                  <option value="Georgia">Georgia</option>
+                  <option value="Segoe UI">Segoe UI</option>
+                  <option value="Tahoma">Tahoma</option>
+                  <option value="Times New Roman">Times New Roman</option>
+                  <option value="Verdana">Verdana</option>
+                </select>
+                <input type="number" id="slidesDeckFontSize" min="24" max="200" value="96">
+                <input type="color" id="slidesDeckTextColor" value="#ffffff">
+                <input type="color" id="slidesDeckBgColor" value="#000000">
+              </div>
+              <input type="file" id="slidesTextObjectBackgroundInput" accept="image/*,video/mp4,video/webm" hidden>
+              <input type="file" id="slidesObjectImageInput" accept="image/*" hidden>
+              <div id="slidesEditorContextMenu" class="song-editor-context-menu" style="display: none; position: fixed; z-index: 10000;"></div>
+            </div>
+          </section>
+        </div>
+
         <div id="bibleWorkspace" class="bible-workspace" hidden>
         <aside class="bible-workspace__navigator" aria-label="Bible chapter navigator">
           <div class="bible-workspace__heading">Bible</div>
@@ -798,7 +993,7 @@ export function queueTypeIconMarkup(itemOrType) {
     case "bible":
       return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 1.5h8.5A1.5 1.5 0 0 1 13 3v11.5H4.5A1.5 1.5 0 0 1 3 13V1.5zM4.5 12.5a.5.5 0 0 0 0 1H12v-1H4.5zM6 4h4v1H8.5v4H7.5V5H6V4z"/></svg>`;
     case "song":
-      return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M6 1.5v9.2A2.3 2.3 0 1 0 8.3 8V3.5L13 2v7.2A2.3 2.3 0 1 0 15.3 7V1.5H6z"/></svg>`;
+      return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>`;
     default:
       return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 2h10v12H3V2zm1 1v10h8V3H4zm1 1h6v1H5V4zm0 2h4v1H5V6zm0 2h6v1H5V8z"/></svg>`;
   }
