@@ -232,21 +232,18 @@ export function songSectionLyricsText(section) {
 }
 
 export function songCopyrightAttribution(metadata = {}, placement = "firstSlide") {
-  if (placement === "none") return "";
+  if (!metadata) return "";
   const parts = [];
-  const copyright = typeof metadata.copyright === "string" ? metadata.copyright.trim() : "";
-  const ccli =
-    metadata.ccliNumber != null && String(metadata.ccliNumber).trim()
-      ? `CCLI #${String(metadata.ccliNumber).trim()}`
-      : "";
-  const oneLicense =
-    metadata.oneLicense != null && String(metadata.oneLicense).trim()
-      ? `ONE LICENSE #${String(metadata.oneLicense).trim()}`
-      : "";
-  if (copyright) parts.push(copyright);
-  if (ccli) parts.push(ccli);
-  if (oneLicense) parts.push(oneLicense);
-  return parts.join(" · ");
+  if (metadata.authors && metadata.authors.length > 0) {
+    parts.push(metadata.authors.join(", "));
+  }
+  if (metadata.copyright) {
+    parts.push(metadata.copyright);
+  }
+  if (metadata.ccliNumber) {
+    parts.push(`CCLI #${metadata.ccliNumber}`);
+  }
+  return parts.join("\n").trim();
 }
 
 function definedRenderValues(value = {}) {
@@ -346,7 +343,8 @@ export function buildSongTextMessage({
   const style = mergeSongRenderState({}, render);
   const bodyText = songSectionLyricsText(section);
   const referenceText = "";
-  const attributionText = showCopyright
+  const attributionText = "";
+  const copyrightText = showCopyright
     ? songCopyrightAttribution(song?.metadata, style.copyrightPlacement)
     : "";
   const backgroundUrl = style.backgroundPath ? pathToMediaUrl(style.backgroundPath) : "";
@@ -367,6 +365,7 @@ export function buildSongTextMessage({
     reference: referenceText,
     referenceText,
     attributionText,
+    copyrightText,
     version: "",
     fontFamily: style.fontFamily || SCRIPTURE_FONT_FAMILY,
     fontSize: normalizeScriptureFontSize(style.fontSize, SCRIPTURE_BODY_FONT_SIZE),
@@ -471,14 +470,14 @@ export function queueEntryFromSong({
     },
     render: {
       themeId: "song_default",
-      backgroundColor: render.backgroundColor || DEFAULT_SONG_RENDER.backgroundColor,
-      backgroundPath: render.backgroundPath || "",
-      color: render.color || DEFAULT_SONG_RENDER.color,
-      fontFamily: render.fontFamily || DEFAULT_SONG_RENDER.fontFamily,
-      fontSize: render.fontSize || DEFAULT_SONG_RENDER.fontSize,
-      autosizeMode: render.autosizeMode || DEFAULT_SONG_RENDER.autosizeMode,
-      minFontSize: render.minFontSize || DEFAULT_SONG_RENDER.minFontSize,
-      copyrightPlacement: render.copyrightPlacement || "firstSlide",
+      backgroundColor: render.backgroundColor,
+      backgroundPath: render.backgroundPath,
+      color: render.color,
+      fontFamily: render.fontFamily,
+      fontSize: render.fontSize,
+      autosizeMode: render.autosizeMode,
+      minFontSize: render.minFontSize,
+      copyrightPlacement: render.copyrightPlacement,
       textBoxPosition: render.textBoxPosition || null,
       ccliNumber:
         render.ccliNumber != null && String(render.ccliNumber).trim()

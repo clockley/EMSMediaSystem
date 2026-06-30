@@ -118,6 +118,27 @@
             box-sizing: border-box;
         }
 
+        .song-copyright-overlay {
+            position: absolute;
+            left: 2.5vw;
+            right: 2.5vw;
+            bottom: 2.4vh;
+            z-index: 2;
+            max-width: min(92vw, 1720px);
+            color: rgba(255, 255, 255, 0.78);
+            font-family: 'CMG Sans';
+            font-size: clamp(14px, 1.9vh, 22px);
+            line-height: 1.25;
+            text-align: left;
+            text-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
+            white-space: pre-wrap;
+            pointer-events: none;
+        }
+
+        .song-copyright-overlay[hidden] {
+            display: none !important;
+        }
+
         .scripture-render {
             --scripture-font-size: 66px;
             --scripture-reference-font-size: 38px;

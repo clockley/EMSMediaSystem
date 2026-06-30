@@ -1008,6 +1008,7 @@ const DEFAULT_TEXT_PRESENTATION = Object.freeze({
   lineHeight: SCRIPTURE_LINE_HEIGHT,
   referenceFontSize: SCRIPTURE_REFERENCE_FONT_SIZE,
   attributionText: "",
+  copyrightText: "",
   backgroundColor: "#000000",
   backgroundImage: "",
   backgroundVideo: "",
@@ -1357,7 +1358,27 @@ function ensureScriptureTextShell(textContent) {
   };
 }
 
-function textPresentationSignature(message, bodyText, referenceText, attributionText) {
+function renderTextCopyrightOverlay(textCanvas, copyrightText) {
+  const text = String(copyrightText || "").trim();
+  let copyright = document.getElementById("songCopyright");
+  if (!text) {
+    copyright?.remove();
+    return;
+  }
+  if (!textCanvas) return;
+  if (!copyright) {
+    copyright = document.createElement("div");
+    copyright.id = "songCopyright";
+    copyright.className = "song-copyright-overlay";
+  }
+  if (copyright.parentElement !== textCanvas) {
+    textCanvas.appendChild(copyright);
+  }
+  copyright.textContent = text;
+  copyright.hidden = false;
+}
+
+function textPresentationSignature(message, bodyText, referenceText, attributionText, copyrightText) {
   const position =
     message && typeof message.position === "object"
       ? message.position
@@ -1367,6 +1388,7 @@ function textPresentationSignature(message, bodyText, referenceText, attribution
     bodyText,
     referenceText,
     attributionText,
+    copyrightText,
     reference: message.reference || "",
     version: message.version || "",
     book: message.book || "",
@@ -1407,6 +1429,9 @@ function textPresentationSignature(message, bodyText, referenceText, attribution
       : 0,
     lowerThirdSegments: Array.isArray(message.lowerThirdSegments)
       ? message.lowerThirdSegments.map((segment) => segment?.text || segment).join("|")
+      : "",
+    textBoxPosition: message.textBoxPosition && message.textBoxPosition.left !== undefined 
+      ? `${message.textBoxPosition.left},${message.textBoxPosition.top},${message.textBoxPosition.width},${message.textBoxPosition.height}`
       : "",
     backgroundColor: message.backgroundColor || "",
     backgroundImage: message.backgroundImage || "",
@@ -1532,11 +1557,13 @@ function applyTextMessage(message) {
     "";
   const referenceText = safeMessage.referenceText || "";
   const attributionText = safeMessage.attributionText || "";
+  const copyrightText = safeMessage.copyrightText || "";
   const signature = textPresentationSignature(
     safeMessage,
     bodyText,
     referenceText,
     attributionText,
+    copyrightText,
   );
   const look = lowerThirdOutput
     ? SCRIPTURE_LOOK_LOWER_THIRD
@@ -1548,6 +1575,7 @@ function applyTextMessage(message) {
     } else {
       applyTextBackgroundVideoState(safeMessage, textCanvas);
     }
+    renderTextCopyrightOverlay(textCanvas, copyrightText);
     textPresentationState.lastMessage = { ...safeMessage, look };
     refitCurrentTextPresentation();
     return;
@@ -1595,6 +1623,7 @@ function applyTextMessage(message) {
     shell.attribution.textContent = attributionText;
     shell.attribution.hidden = !attributionText;
   }
+  renderTextCopyrightOverlay(textCanvas, copyrightText);
   textPresentationState.lastMessage = { ...safeMessage, look };
   refitCurrentTextPresentation();
 

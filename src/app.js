@@ -147,6 +147,7 @@ import {
   resolvedSongPresentation,
   songDefaultRenderFromRender,
   songSectionBlockTexts,
+  songBlockText,
   songSectionLyricsText,
   songForLibraryDatabase,
   songQueuePath,
@@ -6995,6 +6996,22 @@ function renderSongBlocksIntoPreview(preview, blocks, color = "#ffffff", textBox
   preview.appendChild(container);
 }
 
+function renderSongCopyrightIntoPreview(preview, copyrightText) {
+  if (!preview) return;
+  const text = String(copyrightText || "").trim();
+  let copyright = preview.querySelector(".song-copyright-overlay");
+  if (!text) {
+    copyright?.remove();
+    return;
+  }
+  if (!copyright) {
+    copyright = document.createElement("div");
+    copyright.className = "song-copyright-overlay";
+  }
+  copyright.textContent = text;
+  preview.appendChild(copyright);
+}
+
 function textStyleFromSegment(segment) {
   const style = segment?.style && typeof segment.style === "object" ? segment.style : {};
   const normalized = {};
@@ -7133,10 +7150,11 @@ function setSongEditorStyleScope(scope) {
 }
 
 function selectedSongEditorTextRange(textarea) {
-  const value = textarea?.value || "";
-  let start = Number.isFinite(textarea?.selectionStart) ? textarea.selectionStart : 0;
-  let end = Number.isFinite(textarea?.selectionEnd) ? textarea.selectionEnd : start;
+  const savedPos = saveSongEditorCursorPosition(textarea);
+  if (!savedPos) return null;
+  let { start, end } = savedPos;
   if (start !== end) return { start: Math.min(start, end), end: Math.max(start, end) };
+  const value = textarea.innerText || textarea.textContent || "";
   if (!value) return null;
   if (start < value.length && value[start] !== "\n") return { start, end: start + 1 };
   if (start > 0 && value[start - 1] !== "\n") return { start: start - 1, end: start };
@@ -7151,6 +7169,78 @@ function updateSongEditorSection(index, section) {
   }
 }
 
+function saveSongEditorCursorPosition(contentEditableEl) {
+  const selection = window.getSelection();
+  if (!selection.rangeCount || !contentEditableEl.contains(selection.anchorNode)) return null;
+  
+  const range = selection.getRangeAt(0);
+  let start = 0, end = 0, currentOffset = 0;
+  let foundStart = false, foundEnd = false;
+
+  const walk = (node) => {
+    if (foundEnd) return;
+    if (node.nodeType === 3) {
+      if (!foundStart && range.startContainer === node) { start = currentOffset + range.startOffset; foundStart = true; }
+      if (!foundEnd && range.endContainer === node) { end = currentOffset + range.endOffset; foundEnd = true; }
+      currentOffset += node.textContent.length;
+    } else if (node.nodeType === 1) {
+      for (let i = 0; i < node.childNodes.length; i++) {
+        if (!foundStart && range.startContainer === node && range.startOffset === i) { start = currentOffset; foundStart = true; }
+        if (!foundEnd && range.endContainer === node && range.endOffset === i) { end = currentOffset; foundEnd = true; }
+        walk(node.childNodes[i]);
+      }
+      if (!foundStart && range.startContainer === node && range.startOffset === node.childNodes.length) { start = currentOffset; foundStart = true; }
+      if (!foundEnd && range.endContainer === node && range.endOffset === node.childNodes.length) { end = currentOffset; foundEnd = true; }
+      
+      if ((node.tagName === "DIV" || node.tagName === "P") && node.nextSibling) {
+        currentOffset += 1;
+      }
+    }
+  };
+
+  walk(contentEditableEl);
+  if (!foundStart) start = currentOffset;
+  if (!foundEnd) end = start;
+  return { start, end };
+}
+
+function restoreSongEditorCursorPosition(contentEditableEl, savedPosition) {
+  if (!savedPosition) return;
+  const { start, end } = savedPosition;
+  let currentOffset = 0;
+  const range = document.createRange();
+  range.setStart(contentEditableEl, 0);
+  range.collapse(true);
+  
+  let foundStart = false, foundEnd = false;
+
+  const walk = (node) => {
+    if (foundEnd) return;
+    if (node.nodeType === 3) {
+      const len = node.textContent.length;
+      if (!foundStart && start >= currentOffset && start <= currentOffset + len) {
+        range.setStart(node, start - currentOffset);
+        foundStart = true;
+      }
+      if (foundStart && !foundEnd && end >= currentOffset && end <= currentOffset + len) {
+        range.setEnd(node, end - currentOffset);
+        foundEnd = true;
+      }
+      currentOffset += len;
+    } else if (node.nodeType === 1) {
+      for (const child of node.childNodes) walk(child);
+      if ((node.tagName === "DIV" || node.tagName === "P") && node.nextSibling) {
+        currentOffset += 1;
+      }
+    }
+  };
+  
+  walk(contentEditableEl);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
 function refreshSongEditorAfterStyleChange() {
   syncSongEditorHiddenTextarea();
   const activeSection = songEditorSections[songEditorActiveIndex];
@@ -7160,15 +7250,31 @@ function refreshSongEditorAfterStyleChange() {
   renderSongEditorSlideList();
   const textarea = document.getElementById("songEditorSlideTextarea");
   if (textarea && activeSection) {
-    const selectionStart = textarea.selectionStart;
-    const selectionEnd = textarea.selectionEnd;
-    textarea.value = songSectionBlockTexts(activeSection).join("\n");
-    if (Number.isFinite(selectionStart) && Number.isFinite(selectionEnd)) {
-      textarea.setSelectionRange(
-        Math.min(selectionStart, textarea.value.length),
-        Math.min(selectionEnd, textarea.value.length),
-      );
+    const savedPos = saveSongEditorCursorPosition(textarea);
+    populateSongEditorTextarea(textarea, activeSection);
+    restoreSongEditorCursorPosition(textarea, savedPos);
+  }
+}
+
+function populateSongEditorTextarea(textarea, section) {
+  if (!textarea || !section) return;
+  textarea.innerHTML = "";
+  const blocks = Array.isArray(section.blocks) ? section.blocks : [];
+  for (const block of blocks) {
+    const lineEl = document.createElement("div");
+    lineEl.dataset.blockId = block.id;
+    if (block.type === "spacer" || !block.primary?.segments?.length) {
+      lineEl.innerHTML = "<br>";
+    } else {
+      for (const segment of block.primary.segments) {
+        const span = document.createElement("span");
+        span.textContent = segment.text || "";
+        if (segment.style?.color) span.style.color = segment.style.color;
+        if (segment.style?.fontFamily) span.style.fontFamily = segment.style.fontFamily;
+        lineEl.appendChild(span);
+      }
     }
+    textarea.appendChild(lineEl);
   }
 }
 
@@ -7503,7 +7609,7 @@ function selectSongEditorSlide(index) {
   const section = songEditorSections[index];
   const textarea = document.getElementById("songEditorSlideTextarea");
   if (textarea) {
-    textarea.value = songSectionBlockTexts(section).join("\n");
+    populateSongEditorTextarea(textarea, section);
   }
 
   const label = section.label || "";
@@ -7555,21 +7661,31 @@ function syncSongEditorWorkspaceStyles(message = null) {
     canvas.style.fontFamily = songFontFamilyCSS(style.fontFamily);
     canvas.style.setProperty("--base-font-size", style.fontSize || DEFAULT_SONG_RENDER.fontSize);
     canvas.style.setProperty("--font-family", songFontFamilyCSS(style.fontFamily));
-  } else if (preview) {
+  }
+  if (preview) {
     preview.style.setProperty("--base-font-size", style.fontSize || DEFAULT_SONG_RENDER.fontSize);
     preview.style.setProperty("--font-family", songFontFamilyCSS(style.fontFamily));
   }
+  const activeSection = Array.isArray(songEditorSections) && Number.isFinite(songEditorActiveIndex) 
+    ? songEditorSections[songEditorActiveIndex] 
+    : null;
+  const sectionStyle = activeSection?.primary?.style || {};
+  const activeColor = sectionStyle.color || style.color || DEFAULT_SONG_RENDER.color;
+  const activeFontFamily = sectionStyle.fontFamily || style.fontFamily;
+  const activeFontSize = sectionStyle.fontSize || style.fontSize || DEFAULT_SONG_RENDER.fontSize;
+
   const textBox = document.getElementById("songEditorTextBox");
   if (textBox) {
-    textBox.style.color = style.color || DEFAULT_SONG_RENDER.color;
-    textBox.style.fontFamily = songFontFamilyCSS(style.fontFamily);
-    textBox.style.setProperty("--base-font-size", style.fontSize || DEFAULT_SONG_RENDER.fontSize);
-    textBox.style.setProperty("--font-family", songFontFamilyCSS(style.fontFamily));
+    textBox.style.color = activeColor;
+    textBox.style.fontFamily = songFontFamilyCSS(activeFontFamily);
+    textBox.style.setProperty("--base-font-size", activeFontSize);
+    textBox.style.setProperty("--font-family", songFontFamilyCSS(activeFontFamily));
   }
   const textarea = document.getElementById("songEditorSlideTextarea");
   if (textarea) {
-    textarea.style.color = style.color || DEFAULT_SONG_RENDER.color;
-    textarea.style.fontFamily = songFontFamilyCSS(style.fontFamily);
+    textarea.style.color = activeColor;
+    textarea.style.fontFamily = songFontFamilyCSS(activeFontFamily);
+    textarea.style.setProperty("--font-family", songFontFamilyCSS(activeFontFamily));
   }
   if (textBox && style.textBoxPosition) {
     const pos = style.textBoxPosition;
@@ -8013,28 +8129,57 @@ function initSongEditorContextMenu() {
   }
 }
 
-function handleSongEditorCanvasTextInput(text) {
+function handleSongEditorCanvasTextInput(editorDiv) {
   const activeSection = songEditorSections[songEditorActiveIndex];
   if (!activeSection) return;
 
   const previousBlocks = Array.isArray(activeSection.blocks) ? activeSection.blocks : [];
-  const blocks = text.split("\n").map((line, idx) => {
-    const trimmed = line.trimRight();
-    const previousBlock = previousBlocks[idx];
-    if (previousBlock && songBlockText(previousBlock) === trimmed) {
-      return previousBlock;
+  const blocks = [];
+
+  for (const node of editorDiv.childNodes) {
+    if (node.nodeType === 3) { // Text node outside div
+      if (node.textContent.trim() !== "") {
+        blocks.push({
+          type: "lyricLine",
+          id: "block_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+          primary: { lang: "en", segments: [{ type: "text", text: node.textContent }] },
+          translations: [], annotations: []
+        });
+      }
+    } else if (node.nodeType === 1) { // Element
+      if (node.tagName === "BR") {
+        blocks.push({ type: "spacer", id: "block_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6) });
+      } else if (node.tagName === "DIV" || node.tagName === "P") {
+        const segments = [];
+        const walk = (n, currentStyle) => {
+          if (n.nodeType === 3) {
+            if (n.textContent) segments.push({ type: "text", text: n.textContent, style: currentStyle });
+          } else if (n.nodeType === 1 && n.tagName !== "BR") {
+            const newStyle = { ...currentStyle };
+            if (n.style.fontFamily) newStyle.fontFamily = n.style.fontFamily;
+            if (n.style.color) newStyle.color = n.style.color;
+            for (const child of n.childNodes) walk(child, newStyle);
+          }
+        };
+        for (const child of node.childNodes) walk(child, {});
+        
+        let blockId = node.dataset.blockId || ("block_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6));
+        const existingBlock = previousBlocks.find(b => b.id === blockId);
+        
+        if (segments.length === 0) {
+          blocks.push(existingBlock && existingBlock.type === "spacer" ? existingBlock : { type: "spacer", id: blockId });
+        } else {
+          blocks.push({
+            type: "lyricLine",
+            id: blockId,
+            primary: { lang: "en", segments },
+            translations: existingBlock?.translations || [],
+            annotations: existingBlock?.annotations || [],
+          });
+        }
+      }
     }
-    return {
-      type: trimmed === "" ? "spacer" : "lyricLine",
-      id: previousBlock?.id || `block_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
-      primary: {
-        lang: "en",
-        segments: trimmed === "" ? [] : [{ type: "text", text: trimmed }],
-      },
-      translations: [],
-      annotations: [],
-    };
-  });
+  }
 
   activeSection.blocks = blocks;
 
@@ -8272,9 +8417,6 @@ function readSongEditorRenderState() {
   const minFontSizeInput = document.getElementById("songEditorMinFontSizeInput");
   const textColor = document.getElementById("songEditorTextColor")?.value;
   const backgroundColor = document.getElementById("songEditorBackgroundColor")?.value;
-  const copyright = document.getElementById("songEditorCopyright")?.value?.trim() || "";
-  const ccliNumber = document.getElementById("songEditorCcli")?.value?.trim() || null;
-  const oneLicense = document.getElementById("songEditorOneLicense")?.value?.trim() || null;
   return mergeSongRenderState(currentSongRenderState, {
     fontFamily: fontInput ? fontInput.value : DEFAULT_SONG_RENDER.fontFamily,
     fontSize: fontSizeInput && fontSizeInput.value ? Number(fontSizeInput.value) : DEFAULT_SONG_RENDER.fontSize,
@@ -8283,9 +8425,6 @@ function readSongEditorRenderState() {
     color: textColor || DEFAULT_SONG_RENDER.color,
     backgroundColor: backgroundColor || DEFAULT_SONG_RENDER.backgroundColor,
     backgroundPath: currentSongRenderState.backgroundPath || "",
-    copyright,
-    ccliNumber,
-    oneLicense,
     textBoxPosition: currentSongRenderState.textBoxPosition || null,
   });
 }
@@ -8297,9 +8436,6 @@ function syncSongEditorRenderControls(render = currentSongRenderState) {
   const minFontSizeInput = document.getElementById("songEditorMinFontSizeInput");
   const textColorInput = document.getElementById("songEditorTextColor");
   const backgroundColorInput = document.getElementById("songEditorBackgroundColor");
-  const copyrightInput = document.getElementById("songEditorCopyright");
-  const ccliInput = document.getElementById("songEditorCcli");
-  const oneLicenseInput = document.getElementById("songEditorOneLicense");
 
   if (fontInput) fontInput.value = render.fontFamily || DEFAULT_SONG_RENDER.fontFamily;
   if (fontSizeInput) fontSizeInput.value = render.fontSize || DEFAULT_SONG_RENDER.fontSize;
@@ -8310,9 +8446,6 @@ function syncSongEditorRenderControls(render = currentSongRenderState) {
   if (backgroundColorInput) {
     backgroundColorInput.value = render.backgroundColor || DEFAULT_SONG_RENDER.backgroundColor;
   }
-  if (copyrightInput) copyrightInput.value = render.copyright || "";
-  if (ccliInput) ccliInput.value = render.ccliNumber || "";
-  if (oneLicenseInput) oneLicenseInput.value = render.oneLicense || "";
   syncSongBackgroundLabel(render.backgroundPath || "");
 }
 
@@ -8335,7 +8468,7 @@ function flushSongEditorStateForSave() {
   const slideTextarea = document.getElementById("songEditorSlideTextarea");
   const activeSection = songEditorSections[songEditorActiveIndex];
   if (slideTextarea && activeSection) {
-    handleSongEditorCanvasTextInput(slideTextarea.value);
+    handleSongEditorCanvasTextInput(slideTextarea);
   }
   currentSongRenderState = readSongEditorRenderState();
   if (currentWorkspaceSong) {
@@ -8596,6 +8729,8 @@ function renderSongSectionPreview(section) {
     preview.appendChild(attrEl);
   }
 
+  renderSongCopyrightIntoPreview(preview, message.copyrightText);
+
   if (isEditing) {
     syncSongEditorWorkspaceStyles(message);
   }
@@ -8853,14 +8988,6 @@ async function openSongEditor(song) {
     authorInput.value = songToEdit.metadata?.authors?.join(", ") || "";
     if (folderInput) folderInput.value = songToEdit.folderId || "";
     textarea.value = songEditorTextFromSections(songEditorSections);
-    currentSongRenderState = mergeSongRenderState(
-      songRenderStateFromDefaultRender(songToEdit.defaultRender),
-      {
-        copyright: songToEdit.metadata?.copyright || "",
-        ccliNumber: songToEdit.metadata?.ccliNumber || null,
-        oneLicense: songToEdit.metadata?.oneLicense || null,
-      },
-    );
     syncSongEditorRenderControls(currentSongRenderState);
   } else {
     currentEditingSongId = null;
@@ -9708,7 +9835,7 @@ function installBibleMediaControls() {
 
   // Slide editor live WYSIWYG text input
   document.getElementById("songEditorSlideTextarea")?.addEventListener("input", (e) => {
-    handleSongEditorCanvasTextInput(e.target.value);
+    handleSongEditorCanvasTextInput(e.target);
   });
 
   // Meta change events (Type dropdown, Number input, Custom label input)
@@ -9766,6 +9893,7 @@ function installBibleMediaControls() {
           : { fontFamily: event.currentTarget.value };
       if (scope === "allSlides") {
         currentSongRenderState = readSongEditorRenderState();
+        syncCurrentWorkspaceSongDefaultRender();
       }
       applySongEditorTextStyle(style, scope);
     } else {
@@ -9781,7 +9909,7 @@ function installBibleMediaControls() {
       if (section) renderSongSectionPreview(section);
     }
   };
-  for (const id of ["songEditorFontInput", "songEditorFontSizeInput", "songEditorAutosizeModeInput", "songEditorMinFontSizeInput", "songEditorTextColor", "songEditorBackgroundColor", "songEditorCopyright", "songEditorCcli", "songEditorOneLicense"]) {
+  for (const id of ["songEditorFontInput", "songEditorFontSizeInput", "songEditorAutosizeModeInput", "songEditorMinFontSizeInput", "songEditorTextColor", "songEditorBackgroundColor"]) {
     const input = document.getElementById(id);
     input?.addEventListener("input", syncSongEditorRenderChange);
     input?.addEventListener("change", syncSongEditorRenderChange);
