@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "fs/promises";
+import { randomUUID } from "crypto";
 import path from "path";
 import { isValidMediaFileHash } from "./media-file-hash.min.mjs";
 
@@ -118,9 +119,14 @@ function normalizeIndex(raw) {
 
 async function atomicWriteJson(filePath, data) {
   await mkdir(path.dirname(filePath), { recursive: true });
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-  await rename(tmpPath, filePath);
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(tmpPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    await rm(tmpPath, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 function snapshotDeletionEligible(snapshot) {
@@ -136,6 +142,8 @@ export class StagingIndex {
     this.stagingDir = stagingDir;
     this.index = emptyIndex();
     this.loaded = false;
+    this.loadPromise = null;
+    this.mutationQueue = Promise.resolve();
   }
 
   get filePath() {
@@ -144,67 +152,90 @@ export class StagingIndex {
 
   async load() {
     if (this.loaded) return this.index;
-    await mkdir(this.stagingDir, { recursive: true });
-    try {
-      const raw = JSON.parse(await readFile(this.filePath, "utf8"));
-      this.index = normalizeIndex(raw);
-    } catch (err) {
-      if (err?.code !== "ENOENT") {
-        const backupPath = `${this.filePath}.bak`;
-        await rm(backupPath, { force: true }).catch(() => {});
-        await rename(this.filePath, backupPath).catch(() => {});
-        console.error("Staging index was corrupt; starting with an empty index:", err);
-      }
-      this.index = emptyIndex();
+    if (!this.loadPromise) {
+      this.loadPromise = (async () => {
+        await mkdir(this.stagingDir, { recursive: true });
+        try {
+          const raw = JSON.parse(await readFile(this.filePath, "utf8"));
+          this.index = normalizeIndex(raw);
+        } catch (err) {
+          if (err?.code !== "ENOENT") {
+            const backupPath = `${this.filePath}.bak`;
+            await rm(backupPath, { force: true }).catch(() => {});
+            await rename(this.filePath, backupPath).catch(() => {});
+            console.error("Staging index was corrupt; starting with an empty index:", err);
+          }
+          this.index = emptyIndex();
+        }
+        this.loaded = true;
+        return this.index;
+      })().finally(() => {
+        this.loadPromise = null;
+      });
     }
-    this.loaded = true;
-    return this.index;
+    return this.loadPromise;
   }
 
-  async save() {
+  enqueueMutation(task) {
+    const run = this.mutationQueue.catch(() => {}).then(task);
+    this.mutationQueue = run.catch(() => {});
+    return run;
+  }
+
+  async saveLoadedIndex() {
     await this.load();
     this.index = normalizeIndex(this.index);
     await atomicWriteJson(this.filePath, this.index);
   }
 
-  async registerSnapshot({ projectGuid, projectPath = "", snapshotId, unsaved = false }) {
-    const guid = normalizeProjectGuid(projectGuid);
-    const id = normalizeSnapshotId(snapshotId);
-    if (!guid || !id) return { ok: false };
-    await this.load();
-
-    const now = Date.now();
-    const project = this.index.projects[guid] || {
-      path: "",
-      lastOpenedMs: now,
-      snapshotIds: [],
-    };
-    project.path = typeof projectPath === "string" ? projectPath : "";
-    project.lastOpenedMs = now;
-    project.unsaved = unsaved === true || undefined;
-    if (!project.snapshotIds.includes(id)) project.snapshotIds.push(id);
-    project.snapshotIds = sortedUnique(project.snapshotIds, normalizeSnapshotId);
-    this.index.projects[guid] = project;
-
-    const snapshot = this.index.snapshots[id] || {
-      refCount: 0,
-      projectGuids: [],
-      protectedBy: [],
-      lastPinnedMs: 0,
-    };
-    if (!snapshot.projectGuids.includes(guid)) snapshot.projectGuids.push(guid);
-    snapshot.projectGuids = sortedUnique(snapshot.projectGuids, normalizeProjectGuid);
-    snapshot.protectedBy = sortedUnique(snapshot.protectedBy, normalizeProjectGuid)
-      .filter((protectedGuid) => snapshot.projectGuids.includes(protectedGuid));
-    snapshot.refCount = snapshot.projectGuids.length;
-    snapshot.lastPinnedMs = now;
-    this.index.snapshots[id] = snapshot;
-
-    await this.save();
-    return { ok: true };
+  async save() {
+    return this.enqueueMutation(() => this.saveLoadedIndex());
   }
 
-  async reconcileProject({
+  async registerSnapshot({ projectGuid, projectPath = "", snapshotId, unsaved = false }) {
+    return this.enqueueMutation(async () => {
+      const guid = normalizeProjectGuid(projectGuid);
+      const id = normalizeSnapshotId(snapshotId);
+      if (!guid || !id) return { ok: false };
+      await this.load();
+
+      const now = Date.now();
+      const project = this.index.projects[guid] || {
+        path: "",
+        lastOpenedMs: now,
+        snapshotIds: [],
+      };
+      project.path = typeof projectPath === "string" ? projectPath : "";
+      project.lastOpenedMs = now;
+      project.unsaved = unsaved === true || undefined;
+      if (!project.snapshotIds.includes(id)) project.snapshotIds.push(id);
+      project.snapshotIds = sortedUnique(project.snapshotIds, normalizeSnapshotId);
+      this.index.projects[guid] = project;
+
+      const snapshot = this.index.snapshots[id] || {
+        refCount: 0,
+        projectGuids: [],
+        protectedBy: [],
+        lastPinnedMs: 0,
+      };
+      if (!snapshot.projectGuids.includes(guid)) snapshot.projectGuids.push(guid);
+      snapshot.projectGuids = sortedUnique(snapshot.projectGuids, normalizeProjectGuid);
+      snapshot.protectedBy = sortedUnique(snapshot.protectedBy, normalizeProjectGuid)
+        .filter((protectedGuid) => snapshot.projectGuids.includes(protectedGuid));
+      snapshot.refCount = snapshot.projectGuids.length;
+      snapshot.lastPinnedMs = now;
+      this.index.snapshots[id] = snapshot;
+
+      await this.saveLoadedIndex();
+      return { ok: true };
+    });
+  }
+
+  async reconcileProject(args) {
+    return this.enqueueMutation(() => this.reconcileProjectLoaded(args));
+  }
+
+  async reconcileProjectLoaded({
     projectGuid,
     projectPath = "",
     snapshotIds = [],
@@ -271,32 +302,43 @@ export class StagingIndex {
       }
     }
 
-    await this.save();
+    await this.saveLoadedIndex();
     return { ok: true, eligibleSnapshotIds };
   }
 
   async removeProject(projectGuid) {
+    return this.enqueueMutation(() => this.removeProjectLoaded(projectGuid));
+  }
+
+  async removeProjectLoaded(projectGuid) {
     const guid = normalizeProjectGuid(projectGuid);
     if (!guid) return { ok: false, eligibleSnapshotIds: [] };
     await this.load();
     const project = this.index.projects[guid];
     const snapshotIds = Array.isArray(project?.snapshotIds) ? project.snapshotIds : [];
-    return this.reconcileProject({
+    const result = await this.reconcileProjectLoaded({
       projectGuid: guid,
       projectPath: "",
       snapshotIds: [],
       protectedSnapshotIds: [],
       unsaved: false,
-    }).then((result) => ({
+    });
+    return {
       ...result,
       eligibleSnapshotIds: sortedUnique(
         [...(result.eligibleSnapshotIds || []), ...snapshotIds],
         normalizeSnapshotId,
       ).filter((snapshotId) => !this.index.snapshots[snapshotId]),
-    }));
+    };
   }
 
   async removeProjectsAtPathExcept(projectPath, projectGuid) {
+    return this.enqueueMutation(() =>
+      this.removeProjectsAtPathExceptLoaded(projectPath, projectGuid),
+    );
+  }
+
+  async removeProjectsAtPathExceptLoaded(projectPath, projectGuid) {
     const keepGuid = normalizeProjectGuid(projectGuid);
     const normalizedPath = typeof projectPath === "string" ? projectPath : "";
     if (!normalizedPath) return { ok: true, eligibleSnapshotIds: [] };
@@ -305,7 +347,7 @@ export class StagingIndex {
     for (const [guid, project] of Object.entries({ ...this.index.projects })) {
       if (guid === keepGuid) continue;
       if (project?.path !== normalizedPath) continue;
-      const result = await this.removeProject(guid);
+      const result = await this.removeProjectLoaded(guid);
       eligibleSnapshotIds.push(...(result.eligibleSnapshotIds || []));
     }
     return {
@@ -315,11 +357,15 @@ export class StagingIndex {
   }
 
   async sweepGhostProjects(readProjectGuid) {
+    return this.enqueueMutation(() => this.sweepGhostProjectsLoaded(readProjectGuid));
+  }
+
+  async sweepGhostProjectsLoaded(readProjectGuid) {
     await this.load();
     const eligibleSnapshotIds = [];
     for (const [projectGuid, project] of Object.entries({ ...this.index.projects })) {
       if (project?.unsaved === true) {
-        const result = await this.removeProject(projectGuid);
+        const result = await this.removeProjectLoaded(projectGuid);
         eligibleSnapshotIds.push(...(result.eligibleSnapshotIds || []));
         continue;
       }
@@ -338,7 +384,7 @@ export class StagingIndex {
         exists = false;
       }
       if (!exists) {
-        const result = await this.removeProject(projectGuid);
+        const result = await this.removeProjectLoaded(projectGuid);
         eligibleSnapshotIds.push(...(result.eligibleSnapshotIds || []));
         continue;
       }
@@ -349,11 +395,11 @@ export class StagingIndex {
         actualGuid = "";
       }
       if (!actualGuid || actualGuid !== projectGuid) {
-        const result = await this.removeProject(projectGuid);
+        const result = await this.removeProjectLoaded(projectGuid);
         eligibleSnapshotIds.push(...(result.eligibleSnapshotIds || []));
       }
     }
-    await this.save();
+    await this.saveLoadedIndex();
     return sortedUnique(eligibleSnapshotIds, normalizeSnapshotId);
   }
 
