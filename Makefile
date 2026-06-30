@@ -296,6 +296,12 @@ else
 endif
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
 
+.PHONY: test-songs-import
+test-songs-import:
+	@echo "$(COLOR_YELLOW)Running song import fixture tests$(COLOR_RESET)"
+	@CGO_ENABLED=0 "$(GO)" test -C "$(SONGS_RPC_ROOT)" ./internal/songimport/ -count=1
+	@echo "$(COLOR_GREEN)$(TICK) Song import tests passed$(COLOR_RESET)"
+
 # --- Bible database ---
 #
 # The database is rebuilt only when its source inputs change or when the edition
@@ -323,7 +329,6 @@ endif
 	@echo "$(COLOR_YELLOW)Building $(BIBLE_EDITION) Bible database -> $@$(COLOR_RESET)"
 	@BIBLE_PRIVATE_ROOT="$(BIBLE_PRIVATE_ROOT)" $(NODE) "$(BIBLE_RPC_ASSET_BUILDER)" $(BIBLE_EDITION) "$(DERIVED_DIR)"
 	@echo "$(COLOR_GREEN)$(TICK) Built $(BIBLE_EDITION) Bible database$(COLOR_RESET)"
-
 
 # Rule: Check dependencies
 check-deps:
@@ -363,7 +368,7 @@ js-minify: $(MINIFIED_JS_FILES)
 	@echo "$(COLOR_GREEN)$(TICK) Minified all JS/MJS files$(COLOR_RESET)"
 
 # Pattern rule to minify .js files
-$(APP_BUNDLE_OUT): $(APP_BUNDLE_SRC) src/app-media-utils.mjs src/app-bible-reference-utils.mjs src/app-bible-scripture-render.mjs src/app-countdown.mjs src/app-pptx-utils.mjs src/app-controls-utils.mjs src/app-media-loading-utils.mjs src/app-toasts.mjs src/app-ui-templates.mjs src/app-song-utils.mjs Makefile | $(DERIVED_DIR)
+$(APP_BUNDLE_OUT): $(APP_BUNDLE_SRC) src/app-media-utils.mjs src/app-bible-reference-utils.mjs src/app-bible-scripture-render.mjs src/app-countdown.mjs src/app-pptx-utils.mjs src/app-controls-utils.mjs src/app-media-loading-utils.mjs src/app-toasts.mjs src/app-ui-templates.mjs src/app-song-utils.mjs src/app-slide-utils.mjs src/schemas/ems-slide.types.mjs Makefile | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 else

@@ -157,16 +157,41 @@ import {
   songSectionBlockTexts,
   songBlockText,
   songSectionLyricsText,
-  songForLibraryDatabase,
   songQueuePath,
   songRenderStateFromDefaultRender,
   songRenderFromItem,
-  songSnapshotForSchedule,
 } from "./app-song-utils.mjs";
+import {
+  EMS_SLIDE_DECK_SCHEMA_ID,
+  DEFAULT_DECK_THEME,
+  DEFAULT_TEXT_FRAME,
+  SONG_DECK_DOCUMENT_TYPE,
+  blocksToText,
+  createBlankDeck,
+  createBlankPage,
+  createImageObject,
+  createShapeObject,
+  createTextObject,
+  deckDefaultRender,
+  deckPagesToSongSections,
+  deckQueuePath,
+  deckToTransientSong,
+  findPage,
+  getPagePrimaryText,
+  isDeckPath,
+  isSlideDeckDocument,
+  normalizeSlideDeck,
+  pageRenderOverrides,
+  parseDeckQueuePath,
+  setPagePrimaryText,
+  songAstToDeck,
+  textToSegmentsBlocks,
+} from "./app-slide-utils.mjs";
 
 let ipcRenderer;
 let bibleAPI;
 let songsAPI;
+let slidesAPI;
 let webUtils;
 let attachCubicWaveShaper;
 let timeRemaining;
@@ -204,6 +229,7 @@ function attachElectronBridge() {
   ipcRenderer = electron.ipcRenderer;
   bibleAPI = electron.bibleAPI;
   songsAPI = electron.songsAPI;
+  slidesAPI = electron.slidesAPI;
   webUtils = electron.webUtils;
   attachCubicWaveShaper = electron.attachCubicWaveShaper;
   timeRemaining = electron.timeRemaining;
@@ -383,6 +409,8 @@ let currentProjectGuid = generateProjectGuid();
 let currentProjectCreated = new Date().toISOString();
 let activeMediaWindowContentType = null;
 let bibleShowNowModeActive = false;
+let songShowNowModeActive = false;
+let songShowNowSourceId = null;
 let bibleLowerThirdOutputActive = false;
 const bibleDesignerState = {
   version: "KJV",
@@ -1065,6 +1093,16 @@ function isQueueItemSong(item) {
   );
 }
 
+function isQueueItemDeck(item) {
+  return Boolean(
+    item &&
+      (item.type === "deck" ||
+        item.source?.kind === "deck" ||
+        item.source?.deckId ||
+        isDeckPath(item.path)),
+  );
+}
+
 function isQueueItemAudio(item) {
   return Boolean(
     item &&
@@ -1123,6 +1161,7 @@ const PREVIEW_SURFACE_CUE_AUDIO = "cue-audio";
 const PREVIEW_SURFACE_PPTX = "pptx";
 const PREVIEW_SURFACE_BIBLE = "bible";
 const PREVIEW_SURFACE_SONGS = "songs";
+const PREVIEW_SURFACE_SLIDES = "slides";
 
 function previewStackElement() {
   return document.getElementById("previewStack");
@@ -1143,6 +1182,8 @@ function setPreviewStackSurface(surface = PREVIEW_SURFACE_LIVE) {
 function syncPreviewStackSurface() {
   if (document.getElementById("songsWorkspace")?.hidden === false) {
     setPreviewStackSurface(PREVIEW_SURFACE_SONGS);
+  } else if (document.getElementById("slidesWorkspace")?.hidden === false) {
+    setPreviewStackSurface(PREVIEW_SURFACE_SLIDES);
   } else if (document.getElementById("bibleWorkspace")?.hidden === false) {
     setPreviewStackSurface(PREVIEW_SURFACE_BIBLE);
   } else if (isPptxPreviewVisible()) {
@@ -2109,6 +2150,18 @@ function ensurePreviewAudioElement() {
     previewAudio.addEventListener("loadedmetadata", paintIfActive);
   }
   return previewAudio;
+}
+
+function disableNativeVideoControls(el) {
+  if (!el) return;
+  el.controls = false;
+  el.removeAttribute("controls");
+  try {
+    el.controlsList?.add("nodownload", "nofullscreen", "noremoteplayback");
+  } catch {}
+  try {
+    el.disablePictureInPicture = true;
+  } catch {}
 }
 
 function ensureLiveAudioElement() {
@@ -3139,7 +3192,7 @@ function trackedPreviewQueueIndexForMedia(mediaEl) {
 
   if (mediaEl === video) {
     if (
-      isBibleWorkspaceVisible() &&
+      isPreviewWorkspaceOverlayVisible() &&
       !isQueuePresentationActive() &&
       !isActiveMediaWindow() &&
       !isLocalAppWindowPresentationActive()
@@ -3286,18 +3339,7 @@ function ensurePreviewCueVideoElement() {
     // anything that later mutates the element can't accidentally turn the
     // stock scrubber back on — the operator already drives the custom
     // controls bar.
-    previewCueVideo.controls = false;
-    previewCueVideo.removeAttribute("controls");
-    try {
-      previewCueVideo.controlsList?.add(
-        "nodownload",
-        "nofullscreen",
-        "noremoteplayback",
-      );
-    } catch {
-      /* controlsList not supported — CSS rule below still hides chrome */
-    }
-    previewCueVideo.disablePictureInPicture = true;
+    disableNativeVideoControls(previewCueVideo);
     if (!previewCueVideo.dataset.cueHandlersInstalled) {
       installPreviewCueVideoHandlers(previewCueVideo);
       previewCueVideo.dataset.cueHandlersInstalled = "true";
@@ -4234,6 +4276,7 @@ function showBibleWorkspace() {
   const button = document.getElementById("openBibleWorkspaceBtn");
   if (!workspace) return;
   hideSongsWorkspace();
+  hideSlidesWorkspace();
   syncLowerThirdFeatureAvailability();
   workspace.hidden = false;
   button?.setAttribute("data-active", "true");
@@ -4241,7 +4284,7 @@ function showBibleWorkspace() {
   document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   setPreviewStackSurface(PREVIEW_SURFACE_BIBLE);
   installBibleWorkspaceEventGuards();
-  pauseInactivePreviewBehindBibleWorkspace();
+  pauseInactivePreviewBehindWorkspace();
 }
 
 function hideBibleWorkspace() {
@@ -4257,14 +4300,17 @@ function showSongsWorkspace() {
   const button = document.getElementById("openSongsWorkspaceBtn");
   if (!workspace) return;
   hideBibleWorkspace();
+  hideSlidesWorkspace();
   workspace.hidden = false;
   button?.setAttribute("data-active", "true");
   document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
   document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   setPreviewStackSurface(PREVIEW_SURFACE_SONGS);
+  installSongsWorkspaceEventGuards();
   
   setMediaCountdownOverlayVisible(false);
   setMediaCountdownText("");
+  pauseInactivePreviewBehindWorkspace();
 
   const launcher = document.getElementById("songsLauncher");
   const slide = document.getElementById("songsPreviewSlide");
@@ -4287,12 +4333,44 @@ function hideSongsWorkspace() {
   syncPreviewStackSurface();
 }
 
+function showSlidesWorkspace() {
+  const workspace = document.getElementById("slidesWorkspace");
+  const button = document.getElementById("openSlidesWorkspaceBtn");
+  if (!workspace) return;
+  hideBibleWorkspace();
+  hideSongsWorkspace();
+  workspace.hidden = false;
+  button?.setAttribute("data-active", "true");
+  document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
+  document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+  setPreviewStackSurface(PREVIEW_SURFACE_SLIDES);
+  installSlidesWorkspaceEventGuards();
+  setMediaCountdownOverlayVisible(false);
+  setMediaCountdownText("");
+  pauseInactivePreviewBehindWorkspace();
+}
+
+function hideSlidesWorkspace() {
+  const workspace = document.getElementById("slidesWorkspace");
+  const button = document.getElementById("openSlidesWorkspaceBtn");
+  if (workspace) workspace.hidden = true;
+  button?.setAttribute("data-active", "false");
+  syncPreviewStackSurface();
+}
+
+function isSlidesWorkspaceVisible() {
+  return document.getElementById("slidesWorkspace")?.hidden === false;
+}
+
 function hideBiblePreview() {
   hideBibleWorkspace();
 }
 
-function installBibleWorkspaceEventGuards() {
-  const workspace = document.getElementById("bibleWorkspace");
+function installPreviewWorkspaceEventGuards(workspaceOrId) {
+  const workspace =
+    typeof workspaceOrId === "string"
+      ? document.getElementById(workspaceOrId)
+      : workspaceOrId;
   if (!workspace || workspace.dataset.eventGuardsInstalled === "1") return;
   workspace.dataset.eventGuardsInstalled = "1";
 
@@ -4312,6 +4390,18 @@ function installBibleWorkspaceEventGuards() {
   workspace.addEventListener("dblclick", stopWorkspaceDoubleClick);
 }
 
+function installBibleWorkspaceEventGuards() {
+  installPreviewWorkspaceEventGuards("bibleWorkspace");
+}
+
+function installSongsWorkspaceEventGuards() {
+  installPreviewWorkspaceEventGuards("songsWorkspace");
+}
+
+function installSlidesWorkspaceEventGuards() {
+  installPreviewWorkspaceEventGuards("slidesWorkspace");
+}
+
 function isBibleWorkspaceVisible() {
   return document.getElementById("bibleWorkspace")?.hidden === false;
 }
@@ -4323,12 +4413,13 @@ function isSongsWorkspaceVisible() {
 function isPreviewWorkspaceOverlayVisible() {
   return (
     isBibleWorkspaceVisible() ||
-    isSongsWorkspaceVisible()
+    isSongsWorkspaceVisible() ||
+    isSlidesWorkspaceVisible()
   );
 }
 
-function pauseInactivePreviewBehindBibleWorkspace() {
-  if (!isBibleWorkspaceVisible()) return;
+function pauseInactivePreviewBehindWorkspace() {
+  if (!isPreviewWorkspaceOverlayVisible()) return;
   if (
     isQueuePresentationActive() ||
     isActiveMediaWindow() ||
@@ -4341,7 +4432,7 @@ function pauseInactivePreviewBehindBibleWorkspace() {
   try {
     video.pause();
   } catch (err) {
-    console.error("Failed to pause hidden media preview behind Bible workspace:", err);
+    console.error("Failed to pause hidden media preview behind workspace:", err);
   }
   localTimeStampUpdateIsRunning = false;
   syncPreviewAudioTrackState();
@@ -5997,6 +6088,7 @@ async function showBibleTextNow() {
         isPlaying = true;
         isQueuePlaying = false;
         bibleShowNowModeActive = true;
+        clearSongShowNowPresentation();
         updateDynUI();
         renderQueue();
         return true;
@@ -6013,6 +6105,7 @@ async function showBibleTextNow() {
     isPlaying = true;
     isQueuePlaying = false;
     bibleShowNowModeActive = true;
+    clearSongShowNowPresentation();
     isActiveMediaWindowCache = audienceStarted;
     updateDynUI();
     renderQueue();
@@ -6884,6 +6977,7 @@ async function jumpBibleReferenceToBrowser() {
 }
 
 let currentWorkspaceSong = null;
+let currentWorkspaceSongDeck = null;
 let currentEditingSongId = null;
 let currentSongRenderState = { ...DEFAULT_SONG_RENDER };
 let currentSongSectionId = null;
@@ -6913,6 +7007,110 @@ function songFontFamilyCSS(fontFamily = DEFAULT_SONG_RENDER.fontFamily) {
   const family = String(fontFamily || DEFAULT_SONG_RENDER.fontFamily).trim();
   if (!family) return `${DEFAULT_SONG_RENDER.fontFamily}, sans-serif`;
   return family.includes(",") ? family : `${family}, sans-serif`;
+}
+
+function songDeckDocumentFromSongDocument(document, render = currentSongRenderState) {
+  if (!document) return null;
+  const deck = isSlideDeckDocument(document)
+    ? normalizeSlideDeck({
+        ...document,
+        documentType: document.documentType || SONG_DECK_DOCUMENT_TYPE,
+        type: SONG_DECK_DOCUMENT_TYPE,
+      })
+    : songAstToDeck(normalizeToSongAST(document), { documentType: SONG_DECK_DOCUMENT_TYPE });
+  if (!deck) return null;
+  deck.documentType = SONG_DECK_DOCUMENT_TYPE;
+  deck.type = SONG_DECK_DOCUMENT_TYPE;
+  if (render && typeof render === "object") {
+    deck.theme = {
+      ...(deck.theme || DEFAULT_DECK_THEME),
+      ...(render.fontFamily ? { fontFamily: render.fontFamily } : {}),
+      ...(Number.isFinite(Number(render.fontSize)) ? { fontSize: Number(render.fontSize) } : {}),
+      ...(Number.isFinite(Number(render.minFontSize)) ? { minFontSize: Number(render.minFontSize) } : {}),
+      ...(render.autosizeMode ? { autosizeMode: render.autosizeMode } : {}),
+      ...(render.color ? { textColor: render.color } : {}),
+      ...(render.backgroundColor ? { backgroundColor: render.backgroundColor } : {}),
+      ...(render.backgroundPath ? { backgroundPath: render.backgroundPath } : {}),
+    };
+  }
+  return normalizeSlideDeck(deck);
+}
+
+function transientSongFromSongDocument(document) {
+  if (!document) return null;
+  if (isSlideDeckDocument(document)) {
+    return deckToTransientSong(document);
+  }
+  return normalizeToSongAST(document);
+}
+
+function songRenderStateFromSongDocument(document) {
+  if (isSlideDeckDocument(document)) {
+    return mergeSongRenderState(DEFAULT_SONG_RENDER, deckDefaultRender(document));
+  }
+  return document?.defaultRender
+    ? songRenderStateFromDefaultRender(document.defaultRender)
+    : mergeSongRenderState();
+}
+
+function buildSongQueueEntryFromDeck({
+  deck,
+  render = currentSongRenderState,
+  currentSectionId = currentSongSectionId,
+  sourceKind = "library",
+} = {}) {
+  const canonicalDeck = songDeckDocumentFromSongDocument(deck, render);
+  if (!canonicalDeck) return null;
+  const transientSong = deckToTransientSong(canonicalDeck);
+  if (!transientSong) return null;
+  const pageId = currentSectionId || canonicalDeck.pages?.[0]?.id || transientSong.sections?.[0]?.id || null;
+  const page = findPage(canonicalDeck, pageId);
+  const pageRender = {
+    ...deckDefaultRender(canonicalDeck),
+    ...pageRenderOverrides(page, canonicalDeck),
+    ...definedSongQueueRenderValues(render),
+  };
+  const entry = queueEntryFromSong({
+    song: transientSong,
+    render: pageRender,
+    currentSectionId: pageId,
+  });
+  entry.type = "song";
+  entry.path = songQueuePath(canonicalDeck.id);
+  entry.name = canonicalDeck.title || "Song";
+  entry.source = {
+    kind: sourceKind,
+    songId: canonicalDeck.id,
+    pageId,
+  };
+  entry.deckSnapshot = canonicalDeck;
+  const transitionOverride = normalizeItemSlideTransitionOverride(page?.transition || render?.transition);
+  if (transitionOverride) entry.transition = transitionOverride;
+  return entry;
+}
+
+function definedSongQueueRenderValues(render = {}) {
+  if (!render || typeof render !== "object") return {};
+  const keys = [
+    "backgroundColor",
+    "backgroundPath",
+    "color",
+    "fontFamily",
+    "fontSize",
+    "autosizeMode",
+    "minFontSize",
+    "copyrightPlacement",
+    "textBoxPosition",
+    "copyright",
+    "ccliNumber",
+    "oneLicense",
+    "transition",
+  ];
+  const values = {};
+  for (const key of keys) {
+    if (render[key] !== undefined) values[key] = render[key];
+  }
+  return values;
 }
 
 function songSectionsFromParsedSections(sections) {
@@ -6971,14 +7169,170 @@ function renderSongBlocksIntoPreview(preview, blocks, color = "#ffffff", textBox
       for (const segment of segments) {
         const span = document.createElement("span");
         span.textContent = segment?.text || "";
-        if (segment?.style?.color) span.style.color = segment.style.color;
-        if (segment?.style?.fontFamily) span.style.fontFamily = segment.style.fontFamily;
+        applySongSegmentStyleToElement(span, segment?.style);
         lineEl.appendChild(span);
       }
     }
     container.appendChild(lineEl);
   }
   preview.appendChild(container);
+}
+
+function renderSlideObjectsIntoPreview(preview, objects, message = {}) {
+  preview.innerHTML = "";
+  const previewScale = Math.max(preview.clientWidth || 1920, 1) / 1920;
+  const orderedObjects = (Array.isArray(objects) ? objects : [])
+    .map((object, index) => ({ object, index }))
+    .sort((a, b) => {
+      const az = Number.isFinite(a.object?.zIndex) ? a.object.zIndex : 0;
+      const bz = Number.isFinite(b.object?.zIndex) ? b.object.zIndex : 0;
+      return az === bz ? a.index - b.index : az - bz;
+    })
+    .map(({ object }) => object);
+  for (const object of orderedObjects) {
+    if (!object) continue;
+    const kind = object?.kind === "image" || object?.kind === "shape" ? object.kind : "text";
+    const position = object?.textBoxPosition || {};
+    const box = document.createElement("div");
+    box.className = `song-preview-slide-object song-preview-slide-object--${kind}`;
+    if (kind === "text") box.classList.add("song-preview-text-box");
+    box.style.position = "absolute";
+    box.style.left = position.left || "10%";
+    box.style.top = position.top || "10%";
+    box.style.width = position.width || "80%";
+    box.style.height = position.height || "80%";
+    box.style.overflow = "hidden";
+    box.style.pointerEvents = "none";
+    box.style.zIndex = String(Number.isFinite(object.zIndex) ? object.zIndex : 0);
+    box.style.opacity = String(clampSlideOpacity(object.opacity, 1));
+
+    if (kind === "image") {
+      const image = object.image && typeof object.image === "object" ? object.image : {};
+      const src = image.imageUrl || image.url || (image.path ? pathToUrlSafe(image.path) : "");
+      if (src) {
+        const img = document.createElement("img");
+        img.className = "song-preview-slide-object__image";
+        img.src = src;
+        img.alt = "";
+        img.draggable = false;
+        img.style.width = "100%";
+        img.style.height = "100%";
+        img.style.display = "block";
+        img.style.objectFit = image.fit === "cover" || image.fit === "fill" ? image.fit : "contain";
+        box.appendChild(img);
+      }
+      preview.appendChild(box);
+      continue;
+    }
+
+    if (kind === "shape") {
+      const shape = object.shape && typeof object.shape === "object" ? object.shape : {};
+      const shapeEl = document.createElement("div");
+      shapeEl.className = "song-preview-slide-object__shape";
+      shapeEl.style.position = "absolute";
+      shapeEl.style.inset = "0";
+      if (shape.type === "ellipse") {
+        shapeEl.style.borderRadius = "999px";
+      } else if (Number.isFinite(shape.radius) && shape.radius > 0) {
+        shapeEl.style.borderRadius = `${shape.radius}px`;
+      }
+      shapeEl.style.backgroundColor = shape.type === "line" ? "transparent" : (shape.fill || "#ffffff");
+      if (shape.stroke || Number.isFinite(shape.strokeWidth)) {
+        const strokeWidth = Number.isFinite(shape.strokeWidth) ? shape.strokeWidth : 1;
+        shapeEl.style.border = `${strokeWidth}px solid ${shape.stroke || shape.fill || "#ffffff"}`;
+      }
+      if (shape.type === "line") {
+        const strokeWidth = Number.isFinite(shape.strokeWidth) && shape.strokeWidth > 0 ? shape.strokeWidth : 4;
+        shapeEl.style.inset = "50% 0 auto 0";
+        shapeEl.style.height = "0";
+        shapeEl.style.border = "none";
+        shapeEl.style.borderTop = `${strokeWidth}px solid ${shape.stroke || shape.fill || "#ffffff"}`;
+      }
+      box.appendChild(shapeEl);
+      preview.appendChild(box);
+      continue;
+    }
+
+    box.style.display = "flex";
+    box.style.flexDirection = "column";
+    box.style.justifyContent =
+      object.verticalAlign === "top"
+        ? "flex-start"
+        : object.verticalAlign === "bottom"
+          ? "flex-end"
+          : "center";
+    box.style.alignItems =
+      object.align === "left" ? "flex-start" : object.align === "right" ? "flex-end" : "center";
+    box.style.textAlign = object.align || "center";
+    box.style.color = object.color || message.color || "#ffffff";
+    box.style.fontFamily = songFontFamilyCSS(object.fontFamily || message.fontFamily);
+    box.style.fontWeight = object.fontWeight || message.fontWeight || "";
+    box.style.fontStyle = object.fontStyle || "";
+    box.style.textDecoration = object.textDecoration || "";
+    const objectFontSize = Math.max(
+      12,
+      (Number(object.fontSize) || Number(message.fontSize) || DEFAULT_SONG_RENDER.fontSize) * previewScale,
+    );
+    box.style.fontSize = `${objectFontSize}px`;
+    box.style.lineHeight = object.lineHeight || message.lineHeight || SCRIPTURE_LINE_HEIGHT;
+
+    const bg = object.background && typeof object.background === "object" ? object.background : null;
+    if (bg?.type === "color") {
+      box.style.backgroundColor = bg.color || "transparent";
+    } else if (bg?.backgroundVideo || (bg?.path && bg.type === "video")) {
+      const videoEl = document.createElement("video");
+      videoEl.src = bg.backgroundVideo || pathToUrlSafe(bg.path);
+      videoEl.autoplay = true;
+      videoEl.loop = true;
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      videoEl.style.position = "absolute";
+      videoEl.style.inset = "0";
+      videoEl.style.width = "100%";
+      videoEl.style.height = "100%";
+      videoEl.style.objectFit = "cover";
+      videoEl.style.zIndex = "0";
+      box.appendChild(videoEl);
+      void videoEl.play().catch(() => {});
+    } else if (bg?.backgroundImage || bg?.path) {
+      box.style.backgroundImage = `url('${bg.backgroundImage || pathToUrlSafe(bg.path)}')`;
+      box.style.backgroundSize = "cover";
+      box.style.backgroundPosition = "center";
+    }
+
+    const content = document.createElement("div");
+    content.style.position = "relative";
+    content.style.zIndex = "1";
+    content.style.width = "100%";
+    for (const block of Array.isArray(object.blocks) ? object.blocks : []) {
+      const lineEl = document.createElement("div");
+      lineEl.className = "song-preview-block";
+      const segments = block?.type === "lyricLine" && Array.isArray(block.primary?.segments)
+        ? block.primary.segments
+        : [];
+      if (!segments.length || segments.every((segment) => !segment?.text?.trim())) {
+        lineEl.textContent = "\u00a0";
+      } else {
+        for (const segment of segments) {
+          const span = document.createElement("span");
+          span.textContent = segment?.text || "";
+          applySongSegmentStyleToElement(span, segment?.style);
+          lineEl.appendChild(span);
+        }
+      }
+      content.appendChild(lineEl);
+    }
+    box.appendChild(content);
+    preview.appendChild(box);
+    fitTextElementToBox(box, content, {
+      baseSize: objectFontSize,
+      minSize: Math.max(
+        8,
+        (Number(object.minFontSize) || Number(message.minFontSize) || DEFAULT_SONG_RENDER.minFontSize) * previewScale,
+      ),
+      mode: object.autofit || message.autosizeMode || "fit",
+    });
+  }
 }
 
 function renderSongCopyrightIntoPreview(preview, copyrightText) {
@@ -7002,16 +7356,32 @@ function textStyleFromSegment(segment) {
   const normalized = {};
   if (typeof style.color === "string" && style.color.trim()) normalized.color = style.color.trim();
   if (typeof style.fontFamily === "string" && style.fontFamily.trim()) normalized.fontFamily = style.fontFamily.trim();
+  if (typeof style.backgroundColor === "string" && style.backgroundColor.trim()) {
+    normalized.backgroundColor = style.backgroundColor.trim();
+  }
+  if (typeof style.fontWeight === "string" && style.fontWeight.trim()) {
+    normalized.fontWeight = style.fontWeight.trim();
+  } else if (Number.isFinite(Number(style.fontWeight))) {
+    normalized.fontWeight = String(Number(style.fontWeight));
+  }
+  if (typeof style.fontStyle === "string" && style.fontStyle.trim()) {
+    normalized.fontStyle = style.fontStyle.trim();
+  }
+  if (typeof style.textDecoration === "string" && style.textDecoration.trim()) {
+    normalized.textDecoration = style.textDecoration.trim();
+  }
   return normalized;
 }
 
 function mergeSongSegmentStyle(baseStyle = {}, overrideStyle = {}) {
   const merged = { ...textStyleFromSegment({ style: baseStyle }) };
-  if (typeof overrideStyle.color === "string" && overrideStyle.color.trim()) {
-    merged.color = overrideStyle.color.trim();
-  }
-  if (typeof overrideStyle.fontFamily === "string" && overrideStyle.fontFamily.trim()) {
-    merged.fontFamily = overrideStyle.fontFamily.trim();
+  const override = textStyleFromSegment({ style: overrideStyle });
+  for (const [key, value] of Object.entries(override)) {
+    if (value == null || value === "") {
+      delete merged[key];
+    } else {
+      merged[key] = value;
+    }
   }
   return merged;
 }
@@ -7019,7 +7389,22 @@ function mergeSongSegmentStyle(baseStyle = {}, overrideStyle = {}) {
 function sameSongSegmentStyle(a = {}, b = {}) {
   const left = textStyleFromSegment({ style: a });
   const right = textStyleFromSegment({ style: b });
-  return left.color === right.color && left.fontFamily === right.fontFamily;
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if ((left[key] || "") !== (right[key] || "")) return false;
+  }
+  return true;
+}
+
+function applySongSegmentStyleToElement(el, style = {}) {
+  if (!el) return;
+  const normalized = textStyleFromSegment({ style });
+  if (normalized.color) el.style.color = normalized.color;
+  if (normalized.fontFamily) el.style.fontFamily = songFontFamilyCSS(normalized.fontFamily);
+  if (normalized.backgroundColor) el.style.backgroundColor = normalized.backgroundColor;
+  if (normalized.fontWeight) el.style.fontWeight = normalized.fontWeight;
+  if (normalized.fontStyle) el.style.fontStyle = normalized.fontStyle;
+  if (normalized.textDecoration) el.style.textDecoration = normalized.textDecoration;
 }
 
 function normalizeSongSegments(segments = []) {
@@ -7231,6 +7616,7 @@ function refreshSongEditorAfterStyleChange() {
   const activeSection = songEditorSections[songEditorActiveIndex];
   if (activeSection) {
     renderSongSectionPreview(activeSection);
+    void syncActiveScheduledSongPresentation().catch(console.error);
   }
   renderSongEditorSlideList();
   const textarea = document.getElementById("songEditorSlideTextarea");
@@ -7254,8 +7640,7 @@ function populateSongEditorTextarea(textarea, section) {
       for (const segment of block.primary.segments) {
         const span = document.createElement("span");
         span.textContent = segment.text || "";
-        if (segment.style?.color) span.style.color = segment.style.color;
-        if (segment.style?.fontFamily) span.style.fontFamily = segment.style.fontFamily;
+        applySongSegmentStyleToElement(span, segment.style);
         lineEl.appendChild(span);
       }
     }
@@ -7383,15 +7768,11 @@ async function bulkScheduleSelectedSongs() {
   for (const id of selectedSongIds) {
     try {
       const song = await songsAPI.get(id);
-      entries.push(
-        queueEntryFromSong({
-          song,
-          render: mergeSongRenderState(DEFAULT_SONG_RENDER, {
-            copyright: song.metadata?.copyright || "",
-            ccliNumber: song.metadata?.ccliNumber || null,
-          }),
-        }),
-      );
+      const entry = buildSongQueueEntryFromDeck({
+        deck: song,
+        render: renderStateForLibrarySong(song),
+      });
+      if (entry) entries.push(entry);
     } catch (err) {
       console.error(`Failed to load song ${id} for schedule:`, err);
     }
@@ -7545,6 +7926,7 @@ function renderSongEditorSlideList() {
           if (currentWorkspaceSong) {
             currentWorkspaceSong.sections = songEditorSections;
             renderSongSectionPreview(section);
+            void syncActiveScheduledSongPresentation().catch(console.error);
           }
         }
       }
@@ -7621,6 +8003,7 @@ function selectSongEditorSlide(index) {
     currentWorkspaceSong.sections = songEditorSections;
     currentSongSectionId = section.id;
     renderSongSectionPreview(section);
+    void syncActiveScheduledSongPresentation().catch(console.error);
   }
 }
 
@@ -7733,6 +8116,7 @@ function initSongEditorTextBoxDragAndDrop() {
     };
     syncCurrentWorkspaceSongDefaultRender();
     renderActiveSongEditorSection();
+    void syncActiveScheduledSongPresentation().catch(console.error);
   };
 
   handle.addEventListener("mousedown", (e) => {
@@ -8174,6 +8558,7 @@ function handleSongEditorCanvasTextInput(editorDiv) {
     currentWorkspaceSong.sections = songEditorSections;
     currentSongSectionId = activeSection.id;
     renderSongSectionPreview(activeSection);
+    void syncActiveScheduledSongPresentation().catch(console.error);
   }
 
   const snippetEl = document.querySelector(`.song-editor-slide-item[data-index="${songEditorActiveIndex}"] .song-editor-slide-item__snippet`);
@@ -8227,6 +8612,7 @@ function handleSongEditorSectionMetaChange() {
     currentWorkspaceSong.sections = songEditorSections;
     currentSongSectionId = activeSection.id;
     renderSongSectionPreview(activeSection);
+    void syncActiveScheduledSongPresentation().catch(console.error);
   }
 }
 
@@ -8283,6 +8669,13 @@ function handleSongEditorMoveSectionDown() {
 function closeSongEditor() {
   document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
   restoreSongWorkspaceView();
+  if (currentWorkspaceSong) {
+    const activeSection =
+      enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
+      currentWorkspaceSong.sections?.[0] ||
+      null;
+    if (activeSection) renderSongSectionPreview(activeSection);
+  }
 }
 
 async function refreshSongFolders(prefetchedFolders = null) {
@@ -8459,6 +8852,31 @@ function syncSongBackgroundLabel(filePath = currentSongRenderState.backgroundPat
 function syncCurrentWorkspaceSongDefaultRender() {
   if (!currentWorkspaceSong) return;
   currentWorkspaceSong.defaultRender = songDefaultRenderFromRender(currentSongRenderState);
+  if (currentWorkspaceSongDeck) {
+    currentWorkspaceSongDeck = songDeckDocumentFromSongDocument(
+      currentWorkspaceSongDeck,
+      currentSongRenderState,
+    );
+  }
+}
+
+function currentWorkspaceSongSequenceEntries() {
+  const arrangedEntries = arrangementSequenceEntries(currentWorkspaceSong);
+  if (
+    !currentSongSectionId ||
+    arrangedEntries.some(
+      (entry) => entry.enabled !== false && entry.sectionId === currentSongSectionId,
+    )
+  ) {
+    return arrangedEntries;
+  }
+  return (currentWorkspaceSong?.sections || [])
+    .map((section, index) => (
+      section?.id
+        ? { id: `workspace_${index}_${section.id}`, sectionId: section.id, enabled: true }
+        : null
+    ))
+    .filter(Boolean);
 }
 
 function flushSongEditorStateForSave() {
@@ -8476,46 +8894,290 @@ function flushSongEditorStateForSave() {
 }
 
 function currentSongPresentationItem() {
-  if (!currentWorkspaceSong) return null;
-  return {
-    type: "song",
-    path: songQueuePath(currentWorkspaceSong.id),
-    songSnapshot: songSnapshotForSchedule(currentWorkspaceSong, {
-      copyright: currentSongRenderState.copyright,
-      ccliNumber: currentSongRenderState.ccliNumber,
-      oneLicense: currentSongRenderState.oneLicense,
-      defaultRender: songDefaultRenderFromRender(currentSongRenderState),
-    }),
-    sequence: {
-      arrangementId: currentWorkspaceSong.arrangements?.[0]?.id || "arr_default",
-      entries: arrangementSequenceEntries(currentWorkspaceSong),
-    },
+  if (!currentWorkspaceSongDeck && !currentWorkspaceSong) return null;
+  return buildSongQueueEntryFromDeck({
+    deck: currentWorkspaceSongDeck || currentWorkspaceSong,
     render: {
       ...currentSongRenderState,
       currentSectionId: currentSongSectionId,
     },
-  };
+    currentSectionId: currentSongSectionId,
+  });
+}
+
+function songPresentationSourceId(item) {
+  return (
+    item?.deckSnapshot?.id ||
+    item?.songSnapshot?.id ||
+    item?.source?.songId ||
+    parseSongQueuePath(item?.path) ||
+    null
+  );
+}
+
+function markSongShowNowPresentation(item) {
+  const sourceId = songPresentationSourceId(item);
+  songShowNowModeActive = Boolean(sourceId);
+  songShowNowSourceId = sourceId;
+}
+
+function clearSongShowNowPresentation() {
+  songShowNowModeActive = false;
+  songShowNowSourceId = null;
+}
+
+function isCurrentWorkspaceSongShownNow() {
+  return Boolean(
+    songShowNowModeActive &&
+      currentWorkspaceSong &&
+      songShowNowSourceId &&
+      currentWorkspaceSong.id === songShowNowSourceId
+  );
 }
 
 async function loadSongItemIntoWorkspace(item, token) {
   currentSongQueueItem = item || null;
-  if (item?.songSnapshot) {
-    currentSongRenderState = songRenderFromItem(item);
-    currentSongSectionId = item.render?.currentSectionId || null;
+  if (item?.deckSnapshot) {
+    const deck = normalizeSlideDeck(item.deckSnapshot);
+    const itemRender = songRenderFromItem({
+      ...item,
+      songSnapshot: deckToTransientSong(deck),
+    });
+    currentSongRenderState = mergeSongRenderState(songRenderStateFromSongDocument(deck), itemRender);
+    currentSongSectionId = itemRender.currentSectionId || item?.source?.pageId || null;
     if (typeof token === "number" && !isCurrentPreviewLoad(token)) return;
-    await loadSongIntoWorkspace(item.songSnapshot);
+    await loadSongIntoWorkspace(deck, { render: currentSongRenderState });
+    return;
+  }
+  if (item?.songSnapshot) {
+    const songSnapshot = transientSongFromSongDocument(item.songSnapshot);
+    const itemRender = songRenderFromItem({ ...item, songSnapshot });
+    currentSongRenderState = itemRender;
+    currentSongSectionId = itemRender.currentSectionId || null;
+    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return;
+    await loadSongIntoWorkspace(item.songSnapshot, { render: itemRender });
     return;
   }
   if (item?.source?.songId) {
     const song = await songsAPI.get(item.source.songId);
     if (typeof token === "number" && !isCurrentPreviewLoad(token)) return;
-    currentSongRenderState = songRenderFromItem(item);
-    await loadSongIntoWorkspace(song);
+    const songSnapshot = transientSongFromSongDocument(song);
+    const itemRender = songRenderFromItem({ ...item, songSnapshot });
+    currentSongRenderState = mergeSongRenderState(songRenderStateFromSongDocument(song), itemRender);
+    currentSongSectionId = itemRender.currentSectionId || null;
+    await loadSongIntoWorkspace(song, { render: itemRender });
   }
 }
 
+function queueItemDeckId(item) {
+  if (!item || typeof item !== "object") return null;
+  return (
+    item.deckSnapshot?.id ||
+    item.source?.deckId ||
+    parseDeckQueuePath(item.path) ||
+    null
+  );
+}
+
+function queueItemMatchesDeck(item, deck) {
+  const itemDeckId = queueItemDeckId(item);
+  return Boolean(deck?.id && itemDeckId && itemDeckId === deck.id);
+}
+
+function normalizedCssUnit(value, fallback) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.endsWith("%")) {
+      const pct = Number.parseFloat(trimmed.slice(0, -1));
+      return Number.isFinite(pct) ? pct / 100 : fallback;
+    }
+    if (/px$/i.test(trimmed)) return fallback;
+    const numeric = Number.parseFloat(trimmed);
+    if (Number.isFinite(numeric)) return numeric > 1 ? numeric / 100 : numeric;
+    return fallback;
+  }
+  if (Number.isFinite(value)) return value > 1 ? value / 100 : value;
+  return fallback;
+}
+
+function frameFromSongTextBoxPosition(position = {}) {
+  const fallback = DEFAULT_TEXT_FRAME;
+  return normalizeSlideTextObjectFrame({
+    x: normalizedCssUnit(position.left, fallback.x),
+    y: normalizedCssUnit(position.top, fallback.y),
+    width: normalizedCssUnit(position.width, fallback.width),
+    height: normalizedCssUnit(position.height, fallback.height),
+  });
+}
+
+function blocksClone(blocks, fallbackText = "") {
+  const source = Array.isArray(blocks) && blocks.length
+    ? blocks
+    : textToSegmentsBlocks(fallbackText);
+  try {
+    return structuredClone(source);
+  } catch {
+    return JSON.parse(JSON.stringify(source));
+  }
+}
+
+function compactStyle(style) {
+  return Object.fromEntries(
+    Object.entries(style || {}).filter(([, value]) => value !== undefined && value !== null),
+  );
+}
+
+function deckObjectFromSongPresentation(object, { fallbackText = "", sectionId = "", pageIndex = 0, objectIndex = 0 } = {}) {
+  const hasImage = object?.kind === "image" || (object?.image && typeof object.image === "object");
+  const hasShape = object?.kind === "shape" || (object?.shape && typeof object.shape === "object");
+  const kind = hasImage ? "image" : hasShape ? "shape" : "text";
+  const base = {
+    id: object?.id || `obj_${sectionId || pageIndex}_${objectIndex}`,
+    kind,
+    frame: frameFromSongTextBoxPosition(object?.textBoxPosition || {}),
+    zIndex: Number.isFinite(object?.zIndex) ? object.zIndex : objectIndex + 1,
+    opacity: Number.isFinite(object?.opacity) ? object.opacity : 1,
+  };
+
+  if (kind === "image") {
+    const image = object?.image && typeof object.image === "object" ? object.image : {};
+    return {
+      ...base,
+      image: {
+        path: typeof image.path === "string" ? image.path : "",
+        ...(image.assetId ? { assetId: String(image.assetId) } : {}),
+        fit: image.fit === "cover" || image.fit === "fill" ? image.fit : "contain",
+      },
+    };
+  }
+
+  if (kind === "shape") {
+    const shape = object?.shape && typeof object.shape === "object" ? object.shape : {};
+    return {
+      ...base,
+      shape: {
+        type: shape.type === "ellipse" || shape.type === "line" ? shape.type : "rect",
+        fill: shape.fill || "#ffffff",
+        ...(shape.stroke ? { stroke: shape.stroke } : {}),
+        strokeWidth: Number.isFinite(shape.strokeWidth) ? shape.strokeWidth : 0,
+        radius: Number.isFinite(shape.radius) ? shape.radius : 0,
+      },
+    };
+  }
+
+  return {
+    ...base,
+    role: "body",
+    autofit: object?.autofit || "fit",
+    style: compactStyle({
+      color: object?.color,
+      fontFamily: object?.fontFamily,
+      fontSize: Number.isFinite(Number(object?.fontSize)) ? Number(object.fontSize) : undefined,
+      minFontSize: Number.isFinite(Number(object?.minFontSize)) ? Number(object.minFontSize) : undefined,
+      align: object?.align,
+      verticalAlign: object?.verticalAlign,
+      fontWeight: object?.fontWeight,
+      fontStyle: object?.fontStyle,
+      textDecoration: object?.textDecoration,
+      lineHeight: Number.isFinite(Number(object?.lineHeight)) ? Number(object.lineHeight) : undefined,
+    }),
+    ...(object?.background && typeof object.background === "object"
+      ? { background: { ...object.background } }
+      : {}),
+    blocks: blocksClone(object?.blocks, fallbackText),
+  };
+}
+
+function deckFromSongQueueItem(item) {
+  const song = item?.songSnapshot ? normalizeToSongAST(item.songSnapshot) : null;
+  if (!song?.sections?.length) return null;
+  const render = {
+    ...(song.defaultRender && typeof song.defaultRender === "object" ? song.defaultRender : {}),
+    ...(item.render && typeof item.render === "object" ? item.render : {}),
+  };
+  const theme = {
+    ...DEFAULT_DECK_THEME,
+    ...(render.fontFamily ? { fontFamily: render.fontFamily } : {}),
+    ...(Number.isFinite(Number(render.fontSize)) ? { fontSize: Number(render.fontSize) } : {}),
+    ...(render.color ? { textColor: render.color } : {}),
+    ...(render.backgroundColor ? { backgroundColor: render.backgroundColor } : {}),
+  };
+  const pages = song.sections.map((section, index) => {
+    const fallbackText = blocksToText(section.blocks || []);
+    const sectionObjects = Array.isArray(section.slideObjects) && section.slideObjects.length
+      ? section.slideObjects
+      : Array.isArray(section.slideTextObjects) && section.slideTextObjects.length
+        ? section.slideTextObjects
+        : null;
+    const objects = sectionObjects
+      ? sectionObjects.map((object, objectIndex) => deckObjectFromSongPresentation(object, {
+          fallbackText,
+          sectionId: section.id,
+          pageIndex: index,
+          objectIndex,
+        }))
+      : [createTextObject({ text: fallbackText })];
+    return {
+      id: section.id || `page_${index + 1}`,
+      label: section.label || `Page ${index + 1}`,
+      durationMs: 0,
+      autoAdvance: false,
+      background: {
+        type: "color",
+        color: theme.backgroundColor || DEFAULT_DECK_THEME.backgroundColor,
+      },
+      notes: "",
+      objects,
+    };
+  });
+  return normalizeSlideDeck({
+    id: queueItemDeckId(item) || song.id,
+    title: item?.name || song.title || "Slide Deck",
+    folderId: null,
+    theme,
+    pages,
+  });
+}
+
+function deckFromQueueItem(item) {
+  if (!isQueueItemDeck(item)) return null;
+  const snapshot = item?.deckSnapshot ? normalizeSlideDeck(item.deckSnapshot) : null;
+  return snapshot || deckFromSongQueueItem(item);
+}
+
+async function loadDeckQueueItemIntoWorkspace(item, token) {
+  const deck = deckFromQueueItem(item);
+  if (!deck) return false;
+  if (typeof token === "number" && !isCurrentPreviewLoad(token)) return false;
+  const pageId =
+    item?.render?.currentSectionId ||
+    item?.source?.pageId ||
+    deck.pages?.[0]?.id ||
+    null;
+  currentSongQueueItem = item || null;
+  currentWorkspaceSongDeck = deck;
+  currentWorkspaceSong = item?.songSnapshot || deckToTransientSong(deck);
+  currentSongRenderState = mergeSongRenderState(
+    DEFAULT_SONG_RENDER,
+    item?.render || deckDefaultRender(deck),
+  );
+  currentSongSectionId = pageId;
+  loadDeckIntoWorkspace(deck, {
+    pageId,
+    queueItem: item || null,
+    documentType: item?.type === "song" ? SONG_DECK_DOCUMENT_TYPE : "deck",
+  });
+  return true;
+}
+
 async function loadSongIntoWorkspace(song, opts = {}) {
-  currentWorkspaceSong = song || null;
+  const sourceDocument = song || null;
+  currentWorkspaceSongDeck = sourceDocument
+    ? songDeckDocumentFromSongDocument(sourceDocument, opts.render || currentSongRenderState)
+    : null;
+  currentWorkspaceSong = currentWorkspaceSongDeck
+    ? transientSongFromSongDocument(currentWorkspaceSongDeck)
+    : null;
 
   const launcher = document.getElementById("songsLauncher");
   const slide = document.getElementById("songsPreviewSlide");
@@ -8549,37 +9211,38 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     if (slide) slide.innerHTML = "";
     currentSongSectionId = null;
     currentSongQueueItem = null;
+    currentWorkspaceSongDeck = null;
     syncSongsMoveFolderSelect(null);
     return;
   }
 
   if (opts.render) {
     currentSongRenderState = mergeSongRenderState(currentSongRenderState, opts.render);
-  } else if (song.defaultRender) {
+  } else if (sourceDocument) {
     currentSongRenderState = mergeSongRenderState(
       currentSongRenderState,
-      songRenderStateFromDefaultRender(song.defaultRender),
+      songRenderStateFromSongDocument(sourceDocument),
     );
   }
 
-  const inLibrary = await checkIfSongInLibrary(song.id);
+  const inLibrary = await checkIfSongInLibrary(currentWorkspaceSong.id);
   const saveToLibraryBtn = document.getElementById("songsSaveToLibraryBtn");
   if (saveToLibraryBtn) {
     saveToLibraryBtn.hidden = inLibrary;
     saveToLibraryBtn.disabled = inLibrary;
   }
 
-  document.getElementById("songsWorkspaceTitle").textContent = song.title;
+  document.getElementById("songsWorkspaceTitle").textContent = currentWorkspaceSong.title;
   document.getElementById("songsShowNowBtn").disabled = false;
   document.getElementById("songsAddScheduleBtn").disabled = false;
   document.getElementById("songsEditBtn").disabled = false;
   document.getElementById("songsDeleteBtn").disabled = !inLibrary;
   document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
-  syncSongsMoveFolderSelect(song, inLibrary);
+  syncSongsMoveFolderSelect(currentWorkspaceSongDeck || currentWorkspaceSong, inLibrary);
 
   const enabledSections = enabledSongSections(song);
   if (!currentSongSectionId || !enabledSections.some((s) => s.id === currentSongSectionId)) {
-    currentSongSectionId = enabledSections[0]?.id || song.sections?.[0]?.id || null;
+    currentSongSectionId = enabledSections[0]?.id || currentWorkspaceSong.sections?.[0]?.id || null;
   }
 
   const strip = document.getElementById("songArrangementStrip");
@@ -8612,7 +9275,7 @@ async function loadSongIntoWorkspace(song, opts = {}) {
   const activeSection =
     enabledSections.find((s) => s.id === currentSongSectionId) ||
     enabledSections[0] ||
-    song.sections?.[0] ||
+    currentWorkspaceSong.sections?.[0] ||
     null;
   if (activeSection) {
     renderSongSectionPreview(activeSection);
@@ -8704,12 +9367,21 @@ function renderSongSectionPreview(section) {
     preview.style.backgroundImage = "";
   }
 
-  renderSongBlocksIntoPreview(
-    preview,
-    message.blocks,
-    message.color || "#ffffff",
-    message.textBoxPosition || null,
-  );
+  const slideObjects = Array.isArray(message.slideObjects) && message.slideObjects.length > 0
+    ? message.slideObjects
+    : Array.isArray(message.slideTextObjects)
+      ? message.slideTextObjects
+      : [];
+  if (slideObjects.length > 0) {
+    renderSlideObjectsIntoPreview(preview, slideObjects, message);
+  } else {
+    renderSongBlocksIntoPreview(
+      preview,
+      message.blocks,
+      message.color || "#ffffff",
+      message.textBoxPosition || null,
+    );
+  }
 
   if (message.referenceText) {
     const refEl = document.createElement("div");
@@ -8743,10 +9415,14 @@ async function sendSongTextToOutput(item = null) {
   const presentation = resolvedSongPresentation(item || currentSongPresentationItem());
   if (!presentation?.message) return;
   const message = { ...presentation.message };
-  const scheduledItem =
-    item && mediaQueue.includes(item) && isQueueItemSong(item) ? item : null;
-  if (scheduledItem) {
-    message.transition = slideTransitionPayloadForQueueItem(scheduledItem);
+  const transitionItem =
+    item && isQueueItemTransitionCapable(item)
+      ? item
+      : item && mediaQueue.includes(item) && isQueueItemSong(item)
+        ? item
+        : null;
+  if (transitionItem) {
+    message.transition = slideTransitionPayloadForQueueItem(transitionItem);
   }
   send("update-text", message);
 }
@@ -8754,9 +9430,21 @@ async function sendSongTextToOutput(item = null) {
 async function syncActiveScheduledSongPresentation() {
   if (!isActiveMediaWindow() || activeMediaWindowContentType !== "song") return false;
   const liveIndex = currentQueueIndex;
-  if (liveIndex < 0 || liveIndex >= mediaQueue.length) return false;
+  if (liveIndex < 0 || liveIndex >= mediaQueue.length) {
+    if (!isCurrentWorkspaceSongShownNow()) return false;
+    const item = currentSongPresentationItem();
+    if (!item) return false;
+    await sendSongTextToOutput(item);
+    return true;
+  }
   const item = mediaQueue[liveIndex];
-  if (!isQueueItemSong(item)) return false;
+  if (!isQueueItemSong(item)) {
+    if (!isCurrentWorkspaceSongShownNow()) return false;
+    const currentItem = currentSongPresentationItem();
+    if (!currentItem) return false;
+    await sendSongTextToOutput(currentItem);
+    return true;
+  }
   await sendSongTextToOutput(item);
   return true;
 }
@@ -8771,11 +9459,12 @@ async function showSongTextNow() {
     return false;
   }
 
-  const transientEntry = queueEntryFromSong({
-    song: currentWorkspaceSong,
+  const transientEntry = buildSongQueueEntryFromDeck({
+    deck: currentWorkspaceSongDeck || currentWorkspaceSong,
     render: currentSongRenderState,
     currentSectionId: currentSongSectionId,
   });
+  if (!transientEntry) return false;
 
   try {
     mediaPlaybackEndedPending = false;
@@ -8789,6 +9478,7 @@ async function showSongTextNow() {
       isPlaying = true;
       isQueuePlaying = false;
       activeMediaWindowContentType = "song";
+      markSongShowNowPresentation(transientEntry);
       isActiveMediaWindowCache = true;
       updateDynUI();
       renderQueue();
@@ -8807,6 +9497,7 @@ async function showSongTextNow() {
     activeMediaWindowContentType = "song";
     isPlaying = true;
     isQueuePlaying = false;
+    markSongShowNowPresentation(transientEntry);
     isActiveMediaWindowCache = true;
     updateDynUI();
     renderQueue();
@@ -8823,11 +9514,12 @@ async function insertSongInSchedule() {
     showGnomeToast("Choose a song to schedule");
     return false;
   }
-  const entry = queueEntryFromSong({
-    song: currentWorkspaceSong,
+  const entry = buildSongQueueEntryFromDeck({
+    deck: currentWorkspaceSongDeck || currentWorkspaceSong,
     render: currentSongRenderState,
     currentSectionId: currentSongSectionId,
   });
+  if (!entry) return false;
   invalidateQueueUndoToastAfterMutation();
   insertQueueEntriesAfterSelection([entry]);
   renderQueue();
@@ -8914,6 +9606,3249 @@ async function openSongsWorkspaceFromButton() {
   await refreshSongsBrowser();
 }
 
+/* ════════════════════════════════════════════════════════════
+   SLIDES WORKSPACE
+   ════════════════════════════════════════════════════════════ */
+
+let currentDeck = null;
+let currentDeckPageId = null;
+let currentDeckFolderFilter = null;
+let currentDeckDocumentType = "deck";
+let activeSlideTextObjectId = null;
+let slideTextObjectBackgroundTargetId = null;
+let slideObjectImageTargetId = null;
+let slideObjectImageInsertPoint = null;
+let slideTextSelectionState = null;
+let slideObjectClipboard = null;
+let slideObjectPasteCount = 0;
+let deckDirty = false;
+let deckLibraryDecks = [];
+let deckLibraryFolders = [];
+const SLIDE_UNDO_LIMIT = 50;
+let slideUndoStack = [];
+let slideRedoStack = [];
+let slideUndoTransaction = null;
+let slideUndoRestoring = false;
+const SLIDE_THUMBNAIL_WIDTH = 320;
+const SLIDE_THUMBNAIL_HEIGHT = 180;
+const SLIDE_THUMBNAIL_IDLE_MS = 3000;
+const slideThumbnailCache = new Map();
+const slideThumbnailTimers = new Map();
+
+const SLIDE_LAYOUT_TEMPLATES = Object.freeze([
+  {
+    id: "blank",
+    label: "Blank",
+    objects: [],
+  },
+  {
+    id: "center",
+    label: "Center",
+    objects: [
+      { frame: { x: 0.12, y: 0.2, width: 0.76, height: 0.6 }, align: "center", verticalAlign: "center" },
+    ],
+  },
+  {
+    id: "left",
+    label: "Left",
+    objects: [
+      { frame: { x: 0.07, y: 0.16, width: 0.46, height: 0.68 }, align: "left", verticalAlign: "center" },
+    ],
+  },
+  {
+    id: "right",
+    label: "Right",
+    objects: [
+      { frame: { x: 0.47, y: 0.16, width: 0.46, height: 0.68 }, align: "right", verticalAlign: "center" },
+    ],
+  },
+  {
+    id: "two-column",
+    label: "Two Columns",
+    objects: [
+      { frame: { x: 0.07, y: 0.16, width: 0.4, height: 0.68 }, align: "left", verticalAlign: "center" },
+      { frame: { x: 0.53, y: 0.16, width: 0.4, height: 0.68 }, align: "left", verticalAlign: "center" },
+    ],
+  },
+  {
+    id: "title-body",
+    label: "Title + Body",
+    objects: [
+      { frame: { x: 0.1, y: 0.1, width: 0.8, height: 0.18 }, align: "center", verticalAlign: "center", fontScale: 0.78 },
+      { frame: { x: 0.14, y: 0.36, width: 0.72, height: 0.44 }, align: "center", verticalAlign: "center", fontScale: 0.58 },
+    ],
+  },
+  {
+    id: "lower-third",
+    label: "Lower Third",
+    objects: [
+      { frame: { x: 0.08, y: 0.65, width: 0.84, height: 0.22 }, align: "center", verticalAlign: "center", fontScale: 0.62 },
+    ],
+  },
+]);
+
+function setDeckDirty(dirty) {
+  deckDirty = !!dirty;
+  const saveBtn = document.getElementById("slidesSaveDeckBtn");
+  if (saveBtn) saveBtn.disabled = !currentDeck || !deckDirty;
+  syncSlidesWorkspaceTitle();
+  syncSlideUndoRedoButtons();
+  if (deckDirty) scheduleCurrentSlideThumbnailRefresh();
+}
+
+function syncSlidesWorkspaceTitle() {
+  const titleEl = document.getElementById("slidesWorkspaceTitle");
+  if (titleEl) {
+    titleEl.textContent = currentDeck
+      ? `${currentDeckIsSongDocument() ? "Song: " : ""}${currentDeck.title || "Untitled Deck"}${deckDirty ? " •" : ""}`
+      : "Select or Create a Deck";
+  }
+  const titleBtn = document.getElementById("slidesWorkspaceTitleButton");
+  if (titleBtn) titleBtn.disabled = !currentDeck;
+}
+
+function currentDeckIsSongDocument() {
+  return Boolean(
+    currentDeckDocumentType === SONG_DECK_DOCUMENT_TYPE ||
+      currentDeck?.documentType === SONG_DECK_DOCUMENT_TYPE ||
+      currentDeck?.type === SONG_DECK_DOCUMENT_TYPE,
+  );
+}
+
+function cloneSlideDeckValue(value) {
+  try {
+    return structuredClone(value);
+  } catch {
+    return JSON.parse(JSON.stringify(value));
+  }
+}
+
+function createSlideEditorCheckpoint() {
+  if (!currentDeck) return null;
+  return {
+    deck: cloneSlideDeckValue(currentDeck),
+    pageId: currentDeckPageId,
+    activeObjectId: activeSlideTextObjectId,
+    dirty: deckDirty,
+  };
+}
+
+function slideCheckpointSignature(checkpoint) {
+  if (!checkpoint?.deck) return "";
+  try {
+    return JSON.stringify({
+      deck: checkpoint.deck,
+      pageId: checkpoint.pageId || null,
+      activeObjectId: checkpoint.activeObjectId || null,
+      dirty: Boolean(checkpoint.dirty),
+    });
+  } catch {
+    return "";
+  }
+}
+
+function slideCheckpointsEqual(left, right) {
+  return Boolean(left && right && slideCheckpointSignature(left) === slideCheckpointSignature(right));
+}
+
+function pushSlideHistoryEntry(stack, checkpoint) {
+  if (!checkpoint?.deck) return false;
+  const last = stack[stack.length - 1];
+  if (slideCheckpointsEqual(last, checkpoint)) return false;
+  stack.push(checkpoint);
+  if (stack.length > SLIDE_UNDO_LIMIT) stack.shift();
+  return true;
+}
+
+function syncSlideUndoRedoButtons() {
+  const undoBtn = document.getElementById("slidesUndoBtn");
+  const redoBtn = document.getElementById("slidesRedoBtn");
+  if (undoBtn) undoBtn.disabled = !currentDeck || slideUndoStack.length === 0;
+  if (redoBtn) redoBtn.disabled = !currentDeck || slideRedoStack.length === 0;
+}
+
+function clearSlideUndoHistory() {
+  slideUndoStack = [];
+  slideRedoStack = [];
+  slideUndoTransaction = null;
+  syncSlideUndoRedoButtons();
+}
+
+function pushSlideUndoCheckpoint(checkpoint, { clearRedo = true } = {}) {
+  pushSlideHistoryEntry(slideUndoStack, checkpoint);
+  if (clearRedo) slideRedoStack = [];
+  syncSlideUndoRedoButtons();
+}
+
+function beginSlideUndoTransaction(label = "Edit slide") {
+  if (slideUndoRestoring || !currentDeck || slideUndoTransaction) return;
+  slideUndoTransaction = {
+    label,
+    before: createSlideEditorCheckpoint(),
+  };
+}
+
+function commitSlideUndoTransaction() {
+  if (!slideUndoTransaction) return false;
+  const transaction = slideUndoTransaction;
+  slideUndoTransaction = null;
+  const after = createSlideEditorCheckpoint();
+  if (!after || slideCheckpointsEqual(transaction.before, after)) {
+    syncSlideUndoRedoButtons();
+    return false;
+  }
+  pushSlideUndoCheckpoint(transaction.before);
+  return true;
+}
+
+function recordSlideUndoCheckpoint(label = "Edit slide", { flush = true } = {}) {
+  if (slideUndoRestoring || !currentDeck) return;
+  commitSlideUndoTransaction();
+  if (flush) flushSlideEditorTextToModel({ recordUndo: false });
+  pushSlideUndoCheckpoint({
+    ...createSlideEditorCheckpoint(),
+    label,
+  });
+}
+
+function recordSlideUndoForMutation(label = "Edit slide") {
+  if (slideUndoRestoring || !currentDeck || slideUndoTransaction) return;
+  recordSlideUndoCheckpoint(label, { flush: false });
+}
+
+function restoreSlideEditorCheckpoint(checkpoint) {
+  if (!checkpoint?.deck) return false;
+  slideUndoRestoring = true;
+  try {
+    currentDeck = normalizeSlideDeck(cloneSlideDeckValue(checkpoint.deck));
+    currentDeckPageId =
+      checkpoint.pageId && findPage(currentDeck, checkpoint.pageId)
+        ? checkpoint.pageId
+        : currentDeck?.pages?.[0]?.id || null;
+    const page = currentPage();
+    activeSlideTextObjectId = slideObjectById(page, checkpoint.activeObjectId)
+      ? checkpoint.activeObjectId
+      : orderedSlideObjects(page)[0]?.id || null;
+    setDeckDirty(Boolean(checkpoint.dirty));
+    syncSlidesDeckFolderSelect();
+    renderSlidesList();
+    renderSlideEditorState();
+    queueAllSlideThumbnailRenders(250);
+    void syncActiveDeckPresentation().catch(console.error);
+    return true;
+  } finally {
+    slideUndoRestoring = false;
+    syncSlideUndoRedoButtons();
+  }
+}
+
+function undoSlideEdit() {
+  if (!currentDeck) return false;
+  commitSlideUndoTransaction();
+  const previous = slideUndoStack.pop();
+  if (!previous) {
+    syncSlideUndoRedoButtons();
+    return false;
+  }
+  pushSlideHistoryEntry(slideRedoStack, createSlideEditorCheckpoint());
+  restoreSlideEditorCheckpoint(previous);
+  return true;
+}
+
+function redoSlideEdit() {
+  if (!currentDeck) return false;
+  commitSlideUndoTransaction();
+  const next = slideRedoStack.pop();
+  if (!next) {
+    syncSlideUndoRedoButtons();
+    return false;
+  }
+  pushSlideUndoCheckpoint(createSlideEditorCheckpoint(), { clearRedo: false });
+  restoreSlideEditorCheckpoint(next);
+  return true;
+}
+
+function renameCurrentDeck() {
+  if (!currentDeck) return;
+  const nextTitle = (window.prompt("Deck name", currentDeck.title || "Untitled Deck") || "").trim();
+  if (!nextTitle || nextTitle === currentDeck.title) return;
+  recordSlideUndoCheckpoint("Rename deck");
+  currentDeck.title = nextTitle;
+  const titleInput = document.getElementById("slidesDeckTitleInput");
+  if (titleInput) titleInput.value = nextTitle;
+  setDeckDirty(true);
+  renderSlidesList();
+}
+
+function deckSummaryFromDeck(deck) {
+  if (!deck) return null;
+  return {
+    id: deck.id,
+    title: deck.title || "Untitled Deck",
+    folderId: deck.folderId || null,
+    pageCount: Array.isArray(deck.pages) ? deck.pages.length : 0,
+    updatedAt: deck.updatedAt || null,
+  };
+}
+
+async function openSlidesWorkspaceFromButton() {
+  currentDeck = null;
+  currentDeckPageId = null;
+  currentDeckDocumentType = "deck";
+  clearSlideUndoHistory();
+  clearSlideThumbnailState();
+  setDeckDirty(false);
+  showSlidesWorkspace();
+  try {
+    await slidesAPI.waitForReady();
+  } catch (err) {
+    console.warn("Slides store not ready:", err);
+  }
+  await refreshSlidesFolderList();
+  await refreshSlidesList();
+  renderSlideEditorState();
+}
+
+async function refreshSlidesList(query = "") {
+  try {
+    const list = await slidesAPI.list({ search: query, folderId: currentDeckFolderFilter });
+    deckLibraryDecks = Array.isArray(list) ? list : [];
+  } catch (err) {
+    console.error("Failed to list decks:", err);
+    deckLibraryDecks = [];
+  }
+  renderSlidesList();
+}
+
+function renderSlidesList() {
+  const host = document.getElementById("slidesList");
+  if (!host) return;
+  host.innerHTML = "";
+  if (deckLibraryDecks.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "list-placeholder-title";
+    empty.textContent = "No decks yet";
+    host.appendChild(empty);
+    return;
+  }
+  for (const summary of deckLibraryDecks) {
+    const item = document.createElement("div");
+    item.className = "slides-list-item";
+    if (currentDeck && currentDeck.id === summary.id) item.classList.add("is-selected");
+    item.dataset.deckId = summary.id;
+    item.setAttribute("role", "option");
+
+    const title = document.createElement("span");
+    title.className = "slides-list-item__title";
+    title.textContent = summary.title || "Untitled Deck";
+    const count = document.createElement("span");
+    count.className = "slides-list-item__count";
+    count.textContent = `${summary.pageCount || 0}`;
+    item.appendChild(title);
+    item.appendChild(count);
+
+    item.addEventListener("click", () => {
+      void activateDeckFromLibrary(summary.id).catch(console.error);
+    });
+    item.addEventListener("dblclick", () => {
+      void activateDeckFromLibrary(summary.id).catch(console.error);
+    });
+    host.appendChild(item);
+  }
+}
+
+async function refreshSlidesFolderList() {
+  try {
+    const folders = await slidesAPI.listFolders();
+    deckLibraryFolders = Array.isArray(folders) ? folders : [];
+  } catch (err) {
+    console.error("Failed to list deck folders:", err);
+    deckLibraryFolders = [];
+  }
+  renderSlidesFolderList();
+  syncSlidesDeckFolderSelect();
+}
+
+function renderSlidesFolderList() {
+  const host = document.getElementById("slidesFolderList");
+  if (!host) return;
+  host.innerHTML = "";
+  const allRow = document.createElement("div");
+  allRow.className = "songs-folder-item";
+  if (currentDeckFolderFilter === null) allRow.classList.add("is-selected");
+  allRow.textContent = "All Decks";
+  allRow.addEventListener("click", () => {
+    currentDeckFolderFilter = null;
+    renderSlidesFolderList();
+    void refreshSlidesList(document.getElementById("slidesSearchInput")?.value || "");
+  });
+  host.appendChild(allRow);
+  const unfiledRow = document.createElement("div");
+  unfiledRow.className = "songs-folder-item";
+  if (currentDeckFolderFilter === "") unfiledRow.classList.add("is-selected");
+  unfiledRow.textContent = "Default";
+  unfiledRow.addEventListener("click", () => {
+    currentDeckFolderFilter = "";
+    renderSlidesFolderList();
+    void refreshSlidesList(document.getElementById("slidesSearchInput")?.value || "");
+  });
+  host.appendChild(unfiledRow);
+  for (const folder of deckLibraryFolders) {
+    const row = document.createElement("div");
+    row.className = "songs-folder-item";
+    if (currentDeckFolderFilter === folder.id) row.classList.add("is-selected");
+    const label = document.createElement("span");
+    label.textContent = folder.name;
+    row.appendChild(label);
+    row.addEventListener("click", () => {
+      currentDeckFolderFilter = folder.id;
+      renderSlidesFolderList();
+      void refreshSlidesList(document.getElementById("slidesSearchInput")?.value || "");
+    });
+    host.appendChild(row);
+  }
+}
+
+function syncSlidesDeckFolderSelect() {
+  const select = document.getElementById("slidesDeckFolderSelect");
+  if (!select) return;
+  const currentValue = currentDeck?.folderId || "";
+  select.innerHTML = "";
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = "Default";
+  select.appendChild(defaultOpt);
+  for (const folder of deckLibraryFolders) {
+    const opt = document.createElement("option");
+    opt.value = folder.id;
+    opt.textContent = folder.name;
+    select.appendChild(opt);
+  }
+  select.value = currentValue;
+}
+
+async function activateDeckFromLibrary(deckId) {
+  if (deckDirty && currentDeck && !confirm("Discard unsaved changes to current deck?")) return;
+  try {
+    const deck = await slidesAPI.get(deckId);
+    if (!deck) {
+      showGnomeToast("Deck not found");
+      return;
+    }
+    loadDeckIntoWorkspace(normalizeSlideDeck(deck));
+  } catch (err) {
+    console.error("Failed to load deck:", err);
+    showGnomeToast("Failed to load deck");
+  }
+}
+
+function loadDeckIntoWorkspace(deck, opts = {}) {
+  clearSlideThumbnailState();
+  clearSlideUndoHistory();
+  currentDeck = deck;
+  currentDeckDocumentType =
+    opts.documentType ||
+    (deck?.documentType === SONG_DECK_DOCUMENT_TYPE || deck?.type === SONG_DECK_DOCUMENT_TYPE
+      ? SONG_DECK_DOCUMENT_TYPE
+      : "deck");
+  if (currentDeckDocumentType === SONG_DECK_DOCUMENT_TYPE && currentDeck) {
+    currentDeck.documentType = SONG_DECK_DOCUMENT_TYPE;
+    currentDeck.type = SONG_DECK_DOCUMENT_TYPE;
+  }
+  const requestedPageId = opts.pageId || null;
+  currentDeckPageId =
+    requestedPageId && findPage(deck, requestedPageId)
+      ? requestedPageId
+      : deck?.pages?.[0]?.id || null;
+  activeSlideTextObjectId = null;
+  if (Object.prototype.hasOwnProperty.call(opts, "queueItem")) {
+    currentSongQueueItem = opts.queueItem || null;
+  } else if (!queueItemMatchesDeck(currentSongQueueItem, deck)) {
+    currentSongQueueItem = null;
+  }
+  setDeckDirty(false);
+  syncSlidesDeckFolderSelect();
+  renderSlidesList();
+  renderSlideEditorState();
+  queueAllSlideThumbnailRenders(250);
+}
+
+function createNewDeck() {
+  if (deckDirty && currentDeck && !confirm("Discard unsaved changes to current deck?")) return;
+  clearSlideThumbnailState();
+  clearSlideUndoHistory();
+  const deck = createBlankDeck({ folderId: currentDeckFolderFilter || null });
+  currentDeck = deck;
+  currentDeckDocumentType = "deck";
+  currentDeckPageId = deck.pages[0].id;
+  activeSlideTextObjectId = null;
+  setDeckDirty(true);
+  syncSlidesDeckFolderSelect();
+  renderSlideEditorState();
+  queueAllSlideThumbnailRenders(250);
+}
+
+async function saveCurrentDeck() {
+  if (!currentDeck) return;
+  commitSlideUndoTransaction();
+  flushSlideEditorTextToModel();
+  if (currentDeckIsSongDocument()) {
+    try {
+      currentDeck.documentType = SONG_DECK_DOCUMENT_TYPE;
+      currentDeck.type = SONG_DECK_DOCUMENT_TYPE;
+      currentDeck.updatedAt = new Date().toISOString();
+      const saved = await songsAPI.save(currentDeck);
+      const savedDeckSource = saved || currentDeck;
+      const savedDeck = songDeckDocumentFromSongDocument(
+        savedDeckSource,
+        deckDefaultRender(savedDeckSource),
+      );
+      currentDeck = savedDeck || currentDeck;
+      currentWorkspaceSongDeck = currentDeck;
+      currentWorkspaceSong = deckToTransientSong(currentDeck);
+      currentSongRenderState = mergeSongRenderState(currentSongRenderState, deckDefaultRender(currentDeck));
+      currentEditingSongId = currentDeck.id;
+      clearSlideUndoHistory();
+      setDeckDirty(false);
+      const searchInput = document.getElementById("songsSearchInput");
+      await refreshSongFolders();
+      if (searchInput) await refreshSongsBrowser(searchInput.value);
+      showGnomeToast(`Saved ${currentDeck.title || "song"}`);
+    } catch (err) {
+      console.error("Failed to save song deck:", err);
+      showGnomeToast(`Save failed: ${err.message || err}`);
+    }
+    return;
+  }
+  try {
+    const summary = await slidesAPI.save(currentDeck);
+    currentDeck.updatedAt = summary?.updatedAt || new Date().toISOString();
+    clearSlideUndoHistory();
+    setDeckDirty(false);
+    await refreshSlidesList(document.getElementById("slidesSearchInput")?.value || "");
+    showGnomeToast(`Saved ${currentDeck.title || "deck"}`);
+  } catch (err) {
+    console.error("Failed to save deck:", err);
+    showGnomeToast(`Save failed: ${err.message || err}`);
+  }
+}
+
+async function deleteCurrentDeck() {
+  if (!currentDeck) return;
+  if (!confirm(`Delete "${currentDeck.title || "Untitled Deck"}"?`)) return;
+  if (currentDeckIsSongDocument()) {
+    try {
+      await songsAPI.delete(currentDeck.id);
+      currentDeck = null;
+      currentDeckPageId = null;
+      currentDeckDocumentType = "deck";
+      currentWorkspaceSongDeck = null;
+      currentWorkspaceSong = null;
+      clearSlideUndoHistory();
+      setDeckDirty(false);
+      const searchInput = document.getElementById("songsSearchInput");
+      await refreshSongFolders();
+      if (searchInput) await refreshSongsBrowser(searchInput.value);
+      showSongsWorkspace();
+    } catch (err) {
+      console.error("Failed to delete song:", err);
+      showGnomeToast(`Delete failed: ${err.message || err}`);
+    }
+    return;
+  }
+  try {
+    await slidesAPI.delete(currentDeck.id);
+    currentDeck = null;
+    currentDeckPageId = null;
+    clearSlideUndoHistory();
+    setDeckDirty(false);
+    await refreshSlidesList(document.getElementById("slidesSearchInput")?.value || "");
+    renderSlideEditorState();
+  } catch (err) {
+    console.error("Failed to delete deck:", err);
+    showGnomeToast(`Delete failed: ${err.message || err}`);
+  }
+}
+
+async function duplicateCurrentDeck() {
+  if (!currentDeck) return;
+  if (deckDirty && !confirm("Save changes before duplicating? Duplicating will save first.")) return;
+  if (deckDirty) await saveCurrentDeck();
+  try {
+    const copy = await slidesAPI.duplicate(currentDeck.id, {});
+    if (copy) loadDeckIntoWorkspace(normalizeSlideDeck(copy));
+    await refreshSlidesList(document.getElementById("slidesSearchInput")?.value || "");
+  } catch (err) {
+    console.error("Failed to duplicate deck:", err);
+    showGnomeToast(`Duplicate failed: ${err.message || err}`);
+  }
+}
+
+/* ── Page operations ──────────────────────────────────────── */
+
+function currentPage() {
+  if (!currentDeck || !currentDeckPageId) return null;
+  return findPage(currentDeck, currentDeckPageId);
+}
+
+function selectDeckPage(pageId) {
+  commitSlideUndoTransaction();
+  flushSlideEditorTextToModel();
+  currentDeckPageId = pageId;
+  activeSlideTextObjectId = null;
+  renderSlideEditorState();
+  void syncActiveDeckPresentation().catch(console.error);
+}
+
+function addDeckPage() {
+  if (!currentDeck) return;
+  recordSlideUndoCheckpoint("Add page");
+  const page = createBlankPage({ label: `Page ${currentDeck.pages.length + 1}` });
+  currentDeck.pages.push(page);
+  currentDeckPageId = page.id;
+  activeSlideTextObjectId = null;
+  setDeckDirty(true);
+  renderSlideEditorState();
+}
+
+function duplicateDeckPage() {
+  if (!currentDeck) return;
+  const page = currentPage();
+  if (!page) return;
+  recordSlideUndoCheckpoint("Duplicate page");
+  const copy = JSON.parse(JSON.stringify(page));
+  copy.id = `page_${(crypto.randomUUID?.() || String(Math.random())).replace(/-/g, "").slice(0, 12)}`;
+  for (const obj of copy.objects || []) {
+    obj.id = `obj_${(crypto.randomUUID?.() || String(Math.random())).replace(/-/g, "").slice(0, 12)}`;
+  }
+  const idx = currentDeck.pages.findIndex((p) => p.id === page.id);
+  currentDeck.pages.splice(idx + 1, 0, copy);
+  currentDeckPageId = copy.id;
+  activeSlideTextObjectId = null;
+  setDeckDirty(true);
+  renderSlideEditorState();
+}
+
+function deleteDeckPage() {
+  if (!currentDeck) return;
+  if (currentDeck.pages.length <= 1) {
+    showGnomeToast("A deck must have at least one page");
+    return;
+  }
+  const idx = currentDeck.pages.findIndex((p) => p.id === currentDeckPageId);
+  if (idx < 0) return;
+  recordSlideUndoCheckpoint("Delete page");
+  currentDeck.pages.splice(idx, 1);
+  currentDeckPageId = currentDeck.pages[Math.min(idx, currentDeck.pages.length - 1)].id;
+  activeSlideTextObjectId = null;
+  setDeckDirty(true);
+  renderSlideEditorState();
+}
+
+/* ── Editor render ────────────────────────────────────────── */
+
+function renderSlideEditorState() {
+  const hasDeck = Boolean(currentDeck);
+  const page = currentPage();
+
+  syncSlidesWorkspaceTitle();
+
+  const titleInput = document.getElementById("slidesDeckTitleInput");
+  if (titleInput) titleInput.value = currentDeck?.title || "";
+
+  const fontFamily = document.getElementById("slidesDeckFontFamily");
+  if (fontFamily) fontFamily.value = currentDeck?.theme?.fontFamily || DEFAULT_DECK_THEME.fontFamily;
+  const fontSize = document.getElementById("slidesDeckFontSize");
+  if (fontSize) fontSize.value = currentDeck?.theme?.fontSize ?? DEFAULT_DECK_THEME.fontSize;
+  const textColor = document.getElementById("slidesDeckTextColor");
+  if (textColor) textColor.value = currentDeck?.theme?.textColor || DEFAULT_DECK_THEME.textColor;
+  const bgColor = document.getElementById("slidesDeckBgColor");
+  if (bgColor) bgColor.value = currentDeck?.theme?.backgroundColor || DEFAULT_DECK_THEME.backgroundColor;
+
+  const pageLabel = document.getElementById("slidesPageLabelInput");
+  if (pageLabel) pageLabel.value = page?.label || "";
+  const pageBg = document.getElementById("slidesPageBackgroundColor");
+  if (pageBg) {
+    pageBg.value = page?.background?.color || currentDeck?.theme?.backgroundColor || DEFAULT_DECK_THEME.backgroundColor;
+  }
+  const bgLabel = document.getElementById("slidesPageBackgroundLabel");
+  if (bgLabel) {
+    if (page?.background?.type === "image" || page?.background?.type === "video") {
+      const p = page.background.path || "";
+      bgLabel.textContent = p ? p.split(/[\\/]/).pop() : (page.background.type === "video" ? "Video" : "Image");
+    } else {
+      bgLabel.textContent = "None";
+    }
+  }
+  const pageNotes = document.getElementById("slidesPageNotes");
+  if (pageNotes) pageNotes.value = page?.notes || "";
+  syncSlideTransitionControls(
+    "slidesPageTransitionEffect",
+    "slidesPageTransitionDuration",
+    page?.transition,
+    { allowInherit: true },
+  );
+  renderSlideTemplatePicker();
+
+  // Buttons enable/disable
+  for (const id of [
+    "slidesShowNowBtn",
+    "slidesAddScheduleBtn",
+    "slidesDeleteDeckBtn",
+    "slidesDuplicateDeckBtn",
+    "slidesAddPageBtn",
+    "slidesDuplicatePageBtn",
+    "slidesDeletePageBtn",
+    "slidesAddTextBoxBtn",
+    "slidesAddImageBtn",
+    "slidesAddRectBtn",
+    "slidesAddEllipseBtn",
+    "slidesAddLineBtn",
+  ]) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !hasDeck;
+  }
+  const saveBtn = document.getElementById("slidesSaveDeckBtn");
+  if (saveBtn) saveBtn.disabled = !hasDeck || !deckDirty;
+  syncSlideUndoRedoButtons();
+
+  renderDeckPageStrip();
+  renderSlideCanvas();
+}
+
+function applyDeckPageThumbnailBackground(thumb, page) {
+  const bg = page?.background || {};
+  thumb.style.backgroundColor = "#000";
+  thumb.style.backgroundImage = "";
+  thumb.style.backgroundRepeat = "no-repeat";
+  thumb.style.backgroundSize = "contain";
+  thumb.style.backgroundPosition = "center";
+  if (bg.type === "image" && bg.path) {
+    thumb.style.backgroundColor = "#000";
+    thumb.style.backgroundImage = `url("${pathToUrlSafe(bg.path)}")`;
+  } else if (bg.type === "color" && bg.color) {
+    thumb.style.backgroundColor = bg.color;
+  }
+}
+
+function applyDeckPageThumbnailObjectBox(el, object) {
+  const frame = normalizeSlideTextObjectFrame(object?.frame || DEFAULT_TEXT_FRAME);
+  el.style.left = `${frame.x * 100}%`;
+  el.style.top = `${frame.y * 100}%`;
+  el.style.width = `${frame.width * 100}%`;
+  el.style.height = `${frame.height * 100}%`;
+  el.style.zIndex = String(Number.isFinite(object?.zIndex) ? object.zIndex : 0);
+  el.style.opacity = String(clampSlideOpacity(object?.opacity, 1));
+}
+
+function createDeckPageThumbnailObject(object) {
+  const kind = object?.kind === "image" || object?.kind === "shape" ? object.kind : "text";
+  const el = document.createElement("div");
+  el.className = `slides-page-list__thumb-object slides-page-list__thumb-object--${kind}`;
+  applyDeckPageThumbnailObjectBox(el, object);
+
+  if (kind === "image") {
+    const image = object.image && typeof object.image === "object" ? object.image : {};
+    if (image.path) {
+      const img = document.createElement("img");
+      img.src = pathToUrlSafe(image.path);
+      img.alt = "";
+      img.draggable = false;
+      img.style.objectFit = image.fit === "cover" || image.fit === "fill" ? image.fit : "contain";
+      el.appendChild(img);
+    }
+    return el;
+  }
+
+  if (kind === "shape") {
+    const shape = object.shape && typeof object.shape === "object" ? object.shape : {};
+    const shapeEl = document.createElement("div");
+    shapeEl.className = "slides-page-list__thumb-shape";
+    if (shape.type === "ellipse") {
+      shapeEl.style.borderRadius = "999px";
+    } else if (Number.isFinite(shape.radius) && shape.radius > 0) {
+      shapeEl.style.borderRadius = `${Math.max(1, shape.radius / 8)}px`;
+    }
+    shapeEl.style.backgroundColor = shape.type === "line" ? "transparent" : (shape.fill || "#ffffff");
+    if (shape.stroke || Number.isFinite(shape.strokeWidth)) {
+      const strokeWidth = Number.isFinite(shape.strokeWidth) ? Math.max(1, shape.strokeWidth / 3) : 1;
+      shapeEl.style.border = `${strokeWidth}px solid ${shape.stroke || shape.fill || "#ffffff"}`;
+    }
+    if (shape.type === "line") {
+      const strokeWidth = Number.isFinite(shape.strokeWidth) && shape.strokeWidth > 0
+        ? Math.max(1, shape.strokeWidth / 3)
+        : 1;
+      shapeEl.classList.add("slides-page-list__thumb-shape--line");
+      shapeEl.style.border = "none";
+      shapeEl.style.borderTop = `${strokeWidth}px solid ${shape.stroke || shape.fill || "#ffffff"}`;
+    }
+    el.appendChild(shapeEl);
+    return el;
+  }
+
+  const style = object.style && typeof object.style === "object" ? object.style : {};
+  el.textContent = slideTextObjectText(object);
+  el.style.color = style.color || currentDeck?.theme?.textColor || "#ffffff";
+  el.style.fontFamily = songFontFamilyCSS(style.fontFamily || currentDeck?.theme?.fontFamily);
+  el.style.fontSize = `${Math.max(5, Math.min(14, (Number(style.fontSize) || Number(currentDeck?.theme?.fontSize) || 72) / 10))}px`;
+  el.style.lineHeight = String(style.lineHeight || 1.15);
+  el.style.textAlign = style.align || "center";
+  el.style.alignItems =
+    style.align === "left" ? "flex-start" : style.align === "right" ? "flex-end" : "center";
+  el.style.justifyContent =
+    style.verticalAlign === "top"
+      ? "flex-start"
+      : style.verticalAlign === "bottom"
+        ? "flex-end"
+        : "center";
+  return el;
+}
+
+function renderDeckPageThumbnail(thumb, page) {
+  thumb.innerHTML = "";
+  const signature = slideThumbnailSignature(page, currentDeck);
+  const cached = slideThumbnailCache.get(page?.id);
+  if (cached?.signature === signature && cached.dataUrl) {
+    thumb.classList.add("slides-page-list__thumb--rendered");
+    thumb.style.backgroundColor = "#000";
+    thumb.style.backgroundImage = `url("${cached.dataUrl}")`;
+    thumb.style.backgroundRepeat = "no-repeat";
+    thumb.style.backgroundSize = "contain";
+    thumb.style.backgroundPosition = "center";
+    return;
+  }
+  thumb.classList.remove("slides-page-list__thumb--rendered");
+  applyDeckPageThumbnailBackground(thumb, page);
+  const objects = orderedSlideObjects(page);
+  if (!objects.length) {
+    const txt = getPagePrimaryText(page);
+    const fallback = document.createElement("div");
+    fallback.className = "slides-page-list__thumb-object slides-page-list__thumb-object--text";
+    fallback.style.inset = "0";
+    fallback.style.alignItems = "center";
+    fallback.style.justifyContent = "center";
+    fallback.style.color = currentDeck?.theme?.textColor || "#ffffff";
+    fallback.textContent = txt.length > 80 ? `${txt.slice(0, 77)}...` : txt;
+    thumb.appendChild(fallback);
+    return;
+  }
+  for (const object of objects) {
+    thumb.appendChild(createDeckPageThumbnailObject(object));
+  }
+}
+
+function renderDeckPageStrip() {
+  const host = document.getElementById("slidesPageList");
+  if (!host) return;
+  host.innerHTML = "";
+  if (!currentDeck) return;
+  currentDeck.pages.forEach((page, idx) => {
+    const row = document.createElement("div");
+    row.className = "slides-page-list__item";
+    if (page.id === currentDeckPageId) row.classList.add("is-active");
+    row.dataset.pageId = page.id;
+
+    const idxEl = document.createElement("span");
+    idxEl.className = "slides-page-list__index";
+    idxEl.textContent = String(idx + 1);
+
+    const wrap = document.createElement("div");
+    wrap.style.flex = "1";
+    wrap.style.minWidth = "0";
+
+    const thumb = document.createElement("div");
+    thumb.className = "slides-page-list__thumb";
+    renderDeckPageThumbnail(thumb, page);
+
+    const label = document.createElement("div");
+    label.className = "slides-page-list__label";
+    label.textContent = page.label || `Page ${idx + 1}`;
+
+    wrap.appendChild(thumb);
+    wrap.appendChild(label);
+    row.appendChild(idxEl);
+    row.appendChild(wrap);
+    row.addEventListener("click", () => selectDeckPage(page.id));
+    host.appendChild(row);
+  });
+}
+
+function pathToUrlSafe(p) {
+  if (!p) return "";
+  if (/^[a-z]+:\/\//i.test(p)) return p;
+  try {
+    return `file://${p.replace(/\\/g, "/")}`;
+  } catch {
+    return p;
+  }
+}
+
+function slideThumbnailSignature(page, deck = currentDeck) {
+  if (!page || !deck) return "";
+  try {
+    return JSON.stringify({
+      canvas: deck.canvas || null,
+      theme: deck.theme || null,
+      background: page.background || null,
+      objects: Array.isArray(page.objects) ? page.objects : [],
+    });
+  } catch {
+    return `${Date.now()}`;
+  }
+}
+
+function scheduleCurrentSlideThumbnailRefresh(delayMs = SLIDE_THUMBNAIL_IDLE_MS) {
+  if (!currentDeck || !currentDeckPageId) return;
+  queueSlideThumbnailRender(currentDeckPageId, delayMs);
+}
+
+function queueAllSlideThumbnailRenders(delayMs = 250) {
+  if (!currentDeck || !Array.isArray(currentDeck.pages)) return;
+  for (const page of currentDeck.pages) {
+    queueSlideThumbnailRender(page.id, delayMs);
+  }
+}
+
+function clearSlideThumbnailState() {
+  for (const timer of slideThumbnailTimers.values()) {
+    clearTimeout(timer);
+  }
+  slideThumbnailTimers.clear();
+  slideThumbnailCache.clear();
+}
+
+function queueSlideThumbnailRender(pageId, delayMs = SLIDE_THUMBNAIL_IDLE_MS) {
+  if (!currentDeck || !pageId) return;
+  const page = findPage(currentDeck, pageId);
+  if (!page) return;
+  const signature = slideThumbnailSignature(page, currentDeck);
+  const cached = slideThumbnailCache.get(pageId);
+  if (cached?.signature === signature && cached.dataUrl) return;
+  const existingTimer = slideThumbnailTimers.get(pageId);
+  if (existingTimer) clearTimeout(existingTimer);
+  const timer = setTimeout(() => {
+    slideThumbnailTimers.delete(pageId);
+    void renderSlideThumbnailForPage(pageId, signature).catch((err) => {
+      console.warn("Failed to render slide thumbnail:", err);
+    });
+  }, Math.max(0, delayMs));
+  slideThumbnailTimers.set(pageId, timer);
+}
+
+async function renderSlideThumbnailForPage(pageId, scheduledSignature) {
+  const deck = currentDeck;
+  const page = findPage(deck, pageId);
+  if (!deck || !page) return;
+  if (slideThumbnailSignature(page, deck) !== scheduledSignature) return;
+  const dataUrl = await renderSlidePageThumbnailDataUrl(page, deck);
+  if (!dataUrl) return;
+  if (slideThumbnailSignature(page, deck) !== scheduledSignature) return;
+  slideThumbnailCache.set(pageId, { signature: scheduledSignature, dataUrl });
+  if (isSlidesWorkspaceVisible()) renderDeckPageStrip();
+}
+
+function slideThumbnailRectForFrame(frame) {
+  const f = normalizeSlideTextObjectFrame(frame || DEFAULT_TEXT_FRAME);
+  return {
+    x: f.x * SLIDE_THUMBNAIL_WIDTH,
+    y: f.y * SLIDE_THUMBNAIL_HEIGHT,
+    width: f.width * SLIDE_THUMBNAIL_WIDTH,
+    height: f.height * SLIDE_THUMBNAIL_HEIGHT,
+  };
+}
+
+function loadSlideThumbnailImage(src) {
+  return new Promise((resolve) => {
+    if (!src) return resolve(null);
+    const img = new Image();
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const timeout = setTimeout(() => finish(null), 1800);
+    img.onload = () => {
+      clearTimeout(timeout);
+      finish(img);
+    };
+    img.onerror = () => {
+      clearTimeout(timeout);
+      finish(null);
+    };
+    img.src = src;
+  });
+}
+
+function drawSlideThumbnailImage(ctx, img, x, y, width, height, fit = "cover") {
+  if (!img || !width || !height) return;
+  if (fit === "fill") {
+    ctx.drawImage(img, x, y, width, height);
+    return;
+  }
+  const iw = img.naturalWidth || img.width || 1;
+  const ih = img.naturalHeight || img.height || 1;
+  const scale = fit === "contain" ? Math.min(width / iw, height / ih) : Math.max(width / iw, height / ih);
+  const dw = iw * scale;
+  const dh = ih * scale;
+  ctx.drawImage(img, x + (width - dw) / 2, y + (height - dh) / 2, dw, dh);
+}
+
+async function drawSlideThumbnailBackground(ctx, page, deck) {
+  const bg = page?.background || {};
+  const color = bg.color || deck?.theme?.backgroundColor || DEFAULT_DECK_THEME.backgroundColor;
+  ctx.fillStyle = color || "#000000";
+  ctx.fillRect(0, 0, SLIDE_THUMBNAIL_WIDTH, SLIDE_THUMBNAIL_HEIGHT);
+  if (bg.type === "image" && bg.path) {
+    const img = await loadSlideThumbnailImage(pathToUrlSafe(bg.path));
+    if (img) drawSlideThumbnailImage(ctx, img, 0, 0, SLIDE_THUMBNAIL_WIDTH, SLIDE_THUMBNAIL_HEIGHT, "contain");
+  }
+}
+
+async function drawSlideThumbnailObject(ctx, object, deck) {
+  if (!object) return;
+  const kind = object.kind === "image" || object.kind === "shape" ? object.kind : "text";
+  const rect = slideThumbnailRectForFrame(object.frame);
+  ctx.save();
+  ctx.globalAlpha = clampSlideOpacity(object.opacity, 1);
+  ctx.beginPath();
+  ctx.rect(rect.x, rect.y, rect.width, rect.height);
+  ctx.clip();
+
+  if (kind === "image") {
+    const image = object.image && typeof object.image === "object" ? object.image : {};
+    const img = await loadSlideThumbnailImage(pathToUrlSafe(image.path));
+    if (img) drawSlideThumbnailImage(ctx, img, rect.x, rect.y, rect.width, rect.height, image.fit || "contain");
+    ctx.restore();
+    return;
+  }
+
+  if (kind === "shape") {
+    const shape = object.shape && typeof object.shape === "object" ? object.shape : {};
+    const rawStrokeWidth = Number(shape.strokeWidth);
+    const hasStroke = Boolean(shape.stroke) || (Number.isFinite(rawStrokeWidth) && rawStrokeWidth > 0);
+    ctx.fillStyle = shape.fill || "#ffffff";
+    ctx.strokeStyle = shape.stroke || shape.fill || "#ffffff";
+    ctx.lineWidth = hasStroke ? Math.max(1, rawStrokeWidth || 1) : 0;
+    if (shape.type === "line") {
+      ctx.beginPath();
+      ctx.moveTo(rect.x, rect.y + rect.height / 2);
+      ctx.lineTo(rect.x + rect.width, rect.y + rect.height / 2);
+      ctx.lineWidth = Math.max(1, Number(shape.strokeWidth) || 4);
+      ctx.stroke();
+    } else if (shape.type === "ellipse") {
+      ctx.beginPath();
+      ctx.ellipse(rect.x + rect.width / 2, rect.y + rect.height / 2, rect.width / 2, rect.height / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      if (hasStroke) ctx.stroke();
+    } else {
+      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+      if (hasStroke) ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+    }
+    ctx.restore();
+    return;
+  }
+
+  const bg = object.background && typeof object.background === "object" ? object.background : null;
+  if (bg?.type === "color") {
+    ctx.fillStyle = bg.color || "transparent";
+    ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+  } else if (bg?.type === "image" && bg.path) {
+    const bgImg = await loadSlideThumbnailImage(pathToUrlSafe(bg.path));
+    if (bgImg) drawSlideThumbnailImage(ctx, bgImg, rect.x, rect.y, rect.width, rect.height, "cover");
+  }
+
+  const style = object.style && typeof object.style === "object" ? object.style : {};
+  const deckFontSize = Number(deck?.theme?.fontSize) || DEFAULT_DECK_THEME.fontSize;
+  const fontSize = Math.max(5, (Number(style.fontSize) || deckFontSize) * (SLIDE_THUMBNAIL_WIDTH / (deck?.canvas?.width || 1920)));
+  const lineHeight = fontSize * (Number(style.lineHeight) || 1.15);
+  const lines = slideTextObjectText(object).split(/\r?\n/);
+  const totalHeight = Math.max(lineHeight, lines.length * lineHeight);
+  const pad = Math.max(3, fontSize * 0.25);
+  const verticalAlign = style.verticalAlign || "center";
+  let y = rect.y + pad;
+  if (verticalAlign === "center") y = rect.y + (rect.height - totalHeight) / 2;
+  if (verticalAlign === "bottom") y = rect.y + rect.height - totalHeight - pad;
+  const align = style.align || "center";
+  ctx.textAlign = align;
+  ctx.textBaseline = "top";
+  ctx.fillStyle = style.color || deck?.theme?.textColor || "#ffffff";
+  ctx.font = `${style.fontWeight || 700} ${fontSize}px ${songFontFamilyCSS(style.fontFamily || deck?.theme?.fontFamily)}`;
+  const x =
+    align === "left"
+      ? rect.x + pad
+      : align === "right"
+        ? rect.x + rect.width - pad
+        : rect.x + rect.width / 2;
+  for (const line of lines) {
+    ctx.fillText(line || " ", x, y, Math.max(1, rect.width - pad * 2));
+    y += lineHeight;
+  }
+  ctx.restore();
+}
+
+async function renderSlidePageThumbnailDataUrl(page, deck) {
+  if (typeof document === "undefined") return "";
+  const canvas = document.createElement("canvas");
+  canvas.width = SLIDE_THUMBNAIL_WIDTH;
+  canvas.height = SLIDE_THUMBNAIL_HEIGHT;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  await drawSlideThumbnailBackground(ctx, page, deck);
+  for (const object of orderedSlideObjects(page)) {
+    await drawSlideThumbnailObject(ctx, object, deck);
+  }
+  try {
+    return canvas.toDataURL("image/jpeg", 0.72);
+  } catch {
+    return "";
+  }
+}
+
+function clampSlideFrame(value, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(1, n));
+}
+
+function slideTextObjectsForPage(page, { create = false } = {}) {
+  if (!page) return [];
+  if (!Array.isArray(page.objects)) {
+    if (!create) return [];
+    page.objects = [];
+  }
+  let textObjects = page.objects.filter((o) => o && o.kind === "text");
+  if (textObjects.length === 0 && create) {
+    const obj = createTextObject({});
+    page.objects.push(obj);
+    textObjects = [obj];
+    setDeckDirty(true);
+  }
+  return textObjects;
+}
+
+function slideObjectsForPage(page, { createText = false } = {}) {
+  if (!page) return [];
+  if (!Array.isArray(page.objects)) {
+    if (!createText) return [];
+    page.objects = [];
+  }
+  if (createText) slideTextObjectsForPage(page, { create: true });
+  return Array.isArray(page.objects) ? page.objects.filter(Boolean) : [];
+}
+
+function slideObjectById(page, objectId) {
+  if (!page || !objectId || !Array.isArray(page.objects)) return null;
+  return page.objects.find((o) => o && o.id === objectId) || null;
+}
+
+function slideTextObjectById(page, objectId) {
+  const obj = slideObjectById(page, objectId);
+  return obj?.kind === "text" ? obj : null;
+}
+
+function activeSlideTextObject(page = currentPage(), { create = false } = {}) {
+  const textObjects = slideTextObjectsForPage(page, { create });
+  if (textObjects.length === 0) return null;
+  let obj = slideTextObjectById(page, activeSlideTextObjectId);
+  if (!obj) {
+    obj = textObjects[0];
+    activeSlideTextObjectId = obj.id;
+  }
+  return obj;
+}
+
+function orderedSlideObjects(page, { kind = null } = {}) {
+  const objects = slideObjectsForPage(page);
+  return objects
+    .map((object, index) => ({ object, index }))
+    .filter(({ object }) => !kind || object.kind === kind)
+    .sort((a, b) => {
+      const az = Number.isFinite(a.object?.zIndex) ? a.object.zIndex : 0;
+      const bz = Number.isFinite(b.object?.zIndex) ? b.object.zIndex : 0;
+      return az === bz ? a.index - b.index : az - bz;
+    })
+    .map(({ object }) => object);
+}
+
+function maxSlideObjectZIndex(page) {
+  return slideObjectsForPage(page).reduce(
+    (max, obj) => Math.max(max, Number.isFinite(obj?.zIndex) ? obj.zIndex : 0),
+    0,
+  );
+}
+
+function newSlideObjectId() {
+  return `obj_${(crypto.randomUUID?.() || String(Math.random())).replace(/-/g, "").slice(0, 12)}`;
+}
+
+function cloneSlideObject(object) {
+  try {
+    return structuredClone(object);
+  } catch {
+    return JSON.parse(JSON.stringify(object));
+  }
+}
+
+function clampSlideOpacity(value, fallback = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(1, n));
+}
+
+function slideObjectFrameAtCanvasPoint(frame, { clientX = null, clientY = null } = {}) {
+  const canvas = document.getElementById("slidesCanvas");
+  const f = normalizeSlideTextObjectFrame(frame || DEFAULT_TEXT_FRAME);
+  if (!canvas || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return f;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return f;
+  return {
+    ...f,
+    x: Math.max(0, Math.min(1 - f.width, (clientX - rect.left) / rect.width - f.width / 2)),
+    y: Math.max(0, Math.min(1 - f.height, (clientY - rect.top) / rect.height - f.height / 2)),
+  };
+}
+
+function offsetSlideObjectFrame(frame, { clientX = null, clientY = null } = {}) {
+  const f = normalizeSlideTextObjectFrame(frame || DEFAULT_TEXT_FRAME);
+  if (Number.isFinite(clientX) && Number.isFinite(clientY)) {
+    return slideObjectFrameAtCanvasPoint(f, { clientX, clientY });
+  }
+  const offset = Math.min(0.24, (slideObjectPasteCount + 1) * 0.04);
+  return {
+    ...f,
+    x: Math.max(0, Math.min(1 - f.width, f.x + offset)),
+    y: Math.max(0, Math.min(1 - f.height, f.y + offset)),
+  };
+}
+
+function selectSlideObject(objectId, { focus = false } = {}) {
+  activeSlideTextObjectId = objectId || null;
+  document.querySelectorAll(".slides-canvas-text-object").forEach((el) => {
+    const active = Boolean(objectId) && el.dataset.objectId === objectId;
+    el.classList.toggle("is-active", active);
+    if (active && focus) {
+      el.querySelector(".slides-canvas-text-input")?.focus({ preventScroll: true });
+    }
+  });
+}
+
+function selectSlideTextObject(objectId, opts = {}) {
+  selectSlideObject(objectId, opts);
+}
+
+function slideTextFrameFromDom(objectEl) {
+  const canvas = document.getElementById("slidesCanvas");
+  const textObj = objectEl || document.querySelector(".slides-canvas-text-object.is-active");
+  if (!canvas || !textObj || textObj.style.display === "none") return null;
+  const canvasRect = canvas.getBoundingClientRect();
+  const textRect = textObj.getBoundingClientRect();
+  if (!canvasRect.width || !canvasRect.height || !textRect.width || !textRect.height) {
+    return null;
+  }
+  const x = clampSlideFrame((textRect.left - canvasRect.left) / canvasRect.width);
+  const y = clampSlideFrame((textRect.top - canvasRect.top) / canvasRect.height);
+  return {
+    x,
+    y,
+    width: Math.max(0.01, Math.min(1 - x, textRect.width / canvasRect.width)),
+    height: Math.max(0.01, Math.min(1 - y, textRect.height / canvasRect.height)),
+  };
+}
+
+function slideFramesEqual(a, b) {
+  if (!a || !b) return false;
+  const epsilon = 0.0005;
+  return (
+    Math.abs(Number(a.x) - Number(b.x)) < epsilon &&
+    Math.abs(Number(a.y) - Number(b.y)) < epsilon &&
+    Math.abs(Number(a.width) - Number(b.width)) < epsilon &&
+    Math.abs(Number(a.height) - Number(b.height)) < epsilon
+  );
+}
+
+function slideTextObjectText(object) {
+  return blocksToText(object?.blocks || []);
+}
+
+function slideBlocksEqual(a, b) {
+  try {
+    return JSON.stringify(a || []) === JSON.stringify(b || []);
+  } catch {
+    return false;
+  }
+}
+
+function renderSlideTextInputFromBlocks(editor, blocks) {
+  if (!editor) return;
+  editor.innerHTML = "";
+  const source = Array.isArray(blocks) && blocks.length ? blocks : textToSegmentsBlocks("");
+  for (const block of source) {
+    const lineEl = document.createElement("div");
+    lineEl.className = "slides-canvas-text-line";
+    if (block?.id) lineEl.dataset.blockId = block.id;
+    const segments = block?.type === "lyricLine" && Array.isArray(block.primary?.segments)
+      ? block.primary.segments
+      : [];
+    if (!segments.length || segments.every((segment) => !segment?.text)) {
+      lineEl.appendChild(document.createElement("br"));
+    } else {
+      for (const segment of segments) {
+        const span = document.createElement("span");
+        span.textContent = segment?.text || "";
+        applySongSegmentStyleToElement(span, segment?.style);
+        lineEl.appendChild(span);
+      }
+    }
+    editor.appendChild(lineEl);
+  }
+}
+
+function isSlideTextBlockElement(node) {
+  return (
+    node?.nodeType === Node.ELEMENT_NODE &&
+    ["DIV", "P", "LI"].includes(node.tagName)
+  );
+}
+
+function styleFromDomElement(element, inherited = {}) {
+  const next = { ...inherited };
+  if (!element || element.nodeType !== Node.ELEMENT_NODE) return next;
+  const style = element.style || {};
+  if (style.color) next.color = style.color;
+  if (style.fontFamily) next.fontFamily = style.fontFamily;
+  if (style.backgroundColor) next.backgroundColor = style.backgroundColor;
+  if (style.fontWeight) next.fontWeight = style.fontWeight;
+  if (style.fontStyle) next.fontStyle = style.fontStyle;
+  const decoration = style.textDecorationLine || style.textDecoration;
+  if (decoration) next.textDecoration = decoration;
+  return textStyleFromSegment({ style: next });
+}
+
+function appendRichTextSegment(lines, text, style) {
+  if (typeof text !== "string" || text.length === 0) return;
+  const parts = text.replace(/\u00a0/g, " ").split("\n");
+  for (let i = 0; i < parts.length; i += 1) {
+    if (i > 0) lines.push([]);
+    if (!parts[i]) continue;
+    lines[lines.length - 1].push({
+      type: "text",
+      text: parts[i],
+      ...(Object.keys(style || {}).length > 0 ? { style } : {}),
+    });
+  }
+}
+
+function collectRichTextLines(node, inheritedStyle = {}) {
+  const lines = [[]];
+  const walk = (current, style) => {
+    if (!current) return;
+    if (current.nodeType === Node.TEXT_NODE) {
+      appendRichTextSegment(lines, current.nodeValue || "", style);
+      return;
+    }
+    if (current.nodeType !== Node.ELEMENT_NODE) return;
+    if (current.tagName === "BR") {
+      lines.push([]);
+      return;
+    }
+    const nextStyle = styleFromDomElement(current, style);
+    for (const child of current.childNodes) {
+      walk(child, nextStyle);
+    }
+  };
+  walk(node, inheritedStyle);
+  while (
+    lines.length > 1 &&
+    lines[lines.length - 1].length === 0 &&
+    isSlideTextBlockElement(node)
+  ) {
+    lines.pop();
+  }
+  return lines;
+}
+
+function slideTextBlocksFromInput(editor, previousBlocks = []) {
+  if (!editor) return textToSegmentsBlocks("");
+  const childNodes = Array.from(editor.childNodes);
+  const hasDirectBlocks = childNodes.some(isSlideTextBlockElement);
+  const lines = [];
+  if (hasDirectBlocks) {
+    for (const child of childNodes) {
+      if (isSlideTextBlockElement(child)) {
+        lines.push(...collectRichTextLines(child));
+      } else {
+        const collected = collectRichTextLines(child);
+        if (collected.some((line) => line.length > 0)) lines.push(...collected);
+      }
+    }
+  } else {
+    lines.push(...collectRichTextLines(editor));
+  }
+  const normalizedLines = lines.length ? lines : [[]];
+  return normalizedLines.map((segments, index) => {
+    const previous = previousBlocks[index] || {};
+    const normalizedSegments = normalizeSongSegments(segments);
+    return {
+      type: "lyricLine",
+      id: previous.id || `block_${(crypto.randomUUID?.() || String(Math.random())).replace(/-/g, "").slice(0, 8)}`,
+      primary: {
+        lang: previous.primary?.lang || "en",
+        segments: normalizedSegments.length ? normalizedSegments : [{ type: "text", text: "" }],
+      },
+      translations: Array.isArray(previous.translations) ? previous.translations : [],
+      annotations: Array.isArray(previous.annotations) ? previous.annotations : [],
+    };
+  });
+}
+
+function slideTextObjectElementById(objectId) {
+  if (!objectId) return null;
+  return Array.from(document.querySelectorAll(".slides-canvas-text-object"))
+    .find((el) => el.dataset.objectId === objectId) || null;
+}
+
+function slideTextInputForObject(objectId) {
+  return slideTextObjectElementById(objectId)?.querySelector(".slides-canvas-text-input") || null;
+}
+
+function captureSlideTextSelection(objectId) {
+  const editor = slideTextInputForObject(objectId);
+  const range = editor ? saveSongEditorCursorPosition(editor) : null;
+  if (range && range.start !== range.end) {
+    slideTextSelectionState = {
+      objectId,
+      start: Math.min(range.start, range.end),
+      end: Math.max(range.start, range.end),
+    };
+    return slideTextSelectionState;
+  }
+  slideTextSelectionState = null;
+  return null;
+}
+
+function selectedSlideTextRange(objectId) {
+  if (
+    slideTextSelectionState &&
+    slideTextSelectionState.objectId === objectId &&
+    slideTextSelectionState.start !== slideTextSelectionState.end
+  ) {
+    return slideTextSelectionState;
+  }
+  const live = captureSlideTextSelection(objectId);
+  if (live) return live;
+  return null;
+}
+
+function fitTextElementToBox(box, textEl, { baseSize, minSize, mode = "fit" } = {}) {
+  if (!box || !textEl || mode === "none") return;
+  const boxWidth = Math.max(1, box.clientWidth || box.getBoundingClientRect().width || 0);
+  const boxHeight = Math.max(1, box.clientHeight || box.getBoundingClientRect().height || 0);
+  if (!boxWidth || !boxHeight) return;
+  let size = Math.max(1, Number(baseSize) || 1);
+  const min = Math.max(1, Math.min(size, Number(minSize) || size));
+  textEl.style.fontSize = `${size}px`;
+  while (
+    size > min &&
+    (textEl.scrollHeight > Math.ceil(boxHeight) + 1 || textEl.scrollWidth > Math.ceil(boxWidth) + 1)
+  ) {
+    size = Math.max(min, Math.floor(size * 0.92));
+    textEl.style.fontSize = `${size}px`;
+  }
+}
+
+function fitSlideTextEditorElement(el, object, scale) {
+  const editor = el?.querySelector(".slides-canvas-text-input");
+  if (!el || !editor || object?.kind !== "text") return;
+  const style = object.style && typeof object.style === "object" ? object.style : {};
+  const deckFontSize = Number(currentDeck?.theme?.fontSize);
+  const baseSize = Number.isFinite(Number(style.fontSize))
+    ? Number(style.fontSize)
+    : Number.isFinite(deckFontSize)
+      ? deckFontSize
+      : DEFAULT_DECK_THEME.fontSize;
+  const minSize = Number.isFinite(Number(style.minFontSize))
+    ? Number(style.minFontSize)
+    : Number(currentDeck?.theme?.minFontSize) || DEFAULT_DECK_THEME.minFontSize;
+  fitTextElementToBox(el, editor, {
+    baseSize: Math.max(8, baseSize * scale),
+    minSize: Math.max(6, minSize * scale),
+    mode: object.autofit || currentDeck?.theme?.autosizeMode || "fit",
+  });
+}
+
+function applySlideTextObjectFormatting(style, objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideTextObjectById(page, objectId);
+  if (!obj || !style || typeof style !== "object") return;
+  const selected = selectedSlideTextRange(obj.id);
+  if (!selected) {
+    updateSlideTextObjectStyle(style, obj.id);
+    return;
+  }
+  recordSlideUndoForMutation("Style selected text");
+  const styledSection = applySongStyleToSectionRange(
+    { blocks: obj.blocks || [] },
+    selected.start,
+    selected.end,
+    style,
+  );
+  obj.blocks = styledSection.blocks;
+  activeSlideTextObjectId = obj.id;
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  const editor = slideTextInputForObject(obj.id);
+  if (editor) {
+    editor.focus({ preventScroll: true });
+    restoreSongEditorCursorPosition(editor, selected);
+  }
+  void syncActiveDeckPresentation().catch(console.error);
+}
+
+function normalizeSlideTextObjectFrame(frame = DEFAULT_TEXT_FRAME) {
+  const x = clampSlideFrame(frame.x, DEFAULT_TEXT_FRAME.x);
+  const y = clampSlideFrame(frame.y, DEFAULT_TEXT_FRAME.y);
+  const width = Math.max(0.01, Math.min(1 - x, Number(frame.width) || DEFAULT_TEXT_FRAME.width));
+  const height = Math.max(0.01, Math.min(1 - y, Number(frame.height) || DEFAULT_TEXT_FRAME.height));
+  return { x, y, width, height };
+}
+
+function applySlideTextObjectBackground(el, object) {
+  const bgEl = el.querySelector(".slides-canvas-text-object-bg");
+  if (!bgEl) return;
+  bgEl.innerHTML = "";
+  bgEl.style.backgroundColor = "";
+  bgEl.style.backgroundImage = "";
+  const bg = object?.background && typeof object.background === "object" ? object.background : null;
+  if (!bg) return;
+  if (bg.type === "color") {
+    bgEl.style.backgroundColor = bg.color || "transparent";
+    return;
+  }
+  if (bg.path) {
+    if (bg.type === "video") {
+      const videoEl = document.createElement("video");
+      videoEl.src = pathToUrlSafe(bg.path);
+      videoEl.autoplay = true;
+      videoEl.loop = true;
+      videoEl.muted = true;
+      videoEl.playsInline = true;
+      bgEl.appendChild(videoEl);
+      void videoEl.play().catch(() => {});
+    } else {
+      bgEl.style.backgroundImage = `url("${pathToUrlSafe(bg.path)}")`;
+    }
+  }
+}
+
+function applySlideObjectElementBoxStyle(el, object) {
+  const frame = normalizeSlideTextObjectFrame(object.frame);
+  object.frame = frame;
+  el.style.left = `${frame.x * 100}%`;
+  el.style.top = `${frame.y * 100}%`;
+  el.style.width = `${frame.width * 100}%`;
+  el.style.height = `${frame.height * 100}%`;
+  el.style.zIndex = String(Number.isFinite(object.zIndex) ? object.zIndex : 1);
+  el.style.setProperty("--slide-object-opacity", String(clampSlideOpacity(object.opacity, 1)));
+}
+
+function applySlideTextObjectElementStyle(el, editor, object, scale) {
+  applySlideObjectElementBoxStyle(el, object);
+  const style = object.style && typeof object.style === "object" ? object.style : {};
+  const objectFontSize = Number(style.fontSize);
+  const deckFontSize = Number(currentDeck?.theme?.fontSize);
+  const fontSize = Number.isFinite(objectFontSize)
+    ? objectFontSize
+    : Number.isFinite(deckFontSize)
+      ? deckFontSize
+      : DEFAULT_DECK_THEME.fontSize;
+  editor.style.fontFamily =
+    style.fontFamily || currentDeck?.theme?.fontFamily || DEFAULT_DECK_THEME.fontFamily;
+  editor.style.fontSize = `${Math.max(8, fontSize * scale)}px`;
+  editor.style.color = style.color || currentDeck?.theme?.textColor || "#fff";
+  editor.style.textAlign = style.align || "center";
+  editor.style.alignItems =
+    style.align === "left" ? "flex-start" : style.align === "right" ? "flex-end" : "center";
+  editor.style.justifyContent =
+    style.verticalAlign === "top"
+      ? "flex-start"
+      : style.verticalAlign === "bottom"
+        ? "flex-end"
+        : "center";
+  applySlideTextObjectBackground(el, object);
+}
+
+function bindSlideTextObjectElement(el, editor, object) {
+  editor.dataset.suppress = "1";
+  renderSlideTextInputFromBlocks(editor, object.blocks);
+  delete editor.dataset.suppress;
+
+  const activate = () => selectSlideTextObject(object.id);
+  el.addEventListener("pointerdown", activate);
+  editor.addEventListener("focus", activate);
+  editor.addEventListener("input", () => {
+    if (editor.dataset.suppress === "1") return;
+    beginSlideUndoTransaction("Edit text");
+    object.blocks = slideTextBlocksFromInput(editor, object.blocks);
+    setDeckDirty(true);
+    const canvas = document.getElementById("slidesCanvas");
+    const scale = canvas ? canvas.getBoundingClientRect().width / (currentDeck?.canvas?.width || 1920) : 1;
+    fitSlideTextEditorElement(el, object, scale);
+    renderDeckPageStrip();
+    void syncActiveDeckPresentation().catch(console.error);
+  });
+  editor.addEventListener("blur", () => {
+    object.blocks = slideTextBlocksFromInput(editor, object.blocks);
+    commitSlideUndoTransaction();
+  });
+  editor.addEventListener("paste", (event) => {
+    const text = event.clipboardData?.getData("text/plain") || "";
+    if (!text) return;
+    event.preventDefault();
+    document.execCommand("insertText", false, text);
+  });
+  editor.addEventListener("keyup", () => captureSlideTextSelection(object.id));
+  editor.addEventListener("mouseup", () => captureSlideTextSelection(object.id));
+  editor.addEventListener("contextmenu", (event) => {
+    captureSlideTextSelection(object.id);
+    showSlideTextObjectContextMenu(event, object.id);
+  });
+  el.addEventListener("contextmenu", (event) => {
+    captureSlideTextSelection(object.id);
+    showSlideTextObjectContextMenu(event, object.id);
+  });
+
+  el.addEventListener("pointerdown", (event) => {
+    if (
+      event.button !== 0 ||
+      event.target.closest?.(".slides-canvas-text-handle") ||
+      event.target.closest?.(".slides-canvas-text-input")
+    ) return;
+    const canvas = document.getElementById("slidesCanvas");
+    if (!canvas) return;
+    selectSlideTextObject(object.id);
+    const canvasRect = canvas.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startFrame = normalizeSlideTextObjectFrame(object.frame);
+    const w = canvasRect.width;
+    const h = canvasRect.height;
+    const dragThreshold = 4;
+    let dragging = false;
+    try {
+      el.setPointerCapture(event.pointerId);
+    } catch {}
+    const move = (e) => {
+      const pixelDx = e.clientX - startX;
+      const pixelDy = e.clientY - startY;
+      if (!dragging) {
+        if (Math.hypot(pixelDx, pixelDy) < dragThreshold) return;
+        dragging = true;
+        beginSlideUndoTransaction("Move object");
+        el.classList.add("slides-canvas-drag-overlay");
+      }
+      e.preventDefault();
+      const dx = pixelDx / w;
+      const dy = pixelDy / h;
+      object.frame = {
+        ...startFrame,
+        x: Math.max(0, Math.min(1 - startFrame.width, startFrame.x + dx)),
+        y: Math.max(0, Math.min(1 - startFrame.height, startFrame.y + dy)),
+      };
+      el.style.left = `${object.frame.x * 100}%`;
+      el.style.top = `${object.frame.y * 100}%`;
+      setDeckDirty(true);
+    };
+    const up = (e) => {
+      if (dragging) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      commitSlideUndoTransaction();
+      try {
+        el.releasePointerCapture(event.pointerId);
+      } catch {}
+      el.classList.remove("slides-canvas-drag-overlay");
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+  }, true);
+
+  for (const handle of el.querySelectorAll(".slides-canvas-text-handle")) {
+    handle.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const canvas = document.getElementById("slidesCanvas");
+      if (!canvas) return;
+      selectSlideTextObject(object.id);
+      const which = handle.dataset.handle;
+      const canvasRect = canvas.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startFrame = normalizeSlideTextObjectFrame(object.frame);
+      const w = canvasRect.width;
+      const h = canvasRect.height;
+      beginSlideUndoTransaction("Resize object");
+      handle.setPointerCapture(event.pointerId);
+      const move = (e) => {
+        const dx = (e.clientX - startX) / w;
+        const dy = (e.clientY - startY) / h;
+        let { x, y, width, height } = startFrame;
+        if (which.includes("e")) width = Math.max(0.05, startFrame.width + dx);
+        if (which.includes("s")) height = Math.max(0.05, startFrame.height + dy);
+        if (which.includes("w")) {
+          width = Math.max(0.05, startFrame.width - dx);
+          x = Math.min(startFrame.x + startFrame.width - 0.05, startFrame.x + dx);
+        }
+        if (which.includes("n")) {
+          height = Math.max(0.05, startFrame.height - dy);
+          y = Math.min(startFrame.y + startFrame.height - 0.05, startFrame.y + dy);
+        }
+        if (x + width > 1) width = 1 - x;
+        if (y + height > 1) height = 1 - y;
+        object.frame = { x, y, width, height };
+        el.style.left = `${x * 100}%`;
+        el.style.top = `${y * 100}%`;
+        el.style.width = `${width * 100}%`;
+        el.style.height = `${height * 100}%`;
+        setDeckDirty(true);
+      };
+      const up = () => {
+        commitSlideUndoTransaction();
+        try {
+          handle.releasePointerCapture(event.pointerId);
+        } catch {}
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        handle.removeEventListener("pointercancel", up);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+      handle.addEventListener("pointercancel", up);
+    });
+  }
+}
+
+function bindSlideObjectBoxInteractions(el, object) {
+  const activate = () => selectSlideObject(object.id);
+  el.addEventListener("pointerdown", activate);
+  el.addEventListener("contextmenu", (event) => {
+    showSlideObjectContextMenu(event, object.id);
+  });
+
+  el.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest?.(".slides-canvas-text-handle")) return;
+    const canvas = document.getElementById("slidesCanvas");
+    if (!canvas) return;
+    selectSlideObject(object.id);
+    const canvasRect = canvas.getBoundingClientRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startFrame = normalizeSlideTextObjectFrame(object.frame);
+    const w = canvasRect.width;
+    const h = canvasRect.height;
+    const dragThreshold = 4;
+    let dragging = false;
+    try {
+      el.setPointerCapture(event.pointerId);
+    } catch {}
+    const move = (e) => {
+      const pixelDx = e.clientX - startX;
+      const pixelDy = e.clientY - startY;
+      if (!dragging) {
+        if (Math.hypot(pixelDx, pixelDy) < dragThreshold) return;
+        dragging = true;
+        beginSlideUndoTransaction("Move object");
+        el.classList.add("slides-canvas-drag-overlay");
+      }
+      e.preventDefault();
+      const dx = pixelDx / w;
+      const dy = pixelDy / h;
+      object.frame = {
+        ...startFrame,
+        x: Math.max(0, Math.min(1 - startFrame.width, startFrame.x + dx)),
+        y: Math.max(0, Math.min(1 - startFrame.height, startFrame.y + dy)),
+      };
+      el.style.left = `${object.frame.x * 100}%`;
+      el.style.top = `${object.frame.y * 100}%`;
+      setDeckDirty(true);
+    };
+    const up = (e) => {
+      if (dragging) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      commitSlideUndoTransaction();
+      try {
+        el.releasePointerCapture(event.pointerId);
+      } catch {}
+      el.classList.remove("slides-canvas-drag-overlay");
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+  }, true);
+
+  for (const handle of el.querySelectorAll(".slides-canvas-text-handle")) {
+    handle.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const canvas = document.getElementById("slidesCanvas");
+      if (!canvas) return;
+      selectSlideObject(object.id);
+      const which = handle.dataset.handle;
+      const canvasRect = canvas.getBoundingClientRect();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startFrame = normalizeSlideTextObjectFrame(object.frame);
+      const w = canvasRect.width;
+      const h = canvasRect.height;
+      beginSlideUndoTransaction("Resize object");
+      handle.setPointerCapture(event.pointerId);
+      const move = (e) => {
+        const dx = (e.clientX - startX) / w;
+        const dy = (e.clientY - startY) / h;
+        let { x, y, width, height } = startFrame;
+        if (which.includes("e")) width = Math.max(0.05, startFrame.width + dx);
+        if (which.includes("s")) height = Math.max(0.05, startFrame.height + dy);
+        if (which.includes("w")) {
+          width = Math.max(0.05, startFrame.width - dx);
+          x = Math.min(startFrame.x + startFrame.width - 0.05, startFrame.x + dx);
+        }
+        if (which.includes("n")) {
+          height = Math.max(0.05, startFrame.height - dy);
+          y = Math.min(startFrame.y + startFrame.height - 0.05, startFrame.y + dy);
+        }
+        if (x + width > 1) width = 1 - x;
+        if (y + height > 1) height = 1 - y;
+        object.frame = { x, y, width, height };
+        el.style.left = `${x * 100}%`;
+        el.style.top = `${y * 100}%`;
+        el.style.width = `${width * 100}%`;
+        el.style.height = `${height * 100}%`;
+        setDeckDirty(true);
+      };
+      const up = () => {
+        commitSlideUndoTransaction();
+        try {
+          handle.releasePointerCapture(event.pointerId);
+        } catch {}
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        handle.removeEventListener("pointercancel", up);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+      handle.addEventListener("pointercancel", up);
+    });
+  }
+}
+
+function slideObjectHandles() {
+  return ["se", "sw", "ne", "nw"].map((handleName) => {
+    const handle = document.createElement("div");
+    handle.className = "slides-canvas-text-handle";
+    handle.dataset.handle = handleName;
+    handle.setAttribute("aria-hidden", "true");
+    return handle;
+  });
+}
+
+function createSlideTextObjectElement(object, scale) {
+  const el = document.createElement("div");
+  el.className = "slides-canvas-text-object slides-canvas-object slides-canvas-object--text";
+  el.tabIndex = -1;
+  el.dataset.objectId = object.id;
+  if (object.id === activeSlideTextObjectId) el.classList.add("is-active");
+
+  const bgEl = document.createElement("div");
+  bgEl.className = "slides-canvas-text-object-bg";
+  const textarea = document.createElement("div");
+  textarea.className = "slides-canvas-text-input";
+  textarea.contentEditable = "true";
+  textarea.dataset.placeholder = "Type slide text...";
+  textarea.setAttribute("role", "textbox");
+  textarea.setAttribute("aria-multiline", "true");
+  textarea.setAttribute("aria-label", "Slide text");
+  const handles = slideObjectHandles();
+  el.append(bgEl, textarea, ...handles);
+  applySlideTextObjectElementStyle(el, textarea, object, scale);
+  bindSlideTextObjectElement(el, textarea, object);
+  return el;
+}
+
+function createSlideImageObjectElement(object) {
+  const el = document.createElement("div");
+  el.className = "slides-canvas-text-object slides-canvas-object slides-canvas-object--image";
+  el.tabIndex = -1;
+  el.dataset.objectId = object.id;
+  if (object.id === activeSlideTextObjectId) el.classList.add("is-active");
+
+  const image = object.image && typeof object.image === "object" ? object.image : {};
+  const img = document.createElement("img");
+  img.className = "slides-canvas-object__image";
+  if (image.path) img.src = pathToUrlSafe(image.path);
+  img.alt = "";
+  img.draggable = false;
+  const fit = image.fit === "cover" || image.fit === "fill" ? image.fit : "contain";
+  img.style.objectFit = fit === "fill" ? "fill" : fit;
+  el.append(img, ...slideObjectHandles());
+  applySlideObjectElementBoxStyle(el, object);
+  bindSlideObjectBoxInteractions(el, object);
+  return el;
+}
+
+function createSlideShapeObjectElement(object) {
+  const el = document.createElement("div");
+  el.className = "slides-canvas-text-object slides-canvas-object slides-canvas-object--shape";
+  el.tabIndex = -1;
+  el.dataset.objectId = object.id;
+  if (object.id === activeSlideTextObjectId) el.classList.add("is-active");
+
+  const shape = object.shape && typeof object.shape === "object" ? object.shape : {};
+  const shapeEl = document.createElement("div");
+  shapeEl.className = "slides-canvas-object__shape";
+  const opacity = `var(--slide-object-opacity, 1)`;
+  shapeEl.style.opacity = opacity;
+  if (shape.type === "ellipse") {
+    shapeEl.style.borderRadius = "999px";
+  } else if (shape.type === "line") {
+    shapeEl.classList.add("slides-canvas-object__shape--line");
+  } else if (Number.isFinite(shape.radius) && shape.radius > 0) {
+    shapeEl.style.borderRadius = `${shape.radius}px`;
+  }
+  shapeEl.style.backgroundColor = shape.type === "line" ? "transparent" : (shape.fill || "#ffffff");
+  if (shape.stroke || Number.isFinite(shape.strokeWidth)) {
+    const strokeWidth = Number.isFinite(shape.strokeWidth) ? shape.strokeWidth : 1;
+    shapeEl.style.border = `${strokeWidth}px solid ${shape.stroke || shape.fill || "#ffffff"}`;
+  }
+  if (shape.type === "line") {
+    const strokeWidth = Number.isFinite(shape.strokeWidth) && shape.strokeWidth > 0 ? shape.strokeWidth : 4;
+    shapeEl.style.border = "none";
+    shapeEl.style.borderTop = `${strokeWidth}px solid ${shape.stroke || shape.fill || "#ffffff"}`;
+  }
+  el.append(shapeEl, ...slideObjectHandles());
+  applySlideObjectElementBoxStyle(el, object);
+  bindSlideObjectBoxInteractions(el, object);
+  return el;
+}
+
+function createSlideObjectElement(object, scale) {
+  if (object?.kind === "image") return createSlideImageObjectElement(object);
+  if (object?.kind === "shape") return createSlideShapeObjectElement(object);
+  return createSlideTextObjectElement(object, scale);
+}
+
+function renderSlideCanvas() {
+  const canvas = document.getElementById("slidesCanvas");
+  const bgEl = document.getElementById("slidesCanvasBackground");
+  const textLayer = document.getElementById("slidesTextLayer");
+  if (!canvas || !textLayer || !bgEl) return;
+
+  const page = currentPage();
+  const hasPage = Boolean(page);
+  textLayer.style.display = hasPage ? "" : "none";
+  bgEl.style.display = hasPage ? "" : "none";
+
+  if (!hasPage) {
+    textLayer.innerHTML = "";
+    bgEl.style.backgroundColor = "#000";
+    bgEl.style.backgroundImage = "";
+    return;
+  }
+
+  // Background
+  const bg = page.background || {};
+  if (bg.type === "image" && bg.path) {
+    bgEl.style.backgroundColor = "#000";
+    bgEl.style.backgroundImage = `url("${pathToUrlSafe(bg.path)}")`;
+  } else {
+    bgEl.style.backgroundColor = bg.color || currentDeck.theme?.backgroundColor || "#000";
+    bgEl.style.backgroundImage = "";
+  }
+
+  const objects = orderedSlideObjects(page);
+  if (!slideObjectById(page, activeSlideTextObjectId)) {
+    activeSlideTextObjectId = objects.find((object) => object?.kind === "text")?.id || objects[0]?.id || null;
+  }
+  const canvasRect = canvas.getBoundingClientRect();
+  const scale = canvasRect.width / (currentDeck.canvas?.width || 1920);
+  textLayer.innerHTML = "";
+  for (const object of objects) {
+    const objectEl = createSlideObjectElement(object, scale);
+    textLayer.appendChild(objectEl);
+    if (object?.kind === "text") {
+      fitSlideTextEditorElement(objectEl, object, scale);
+    }
+  }
+}
+
+function flushSlideEditorTextToModel(_opts = {}) {
+  if (!currentDeck) return;
+  const page = currentPage();
+  if (!page) return;
+  document.querySelectorAll(".slides-canvas-text-object").forEach((el) => {
+    const obj = slideTextObjectById(page, el.dataset.objectId);
+    if (!obj) return;
+    const editor = el.querySelector(".slides-canvas-text-input");
+    if (editor) {
+      const nextBlocks = slideTextBlocksFromInput(editor, obj.blocks);
+      if (!slideBlocksEqual(nextBlocks, obj.blocks)) {
+        obj.blocks = nextBlocks;
+        setDeckDirty(true);
+      }
+    }
+    const frame = slideTextFrameFromDom(el);
+    if (frame && !slideFramesEqual(obj.frame, frame)) {
+      obj.frame = frame;
+      setDeckDirty(true);
+    }
+  });
+
+  const fontSizeInput = document.getElementById("slidesDeckFontSize");
+  const fontSize = Number(fontSizeInput?.value);
+  if (Number.isFinite(fontSize) && fontSize > 0 && currentDeck.theme?.fontSize !== fontSize) {
+    currentDeck.theme = { ...(currentDeck.theme || {}), fontSize };
+    setDeckDirty(true);
+  }
+
+  const fontFamilyInput = document.getElementById("slidesDeckFontFamily");
+  if (fontFamilyInput?.value && currentDeck.theme?.fontFamily !== fontFamilyInput.value) {
+    currentDeck.theme = { ...(currentDeck.theme || {}), fontFamily: fontFamilyInput.value };
+    setDeckDirty(true);
+  }
+
+  const textColorInput = document.getElementById("slidesDeckTextColor");
+  if (textColorInput?.value && currentDeck.theme?.textColor !== textColorInput.value) {
+    currentDeck.theme = { ...(currentDeck.theme || {}), textColor: textColorInput.value };
+    setDeckDirty(true);
+  }
+}
+
+/* ── Text object styling / context menu ───────────────────── */
+
+function renderSlideTemplatePicker() {
+  const host = document.getElementById("slidesTemplateList");
+  if (!host) return;
+  host.innerHTML = "";
+  for (const template of SLIDE_LAYOUT_TEMPLATES) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "slides-template-card";
+    button.disabled = !currentDeck || !currentPage();
+    button.dataset.templateId = template.id;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-label", template.label);
+
+    const preview = document.createElement("span");
+    preview.className = "slides-template-card__preview";
+    for (const object of template.objects) {
+      const box = document.createElement("span");
+      box.className = "slides-template-card__box";
+      box.style.left = `${object.frame.x * 100}%`;
+      box.style.top = `${object.frame.y * 100}%`;
+      box.style.width = `${object.frame.width * 100}%`;
+      box.style.height = `${object.frame.height * 100}%`;
+      preview.appendChild(box);
+    }
+
+    const label = document.createElement("span");
+    label.className = "slides-template-card__label";
+    label.textContent = template.label;
+    button.append(preview, label);
+    button.addEventListener("click", () => applySlideTemplate(template.id));
+    host.appendChild(button);
+  }
+}
+
+function slideTemplateBlocksForSlot(textObjects, slotIndex, slotCount) {
+  if (!textObjects.length) return textToSegmentsBlocks("");
+  if (slotCount === 1) {
+    const text = textObjects
+      .map((object) => slideTextObjectText(object).trim())
+      .filter(Boolean)
+      .join("\n\n");
+    return text ? textToSegmentsBlocks(text) : blocksClone(textObjects[0]?.blocks, "");
+  }
+  return blocksClone(textObjects[slotIndex]?.blocks, "");
+}
+
+function createSlideTemplateTextObject(spec, slotIndex, slotCount, textObjects, baseZIndex) {
+  const fontScale = Number.isFinite(spec.fontScale) ? spec.fontScale : 1;
+  const deckFontSize = Number(currentDeck?.theme?.fontSize) || DEFAULT_DECK_THEME.fontSize;
+  const obj = createTextObject({
+    text: "",
+    frame: spec.frame,
+    style: {
+      fontFamily: currentDeck?.theme?.fontFamily || DEFAULT_DECK_THEME.fontFamily,
+      fontSize: Math.max(24, Math.round(deckFontSize * fontScale)),
+      color: currentDeck?.theme?.textColor || DEFAULT_DECK_THEME.textColor,
+      align: spec.align || "center",
+      verticalAlign: spec.verticalAlign || "center",
+    },
+    zIndex: baseZIndex + slotIndex + 1,
+  });
+  obj.blocks = slideTemplateBlocksForSlot(textObjects, slotIndex, slotCount);
+  return obj;
+}
+
+function applySlideTemplate(templateId) {
+  const page = currentPage();
+  const template = SLIDE_LAYOUT_TEMPLATES.find((candidate) => candidate.id === templateId);
+  if (!page || !template) return;
+  recordSlideUndoCheckpoint("Apply template");
+  flushSlideEditorTextToModel();
+  if (!Array.isArray(page.objects)) page.objects = [];
+  const existingObjects = orderedSlideObjects(page);
+  const textObjects = existingObjects.filter((object) => object?.kind === "text");
+  const nonTextObjects = existingObjects.filter((object) => object?.kind !== "text");
+  const baseZIndex = nonTextObjects.reduce(
+    (max, object) => Math.max(max, Number.isFinite(object?.zIndex) ? object.zIndex : 0),
+    0,
+  );
+  const textSlots = template.objects || [];
+  const newTextObjects = textSlots.map((spec, index) =>
+    createSlideTemplateTextObject(spec, index, textSlots.length, textObjects, baseZIndex),
+  );
+  page.objects = [...nonTextObjects, ...newTextObjects];
+  activeSlideTextObjectId = newTextObjects[0]?.id || nonTextObjects[0]?.id || null;
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  renderSlideTemplatePicker();
+  if (activeSlideTextObjectId) {
+    selectSlideObject(activeSlideTextObjectId, { focus: newTextObjects[0]?.id === activeSlideTextObjectId });
+  }
+}
+
+function nextSlideTextObjectFrame(page) {
+  const count = slideTextObjectsForPage(page).length;
+  const offset = Math.min(0.24, count * 0.04);
+  return {
+    x: Math.min(0.72, DEFAULT_TEXT_FRAME.x + offset),
+    y: Math.min(0.72, DEFAULT_TEXT_FRAME.y + offset),
+    width: DEFAULT_TEXT_FRAME.width,
+    height: DEFAULT_TEXT_FRAME.height,
+  };
+}
+
+function nextSlideObjectFrame(page, kind = "shape", { clientX = null, clientY = null } = {}) {
+  const count = slideObjectsForPage(page).length;
+  const offset = Math.min(0.2, count * 0.035);
+  const base =
+    kind === "line"
+      ? { x: 0.18, y: 0.48, width: 0.64, height: 0.06 }
+      : kind === "image"
+        ? { x: 0.16, y: 0.16, width: 0.68, height: 0.68 }
+        : { x: 0.22, y: 0.22, width: 0.56, height: 0.42 };
+  const frame = {
+    ...base,
+    x: Math.min(Math.max(0, 1 - base.width), base.x + offset),
+    y: Math.min(Math.max(0, 1 - base.height), base.y + offset),
+  };
+  return slideObjectFrameAtCanvasPoint(frame, { clientX, clientY });
+}
+
+function addSlideTextBox() {
+  const page = currentPage();
+  if (!page) return;
+  recordSlideUndoCheckpoint("Add text box");
+  flushSlideEditorTextToModel();
+  if (!Array.isArray(page.objects)) page.objects = [];
+  const obj = createTextObject({
+    text: "",
+    frame: nextSlideTextObjectFrame(page),
+    style: {
+      fontFamily: currentDeck?.theme?.fontFamily || DEFAULT_DECK_THEME.fontFamily,
+      fontSize: Number(currentDeck?.theme?.fontSize) || DEFAULT_DECK_THEME.fontSize,
+      color: currentDeck?.theme?.textColor || DEFAULT_DECK_THEME.textColor,
+      align: "center",
+      verticalAlign: "center",
+    },
+    zIndex: maxSlideObjectZIndex(page) + 1,
+  });
+  page.objects.push(obj);
+  activeSlideTextObjectId = obj.id;
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  selectSlideTextObject(obj.id, { focus: true });
+}
+
+function chooseSlideObjectImage({ targetId = null, clientX = null, clientY = null } = {}) {
+  if (!currentPage()) return;
+  slideObjectImageTargetId = targetId || null;
+  slideObjectImageInsertPoint =
+    Number.isFinite(clientX) && Number.isFinite(clientY) ? { clientX, clientY } : null;
+  document.getElementById("slidesObjectImageInput")?.click();
+}
+
+function addSlideImageObject(filePath, { clientX = null, clientY = null } = {}) {
+  const page = currentPage();
+  if (!page || !filePath) return null;
+  recordSlideUndoCheckpoint("Add image");
+  if (!Array.isArray(page.objects)) page.objects = [];
+  const obj = createImageObject({
+    path: filePath,
+    fit: "contain",
+    frame: nextSlideObjectFrame(page, "image", { clientX, clientY }),
+    zIndex: maxSlideObjectZIndex(page) + 1,
+  });
+  page.objects.push(obj);
+  activeSlideTextObjectId = obj.id;
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  selectSlideObject(obj.id);
+  return obj;
+}
+
+function replaceSlideImageObject(objectId, filePath) {
+  const page = currentPage();
+  const obj = slideObjectById(page, objectId);
+  if (!obj || obj.kind !== "image" || !filePath) return false;
+  recordSlideUndoCheckpoint("Replace image");
+  obj.image = {
+    ...(obj.image && typeof obj.image === "object" ? obj.image : {}),
+    path: filePath,
+  };
+  activeSlideTextObjectId = obj.id;
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  selectSlideObject(obj.id);
+  return true;
+}
+
+function addSlideShapeObject(type = "rect", { clientX = null, clientY = null } = {}) {
+  const page = currentPage();
+  if (!page) return null;
+  const shapeType = type === "ellipse" || type === "line" ? type : "rect";
+  recordSlideUndoCheckpoint(`Add ${shapeType}`);
+  if (!Array.isArray(page.objects)) page.objects = [];
+  const obj = createShapeObject({
+    type: shapeType,
+    fill: shapeType === "line" ? currentDeck?.theme?.textColor || "#ffffff" : "#3584e4",
+    stroke: shapeType === "line" ? currentDeck?.theme?.textColor || "#ffffff" : null,
+    strokeWidth: shapeType === "line" ? 6 : 0,
+    radius: shapeType === "rect" ? 12 : 0,
+    frame: nextSlideObjectFrame(page, shapeType, { clientX, clientY }),
+    zIndex: maxSlideObjectZIndex(page) + 1,
+  });
+  page.objects.push(obj);
+  activeSlideTextObjectId = obj.id;
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  selectSlideObject(obj.id);
+  return obj;
+}
+
+function duplicateSlideTextObject(objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideTextObjectById(page, objectId);
+  if (!page || !obj) return;
+  insertSlideObjectCopy(obj);
+}
+
+function insertSlideObjectCopy(sourceObject, { clientX = null, clientY = null } = {}) {
+  const page = currentPage();
+  if (!page || !sourceObject) return null;
+  recordSlideUndoCheckpoint("Duplicate object");
+  flushSlideEditorTextToModel();
+  if (!Array.isArray(page.objects)) page.objects = [];
+  const copy = cloneSlideObject(sourceObject);
+  copy.id = newSlideObjectId();
+  copy.frame = offsetSlideObjectFrame(copy.frame, { clientX, clientY });
+  copy.zIndex = maxSlideObjectZIndex(page) + 1;
+  copy.opacity = clampSlideOpacity(copy.opacity, 1);
+  page.objects.push(copy);
+  activeSlideTextObjectId = copy.id;
+  slideObjectPasteCount += 1;
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  selectSlideObject(copy.id, { focus: copy.kind === "text" });
+  return copy;
+}
+
+function canRemoveSlideObject(page, object) {
+  return Boolean(page && object);
+}
+
+function deleteSlideObject(objectId = activeSlideTextObjectId, { quiet = false } = {}) {
+  const page = currentPage();
+  if (!page || !Array.isArray(page.objects)) return false;
+  const obj = slideObjectById(page, objectId);
+  if (!obj) return false;
+  if (!canRemoveSlideObject(page, obj)) return false;
+  const idx = page.objects.findIndex((candidate) => candidate && candidate.id === objectId);
+  if (idx < 0) return false;
+  recordSlideUndoCheckpoint("Delete object");
+  page.objects.splice(idx, 1);
+  activeSlideTextObjectId = orderedSlideObjects(page)[Math.min(idx, page.objects.length - 1)]?.id || null;
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  return true;
+}
+
+function copySlideObject(objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideObjectById(page, objectId);
+  if (!obj) return false;
+  flushSlideEditorTextToModel();
+  slideObjectClipboard = cloneSlideObject(obj);
+  slideObjectPasteCount = 0;
+  showGnomeToast("Copied slide object");
+  return true;
+}
+
+function cutSlideObject(objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideObjectById(page, objectId);
+  if (!obj) return false;
+  if (!copySlideObject(objectId)) return false;
+  return deleteSlideObject(objectId, { quiet: true });
+}
+
+function pasteSlideObject({ clientX = null, clientY = null } = {}) {
+  if (!slideObjectClipboard) {
+    showGnomeToast("No slide object copied");
+    return null;
+  }
+  return insertSlideObjectCopy(slideObjectClipboard, { clientX, clientY });
+}
+
+function setSlideObjectOpacity(opacity, objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideObjectById(page, objectId);
+  if (!obj) return;
+  recordSlideUndoForMutation("Set object opacity");
+  obj.opacity = clampSlideOpacity(opacity, 1);
+  setDeckDirty(true);
+  renderSlideCanvas();
+  selectSlideObject(obj.id, { focus: obj.kind === "text" });
+}
+
+function setSlideObjectZOrder(action, objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideObjectById(page, objectId);
+  if (!page || !obj) return;
+  const ordered = orderedSlideObjects(page);
+  const currentIndex = ordered.findIndex((candidate) => candidate?.id === obj.id);
+  if (currentIndex < 0) return;
+  let nextIndex = currentIndex;
+  if (action === "front") nextIndex = ordered.length - 1;
+  else if (action === "back") nextIndex = 0;
+  else if (action === "forward") nextIndex = Math.min(ordered.length - 1, currentIndex + 1);
+  else if (action === "backward") nextIndex = Math.max(0, currentIndex - 1);
+  if (nextIndex === currentIndex) return;
+  recordSlideUndoCheckpoint("Arrange object");
+  const [moved] = ordered.splice(currentIndex, 1);
+  ordered.splice(nextIndex, 0, moved);
+  ordered.forEach((object, index) => {
+    object.zIndex = index + 1;
+  });
+  page.objects = ordered;
+  activeSlideTextObjectId = obj.id;
+  setDeckDirty(true);
+  renderSlideCanvas();
+  selectSlideObject(obj.id, { focus: obj.kind === "text" });
+}
+
+function deleteSlideTextObject(objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideTextObjectById(page, objectId);
+  if (!page || !obj) return;
+  deleteSlideObject(objectId);
+}
+
+function updateSlideTextObjectStyle(style, objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideTextObjectById(page, objectId);
+  if (!obj || !style || typeof style !== "object") return;
+  recordSlideUndoForMutation("Style text object");
+  obj.style = { ...(obj.style || {}), ...style };
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  selectSlideTextObject(obj.id, { focus: true });
+  void syncActiveDeckPresentation().catch(console.error);
+}
+
+function setSlideTextObjectBackground(background, objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideTextObjectById(page, objectId);
+  if (!obj) return;
+  recordSlideUndoForMutation("Set text background");
+  if (background) {
+    obj.background = background;
+  } else {
+    delete obj.background;
+  }
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  selectSlideTextObject(obj.id, { focus: true });
+  void syncActiveDeckPresentation().catch(console.error);
+}
+
+function setSlideImageObjectFit(fit, objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideObjectById(page, objectId);
+  if (!obj || obj.kind !== "image") return;
+  const nextFit = fit === "cover" || fit === "fill" ? fit : "contain";
+  if ((obj.image?.fit || "contain") === nextFit) return;
+  recordSlideUndoForMutation("Set image fit");
+  obj.image = {
+    ...(obj.image && typeof obj.image === "object" ? obj.image : {}),
+    fit: nextFit,
+  };
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  selectSlideObject(obj.id);
+}
+
+function updateSlideShapeObject(shapePatch, objectId = activeSlideTextObjectId) {
+  const page = currentPage();
+  const obj = slideObjectById(page, objectId);
+  if (!obj || obj.kind !== "shape" || !shapePatch || typeof shapePatch !== "object") return;
+  recordSlideUndoForMutation("Style shape");
+  const currentShape = obj.shape && typeof obj.shape === "object" ? obj.shape : {};
+  const nextShape = { ...currentShape, ...shapePatch };
+  if (nextShape.type !== "ellipse" && nextShape.type !== "line") nextShape.type = "rect";
+  obj.shape = nextShape;
+  setDeckDirty(true);
+  renderSlideCanvas();
+  renderDeckPageStrip();
+  selectSlideObject(obj.id);
+}
+
+function getOrCreateCallbackColorInput(id, onColor) {
+  let input = document.getElementById(id);
+  if (!input) {
+    input = document.createElement("input");
+    input.type = "color";
+    input.id = id;
+    input.style.position = "fixed";
+    input.style.left = "-100px";
+    input.style.top = "-100px";
+    input.style.width = "32px";
+    input.style.height = "32px";
+    input.style.opacity = "0.01";
+    input.style.pointerEvents = "none";
+    input.style.zIndex = "999999";
+    document.body.appendChild(input);
+  }
+  input.oninput = (event) => onColor(event.target.value);
+  input.onchange = (event) => {
+    onColor(event.target.value);
+    commitSlideUndoTransaction();
+  };
+  input.onblur = () => commitSlideUndoTransaction();
+  return input;
+}
+
+function hideSlidesEditorContextMenu() {
+  const menu = document.getElementById("slidesEditorContextMenu");
+  if (!menu) return;
+  menu.style.display = "none";
+  menu.style.visibility = "";
+}
+
+function positionSlidesEditorContextMenu(menu, x, y) {
+  menu.classList.add("slides-editor-context-menu");
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  menu.style.visibility = "hidden";
+  menu.style.display = "block";
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
+  menu.style.visibility = "";
+}
+
+function showCallbackColorPicker(event, inputId, color, onColor) {
+  event.preventDefault();
+  event.stopPropagation();
+  beginSlideUndoTransaction("Pick color");
+  const input = getOrCreateCallbackColorInput(inputId, onColor);
+  input.value = color || "#ffffff";
+  input.style.left = `${event.clientX}px`;
+  input.style.top = `${event.clientY}px`;
+  hideSlidesEditorContextMenu();
+  input.focus({ preventScroll: true });
+  try {
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+      return;
+    }
+  } catch {}
+  input.click();
+}
+
+function appendSlidesMenuItem(menu, label, onClick, { active = false, icon = "" } = {}) {
+  const item = document.createElement("div");
+  item.className = "song-editor-context-menu__item";
+  if (active) item.classList.add("song-editor-context-menu__item--active");
+  item.innerHTML = icon ? `<span class="icon">${icon}</span> ${label}` : label;
+  item.addEventListener("click", onClick);
+  menu.appendChild(item);
+  return item;
+}
+
+function appendSlidesMenuHeader(menu, label) {
+  const header = document.createElement("div");
+  header.className = "song-editor-context-menu__header";
+  header.textContent = label;
+  menu.appendChild(header);
+}
+
+function appendSlidesMenuSeparator(menu) {
+  menu.appendChild(document.createElement("div")).className = "song-editor-context-menu__separator";
+}
+
+function appendSlidesMenuButtonRow(menu, buttons, { columns = 3 } = {}) {
+  const row = document.createElement("div");
+  row.className = "slides-editor-context-menu__button-row";
+  row.style.gridTemplateColumns = `repeat(${Math.max(1, columns)}, minmax(0, 1fr))`;
+  for (const buttonDef of buttons) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "slides-editor-context-menu__button";
+    if (buttonDef.active) button.classList.add("is-active");
+    if (buttonDef.disabled) button.disabled = true;
+    button.textContent = buttonDef.label;
+    if (buttonDef.title) button.title = buttonDef.title;
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      buttonDef.onClick?.(event);
+    });
+    row.appendChild(button);
+  }
+  menu.appendChild(row);
+  return row;
+}
+
+function appendSlidesMenuSelect(menu, value, options, onChange) {
+  const row = document.createElement("div");
+  row.className = "slides-editor-context-menu__select-row";
+  const select = document.createElement("select");
+  select.className = "slides-editor-context-menu__select";
+  for (const option of options) {
+    const optionEl = document.createElement("option");
+    optionEl.value = option.value;
+    optionEl.textContent = option.label;
+    select.appendChild(optionEl);
+  }
+  select.value = value;
+  select.addEventListener("change", () => onChange?.(select.value));
+  row.appendChild(select);
+  menu.appendChild(row);
+  return select;
+}
+
+function appendSlideObjectMenuItems(menu, object, event) {
+  const opacity = clampSlideOpacity(object?.opacity, 1);
+
+  appendSlidesMenuHeader(menu, "Object");
+  appendSlidesMenuButtonRow(menu, [
+    {
+      label: "Copy",
+      onClick: () => {
+        copySlideObject(object.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Cut",
+      onClick: () => {
+        cutSlideObject(object.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Paste",
+      active: Boolean(slideObjectClipboard),
+      onClick: () => {
+        pasteSlideObject({ clientX: event?.clientX, clientY: event?.clientY });
+        hideSlidesEditorContextMenu();
+      },
+    },
+  ]);
+
+  appendSlidesMenuSeparator(menu);
+  appendSlidesMenuHeader(menu, "Arrange");
+  appendSlidesMenuButtonRow(menu, [
+    {
+      label: "Forward",
+      onClick: () => {
+        setSlideObjectZOrder("forward", object.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Backward",
+      onClick: () => {
+        setSlideObjectZOrder("backward", object.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Front",
+      onClick: () => {
+        setSlideObjectZOrder("front", object.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Back",
+      onClick: () => {
+        setSlideObjectZOrder("back", object.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+  ], { columns: 2 });
+
+  appendSlidesMenuSeparator(menu);
+  appendSlidesMenuHeader(menu, "Opacity");
+  appendSlidesMenuButtonRow(menu, [
+    { label: "100%", value: 1 },
+    { label: "75%", value: 0.75 },
+    { label: "50%", value: 0.5 },
+    { label: "25%", value: 0.25 },
+    { label: "0%", value: 0 },
+  ].map((option) => ({
+    label: option.label,
+    active: Math.abs(opacity - option.value) < 0.01,
+    onClick: () => {
+      setSlideObjectOpacity(option.value, object.id);
+      hideSlidesEditorContextMenu();
+    },
+  })), { columns: 5 });
+}
+
+function showSlideObjectContextMenu(event, objectId) {
+  event.preventDefault();
+  event.stopPropagation();
+  const page = currentPage();
+  const obj = slideObjectById(page, objectId);
+  const menu = document.getElementById("slidesEditorContextMenu");
+  if (!obj || !menu) return;
+  if (obj.kind === "text") {
+    showSlideTextObjectContextMenu(event, objectId);
+    return;
+  }
+  selectSlideObject(obj.id);
+  menu.innerHTML = "";
+  appendSlideObjectMenuItems(menu, obj, event);
+
+  if (obj.kind === "image") {
+    const image = obj.image && typeof obj.image === "object" ? obj.image : {};
+    const fit = image.fit === "cover" || image.fit === "fill" ? image.fit : "contain";
+    appendSlidesMenuSeparator(menu);
+    appendSlidesMenuHeader(menu, "Image");
+    appendSlidesMenuButtonRow(menu, [
+      {
+        label: "Replace",
+        onClick: () => {
+          chooseSlideObjectImage({ targetId: obj.id });
+          hideSlidesEditorContextMenu();
+        },
+      },
+      ...["cover", "contain", "fill"].map((value) => ({
+        label: value[0].toUpperCase() + value.slice(1),
+        active: fit === value,
+        onClick: () => {
+          setSlideImageObjectFit(value, obj.id);
+          hideSlidesEditorContextMenu();
+        },
+      })),
+    ], { columns: 2 });
+  } else if (obj.kind === "shape") {
+    const shape = obj.shape && typeof obj.shape === "object" ? obj.shape : {};
+    const shapeType = shape.type === "ellipse" || shape.type === "line" ? shape.type : "rect";
+    appendSlidesMenuSeparator(menu);
+    appendSlidesMenuHeader(menu, "Shape");
+    appendSlidesMenuButtonRow(menu, [
+      {
+        label: "Fill",
+        onClick: (evt) => {
+          showCallbackColorPicker(
+            evt,
+            "slidesShapeFillInput",
+            shape.fill || "#3584e4",
+            (color) => updateSlideShapeObject({ fill: color }, obj.id),
+          );
+        },
+      },
+      {
+        label: "Stroke",
+        onClick: (evt) => {
+          showCallbackColorPicker(
+            evt,
+            "slidesShapeStrokeInput",
+            shape.stroke || shape.fill || "#ffffff",
+            (color) => updateSlideShapeObject({
+              stroke: color,
+              strokeWidth: Number.isFinite(shape.strokeWidth) && shape.strokeWidth > 0 ? shape.strokeWidth : 4,
+            }, obj.id),
+          );
+        },
+      },
+    ], { columns: 2 });
+    appendSlidesMenuButtonRow(menu, [
+      { label: "Rect", value: "rect" },
+      { label: "Ellipse", value: "ellipse" },
+      { label: "Line", value: "line" },
+    ].map((option) => ({
+      label: option.label,
+      active: shapeType === option.value,
+      onClick: () => {
+        updateSlideShapeObject({
+          type: option.value,
+          ...(option.value === "line" && !(Number.isFinite(shape.strokeWidth) && shape.strokeWidth > 0)
+            ? { strokeWidth: 6, stroke: shape.stroke || shape.fill || "#ffffff" }
+            : {}),
+        }, obj.id);
+        hideSlidesEditorContextMenu();
+      },
+    })), { columns: 3 });
+  }
+
+  appendSlidesMenuSeparator(menu);
+  appendSlidesMenuButtonRow(menu, [
+    {
+      label: "Duplicate",
+      onClick: () => {
+        insertSlideObjectCopy(obj);
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Delete",
+      onClick: () => {
+        deleteSlideObject(obj.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+  ], { columns: 2 });
+  positionSlidesEditorContextMenu(menu, event.clientX, event.clientY);
+}
+
+function showSlideTextObjectContextMenu(event, objectId) {
+  event.preventDefault();
+  event.stopPropagation();
+  const page = currentPage();
+  const obj = slideTextObjectById(page, objectId);
+  const menu = document.getElementById("slidesEditorContextMenu");
+  if (!obj || !menu) return;
+  selectSlideTextObject(obj.id);
+  captureSlideTextSelection(obj.id);
+  const style = obj.style || {};
+  const background = obj.background || null;
+  menu.innerHTML = "";
+
+  appendSlideObjectMenuItems(menu, obj, event);
+  appendSlidesMenuSeparator(menu);
+  appendSlidesMenuHeader(menu, "Text Format");
+  appendSlidesMenuButtonRow(menu, [{
+    label: "Text Color",
+    onClick: (evt) => {
+      showCallbackColorPicker(
+        evt,
+        "slidesObjectTextColorInput",
+        style.color || currentDeck?.theme?.textColor || DEFAULT_DECK_THEME.textColor,
+        (color) => applySlideTextObjectFormatting({ color }, obj.id),
+      );
+    },
+  }], { columns: 1 });
+  appendSlidesMenuButtonRow(menu, [
+    {
+      label: "Bold",
+      active: String(style.fontWeight || "") === "700" || style.fontWeight === "bold",
+      onClick: () => {
+        applySlideTextObjectFormatting({ fontWeight: "700" }, obj.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Italic",
+      active: style.fontStyle === "italic",
+      onClick: () => {
+        applySlideTextObjectFormatting({ fontStyle: "italic" }, obj.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Underline",
+      active: String(style.textDecoration || "").includes("underline"),
+      onClick: () => {
+        applySlideTextObjectFormatting({ textDecoration: "underline" }, obj.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+  ], { columns: 3 });
+
+  const fontInput = document.getElementById("slidesDeckFontFamily");
+  const fonts = fontInput
+    ? Array.from(fontInput.options).map((option) => ({
+        label: option.textContent || option.value,
+        value: option.value,
+      }))
+    : [
+        { label: "Adwaita Sans", value: "Adwaita Sans" },
+        { label: "CMG Sans", value: "CMG Sans" },
+        { label: "Arial", value: "Arial" },
+        { label: "Georgia", value: "Georgia" },
+      ];
+  appendSlidesMenuSeparator(menu);
+  appendSlidesMenuHeader(menu, "Font Family");
+  const activeFont = style.fontFamily || currentDeck?.theme?.fontFamily || DEFAULT_DECK_THEME.fontFamily;
+  appendSlidesMenuSelect(menu, activeFont, fonts, (fontFamily) => {
+    applySlideTextObjectFormatting({ fontFamily }, obj.id);
+    hideSlidesEditorContextMenu();
+  });
+
+  appendSlidesMenuSeparator(menu);
+  appendSlidesMenuHeader(menu, "Text Box Background");
+  appendSlidesMenuButtonRow(menu, [
+    {
+      label: "Color",
+      onClick: (evt) => {
+        showCallbackColorPicker(
+          evt,
+          "slidesObjectBackgroundColorInput",
+          background?.color || "#000000",
+          (color) => setSlideTextObjectBackground({ type: "color", color }, obj.id),
+        );
+      },
+    },
+    {
+      label: "Media",
+      onClick: (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+        slideTextObjectBackgroundTargetId = obj.id;
+        hideSlidesEditorContextMenu();
+        document.getElementById("slidesTextObjectBackgroundInput")?.click();
+      },
+    },
+    ...(background
+      ? [{
+          label: "Clear",
+          onClick: (evt) => {
+            evt.preventDefault();
+            evt.stopPropagation();
+            setSlideTextObjectBackground(null, obj.id);
+            hideSlidesEditorContextMenu();
+          },
+        }]
+      : []),
+  ], { columns: background ? 3 : 2 });
+
+  appendSlidesMenuSeparator(menu);
+  appendSlidesMenuButtonRow(menu, [
+    {
+      label: "Duplicate",
+      onClick: () => {
+        duplicateSlideTextObject(obj.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Delete",
+      onClick: () => {
+        deleteSlideTextObject(obj.id);
+        hideSlidesEditorContextMenu();
+      },
+    },
+  ], { columns: 2 });
+
+  positionSlidesEditorContextMenu(menu, event.clientX, event.clientY);
+}
+
+function showSlideCanvasContextMenu(event) {
+  if (event.target.closest?.(".slides-canvas-text-object")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const menu = document.getElementById("slidesEditorContextMenu");
+  if (!menu) return;
+  menu.innerHTML = "";
+  appendSlidesMenuHeader(menu, "Canvas");
+  appendSlidesMenuButtonRow(menu, [
+    {
+      label: "Text Box",
+      onClick: () => {
+        addSlideTextBox();
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Image",
+      onClick: () => {
+        chooseSlideObjectImage({ clientX: event.clientX, clientY: event.clientY });
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Rect",
+      onClick: () => {
+        addSlideShapeObject("rect", { clientX: event.clientX, clientY: event.clientY });
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Ellipse",
+      onClick: () => {
+        addSlideShapeObject("ellipse", { clientX: event.clientX, clientY: event.clientY });
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Line",
+      onClick: () => {
+        addSlideShapeObject("line", { clientX: event.clientX, clientY: event.clientY });
+        hideSlidesEditorContextMenu();
+      },
+    },
+    {
+      label: "Paste",
+      active: Boolean(slideObjectClipboard),
+      onClick: () => {
+        pasteSlideObject({ clientX: event.clientX, clientY: event.clientY });
+        hideSlidesEditorContextMenu();
+      },
+    },
+  ], { columns: 3 });
+  positionSlidesEditorContextMenu(menu, event.clientX, event.clientY);
+}
+
+function slideEditorShortcutEditableTarget(event) {
+  const target = event.target;
+  const editable = target?.closest?.("input, textarea, select, [contenteditable='true']");
+  if (!editable) return null;
+  if (!editable.closest?.("#slidesWorkspace")) return editable;
+  return editable;
+}
+
+function editableSelectionIsCollapsed(editable) {
+  if (
+    (editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement) &&
+    typeof editable.selectionStart === "number" &&
+    typeof editable.selectionEnd === "number"
+  ) {
+    return editable.selectionStart === editable.selectionEnd;
+  }
+  const selection = window.getSelection?.();
+  return !selection || selection.isCollapsed;
+}
+
+function handleSlideEditorClipboardShortcut(event) {
+  if (!isSlidesWorkspaceVisible()) return false;
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
+  const key = String(event.key || "").toLowerCase();
+  if (!["c", "x", "v"].includes(key)) return false;
+  const editable = slideEditorShortcutEditableTarget(event);
+  if (editable) {
+    const isSlideTextBox = Boolean(editable.closest?.(".slides-canvas-text-object"));
+    if (key === "v" || !isSlideTextBox || !editableSelectionIsCollapsed(editable)) {
+      return false;
+    }
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  if (key === "c") return copySlideObject(), true;
+  if (key === "x") return cutSlideObject(), true;
+  pasteSlideObject();
+  return true;
+}
+
+function handleSlideEditorUndoRedoShortcut(event) {
+  if (!isSlidesWorkspaceVisible()) return false;
+  if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
+  const key = String(event.key || "").toLowerCase();
+  const wantsUndo = key === "z" && !event.shiftKey;
+  const wantsRedo = key === "y" || (key === "z" && event.shiftKey);
+  if (!wantsUndo && !wantsRedo) return false;
+  if (slideEditorShortcutEditableTarget(event)) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  return wantsUndo ? undoSlideEdit() : redoSlideEdit();
+}
+
+function handleSlideEditorDeleteShortcut(event) {
+  if (!isSlidesWorkspaceVisible()) return false;
+  if (event.ctrlKey || event.metaKey || event.altKey) return false;
+  if (event.key !== "Delete" && event.key !== "Backspace") return false;
+  if (slideEditorShortcutEditableTarget(event)) return false;
+  if (!activeSlideTextObjectId) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  return deleteSlideObject(activeSlideTextObjectId);
+}
+
+function bindSlideUndoControlTransactions() {
+  const controls = [
+    ["slidesDeckTitleInput", "Edit deck title"],
+    ["slidesDeckFolderSelect", "Move deck"],
+    ["slidesDeckFontFamily", "Change deck font"],
+    ["slidesDeckFontSize", "Change deck font size"],
+    ["slidesDeckTextColor", "Change deck text color"],
+    ["slidesDeckBgColor", "Change deck background"],
+    ["slidesPageLabelInput", "Edit page label"],
+    ["slidesPageBackgroundColor", "Change page background"],
+    ["slidesPageNotes", "Edit page notes"],
+    ["slidesPageTransitionEffect", "Change transition"],
+    ["slidesPageTransitionDuration", "Change transition"],
+  ];
+  for (const [id, label] of controls) {
+    const control = document.getElementById(id);
+    if (!control || control.dataset.slideUndoBound === "1") continue;
+    control.dataset.slideUndoBound = "1";
+    control.addEventListener("focus", () => beginSlideUndoTransaction(label));
+    control.addEventListener("pointerdown", () => beginSlideUndoTransaction(label));
+    control.addEventListener("change", () => commitSlideUndoTransaction());
+    control.addEventListener("blur", () => commitSlideUndoTransaction());
+  }
+}
+
+function attachSlideCanvasInteractions() {
+  const canvas = document.getElementById("slidesCanvas");
+  if (!canvas || canvas.dataset.slideInteractionsInstalled === "1") return;
+  canvas.dataset.slideInteractionsInstalled = "1";
+  canvas.addEventListener("contextmenu", showSlideCanvasContextMenu);
+  document.addEventListener("pointerdown", (event) => {
+    const menu = document.getElementById("slidesEditorContextMenu");
+    if (!menu || menu.style.display === "none") return;
+    if (menu.contains(event.target)) return;
+    hideSlidesEditorContextMenu();
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (handleSlideEditorUndoRedoShortcut(event)) return;
+    if (handleSlideEditorClipboardShortcut(event)) return;
+    if (handleSlideEditorDeleteShortcut(event)) return;
+    if (event.key === "Escape") hideSlidesEditorContextMenu();
+  });
+
+  const mediaInput = document.getElementById("slidesTextObjectBackgroundInput");
+  mediaInput?.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    const targetId = slideTextObjectBackgroundTargetId || activeSlideTextObjectId;
+    slideTextObjectBackgroundTargetId = null;
+    if (!file || !targetId) return;
+    const filePath = typeof getPathForFile === "function" ? getPathForFile(file) : "";
+    if (!filePath) {
+      showGnomeToast("Could not resolve file path");
+      return;
+    }
+    const type = /\.(mp4|webm|mov|m4v)$/i.test(filePath) ? "video" : "image";
+    setSlideTextObjectBackground({ type, path: filePath }, targetId);
+    event.target.value = "";
+  });
+
+  const imageInput = document.getElementById("slidesObjectImageInput");
+  imageInput?.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    const targetId = slideObjectImageTargetId;
+    const insertPoint = slideObjectImageInsertPoint;
+    slideObjectImageTargetId = null;
+    slideObjectImageInsertPoint = null;
+    if (!file) return;
+    const filePath = typeof getPathForFile === "function" ? getPathForFile(file) : "";
+    if (!filePath) {
+      showGnomeToast("Could not resolve file path");
+      return;
+    }
+    if (targetId) {
+      replaceSlideImageObject(targetId, filePath);
+    } else {
+      addSlideImageObject(filePath, insertPoint || {});
+    }
+    event.target.value = "";
+  });
+}
+
+function updateCurrentSlideTransitionFromControls() {
+  const page = currentPage();
+  if (!page) return;
+  recordSlideUndoForMutation("Change transition");
+  const transition = readSlideTransitionControls(
+    "slidesPageTransitionEffect",
+    "slidesPageTransitionDuration",
+    { allowInherit: true },
+  );
+  const override = normalizeItemSlideTransitionOverride(transition);
+  if (override) {
+    page.transition = override;
+  } else {
+    delete page.transition;
+  }
+  setDeckDirty(true);
+  void syncActiveDeckPresentation().catch(console.error);
+}
+
+/* ── Show Now / Schedule ──────────────────────────────────── */
+
+function buildDeckQueueEntry({ pageId = null } = {}) {
+  if (!currentDeck) return null;
+  flushSlideEditorTextToModel();
+  if (currentDeckIsSongDocument()) {
+    return buildSongQueueEntryFromDeck({
+      deck: currentDeck,
+      render: {
+        ...currentSongRenderState,
+        ...deckDefaultRender(currentDeck),
+      },
+      currentSectionId: pageId || currentDeckPageId,
+      sourceKind: "library",
+    });
+  }
+  const transientSong = deckToTransientSong(currentDeck);
+  if (!transientSong) return null;
+  const targetPageId = pageId || currentDeckPageId || transientSong.sections[0]?.id || null;
+  const page = findPage(currentDeck, targetPageId);
+  const overrides = pageRenderOverrides(page, currentDeck);
+  const render = { ...deckDefaultRender(currentDeck), ...overrides };
+  const entry = queueEntryFromSong({
+    song: transientSong,
+    render,
+    currentSectionId: targetPageId,
+  });
+  const transitionOverride = normalizeItemSlideTransitionOverride(page?.transition);
+  if (transitionOverride) entry.transition = transitionOverride;
+  // Runtime rendering still uses the transient song snapshot, while project
+  // identity and editor routing come from type/source/deckSnapshot.
+  entry.type = "deck";
+  entry.path = deckQueuePath(currentDeck.id, targetPageId);
+  entry.name = currentDeck.title || "Slide Deck";
+  entry.source = {
+    kind: "deck",
+    deckId: currentDeck.id,
+    pageId: targetPageId,
+    songId: transientSong.id,
+  };
+  entry.deckSnapshot = normalizeSlideDeck(currentDeck);
+  return entry;
+}
+
+function syncCurrentDeckQueueItemSnapshot() {
+  if (!currentDeck || !currentDeckPageId || !queueItemMatchesDeck(currentSongQueueItem, currentDeck)) {
+    return null;
+  }
+  const existingItem = currentSongQueueItem;
+  const preserved = {
+    autoAdvance: existingItem.autoAdvance,
+    cueStartTime: existingItem.cueStartTime,
+    cueVolume: existingItem.cueVolume,
+    loop: existingItem.loop,
+  };
+  const updated = buildDeckQueueEntry({ pageId: currentDeckPageId });
+  if (!updated) return null;
+  Object.assign(existingItem, updated);
+  existingItem.autoAdvance = preserved.autoAdvance;
+  existingItem.cueStartTime = preserved.cueStartTime;
+  if (preserved.cueVolume !== undefined) existingItem.cueVolume = preserved.cueVolume;
+  if (preserved.loop !== undefined) existingItem.loop = preserved.loop;
+  currentWorkspaceSongDeck = existingItem.deckSnapshot || normalizeSlideDeck(currentDeck);
+  currentWorkspaceSong = existingItem.songSnapshot || deckToTransientSong(currentWorkspaceSongDeck);
+  currentSongRenderState = mergeSongRenderState(DEFAULT_SONG_RENDER, existingItem.render || {});
+  currentSongSectionId = currentDeckPageId;
+  return existingItem;
+}
+
+async function syncActiveDeckPresentation() {
+  const item = syncCurrentDeckQueueItemSnapshot();
+  if (!item) return false;
+  return syncActiveScheduledSongPresentation();
+}
+
+async function showCurrentDeckNow() {
+  if (!currentDeck) {
+    showGnomeToast("Select a deck first");
+    return;
+  }
+  if (typeof hasAudienceOutputSelected === "function" && !hasAudienceOutputSelected()) {
+    showGnomeToast("Choose an audience output display");
+    return;
+  }
+  const entry = buildDeckQueueEntry({});
+  if (!entry) return;
+  try {
+    if (typeof currentWorkspaceSong !== "undefined") currentWorkspaceSong = entry.songSnapshot;
+    if (typeof currentSongRenderState !== "undefined") {
+      currentSongRenderState = mergeSongRenderState(DEFAULT_SONG_RENDER, entry.render || {});
+    }
+    if (typeof currentSongSectionId !== "undefined") currentSongSectionId = entry.render?.currentSectionId || null;
+    if (typeof currentSongQueueItem !== "undefined") currentSongQueueItem = entry;
+    if (typeof mediaPlaybackEndedPending !== "undefined") mediaPlaybackEndedPending = false;
+    if (typeof pendingQueueSwitchIndex !== "undefined") pendingQueueSwitchIndex = null;
+    if (typeof pendingQueueSwitchStartTime !== "undefined") pendingQueueSwitchStartTime = 0;
+    if (typeof userStopPresentationPending !== "undefined") userStopPresentationPending = false;
+    if (typeof currentQueueIndex !== "undefined") currentQueueIndex = -1;
+
+    if (typeof isActiveMediaWindow === "function" && isActiveMediaWindow() && activeMediaWindowContentType === "song") {
+      await sendSongTextToOutput(entry);
+      if (typeof isPlaying !== "undefined") isPlaying = true;
+      if (typeof isQueuePlaying !== "undefined") isQueuePlaying = false;
+      activeMediaWindowContentType = "song";
+      if (typeof markSongShowNowPresentation === "function") {
+        markSongShowNowPresentation(entry);
+      }
+      if (typeof isActiveMediaWindowCache !== "undefined") isActiveMediaWindowCache = true;
+      if (typeof updateDynUI === "function") updateDynUI();
+      if (typeof renderQueue === "function") renderQueue();
+      return;
+    }
+    const started = await createMediaWindow({
+      textItem: entry,
+      transientText: true,
+      songItem: true,
+    });
+    if (!started) {
+      showGnomeToast("No output started");
+      return;
+    }
+    activeMediaWindowContentType = "song";
+    if (typeof isPlaying !== "undefined") isPlaying = true;
+    if (typeof isQueuePlaying !== "undefined") isQueuePlaying = false;
+    if (typeof markSongShowNowPresentation === "function") {
+      markSongShowNowPresentation(entry);
+    }
+    if (typeof isActiveMediaWindowCache !== "undefined") isActiveMediaWindowCache = true;
+    if (typeof updateDynUI === "function") updateDynUI();
+    if (typeof renderQueue === "function") renderQueue();
+  } catch (err) {
+    console.error("Failed to show deck:", err);
+    showGnomeToast(`Failed to show deck: ${err.message || err}`);
+  }
+}
+
+function scheduleCurrentDeck() {
+  if (!currentDeck) {
+    showGnomeToast("Select a deck first");
+    return;
+  }
+  const entry = buildDeckQueueEntry({});
+  if (!entry) return;
+  invalidateQueueUndoToastAfterMutation();
+  insertQueueEntriesAfterSelection([entry]);
+  renderQueue();
+  saveMediaFile();
+  showGnomeToast(`Scheduled ${entry.name}`);
+}
+
 async function openSongEditor(song) {
   const drawer = document.getElementById("songEditorDrawer");
   if (!drawer) return;
@@ -8937,6 +12872,50 @@ async function openSongEditor(song) {
       syncSongsMoveFolderSelect(songToEdit, false);
     }
   }
+
+  if (!songToEdit) {
+    currentSongRenderState = { ...DEFAULT_SONG_RENDER };
+    const blankSong = normalizeToSongAST({
+      schema: "ems.song.v1",
+      id: `song_${crypto.randomUUID()}`,
+      title: "Untitled Song",
+      metadata: { authors: [], copyright: "", ccliNumber: null, oneLicense: null },
+      sections: [
+        {
+          id: `sec_${crypto.randomUUID().replace(/-/g, "").slice(0, 8)}`,
+          kind: "verse",
+          label: "Verse 1",
+          blocks: textToSegmentsBlocks(""),
+        },
+      ],
+      playOrder: [],
+    });
+    songToEdit = songAstToDeck(blankSong, { documentType: SONG_DECK_DOCUMENT_TYPE });
+  }
+
+  const songDeck = songDeckDocumentFromSongDocument(songToEdit, currentSongRenderState);
+  if (!songDeck) {
+    showGnomeToast("Could not open song editor");
+    return;
+  }
+  currentEditingSongId = songDeck.id;
+  currentWorkspaceSongDeck = songDeck;
+  currentWorkspaceSong = deckToTransientSong(songDeck);
+  currentSongRenderState = mergeSongRenderState(
+    songRenderStateFromSongDocument(songDeck),
+    currentSongRenderState,
+  );
+  currentSongSectionId =
+    currentSongSectionId && findPage(songDeck, currentSongSectionId)
+      ? currentSongSectionId
+      : songDeck.pages?.[0]?.id || null;
+  document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
+  showSlidesWorkspace();
+  loadDeckIntoWorkspace(songDeck, {
+    pageId: currentSongSectionId,
+    documentType: SONG_DECK_DOCUMENT_TYPE,
+  });
+  return;
 
   const launcher = document.getElementById("songsLauncher");
   const slide = document.getElementById("songsPreviewSlide");
@@ -9037,18 +13016,21 @@ async function checkIfSongInLibrary(songId) {
 
 async function updateScheduleSongsWithUpdatedSong(song, opts = {}) {
   const applyTransitionOverride = opts.applyTransitionOverride === true;
+  const songDeck = songDeckDocumentFromSongDocument(song, currentSongRenderState);
+  const songId = songDeck?.id || song?.id;
   let updatedCount = 0;
   for (let i = 0; i < mediaQueue.length; i++) {
     const item = mediaQueue[i];
     if (
       item.type === "song" &&
-      (item.source?.songId === song.id || parseSongQueuePath(item.path) === song.id)
+      (item.source?.songId === songId || item.deckSnapshot?.id === songId || parseSongQueuePath(item.path) === songId)
     ) {
-      const updatedEntry = queueEntryFromSong({
-        song,
+      const updatedEntry = buildSongQueueEntryFromDeck({
+        deck: songDeck,
         render: currentSongRenderState,
         currentSectionId: item.render?.currentSectionId || currentSongSectionId,
       });
+      if (!updatedEntry) continue;
       updatedEntry.autoAdvance = item.autoAdvance;
       updatedEntry.cueStartTime = item.cueStartTime;
       if (applyTransitionOverride) {
@@ -9116,18 +13098,19 @@ async function saveSongEditor() {
       ...songDefaultRenderFromRender(currentSongRenderState),
     },
   };
+  const songDeck = songDeckDocumentFromSongDocument(song, currentSongRenderState);
 
   try {
-    const saved = await songsAPI.save(songForLibraryDatabase(song));
+    const saved = await songsAPI.save(songDeck);
     closeSongEditor();
     
     // Update schedule items with the saved song
-    await updateScheduleSongsWithUpdatedSong(saved || song);
+    await updateScheduleSongsWithUpdatedSong(saved || songDeck);
 
     const searchInput = document.getElementById("songsSearchInput");
     await refreshSongFolders();
     if (searchInput) await refreshSongsBrowser(searchInput.value);
-    await loadSongIntoWorkspace(saved || song, { render: currentSongRenderState });
+    await loadSongIntoWorkspace(saved || songDeck, { render: currentSongRenderState });
   } catch (err) {
     console.error("Failed to save song:", err);
     alert(`Failed to save song: ${err.message}`);
@@ -9182,24 +13165,27 @@ async function saveSongToSchedule() {
     },
   };
 
-  const entry = queueEntryFromSong({
-    song,
+  const songDeck = songDeckDocumentFromSongDocument(song, currentSongRenderState);
+  const entry = buildSongQueueEntryFromDeck({
+    deck: songDeck,
     render: currentSongRenderState,
     currentSectionId: currentSongSectionId,
   });
+  if (!entry) return;
 
   let updatedCount = 0;
   for (let i = 0; i < mediaQueue.length; i++) {
     const item = mediaQueue[i];
     if (
       item.type === "song" &&
-      (item.source?.songId === songId || parseSongQueuePath(item.path) === songId)
+      (item.source?.songId === songId || item.deckSnapshot?.id === songId || parseSongQueuePath(item.path) === songId)
     ) {
-      const updatedEntry = queueEntryFromSong({
-        song,
+      const updatedEntry = buildSongQueueEntryFromDeck({
+        deck: songDeck,
         render: currentSongRenderState,
         currentSectionId: item.render?.currentSectionId || currentSongSectionId,
       });
+      if (!updatedEntry) continue;
       updatedEntry.autoAdvance = item.autoAdvance;
       updatedEntry.cueStartTime = item.cueStartTime;
       const transitionOverride = normalizeItemSlideTransitionOverride(currentSongRenderState.transition);
@@ -9221,8 +13207,9 @@ async function saveSongToSchedule() {
   }
 
   closeSongEditor();
-  currentWorkspaceSong = song;
-  await loadSongIntoWorkspace(song, { render: currentSongRenderState });
+  currentWorkspaceSongDeck = songDeck;
+  currentWorkspaceSong = deckToTransientSong(songDeck);
+  await loadSongIntoWorkspace(songDeck, { render: currentSongRenderState });
 
   invalidateQueueUndoToastAfterMutation();
   renderQueue();
@@ -9264,7 +13251,7 @@ async function deleteSongFromLibrary(songId = currentWorkspaceSong?.id) {
 }
 
 function renderStateForLibrarySong(song) {
-  return mergeSongRenderState(songRenderStateFromDefaultRender(song?.defaultRender), {
+  return mergeSongRenderState(songRenderStateFromSongDocument(song), {
     copyright: song?.metadata?.copyright || "",
     ccliNumber: song?.metadata?.ccliNumber || null,
     oneLicense: song?.metadata?.oneLicense || null,
@@ -9272,7 +13259,7 @@ function renderStateForLibrarySong(song) {
 }
 
 async function loadFullLibrarySong(songSummary) {
-  if (songSummary?.sections?.length) return songSummary;
+  if (songSummary?.sections?.length || isSlideDeckDocument(songSummary)) return songSummary;
   return songsAPI.get(songSummary.id);
 }
 
@@ -9299,10 +13286,11 @@ async function activateSongFromLibrary(songSummary, { openEditor = false } = {})
 async function scheduleSongFromLibrary(songSummary) {
   try {
     const song = await loadFullLibrarySong(songSummary);
-    const entry = queueEntryFromSong({
-      song,
+    const entry = buildSongQueueEntryFromDeck({
+      deck: song,
       render: renderStateForLibrarySong(song),
     });
+    if (!entry) return false;
     invalidateQueueUndoToastAfterMutation();
     insertQueueEntriesAfterSelection([entry]);
     renderQueue();
@@ -9653,6 +13641,8 @@ function installBibleMediaControls() {
   if (!versionSelect || versionSelect.dataset.bibleBound === "1") return;
   versionSelect.dataset.bibleBound = "1";
   installBibleWorkspaceEventGuards();
+  installSongsWorkspaceEventGuards();
+  installSlidesWorkspaceEventGuards();
   syncLowerThirdFeatureAvailability();
   installBiblePreviewScaleObserver();
 
@@ -9671,6 +13661,194 @@ function installBibleMediaControls() {
   document.getElementById("openSongsWorkspaceBtn")?.addEventListener("click", () => {
     void openSongsWorkspaceFromButton().catch(console.error);
   });
+
+  document.getElementById("openSlidesWorkspaceBtn")?.addEventListener("click", () => {
+    void openSlidesWorkspaceFromButton().catch(console.error);
+  });
+  document.getElementById("newDeckBtn")?.addEventListener("click", () => createNewDeck());
+  document.getElementById("newDeckFolderBtn")?.addEventListener("click", async () => {
+    const name = (window.prompt("New deck folder name") || "").trim();
+    if (!name) return;
+    try {
+      await slidesAPI.createFolder(name);
+      await refreshSlidesFolderList();
+    } catch (err) {
+      console.error("Failed to create deck folder:", err);
+      showGnomeToast(`Failed to create folder: ${err.message || err}`);
+    }
+  });
+  document.getElementById("slidesSaveDeckBtn")?.addEventListener("click", () => {
+    void saveCurrentDeck().catch(console.error);
+  });
+  document.getElementById("slidesDeleteDeckBtn")?.addEventListener("click", () => {
+    void deleteCurrentDeck().catch(console.error);
+  });
+  document.getElementById("slidesDuplicateDeckBtn")?.addEventListener("click", () => {
+    void duplicateCurrentDeck().catch(console.error);
+  });
+  document.getElementById("slidesShowNowBtn")?.addEventListener("click", () => {
+    void showCurrentDeckNow().catch(console.error);
+  });
+  document.getElementById("slidesAddScheduleBtn")?.addEventListener("click", () => {
+    scheduleCurrentDeck();
+  });
+  document.getElementById("slidesWorkspaceTitleButton")?.addEventListener("click", () => renameCurrentDeck());
+  document.getElementById("slidesAddPageBtn")?.addEventListener("click", () => addDeckPage());
+  document.getElementById("slidesDuplicatePageBtn")?.addEventListener("click", () => duplicateDeckPage());
+  document.getElementById("slidesDeletePageBtn")?.addEventListener("click", () => deleteDeckPage());
+  document.getElementById("slidesAddTextBoxBtn")?.addEventListener("click", () => addSlideTextBox());
+  document.getElementById("slidesAddImageBtn")?.addEventListener("click", () => chooseSlideObjectImage());
+  document.getElementById("slidesAddRectBtn")?.addEventListener("click", () => addSlideShapeObject("rect"));
+  document.getElementById("slidesAddEllipseBtn")?.addEventListener("click", () => addSlideShapeObject("ellipse"));
+  document.getElementById("slidesAddLineBtn")?.addEventListener("click", () => addSlideShapeObject("line"));
+  document.getElementById("slidesUndoBtn")?.addEventListener("click", () => undoSlideEdit());
+  document.getElementById("slidesRedoBtn")?.addEventListener("click", () => redoSlideEdit());
+
+  const slidesSearchInput = document.getElementById("slidesSearchInput");
+  const slidesSearchClear = document.getElementById("slidesSearchClearBtn");
+  let slidesSearchTimer = null;
+  slidesSearchInput?.addEventListener("input", () => {
+    if (slidesSearchClear) slidesSearchClear.hidden = !slidesSearchInput.value;
+    clearTimeout(slidesSearchTimer);
+    slidesSearchTimer = setTimeout(() => {
+      void refreshSlidesList(slidesSearchInput.value).catch(console.error);
+    }, 150);
+  });
+  slidesSearchClear?.addEventListener("click", () => {
+    if (slidesSearchInput) {
+      slidesSearchInput.value = "";
+      slidesSearchClear.hidden = true;
+      void refreshSlidesList("").catch(console.error);
+    }
+  });
+
+  // Deck properties
+  document.getElementById("slidesDeckTitleInput")?.addEventListener("input", (e) => {
+    if (!currentDeck) return;
+    recordSlideUndoForMutation("Edit deck title");
+    currentDeck.title = e.target.value;
+    setDeckDirty(true);
+    syncSlidesWorkspaceTitle();
+  });
+  document.getElementById("slidesDeckFolderSelect")?.addEventListener("change", (e) => {
+    if (!currentDeck) return;
+    recordSlideUndoForMutation("Move deck");
+    currentDeck.folderId = e.target.value || null;
+    setDeckDirty(true);
+  });
+  document.getElementById("slidesDeckFontFamily")?.addEventListener("change", (e) => {
+    if (!currentDeck) return;
+    recordSlideUndoForMutation("Change deck font");
+    currentDeck.theme = { ...(currentDeck.theme || {}), fontFamily: e.target.value };
+    const obj = activeSlideTextObject();
+    if (obj) obj.style = { ...(obj.style || {}), fontFamily: e.target.value };
+    setDeckDirty(true);
+    renderSlideCanvas();
+  });
+  document.getElementById("slidesDeckFontSize")?.addEventListener("input", (e) => {
+    if (!currentDeck) return;
+    const n = Number(e.target.value);
+    if (!Number.isFinite(n)) return;
+    recordSlideUndoForMutation("Change deck font size");
+    currentDeck.theme = { ...(currentDeck.theme || {}), fontSize: n };
+    const obj = activeSlideTextObject();
+    if (obj) obj.style = { ...(obj.style || {}), fontSize: n };
+    setDeckDirty(true);
+    renderSlideCanvas();
+  });
+  document.getElementById("slidesDeckTextColor")?.addEventListener("input", (e) => {
+    if (!currentDeck) return;
+    recordSlideUndoForMutation("Change deck text color");
+    currentDeck.theme = { ...(currentDeck.theme || {}), textColor: e.target.value };
+    const obj = activeSlideTextObject();
+    if (obj) obj.style = { ...(obj.style || {}), color: e.target.value };
+    setDeckDirty(true);
+    renderSlideCanvas();
+    renderDeckPageStrip();
+  });
+  document.getElementById("slidesDeckBgColor")?.addEventListener("input", (e) => {
+    if (!currentDeck) return;
+    recordSlideUndoForMutation("Change deck background");
+    currentDeck.theme = { ...(currentDeck.theme || {}), backgroundColor: e.target.value };
+    setDeckDirty(true);
+    renderSlideCanvas();
+    renderDeckPageStrip();
+  });
+
+  // Page properties
+  document.getElementById("slidesPageLabelInput")?.addEventListener("input", (e) => {
+    const page = currentPage();
+    if (!page) return;
+    recordSlideUndoForMutation("Edit page label");
+    page.label = e.target.value;
+    setDeckDirty(true);
+    renderDeckPageStrip();
+  });
+  document.getElementById("slidesPageBackgroundColor")?.addEventListener("input", (e) => {
+    const page = currentPage();
+    if (!page) return;
+    recordSlideUndoForMutation("Change page background");
+    page.background = { type: "color", color: e.target.value };
+    setDeckDirty(true);
+    renderSlideCanvas();
+    renderDeckPageStrip();
+  });
+  document.getElementById("slidesPageBackgroundInput")?.addEventListener("change", (e) => {
+    const page = currentPage();
+    if (!page) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const filePath = typeof getPathForFile === "function" ? getPathForFile(file) : "";
+    if (!filePath) {
+      showGnomeToast("Could not resolve file path");
+      return;
+    }
+    const isVideo = /\.(mp4|webm|mov|m4v)$/i.test(filePath);
+    recordSlideUndoCheckpoint("Set page background");
+    page.background = { type: isVideo ? "video" : "image", path: filePath };
+    setDeckDirty(true);
+    renderSlideCanvas();
+    renderDeckPageStrip();
+    renderSlideEditorState();
+    e.target.value = "";
+  });
+  document.getElementById("slidesPageBackgroundClearBtn")?.addEventListener("click", () => {
+    const page = currentPage();
+    if (!page) return;
+    recordSlideUndoCheckpoint("Clear page background");
+    page.background = { type: "color", color: currentDeck?.theme?.backgroundColor || "#000000" };
+    setDeckDirty(true);
+    renderSlideCanvas();
+    renderDeckPageStrip();
+    renderSlideEditorState();
+  });
+  document.getElementById("slidesPageNotes")?.addEventListener("input", (e) => {
+    const page = currentPage();
+    if (!page) return;
+    recordSlideUndoForMutation("Edit page notes");
+    page.notes = e.target.value;
+    setDeckDirty(true);
+  });
+  document.getElementById("slidesPageTransitionEffect")?.addEventListener("change", () => {
+    updateCurrentSlideTransitionFromControls();
+  });
+  document.getElementById("slidesPageTransitionDuration")?.addEventListener("input", () => {
+    updateCurrentSlideTransitionFromControls();
+  });
+
+  attachSlideCanvasInteractions();
+  bindSlideUndoControlTransactions();
+  // Re-flow font sizes when the canvas resizes
+  if (typeof ResizeObserver !== "undefined") {
+    const canvasFrame = document.getElementById("slidesCanvasFrame");
+    if (canvasFrame) {
+      try {
+        new ResizeObserver(() => {
+          if (isSlidesWorkspaceVisible()) renderSlideCanvas();
+        }).observe(canvasFrame);
+      } catch {}
+    }
+  }
   
   const handleNewSong = () => {
     void openSongEditor(null).catch(console.error);
@@ -9759,7 +13937,11 @@ function installBibleMediaControls() {
     if (!currentWorkspaceSong) return;
     try {
       syncCurrentWorkspaceSongDefaultRender();
-      const saved = await songsAPI.save(songForLibraryDatabase(currentWorkspaceSong));
+      const songDeck = songDeckDocumentFromSongDocument(
+        currentWorkspaceSongDeck || currentWorkspaceSong,
+        currentSongRenderState,
+      );
+      const saved = await songsAPI.save(songDeck);
       await updateScheduleSongsWithUpdatedSong(saved || currentWorkspaceSong);
       const searchInput = document.getElementById("songsSearchInput");
       await refreshSongFolders();
@@ -9883,7 +14065,10 @@ function installBibleMediaControls() {
       const section =
         enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
         currentWorkspaceSong.sections?.[0];
-      if (section) renderSongSectionPreview(section);
+      if (section) {
+        renderSongSectionPreview(section);
+        void syncActiveScheduledSongPresentation().catch(console.error);
+      }
     }
   });
 
@@ -9898,7 +14083,10 @@ function installBibleMediaControls() {
       const section =
         enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
         currentWorkspaceSong.sections?.[0];
-      if (section) renderSongSectionPreview(section);
+      if (section) {
+        renderSongSectionPreview(section);
+        void syncActiveScheduledSongPresentation().catch(console.error);
+      }
     }
   });
 
@@ -9928,7 +14116,10 @@ function installBibleMediaControls() {
       const section =
         enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
         currentWorkspaceSong.sections?.[0];
-      if (section) renderSongSectionPreview(section);
+      if (section) {
+        renderSongSectionPreview(section);
+        void syncActiveScheduledSongPresentation().catch(console.error);
+      }
     }
   };
   for (const id of ["songEditorFontInput", "songEditorFontSizeInput", "songEditorAutosizeModeInput", "songEditorMinFontSizeInput", "songEditorTextColor", "songEditorBackgroundColor", "songEditorTransitionEffect", "songEditorTransitionDuration"]) {
@@ -9952,6 +14143,7 @@ function installBibleMediaControls() {
         const section = sections.find((s) => s.id === currentSongSectionId) || sections[0];
         if (section) {
           renderSongSectionPreview(section);
+          void syncActiveScheduledSongPresentation().catch(console.error);
         } else {
           const slide = document.getElementById("songEditorLivePreviewSlide");
           if (slide) slide.innerHTML = "";
@@ -10267,10 +14459,16 @@ function buildProjectQueueItemSnapshot(item) {
     ? projectBibleReferenceEntryForQueueItem(item)
     : null;
   const songEntry = isQueueItemSong(item) ? item : null;
+  const deckBackedEntry = songEntry?.deckSnapshot ? songEntry : null;
   const itemPath = bibleEntry
     ? bibleQueuePath(bibleEntry.reference, bibleEntry.version)
     : songEntry
-      ? songQueuePath(songEntry.songSnapshot?.id || parseSongQueuePath(songEntry.path) || songEntry.source?.songId || "song")
+      ? item.type === "deck"
+        ? deckQueuePath(
+            songEntry.deckSnapshot?.id || songEntry.source?.deckId || "deck",
+            songEntry.render?.currentSectionId || songEntry.source?.pageId || null,
+          )
+        : songQueuePath(songEntry.deckSnapshot?.id || songEntry.songSnapshot?.id || parseSongQueuePath(songEntry.path) || songEntry.source?.songId || "song")
       : item.path;
   const itemName = bibleEntry
     ? projectBibleQueueName(bibleEntry)
@@ -10280,7 +14478,7 @@ function buildProjectQueueItemSnapshot(item) {
   return {
     path: itemPath,
     name: itemName,
-    type: bibleEntry ? "bible" : songEntry ? "song" : item.type,
+    type: bibleEntry ? "bible" : songEntry ? (item.type === "deck" ? "deck" : "song") : item.type,
     missing: bibleEntry || songEntry ? false : item.missing === true,
     originalPath:
       typeof item.originalPath === "string" && item.originalPath.length > 0 && !bibleEntry && !songEntry
@@ -10307,7 +14505,8 @@ function buildProjectQueueItemSnapshot(item) {
       : undefined,
     bible: bibleEntry || undefined,
     source: songEntry?.source,
-    songSnapshot: songEntry?.songSnapshot,
+    songSnapshot: deckBackedEntry ? undefined : songEntry?.songSnapshot,
+    deckSnapshot: songEntry?.deckSnapshot ? normalizeSlideDeck(songEntry.deckSnapshot) : undefined,
     sequence: songEntry?.sequence,
     render: songEntry?.render,
   };
@@ -10432,8 +14631,10 @@ function applyProjectStateSnapshot(state, opts = {}) {
         (x.bible && typeof x.bible === "object");
       const isSongItem =
         x.type === "song" ||
+        x.type === "deck" ||
         isSongPath(rawPath) ||
-        (x.songSnapshot && typeof x.songSnapshot === "object");
+        (x.songSnapshot && typeof x.songSnapshot === "object") ||
+        (x.deckSnapshot && typeof x.deckSnapshot === "object");
       const bibleEntry = isBibleItem
         ? projectBibleReferenceOnlyEntry(x.bible || {}, {
             pathEntry: parseBibleQueuePath(rawPath),
@@ -10442,9 +14643,14 @@ function applyProjectStateSnapshot(state, opts = {}) {
       const itemPath = bibleEntry
         ? bibleQueuePath(bibleEntry.reference, bibleEntry.version)
         : isSongItem
-          ? songQueuePath(
-              x.songSnapshot?.id || parseSongQueuePath(rawPath) || x.source?.songId || "song",
-            )
+          ? x.type === "deck"
+            ? deckQueuePath(
+                x.deckSnapshot?.id || x.source?.deckId || parseDeckQueuePath(rawPath)?.deckId || "deck",
+                x.render?.currentSectionId || x.source?.pageId || parseDeckQueuePath(rawPath)?.pageId || null,
+              )
+            : songQueuePath(
+                x.deckSnapshot?.id || x.songSnapshot?.id || parseSongQueuePath(rawPath) || x.source?.songId || "song",
+              )
           : rawPath;
       if (!itemPath) return null;
       const itemName = bibleEntry
@@ -10459,7 +14665,7 @@ function applyProjectStateSnapshot(state, opts = {}) {
       const item = {
         path: itemPath,
         name: itemName,
-        type: bibleEntry ? "bible" : isSongItem ? "song" : classifyQueueMediaType(itemPath),
+        type: bibleEntry ? "bible" : isSongItem ? (x.type === "deck" ? "deck" : "song") : classifyQueueMediaType(itemPath),
         missing: bibleEntry || isSongItem ? false : x.missing === true,
         originalPath:
           typeof x.originalPath === "string" && x.originalPath.length > 0 && !bibleEntry && !isSongItem
@@ -10491,13 +14697,20 @@ function applyProjectStateSnapshot(state, opts = {}) {
         transition: isQueueItemTransitionCapable({
           type: bibleEntry ? "bible" : isSongItem ? "song" : classifyQueueMediaType(itemPath),
           path: itemPath,
-          songSnapshot: isSongItem ? x.songSnapshot : undefined,
+          songSnapshot: isSongItem
+            ? x.songSnapshot || (x.deckSnapshot ? deckToTransientSong(normalizeSlideDeck(x.deckSnapshot)) : undefined)
+            : undefined,
         })
           ? normalizeItemSlideTransitionOverride(x.transition)
           : undefined,
         bible: bibleEntry || undefined,
         source: isSongItem && x.source ? x.source : undefined,
-        songSnapshot: isSongItem && x.songSnapshot ? x.songSnapshot : undefined,
+        songSnapshot: isSongItem && x.songSnapshot
+          ? x.songSnapshot
+          : isSongItem && x.deckSnapshot
+            ? deckToTransientSong(normalizeSlideDeck(x.deckSnapshot))
+            : undefined,
+        deckSnapshot: isSongItem && x.deckSnapshot ? normalizeSlideDeck(x.deckSnapshot) : undefined,
         sequence: isSongItem && x.sequence ? x.sequence : undefined,
         render: isSongItem && x.render ? x.render : undefined,
       };
@@ -11687,10 +15900,11 @@ function installMediaQueueListDelegation() {
       const insertIndex = queueDropInsertIndexFromEvent(list, e);
       try {
         const song = await songsAPI.get(droppedSongId);
-        const entry = queueEntryFromSong({
-          song,
+        const entry = buildSongQueueEntryFromDeck({
+          deck: song,
           render: renderStateForLibrarySong(song),
         });
+        if (!entry) return;
         invalidateQueueUndoToastAfterMutation();
         insertQueueEntriesAt([entry], insertIndex);
         renderQueue();
@@ -11925,8 +16139,11 @@ async function restorePreviewToLiveOutput(index) {
   if (!isQueueItemBible(item)) {
     hideBibleWorkspace();
   }
-  if (!isQueueItemSong(item)) {
+  if (!isQueueItemSong(item) || isQueueItemDeck(item)) {
     hideSongsWorkspace();
+  }
+  if (!isQueueItemDeck(item)) {
+    hideSlidesWorkspace();
   }
   if (isQueueItemPptx(item)) {
     const liveSlide = await getLivePptxSlideFromMediaWindow(item.path);
@@ -11974,6 +16191,29 @@ async function restorePreviewToLiveOutput(index) {
     });
     if (!loaded || !isCurrentPreviewLoad(token)) return;
     showBibleWorkspace();
+    document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+    syncMediaLoopState({ notify: false });
+    updatePreviewCueUI();
+    renderQueue();
+    return;
+  } else if (isQueueItemDeck(item)) {
+    if (!isCurrentPreviewLoad(token)) return;
+    mediaFile = item.path;
+    mediaPlayerInputState.filePaths = [item.path];
+    updateQueueFileLabel(item.name);
+    commitActiveCueVolume();
+    previewCueIndex = -1;
+    pendingCueVolume = null;
+    cueVolumeDirty = false;
+    syncGtkSliderToCueState();
+    stopPreviewAudioCue();
+    clearVideoPreviewCueOverlay();
+    setMediaCountdownOverlayVisible(false);
+    setMediaCountdownText("");
+
+    const loaded = await loadDeckQueueItemIntoWorkspace(item, token);
+    if (!loaded || !isCurrentPreviewLoad(token)) return;
+    showSlidesWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
     syncMediaLoopState({ notify: false });
     updatePreviewCueUI();
@@ -12206,8 +16446,13 @@ async function loadQueueItemIntoPreviewCue(index) {
   }
   const songsWorkspaceVisible =
     document.getElementById("songsWorkspace")?.hidden === false;
-  if (songsWorkspaceVisible && !isQueueItemSong(item)) {
+  if (songsWorkspaceVisible && (!isQueueItemSong(item) || isQueueItemDeck(item))) {
     hideSongsWorkspace();
+  }
+  const slidesWorkspaceVisible =
+    document.getElementById("slidesWorkspace")?.hidden === false;
+  if (slidesWorkspaceVisible && !isQueueItemDeck(item)) {
+    hideSlidesWorkspace();
   }
 
   if (isLocalAppWindowPresentationActive() && isQueueItemAudio(item)) {
@@ -12248,6 +16493,17 @@ async function loadQueueItemIntoPreviewCue(index) {
     });
     if (!loaded || !isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
     showBibleWorkspace();
+    document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+  } else if (isQueueItemDeck(item)) {
+    hidePptxPreviewIfNeeded();
+    stopPreviewAudioCue();
+    clearVideoPreviewCueOverlay();
+    setMediaCountdownOverlayVisible(false);
+    setMediaCountdownText("");
+
+    const loaded = await loadDeckQueueItemIntoWorkspace(item, token);
+    if (!loaded || !isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+    showSlidesWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemSong(item)) {
     hidePptxPreviewIfNeeded();
@@ -12494,7 +16750,8 @@ async function onQueueItemActivate(index) {
     const activateIndex = index;
     const item = mediaQueue[activateIndex];
     if (!isQueueItemBible(item)) hideBibleWorkspace();
-    if (!isQueueItemSong(item)) hideSongsWorkspace();
+    if (!isQueueItemSong(item) || isQueueItemDeck(item)) hideSongsWorkspace();
+    if (!isQueueItemDeck(item)) hideSlidesWorkspace();
     if (previewCueIndex >= 0) {
       clearPreviewCue();
     }
@@ -12522,6 +16779,7 @@ async function stopQueuePresentationUserClosed() {
   void closeBibleLowerThirdOutput();
   activeMediaWindowContentType = null;
   bibleShowNowModeActive = false;
+  clearSongShowNowPresentation();
   mediaPlaybackEndedPending = false;
   pendingQueueSwitchIndex = null;
   pendingQueueSwitchStartTime = 0;
@@ -12754,6 +17012,23 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
     return;
   }
+  if (isQueueItemDeck(item)) {
+    hidePptxPreviewIfNeeded();
+    restoreNonPptxPreviewSurface({ isImage: false });
+    if (localVideo) {
+      try {
+        localVideo.pause();
+        localVideo.removeAttribute("src");
+        localVideo.load();
+      } catch {}
+    }
+    audioOnlyFile = false;
+    playingMediaAudioOnly = false;
+    const loaded = await loadDeckQueueItemIntoWorkspace(item, loadToken);
+    if (loaded) showSlidesWorkspace();
+    document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+    return;
+  }
   if (isQueueItemSong(item)) {
     hidePptxPreviewIfNeeded();
     restoreNonPptxPreviewSurface({ isImage: false });
@@ -12773,6 +17048,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   }
   hideBiblePreview();
   hideSongsWorkspace();
+  hideSlidesWorkspace();
   const resolvedItemPath = await resolveQueueItemMediaPath(item);
   activePreviewResolvedMediaFile = resolvedItemPath;
   const cacheBust = queueItemMediaCacheBust(item);
@@ -13123,6 +17399,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     currentQueueIndex = index;
     isQueuePlaying = true;
     bibleShowNowModeActive = false;
+    clearSongShowNowPresentation();
     activeMediaWindowContentType = classifyPresentationType(nextItem);
     isActiveMediaWindowCache = true;
     isPlaying = true;
@@ -13494,6 +17771,7 @@ function setupCustomMediaControls() {
     console.error("Missing custom media controls");
     return;
   }
+  disableNativeVideoControls(video);
 
   // The <video id="preview"> persists across tab rebuilds (see preview stash
   // helpers), so listeners attached here would accumulate on every Media-tab
@@ -14401,6 +18679,7 @@ async function handleMediaWindowClosed(event, id) {
   activeResolvedMediaFile = "";
   activePreviewResolvedMediaFile = "";
   bibleShowNowModeActive = false;
+  clearSongShowNowPresentation();
 
   try {
     await invoke("dismiss-queue-switch-dialog");
@@ -15394,6 +19673,7 @@ function restoreLivePreviewIntoPanel(panelEl) {
   const isStreamsLayout = wrapper.classList.contains("stream-preview-host");
 
   if (stashedVideo) {
+    disableNativeVideoControls(stashedVideo);
     if (isStreamsLayout) {
       const orphan = wrapper.querySelector("video#preview");
       if (orphan && orphan !== stashedVideo) {
@@ -15407,7 +19687,7 @@ function restoreLivePreviewIntoPanel(panelEl) {
       if (!placeholder) {
         placeholder = document.createElement("video");
         placeholder.id = "preview";
-        placeholder.disablePictureInPicture = true;
+        disableNativeVideoControls(placeholder);
         const cue = wrapper.querySelector("#previewCue");
         const cnt = wrapper.querySelector("#mediaCntDn");
         if (cue && cue.parentNode === wrapper) {
@@ -15425,7 +19705,7 @@ function restoreLivePreviewIntoPanel(panelEl) {
   } else if (isStreamsLayout && !wrapper.querySelector("video#preview")) {
     const v = document.createElement("video");
     v.id = "preview";
-    v.disablePictureInPicture = true;
+    disableNativeVideoControls(v);
     wrapper.appendChild(v);
   }
 
@@ -15599,8 +19879,7 @@ function prepareRendererCaptureElement(el, stream) {
   el.muted = true;
   el.defaultMuted = true;
   el.volume = 0;
-  el.controls = false;
-  el.disablePictureInPicture = true;
+  disableNativeVideoControls(el);
   el.hidden = false;
   el.play().catch((error) => {
     console.error("Failed to start media renderer preview:", error);
@@ -15818,7 +20097,7 @@ function setSBFormMediaPlayer() {
     isPlaying = true;
   }
   updateDynUI();
-  video.controls = false;
+  disableNativeVideoControls(video);
   let isImgFile;
   if (document.getElementById("preview").parentNode !== null) {
     if (!masterPauseState && video !== null && !video.paused) {
@@ -16094,7 +20373,7 @@ function saveMediaFile() {
           targetTime = startTime;
         }
         video.currentTime = startTime;
-        video.controls = false;
+        disableNativeVideoControls(video);
         if (uncachedLoad) {
           video.load();
         }
@@ -16292,7 +20571,7 @@ function playLocalMedia(event) {
   }
   if (
     event?.target === video &&
-    isBibleWorkspaceVisible() &&
+    isPreviewWorkspaceOverlayVisible() &&
     !isQueuePresentationActive() &&
     !isActiveMediaWindow() &&
     !isLocalAppWindowPresentationActive()
@@ -17279,9 +21558,14 @@ async function createMediaWindow(options) {
     : isPptxFile
       ? "pptx"
       : isImgFile
-        ? "image"
-        : "video";
+      ? "image"
+      : "video";
   bibleShowNowModeActive = Boolean(isTextItem && transientText && activeMediaWindowContentType === "bible");
+  if (isTextItem && transientText && activeMediaWindowContentType === "song") {
+    markSongShowNowPresentation(textItem || mediaQueue[currentQueueIndex]);
+  } else {
+    clearSongShowNowPresentation();
+  }
   if (isTextItem) {
     window.setTimeout(() => {
       void (async () => {
