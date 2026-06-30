@@ -231,7 +231,35 @@ export function songSectionLyricsText(section) {
     .trim();
 }
 
-export function songCopyrightAttribution(metadata = {}, placement = "firstSlide") {
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    const text = value == null ? "" : String(value).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function songCopyrightMetadata(song, render = {}) {
+  const metadata = song?.metadata && typeof song.metadata === "object"
+    ? song.metadata
+    : {};
+  return {
+    authors: Array.isArray(metadata.authors) ? metadata.authors : [],
+    copyright: firstNonEmptyString(render.copyright, metadata.copyright),
+    ccliNumber: firstNonEmptyString(
+      render.ccliNumber,
+      metadata.ccliNumber,
+      metadata.ccli_number,
+    ),
+    oneLicense: firstNonEmptyString(
+      render.oneLicense,
+      metadata.oneLicense,
+      metadata.one_license,
+    ),
+  };
+}
+
+export function songCopyrightAttribution(metadata = {}) {
   if (!metadata) return "";
   const parts = [];
   if (metadata.authors && metadata.authors.length > 0) {
@@ -242,6 +270,9 @@ export function songCopyrightAttribution(metadata = {}, placement = "firstSlide"
   }
   if (metadata.ccliNumber) {
     parts.push(`CCLI #${metadata.ccliNumber}`);
+  }
+  if (metadata.oneLicense) {
+    parts.push(`OneLicense #${metadata.oneLicense}`);
   }
   return parts.join("\n").trim();
 }
@@ -329,6 +360,18 @@ export function songRenderFromItem(item) {
         snapshotStyle.copyrightPlacement ||
         DEFAULT_SONG_RENDER.copyrightPlacement,
       textBoxPosition: render.textBoxPosition || snapshotStyle.textBoxPosition || null,
+      copyright: firstNonEmptyString(render.copyright, item?.songSnapshot?.metadata?.copyright),
+      ccliNumber: firstNonEmptyString(
+        render.ccliNumber,
+        item?.songSnapshot?.metadata?.ccliNumber,
+        item?.songSnapshot?.metadata?.ccli_number,
+      ),
+      oneLicense: firstNonEmptyString(
+        render.oneLicense,
+        item?.songSnapshot?.metadata?.oneLicense,
+        item?.songSnapshot?.metadata?.one_license,
+      ),
+      currentSectionId: render.currentSectionId,
     },
     {},
   );
@@ -345,7 +388,7 @@ export function buildSongTextMessage({
   const referenceText = "";
   const attributionText = "";
   const copyrightText = showCopyright
-    ? songCopyrightAttribution(song?.metadata, style.copyrightPlacement)
+    ? songCopyrightAttribution(songCopyrightMetadata(song, style))
     : "";
   const backgroundUrl = style.backgroundPath ? pathToMediaUrl(style.backgroundPath) : "";
   const backgroundVideo =
@@ -505,9 +548,13 @@ export function resolvedSongPresentation(item) {
     enabled[0] ||
     song.sections?.[0] ||
     null;
+  const firstSection = enabled[0] || song.sections?.[0] || null;
   const showCopyright =
     render.copyrightPlacement !== "none" &&
-    (render.copyrightPlacement !== "firstSlide" || section === enabled[0]);
+    (
+      render.copyrightPlacement !== "firstSlide" ||
+      (Boolean(section?.id) && section.id === firstSection?.id)
+    );
   return {
     song,
     section,

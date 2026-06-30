@@ -18,7 +18,6 @@ import {
   hashMediaFile,
   storedFileHashFromRecord,
 } from "./media-file-hash.min.mjs";
-import { safeParseEmsSlideDocument } from "./schemas/slide-document.schema.min.mjs";
 import yauzl from "yauzl";
 import yazl from "yazl";
 
@@ -117,11 +116,11 @@ const MIME_TYPE = "application/vnd.ems.project+zip";
 const ARCHIVE_COMMENT_FORMAT = "application/vnd.ems.project.comment+json";
 const ARCHIVE_COMMENT_VERSION = 1;
 const PROJECT_FILE_SCHEMA_VERSION = 2;
-const PROJECT_DOCUMENTS_SCHEMA = "ems.documents.v1";
 const PROJECT_DOCUMENTS_INDEX_PATH = "documents.json";
 const PROJECT_DOCUMENT_DIR_PREFIX = "documents/";
 const BIBLE_URI_PREFIX = "bible://";
 const SONG_URI_PREFIX = "song://";
+const LEGACY_SLIDE_URI_PREFIX = "slide://";
 const IMAGE_EXT = new Set([".bmp", ".gif", ".jpg", ".jpeg", ".png", ".webp", ".svg", ".ico"]);
 const VIDEO_EXT = new Set([".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi", ".wmv"]);
 const AUDIO_EXT = new Set([".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".wma"]);
@@ -138,65 +137,12 @@ const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 const PROJECT_GUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function isSlideDocumentArchivePath(archivePath) {
+function isLegacyDocumentArchivePath(archivePath) {
   return (
     typeof archivePath === "string" &&
     archivePath.startsWith(PROJECT_DOCUMENT_DIR_PREFIX) &&
     archivePath.endsWith(".json")
   );
-}
-
-function documentArchivePathForId(docId) {
-  const safeId = String(docId || "")
-    .trim()
-    .replace(/[^A-Za-z0-9._-]/g, "_");
-  if (!safeId) {
-    throw new Error("Slide document id is required");
-  }
-  return `${PROJECT_DOCUMENT_DIR_PREFIX}${safeId}.json`;
-}
-
-function firstZodIssueMessage(error) {
-  const issue = Array.isArray(error?.issues) && error.issues.length > 0
-    ? error.issues[0]
-    : null;
-  if (!issue) return "Invalid slide document";
-  const pathText = Array.isArray(issue.path) && issue.path.length > 0
-    ? issue.path.join(".")
-    : "root";
-  return `${pathText}: ${issue.message}`;
-}
-
-function validateSlideDocumentsForSave(input) {
-  if (!Array.isArray(input)) return [];
-  const validated = [];
-  for (let i = 0; i < input.length; i += 1) {
-    const parsed = safeParseEmsSlideDocument(input[i]);
-    if (!parsed.success) {
-      throw new Error(
-        `Invalid slideDocuments[${i}] - ${firstZodIssueMessage(parsed.error)}`,
-      );
-    }
-    validated.push(parsed.data);
-  }
-  return validated;
-}
-
-function parseProjectDocumentsIndex(raw) {
-  if (!raw || typeof raw !== "object") return [];
-  if (raw.schema !== PROJECT_DOCUMENTS_SCHEMA) return [];
-  const docs = Array.isArray(raw.documents) ? raw.documents : [];
-  return docs
-    .map((doc) => {
-      if (!doc || typeof doc !== "object") return null;
-      const id = typeof doc.id === "string" ? doc.id : "";
-      const kind = typeof doc.kind === "string" ? doc.kind : "";
-      const path = typeof doc.path === "string" ? doc.path : "";
-      const title = typeof doc.title === "string" ? doc.title : "";
-      if (!id || !path || kind !== "slideDocument") return null;
-      return { id, kind, path, title };
-    })
-    .filter(Boolean);
 }
 
 function normalizeProjectGuid(value) {
@@ -296,6 +242,14 @@ function parseSongArchivePath(filePath) {
   } catch {
     return filePath.slice(SONG_URI_PREFIX.length);
   }
+}
+
+function isLegacySlideQueueItem(item) {
+  return (
+    item?.type === "slide" ||
+    (typeof item?.path === "string" && item.path.startsWith(LEGACY_SLIDE_URI_PREFIX)) ||
+    (typeof item?.source?.path === "string" && item.source.path.startsWith(LEGACY_SLIDE_URI_PREFIX))
+  );
 }
 
 function normalizedBibleVersion(value, fallback = "KJV") {
@@ -761,7 +715,7 @@ export async function readEmprojProjectGuid(projectPath) {
           zipfile.readEntry();
           return;
         }
-        if (isSlideDocumentArchivePath(inZipPath)) {
+        if (isLegacyDocumentArchivePath(inZipPath)) {
           if (!archiveComment) {
             entryHashes.set(inZipPath, await hashZipEntry(zipfile, entry));
           }
@@ -1074,7 +1028,6 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   }
   const extractedMediaPaths = new Map();
   const rootFiles = new Map();
-  const documentFiles = new Map();
   const songFiles = new Map();
   const entryHashes = new Map();
 
@@ -1101,10 +1054,8 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
           zipfile.readEntry();
           return;
         }
-        if (isSlideDocumentArchivePath(inZipPath)) {
-          const buffer = await readEntryBuffer(zipfile, entry);
-          documentFiles.set(inZipPath, buffer);
-          entryHashes.set(inZipPath, await sha256Buffer(buffer));
+        if (isLegacyDocumentArchivePath(inZipPath)) {
+          entryHashes.set(inZipPath, await hashZipEntry(zipfile, entry));
           zipfile.readEntry();
           return;
         }
@@ -1251,7 +1202,7 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
 
   const mediaQueue = (
     await Promise.all(sequence.map(async (item) => {
-      if (!item || typeof item !== "object") return null;
+      if (!item || typeof item !== "object" || isLegacySlideQueueItem(item)) return null;
       if (item.type === "scripture" || item.scripture) {
         return buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPaths);
       }
@@ -1291,49 +1242,6 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
       ? manifestJson.project.created
       : new Date().toISOString();
 
-  let indexedDocuments = [];
-  const documentsIndexRaw = rootFiles.get(PROJECT_DOCUMENTS_INDEX_PATH);
-  if (documentsIndexRaw) {
-    try {
-      const parsed = JSON.parse(documentsIndexRaw.toString("utf8"));
-      indexedDocuments = parseProjectDocumentsIndex(parsed);
-    } catch (err) {
-      throw new Error(`Project ${PROJECT_DOCUMENTS_INDEX_PATH} is corrupt: ${err.message}`);
-    }
-  }
-
-  const documentPaths = indexedDocuments.length > 0
-    ? indexedDocuments.map((doc) => doc.path)
-    : [...documentFiles.keys()];
-
-  const slideDocuments = [];
-  for (const documentPath of documentPaths) {
-    const rawDoc = documentFiles.get(documentPath);
-    if (!rawDoc) {
-      throw new Error(`Project references missing document: ${documentPath}`);
-    }
-    let parsedDoc;
-    try {
-      parsedDoc = JSON.parse(rawDoc.toString("utf8"));
-    } catch (err) {
-      throw new Error(`Project document is corrupt (${documentPath}): ${err.message}`);
-    }
-    const validatedDoc = safeParseEmsSlideDocument(parsedDoc);
-    if (!validatedDoc.success) {
-      throw new Error(
-        `Invalid slide document (${documentPath}) - ${firstZodIssueMessage(validatedDoc.error)}`,
-      );
-    }
-    slideDocuments.push(validatedDoc.data);
-  }
-
-  const documentRefs = slideDocuments.map((doc) => ({
-    id: doc.id,
-    kind: "slideDocument",
-    path: documentArchivePathForId(doc.id),
-    title: doc.title,
-  }));
-
   return {
     schemaVersion: PROJECT_FILE_SCHEMA_VERSION,
     projectPath,
@@ -1360,8 +1268,6 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
     previewCueIndex: -1,
     projectStorageMode: manifestJson?.storage?.mode === "packed" ? "packed" : "working",
     projectScriptureText: projectScriptureTextFromOverrides(projectScriptureOverrides),
-    documents: documentRefs,
-    slideDocuments,
     mediaQueue,
   };
 }
@@ -1398,7 +1304,6 @@ export async function saveEmprojSnapshot(
 ) {
   const packMedia = opts?.packMedia === true;
   const applicationInfo = normalizeApplicationInfo(appInfo);
-  const slideDocuments = validateSlideDocumentsForSave(snapshot?.slideDocuments);
   const queue = Array.isArray(snapshot?.mediaQueue) ? snapshot.mediaQueue : [];
   const projectScriptureOverrides = normalizeProjectScriptureOverrides(
     snapshot?.projectScriptureText?.presentation && typeof snapshot.projectScriptureText.presentation === "object"
@@ -1520,7 +1425,14 @@ export async function saveEmprojSnapshot(
   }
 
   for (const item of queue) {
-    if (!item || typeof item.path !== "string" || item.path.length === 0) continue;
+    if (
+      !item ||
+      isLegacySlideQueueItem(item) ||
+      typeof item.path !== "string" ||
+      item.path.length === 0
+    ) {
+      continue;
+    }
     if (
       item.type === "bible" ||
       (typeof item.path === "string" && item.path.startsWith(BIBLE_URI_PREFIX))
@@ -1802,26 +1714,10 @@ export async function saveEmprojSnapshot(
     errors: [],
   };
 
-  const documentsIndex = {
-    schema: PROJECT_DOCUMENTS_SCHEMA,
-    kind: "documentsIndex",
-    documents: slideDocuments.map((doc) => ({
-      id: doc.id,
-      kind: "slideDocument",
-      path: documentArchivePathForId(doc.id),
-      title: doc.title,
-    })),
-  };
-
   const queueBuf = Buffer.from(canonicalJson(queueJson), "utf8");
   const assetsBuf = Buffer.from(canonicalJson(assetsJson), "utf8");
   const outputsBuf = Buffer.from(canonicalJson(outputsJson), "utf8");
   const diagnosticsBuf = Buffer.from(canonicalJson(diagnosticsJson), "utf8");
-  const documentsIndexBuf = Buffer.from(canonicalJson(documentsIndex), "utf8");
-  const documentBuffers = slideDocuments.map((doc) => ({
-    path: documentArchivePathForId(doc.id),
-    buffer: Buffer.from(canonicalJson(doc), "utf8"),
-  }));
 
   const songBuffers = [];
   const processedSongs = new Set();
@@ -1846,11 +1742,7 @@ export async function saveEmprojSnapshot(
     "assets.json": await sha256Buffer(assetsBuf),
     "outputs.json": await sha256Buffer(outputsBuf),
     "diagnostics.json": await sha256Buffer(diagnosticsBuf),
-    [PROJECT_DOCUMENTS_INDEX_PATH]: await sha256Buffer(documentsIndexBuf),
   };
-  for (const entry of documentBuffers) {
-    hashes[entry.path] = await sha256Buffer(entry.buffer);
-  }
   for (const entry of songBuffers) {
     hashes[entry.path] = await sha256Buffer(entry.buffer);
   }
@@ -1878,7 +1770,6 @@ export async function saveEmprojSnapshot(
     features: {
       media: true,
       presentations: true,
-      slideDocuments: slideDocuments.length > 0,
       themes: false,
       scriptures: true,
       ccli: false,
@@ -1914,12 +1805,6 @@ export async function saveEmprojSnapshot(
     { path: "assets.json", buffer: assetsBuf, compress: true },
     { path: "outputs.json", buffer: outputsBuf, compress: true },
     { path: "diagnostics.json", buffer: diagnosticsBuf, compress: true },
-    { path: PROJECT_DOCUMENTS_INDEX_PATH, buffer: documentsIndexBuf, compress: true },
-    ...documentBuffers.map((entry) => ({
-      path: entry.path,
-      buffer: entry.buffer,
-      compress: true,
-    })),
     ...songBuffers.map((entry) => ({
       path: entry.path,
       buffer: entry.buffer,
