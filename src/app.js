@@ -7311,6 +7311,7 @@ function renderSlideObjectsIntoPreview(preview, objects, message = {}) {
         ? block.primary.segments
         : [];
       if (!segments.length || segments.every((segment) => !segment?.text?.trim())) {
+        lineEl.classList.add("song-preview-block--spacer");
         lineEl.textContent = "\u00a0";
       } else {
         for (const segment of segments) {
@@ -10989,12 +10990,24 @@ function slideTextBlocksFromInput(editor, previousBlocks = []) {
   return normalizedLines.map((segments, index) => {
     const previous = previousBlocks[index] || {};
     const normalizedSegments = normalizeSongSegments(segments);
+    if (!normalizedSegments.length) {
+      return {
+        type: "spacer",
+        id: previous.id || `block_${(crypto.randomUUID?.() || String(Math.random())).replace(/-/g, "").slice(0, 8)}`,
+        primary: {
+          lang: previous.primary?.lang || "en",
+          segments: [],
+        },
+        translations: Array.isArray(previous.translations) ? previous.translations : [],
+        annotations: Array.isArray(previous.annotations) ? previous.annotations : [],
+      };
+    }
     return {
       type: "lyricLine",
       id: previous.id || `block_${(crypto.randomUUID?.() || String(Math.random())).replace(/-/g, "").slice(0, 8)}`,
       primary: {
         lang: previous.primary?.lang || "en",
-        segments: normalizedSegments.length ? normalizedSegments : [{ type: "text", text: "" }],
+        segments: normalizedSegments,
       },
       translations: Array.isArray(previous.translations) ? previous.translations : [],
       annotations: Array.isArray(previous.annotations) ? previous.annotations : [],

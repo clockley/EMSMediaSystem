@@ -2047,6 +2047,10 @@ function renderSongSectionHTML(blocks) {
     return blocks
       .map(block => {
         if (block.type === "lyricLine" && block.primary?.segments) {
+          const hasText = block.primary.segments.some((segment) => String(segment?.text || "").length > 0);
+          if (!hasText) {
+            return `<div class="song-block song-block--spacer">&nbsp;</div>`;
+          }
           const html = block.primary.segments
             .map((segment) => renderSongSegmentHTML(segment))
             .join("");
