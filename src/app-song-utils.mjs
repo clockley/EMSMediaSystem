@@ -68,7 +68,12 @@ export function normalizeToSongAST(song) {
   const copyright = song.metadata?.copyright || "";
   const ccliNumber = song.metadata?.ccliNumber || song.metadata?.ccli_number || "";
   const oneLicense = song.metadata?.oneLicense || song.metadata?.one_license || "";
-  const hymnal = song.metadata?.hymnal || { name: null, number: null, display: null };
+  const meter = song.metadata?.meter || song.metadata?.hymnal?.meter || "";
+  const rawHymnal =
+    song.metadata?.hymnal && typeof song.metadata.hymnal === "object"
+      ? song.metadata.hymnal
+      : { name: null, number: null, display: null };
+  const hymnal = { ...rawHymnal, ...(meter ? { meter } : {}) };
 
   const sections = (Array.isArray(song.sections) ? song.sections : []).map(sec => {
     const kind = (sec.kind || "verse").toLowerCase();
@@ -150,6 +155,7 @@ export function normalizeToSongAST(song) {
       copyright,
       ccliNumber,
       oneLicense,
+      meter,
       hymnal
     },
     languages: song.languages || [
@@ -458,13 +464,19 @@ export function songForLibraryDatabase(song) {
 export function songSnapshotForSchedule(song, projectMetadata = {}) {
   const astSong = normalizeToSongAST(song);
   const snapshot = structuredClone(astSong);
+  const meter = projectMetadata.meter || snapshot.metadata?.meter || snapshot.metadata?.hymnal?.meter || "";
+  const rawHymnal =
+    snapshot.metadata?.hymnal && typeof snapshot.metadata.hymnal === "object"
+      ? snapshot.metadata.hymnal
+      : { name: null, number: null, display: null };
   snapshot.metadata = {
     ...(snapshot.metadata || {}),
     authors: Array.isArray(snapshot.metadata?.authors) ? snapshot.metadata.authors : [],
     copyright: projectMetadata.copyright || snapshot.metadata?.copyright || "",
     ccliNumber: projectMetadata.ccliNumber ?? snapshot.metadata?.ccliNumber ?? null,
     oneLicense: projectMetadata.oneLicense ?? snapshot.metadata?.oneLicense ?? null,
-    hymnal: snapshot.metadata?.hymnal || { name: null, number: null, display: null },
+    meter,
+    hymnal: { ...rawHymnal, ...(meter ? { meter } : {}) },
     tags: Array.isArray(snapshot.metadata?.tags) ? snapshot.metadata.tags : [],
     extra: snapshot.metadata?.extra || {},
   };
@@ -503,6 +515,7 @@ export function queueEntryFromSong({
       copyright: render.copyright,
       ccliNumber: render.ccliNumber,
       oneLicense: render.oneLicense,
+      meter: song.metadata?.meter || song.metadata?.hymnal?.meter || "",
       defaultRender: {
         ...songDefaultRenderFromRender(render),
       },

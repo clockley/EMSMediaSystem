@@ -23,6 +23,7 @@ type SongMetadata struct {
 	Copyright  string   `json:"copyright"`
 	CCLINumber string   `json:"ccliNumber"`
 	OneLicense string   `json:"oneLicense"`
+	Meter      string   `json:"meter,omitempty"`
 }
 
 type Song struct {
@@ -90,6 +91,7 @@ type SearchResult struct {
 	Author     string  `json:"author"`
 	SongNumber *int    `json:"songNumber,omitempty"`
 	FolderID   *string `json:"folderId,omitempty"`
+	Meter      string  `json:"meter,omitempty"`
 }
 
 type SearchOptions struct {
@@ -149,6 +151,7 @@ func (s *SongStore) createSchema() error {
 		author TEXT,
 		ccli_number TEXT,
 		copyright TEXT,
+		meter TEXT,
 		folder_id TEXT,
 		original_import_json TEXT,
 		song_json TEXT,
@@ -181,6 +184,7 @@ func (s *SongStore) migrateSchema() error {
 	hasSongNumber := false
 	hasASTJSON := false
 	hasSchemaVersion := false
+	hasMeter := false
 	for rows.Next() {
 		var cid int
 		var name, ctype string
@@ -201,6 +205,9 @@ func (s *SongStore) migrateSchema() error {
 		}
 		if name == "schema_version" {
 			hasSchemaVersion = true
+		}
+		if name == "meter" {
+			hasMeter = true
 		}
 	}
 	rows.Close()
@@ -225,7 +232,15 @@ func (s *SongStore) migrateSchema() error {
 			return fmt.Errorf("failed to add schema_version column: %w", err)
 		}
 	}
+	if !hasMeter {
+		if _, err := s.db.Exec(`ALTER TABLE songs ADD COLUMN meter TEXT`); err != nil {
+			return fmt.Errorf("failed to add meter column: %w", err)
+		}
+	}
 	if err := s.backfillSongNumbersFromJSON(); err != nil {
+		return err
+	}
+	if err := s.backfillSongMetersFromJSON(); err != nil {
 		return err
 	}
 	return s.backfillASTJSONFromJSON()
@@ -241,9 +256,12 @@ func (s *SongStore) ConvertToAST(song Song) map[string]interface{} {
 		"authors":    authors,
 		"copyright":  song.Metadata.Copyright,
 		"ccliNumber": song.Metadata.CCLINumber,
+		"oneLicense": song.Metadata.OneLicense,
+		"meter":      normalizedSongMeter(song.Metadata.Meter),
 		"hymnal": map[string]interface{}{
 			"name":   "",
 			"number": "",
+			"meter":  normalizedSongMeter(song.Metadata.Meter),
 		},
 	}
 	if song.SongNumber != nil {
@@ -332,7 +350,7 @@ func (s *SongStore) ConvertToAST(song Song) map[string]interface{} {
 }
 
 func (s *SongStore) backfillASTJSONFromJSON() error {
-	rows, err := s.db.Query(`SELECT id, song_json, folder_id, song_number FROM songs WHERE ast_json IS NULL OR ast_json = ''`)
+	rows, err := s.db.Query(`SELECT id, song_json, folder_id, song_number, meter FROM songs WHERE ast_json IS NULL OR ast_json = ''`)
 	if err != nil {
 		return err
 	}
@@ -343,12 +361,13 @@ func (s *SongStore) backfillASTJSONFromJSON() error {
 		songJSON   string
 		folderID   sql.NullString
 		songNumber sql.NullInt64
+		meter      sql.NullString
 	}
 
 	var items []backfillItem
 	for rows.Next() {
 		var item backfillItem
-		if err := rows.Scan(&item.id, &item.songJSON, &item.folderID, &item.songNumber); err != nil {
+		if err := rows.Scan(&item.id, &item.songJSON, &item.folderID, &item.songNumber, &item.meter); err != nil {
 			return err
 		}
 		items = append(items, item)
@@ -364,6 +383,9 @@ func (s *SongStore) backfillASTJSONFromJSON() error {
 		if dbNumber := scanNullableInt(item.songNumber); dbNumber != nil {
 			song.SongNumber = dbNumber
 		}
+		if song.Metadata.Meter == "" {
+			song.Metadata.Meter = scanNullableText(item.meter)
+		}
 		ast := s.ConvertToAST(song)
 		astJSON, err := json.Marshal(ast)
 		if err != nil {
@@ -371,6 +393,96 @@ func (s *SongStore) backfillASTJSONFromJSON() error {
 		}
 
 		if _, err := s.db.Exec(`UPDATE songs SET ast_json = ?, schema_version = ? WHERE id = ?`, string(astJSON), "ems.song.v1", item.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func readJSONStringField(data map[string]json.RawMessage, keys ...string) string {
+	for _, key := range keys {
+		if raw, ok := data[key]; ok {
+			var value string
+			if json.Unmarshal(raw, &value) == nil {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	return ""
+}
+
+func songMeterFromJSONDocument(rawJSON string) string {
+	if strings.TrimSpace(rawJSON) == "" {
+		return ""
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(rawJSON), &root); err != nil {
+		return ""
+	}
+	if meter := readJSONStringField(root, "meter", "Meter", "metre", "Metre"); meter != "" {
+		return meter
+	}
+	var metadata map[string]json.RawMessage
+	if raw, ok := root["metadata"]; ok {
+		if json.Unmarshal(raw, &metadata) == nil {
+			if meter := readJSONStringField(metadata, "meter", "Meter", "metre", "Metre"); meter != "" {
+				return meter
+			}
+			var hymnal map[string]json.RawMessage
+			if rawHymnal, ok := metadata["hymnal"]; ok {
+				if json.Unmarshal(rawHymnal, &hymnal) == nil {
+					if meter := readJSONStringField(hymnal, "meter", "Meter", "metre", "Metre"); meter != "" {
+						return meter
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func (s *SongStore) backfillSongMetersFromJSON() error {
+	rows, err := s.db.Query(`SELECT id, song_json, ast_json FROM songs WHERE meter IS NULL OR meter = ''`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type meterBackfillItem struct {
+		id       string
+		songJSON sql.NullString
+		astJSON  sql.NullString
+	}
+
+	var items []meterBackfillItem
+	for rows.Next() {
+		var item meterBackfillItem
+		if err := rows.Scan(&item.id, &item.songJSON, &item.astJSON); err != nil {
+			return err
+		}
+		items = append(items, item)
+	}
+	rows.Close()
+
+	for _, item := range items {
+		meter := firstNonEmptyString(
+			songMeterFromJSONDocument(item.astJSON.String),
+			songMeterFromJSONDocument(item.songJSON.String),
+		)
+		if meter == "" {
+			continue
+		}
+		if _, err := s.db.Exec(`UPDATE songs SET meter = ? WHERE id = ?`, normalizedSongMeter(meter), item.id); err != nil {
 			return err
 		}
 	}
@@ -426,6 +538,18 @@ func songNumberArg(value *int) interface{} {
 	return *value
 }
 
+func normalizedSongMeter(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func songMeterArg(value string) interface{} {
+	meter := normalizedSongMeter(value)
+	if meter == "" {
+		return nil
+	}
+	return meter
+}
+
 func scanNullableInt(value sql.NullInt64) *int {
 	if !value.Valid || value.Int64 <= 0 {
 		return nil
@@ -447,6 +571,34 @@ func scanNullableString(value sql.NullString) *string {
 	}
 	trimmed := strings.TrimSpace(value.String)
 	return &trimmed
+}
+
+func scanNullableText(value sql.NullString) string {
+	if !value.Valid {
+		return ""
+	}
+	return strings.TrimSpace(value.String)
+}
+
+func setASTMetadataString(ast map[string]interface{}, key string, value string) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return
+	}
+	metadata, ok := ast["metadata"].(map[string]interface{})
+	if !ok {
+		metadata = map[string]interface{}{}
+		ast["metadata"] = metadata
+	}
+	metadata[key] = trimmed
+	if key == "meter" {
+		hymnal, ok := metadata["hymnal"].(map[string]interface{})
+		if !ok {
+			hymnal = map[string]interface{}{}
+			metadata["hymnal"] = hymnal
+		}
+		hymnal["meter"] = trimmed
+	}
 }
 
 func songSectionKind(section SongSection) string {
@@ -518,16 +670,18 @@ func (s *SongStore) saveSongTx(tx *sql.Tx, song Song, originalImportJSON string)
 	if len(song.Metadata.Authors) > 0 {
 		authorStr = song.Metadata.Authors[0]
 	}
+	meter := normalizedSongMeter(song.Metadata.Meter)
 
 	_, err = tx.Exec(`
-		INSERT INTO songs (id, title, normalized_title, author, ccli_number, copyright, folder_id, song_number, original_import_json, song_json, ast_json, schema_version, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO songs (id, title, normalized_title, author, ccli_number, copyright, meter, folder_id, song_number, original_import_json, song_json, ast_json, schema_version, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
 			title=excluded.title,
 			normalized_title=excluded.normalized_title,
 			author=excluded.author,
 			ccli_number=excluded.ccli_number,
 			copyright=excluded.copyright,
+			meter=excluded.meter,
 			folder_id=excluded.folder_id,
 			song_number=excluded.song_number,
 			original_import_json=excluded.original_import_json,
@@ -535,7 +689,7 @@ func (s *SongStore) saveSongTx(tx *sql.Tx, song Song, originalImportJSON string)
 			ast_json=excluded.ast_json,
 			schema_version=excluded.schema_version,
 			updated_at=CURRENT_TIMESTAMP
-	`, song.ID, song.Title, song.Title, authorStr, song.Metadata.CCLINumber, song.Metadata.Copyright, nullableString(song.FolderID), songNumberArg(song.SongNumber), originalImportJSON, string(songJSON), string(astJSON), "ems.song.v1")
+	`, song.ID, song.Title, song.Title, authorStr, song.Metadata.CCLINumber, song.Metadata.Copyright, songMeterArg(meter), nullableString(song.FolderID), songNumberArg(song.SongNumber), originalImportJSON, string(songJSON), string(astJSON), "ems.song.v1")
 
 	if err != nil {
 		return err
@@ -547,6 +701,9 @@ func (s *SongStore) saveSongTx(tx *sql.Tx, song Song, originalImportJSON string)
 	for _, section := range song.Sections {
 		sectionLyrics := songSectionLyricsText(section)
 		allLyrics += sectionLyrics + "\n"
+	}
+	if meter != "" {
+		allLyrics += meter + "\n"
 	}
 
 	tx.Exec(`
@@ -562,7 +719,8 @@ func (s *SongStore) GetSong(id string) (interface{}, error) {
 	var songJSON sql.NullString
 	var folderID sql.NullString
 	var songNumber sql.NullInt64
-	err := s.db.QueryRow("SELECT ast_json, song_json, folder_id, song_number FROM songs WHERE id = ?", id).Scan(&astJSON, &songJSON, &folderID, &songNumber)
+	var meter sql.NullString
+	err := s.db.QueryRow("SELECT ast_json, song_json, folder_id, song_number, meter FROM songs WHERE id = ?", id).Scan(&astJSON, &songJSON, &folderID, &songNumber, &meter)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("song not found")
@@ -579,6 +737,7 @@ func (s *SongStore) GetSong(id string) (interface{}, error) {
 				if dbNumber := scanNullableInt(songNumber); dbNumber != nil {
 					ast["songNumber"] = dbNumber
 				}
+				setASTMetadataString(ast, "meter", scanNullableText(meter))
 				return ast, nil
 			}
 		}
@@ -592,6 +751,9 @@ func (s *SongStore) GetSong(id string) (interface{}, error) {
 	song.FolderID = scanNullableString(folderID)
 	if dbNumber := scanNullableInt(songNumber); dbNumber != nil {
 		song.SongNumber = dbNumber
+	}
+	if song.Metadata.Meter == "" {
+		song.Metadata.Meter = scanNullableText(meter)
 	}
 
 	ast := s.ConvertToAST(song)
@@ -640,7 +802,7 @@ func (s *SongStore) Search(opts SearchOptions) ([]SearchResult, error) {
 
 	if useUnfiledFilter {
 		rows, err := s.db.Query(`
-			SELECT id, title, author, folder_id, song_number
+			SELECT id, title, author, folder_id, song_number, meter
 			FROM songs
 			WHERE folder_id IS NULL` + orderBy,
 		)
@@ -652,7 +814,7 @@ func (s *SongStore) Search(opts SearchOptions) ([]SearchResult, error) {
 
 	if useFolderFilter {
 		rows, err := s.db.Query(`
-			SELECT id, title, author, folder_id, song_number
+			SELECT id, title, author, folder_id, song_number, meter
 			FROM songs
 			WHERE folder_id = ?`+orderBy,
 			nullableString(opts.FolderID))
@@ -662,7 +824,7 @@ func (s *SongStore) Search(opts SearchOptions) ([]SearchResult, error) {
 		return scanSearchResults(rows)
 	}
 
-	rows, err := s.db.Query(`SELECT id, title, author, folder_id, song_number FROM songs` + orderBy)
+	rows, err := s.db.Query(`SELECT id, title, author, folder_id, song_number, meter FROM songs` + orderBy)
 	if err != nil {
 		return nil, err
 	}
@@ -714,13 +876,13 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 
 	if number, err := strconv.Atoi(queryClean); err == nil {
 		sqlText := `
-			SELECT id, title, author, folder_id, song_number
+			SELECT id, title, author, folder_id, song_number, meter
 			FROM (
-				SELECT s.id, s.title, s.author, s.folder_id, s.song_number, -1000.0 as rank
+				SELECT s.id, s.title, s.author, s.folder_id, s.song_number, s.meter, -1000.0 as rank
 				FROM songs s
 				WHERE s.song_number = ? ` + folderSQL + `
 				UNION ALL
-				SELECT s.id, s.title, s.author, s.folder_id, s.song_number, bm25(song_fts, 100.0, 10.0, 1.0) as rank
+				SELECT s.id, s.title, s.author, s.folder_id, s.song_number, s.meter, bm25(song_fts, 100.0, 10.0, 1.0) as rank
 				FROM songs s
 				JOIN song_fts ON s.id = song_fts.song_id
 				WHERE song_fts MATCH ? ` + folderSQL + `
@@ -743,7 +905,7 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 	}
 
 	sqlText := `
-		SELECT s.id, s.title, s.author, s.folder_id, s.song_number
+		SELECT s.id, s.title, s.author, s.folder_id, s.song_number, s.meter
 		FROM songs s
 		JOIN song_fts ON s.id = song_fts.song_id
 		WHERE song_fts MATCH ?` + folderSQL + ` 
@@ -766,11 +928,13 @@ func scanSearchResults(rows *sql.Rows) ([]SearchResult, error) {
 		var res SearchResult
 		var folderID sql.NullString
 		var songNumber sql.NullInt64
-		if err := rows.Scan(&res.ID, &res.Title, &res.Author, &folderID, &songNumber); err != nil {
+		var meter sql.NullString
+		if err := rows.Scan(&res.ID, &res.Title, &res.Author, &folderID, &songNumber, &meter); err != nil {
 			return nil, err
 		}
 		res.FolderID = scanNullableString(folderID)
 		res.SongNumber = scanNullableInt(songNumber)
+		res.Meter = scanNullableText(meter)
 		results = append(results, res)
 	}
 	return results, nil

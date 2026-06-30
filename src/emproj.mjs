@@ -33,7 +33,12 @@ function normalizeToSongAST(song) {
   const copyright = song.metadata?.copyright || "";
   const ccliNumber = song.metadata?.ccliNumber || song.metadata?.ccli_number || "";
   const oneLicense = song.metadata?.oneLicense || song.metadata?.one_license || "";
-  const hymnal = song.metadata?.hymnal || { name: null, number: null, display: null };
+  const meter = song.metadata?.meter || song.metadata?.hymnal?.meter || "";
+  const rawHymnal =
+    song.metadata?.hymnal && typeof song.metadata.hymnal === "object"
+      ? song.metadata.hymnal
+      : { name: null, number: null, display: null };
+  const hymnal = { ...rawHymnal, ...(meter ? { meter } : {}) };
 
   const sections = (Array.isArray(song.sections) ? song.sections : []).map(sec => {
     const kind = (sec.kind || "verse").toLowerCase();
@@ -95,6 +100,7 @@ function normalizeToSongAST(song) {
       copyright,
       ccliNumber,
       oneLicense,
+      meter,
       hymnal
     },
     languages: song.languages || [

@@ -8969,6 +8969,7 @@ async function saveSongEditor() {
       copyright: currentSongRenderState.copyright || "",
       ccliNumber: currentSongRenderState.ccliNumber || null,
       oneLicense: currentSongRenderState.oneLicense || null,
+      meter: currentWorkspaceSong?.metadata?.meter || currentWorkspaceSong?.metadata?.hymnal?.meter || "",
     },
     sections,
     playOrder: sections.map((s) => ({
@@ -9033,6 +9034,7 @@ async function saveSongToSchedule() {
       copyright: currentSongRenderState.copyright || "",
       ccliNumber: currentSongRenderState.ccliNumber || null,
       oneLicense: currentSongRenderState.oneLicense || null,
+      meter: currentWorkspaceSong?.metadata?.meter || currentWorkspaceSong?.metadata?.hymnal?.meter || "",
     },
     sections,
     playOrder: sections.map((s) => ({
