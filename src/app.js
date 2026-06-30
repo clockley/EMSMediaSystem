@@ -20,6 +20,11 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 "use strict";
 
 import {
+  DEFAULT_ITEM_SLIDE_TRANSITION,
+  DEFAULT_SLIDE_TRANSITION,
+  DEFAULT_SLIDE_TRANSITION_DURATION_MS,
+  SLIDE_TRANSITION_INHERIT,
+  SLIDE_TRANSITION_NONE,
   bibleQueuePath,
   bibleUriPrefix,
   bibleVersionValue,
@@ -40,6 +45,9 @@ import {
   pathToMediaUrl,
   pptxRegex,
   queueBasename,
+  slideTransitionForPlayback,
+  slideTransitionLabel,
+  slideTransitionOverrideSnapshot,
   songUriPrefix,
   isSongPath,
 } from "./app-media-utils.mjs";
@@ -399,6 +407,7 @@ const bibleDesignerState = {
   lowerThirdSegments: [],
   lowerThirdSegmentIndex: 0,
   lowerThirdSourceText: "",
+  transition: DEFAULT_ITEM_SLIDE_TRANSITION,
 };
 
 function normalizeProjectGuid(value) {
@@ -502,6 +511,7 @@ let previewCueIndex = -1;
 let selectedQueueAnchorIndex = -1;
 let isQueuePlaying = false;
 let manualBoundaryPauseIndex = -1;
+let globalSlideTransitionState = { ...DEFAULT_SLIDE_TRANSITION };
 let pptxViewer = null;
 let pptxViewerHost = null;
 let pptxPreviewSlideHandle = null;
@@ -1081,6 +1091,31 @@ function isQueueItemVideo(item) {
   );
 }
 
+function isQueueItemTransitionCapable(item) {
+  return isQueueItemBible(item) || isQueueItemSong(item) || isQueueItemPptx(item);
+}
+
+function normalizeItemSlideTransitionOverride(transition) {
+  return slideTransitionOverrideSnapshot(transition);
+}
+
+function effectiveSlideTransitionForQueueItem(item) {
+  if (!isQueueItemTransitionCapable(item)) return { ...DEFAULT_SLIDE_TRANSITION };
+  return slideTransitionForPlayback(item?.transition, globalSlideTransitionState);
+}
+
+function slideTransitionPayloadForQueueItem(item) {
+  return effectiveSlideTransitionForQueueItem(item);
+}
+
+function slideTransitionBadgeMarkup(item) {
+  const override = normalizeItemSlideTransitionOverride(item?.transition);
+  if (!override) return "";
+  const label = slideTransitionLabel(override);
+  const duration = Number.isFinite(override.durationMs) ? override.durationMs : DEFAULT_SLIDE_TRANSITION_DURATION_MS;
+  return `<span class="state-badge state-badge--transition" title="Slide transition override">${escapeHtml(label)} ${duration}ms</span>`;
+}
+
 const PREVIEW_SURFACE_LIVE = "live";
 const PREVIEW_SURFACE_CUE_VIDEO = "cue-video";
 const PREVIEW_SURFACE_CUE_IMAGE = "cue-image";
@@ -1590,7 +1625,18 @@ async function showPptxSlide(index) {
 }
 
 function sendPptxSlideToMediaWindow(slideIndex) {
-  send("pptx-goto-slide", { slideIndex, filePath: pptxFilePath });
+  const livePptxItem =
+    isQueuePlaying &&
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length &&
+    isQueueItemPptx(mediaQueue[currentQueueIndex])
+      ? mediaQueue[currentQueueIndex]
+      : null;
+  send("pptx-goto-slide", {
+    slideIndex,
+    filePath: pptxFilePath,
+    transition: livePptxItem ? slideTransitionPayloadForQueueItem(livePptxItem) : undefined,
+  });
 }
 
 function pptxStartSlideForItem(item) {
@@ -3404,6 +3450,10 @@ function renderQueue() {
         if (isCued) {
           badges.push('<span class="state-badge state-badge--cued">Cued</span>');
         }
+        const transitionBadge = slideTransitionBadgeMarkup(item);
+        if (transitionBadge) {
+          badges.push(transitionBadge);
+        }
         if (item.missing && !isQueueItemSong(item)) {
           badges.push(
             '<span class="state-badge state-badge--missing" title="File could not be found">Missing</span>',
@@ -4440,6 +4490,11 @@ async function syncBibleStateFromControls() {
     );
   }
   bibleDesignerState.attribution = bibleAttributionForVersion(bibleDesignerState.version);
+  bibleDesignerState.transition = readSlideTransitionControls(
+    "bibleTransitionEffectInput",
+    "bibleTransitionDurationInput",
+    { allowInherit: true },
+  );
   syncBibleVersionAttributionDisplay();
   Object.assign(bibleDesignerState, getBibleDesignerStyle());
 }
@@ -4640,14 +4695,18 @@ async function bibleEntryForSingleVerse(verseNumber) {
 }
 
 function queueEntryFromBibleEntry(entry) {
-  return {
+  const { transition, ...bible } = entry || {};
+  const transitionOverride = normalizeItemSlideTransitionOverride(transition);
+  const queueEntry = {
     path: bibleQueuePath(entry.reference, entry.version),
     name: `${entry.reference} ${entry.version}`.trim(),
     type: "bible",
     autoAdvance: false,
     cueStartTime: 0,
-    bible: { ...entry },
+    bible: { ...bible },
   };
+  if (transitionOverride) queueEntry.transition = transitionOverride;
+  return queueEntry;
 }
 
 function bibleEntryTextForVerseRows(rows) {
@@ -4883,9 +4942,20 @@ async function currentBibleTextOnlyEntry() {
 async function sendBibleTextToOutput(entry = bibleDesignerState) {
   const resolvedEntry = await bibleEntryWithLookupText(entry);
   setLastShownBibleStyleOverrides(bibleStyleSnapshot(resolvedEntry));
-  send("update-text", buildBibleTextMessage(resolvedEntry, {
+  const message = buildBibleTextMessage(resolvedEntry, {
     look: SCRIPTURE_LOOK_FULLSCREEN,
-  }));
+  });
+  const liveQueueItem =
+    isQueuePlaying &&
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length &&
+    isQueueItemBible(mediaQueue[currentQueueIndex])
+      ? mediaQueue[currentQueueIndex]
+      : null;
+  if (liveQueueItem) {
+    message.transition = slideTransitionPayloadForQueueItem(liveQueueItem);
+  }
+  send("update-text", message);
 }
 
 function selectedDisplayIndexFromSelect(id) {
@@ -5395,13 +5465,21 @@ function hydrateBibleEntryStyle(entry = {}) {
 
 async function resolvedBibleEntryForItem(item) {
   const resolvedEntry = await resolveBibleQueueItemEntry(item);
-  if (resolvedEntry) return hydrateBibleEntryStyle(resolvedEntry);
+  if (resolvedEntry) {
+    return {
+      ...hydrateBibleEntryStyle(resolvedEntry),
+      transition: item?.transition || DEFAULT_ITEM_SLIDE_TRANSITION,
+    };
+  }
   const pathEntry = parseBibleQueuePath(item?.path);
   const baseEntry = {
     ...(item?.bible && typeof item.bible === "object" ? item.bible : {}),
     ...(pathEntry || {}),
   };
-  return hydrateBibleEntryStyle(await bibleEntryWithLookupText(baseEntry));
+  return {
+    ...hydrateBibleEntryStyle(await bibleEntryWithLookupText(baseEntry)),
+    transition: item?.transition || DEFAULT_ITEM_SLIDE_TRANSITION,
+  };
 }
 
 function bibleEntryMatchesQueueItemShallow(entry, item) {
@@ -5538,13 +5616,21 @@ async function syncBibleDesignerStateToPreviewedQueueItem() {
   const entry = await currentBibleQueueEntry();
   if (!entry) return false;
   if (!(await bibleEntryMatchesQueueItem(entry.bible, mediaQueue[targetIndex]))) return false;
-  mediaQueue[targetIndex] = {
+  const transitionOverride = normalizeItemSlideTransitionOverride(entry.bible.transition);
+  const { transition, ...bible } = entry.bible;
+  const updatedItem = {
     ...mediaQueue[targetIndex],
     path: entry.path,
     name: entry.name,
     type: "bible",
-    bible: { ...entry.bible },
+    bible: { ...bible },
   };
+  if (transitionOverride) {
+    updatedItem.transition = transitionOverride;
+  } else {
+    delete updatedItem.transition;
+  }
+  mediaQueue[targetIndex] = updatedItem;
   renderQueue();
   return true;
 }
@@ -5775,6 +5861,7 @@ async function applyBibleStyleToCurrentText() {
 async function applyBibleStyleToScheduledText() {
   await syncBibleStateFromControls();
   const style = bibleCurrentStylePayload();
+  const transitionOverride = normalizeItemSlideTransitionOverride(bibleDesignerState.transition);
   Object.assign(bibleDesignerState, applyBibleStylePayloadToEntry(bibleDesignerState, style));
   clearBibleStyleDirtyState();
 
@@ -5787,6 +5874,11 @@ async function applyBibleStyleToScheduledText() {
       item.path = bibleQueuePath(entry.reference, entry.version);
       item.name = `${entry.reference} ${entry.version}`.trim();
       item.type = "bible";
+    }
+    if (transitionOverride) {
+      item.transition = transitionOverride;
+    } else {
+      delete item.transition;
     }
     changedCount += 1;
   });
@@ -5993,13 +6085,21 @@ async function syncLiveBiblePresentation() {
     if (!(await bibleEntryMatchesQueueItem(entry.bible, liveItem))) {
       return false;
     }
-    mediaQueue[currentQueueIndex] = {
+    const transitionOverride = normalizeItemSlideTransitionOverride(entry.bible.transition);
+    const { transition, ...bible } = entry.bible;
+    const updatedItem = {
       ...liveItem,
       path: entry.path,
       name: entry.name,
       type: "bible",
-      bible: { ...entry.bible },
+      bible: { ...bible },
     };
+    if (transitionOverride) {
+      updatedItem.transition = transitionOverride;
+    } else {
+      delete updatedItem.transition;
+    }
+    mediaQueue[currentQueueIndex] = updatedItem;
     renderQueue();
     saveMediaFile();
   }
@@ -6378,6 +6478,12 @@ function syncBibleStyleControlsFromState() {
     lowerThirdChromaKeyInput.value = bibleDesignerState.lowerThirdChromaKeyColor;
   }
   if (lookSelect) lookSelect.value = normalizeScriptureLook(bibleDesignerState.look);
+  syncSlideTransitionControls(
+    "bibleTransitionEffectInput",
+    "bibleTransitionDurationInput",
+    bibleDesignerState.transition,
+    { allowInherit: true },
+  );
 }
 
 function clearBibleSearchTimer() {
@@ -8296,6 +8402,11 @@ function readSongEditorRenderState() {
   const minFontSizeInput = document.getElementById("songEditorMinFontSizeInput");
   const textColor = document.getElementById("songEditorTextColor")?.value;
   const backgroundColor = document.getElementById("songEditorBackgroundColor")?.value;
+  const transition = readSlideTransitionControls(
+    "songEditorTransitionEffect",
+    "songEditorTransitionDuration",
+    { allowInherit: true },
+  );
   return mergeSongRenderState(currentSongRenderState, {
     fontFamily: fontInput ? fontInput.value : DEFAULT_SONG_RENDER.fontFamily,
     fontSize: fontSizeInput && fontSizeInput.value ? Number(fontSizeInput.value) : DEFAULT_SONG_RENDER.fontSize,
@@ -8305,6 +8416,7 @@ function readSongEditorRenderState() {
     backgroundColor: backgroundColor || DEFAULT_SONG_RENDER.backgroundColor,
     backgroundPath: currentSongRenderState.backgroundPath || "",
     textBoxPosition: currentSongRenderState.textBoxPosition || null,
+    transition,
   });
 }
 
@@ -8325,6 +8437,12 @@ function syncSongEditorRenderControls(render = currentSongRenderState) {
   if (backgroundColorInput) {
     backgroundColorInput.value = render.backgroundColor || DEFAULT_SONG_RENDER.backgroundColor;
   }
+  syncSlideTransitionControls(
+    "songEditorTransitionEffect",
+    "songEditorTransitionDuration",
+    render.transition,
+    { allowInherit: true },
+  );
   syncSongBackgroundLabel(render.backgroundPath || "");
 }
 
@@ -8624,7 +8742,13 @@ function renderSongSectionPreview(section) {
 async function sendSongTextToOutput(item = null) {
   const presentation = resolvedSongPresentation(item || currentSongPresentationItem());
   if (!presentation?.message) return;
-  send("update-text", presentation.message);
+  const message = { ...presentation.message };
+  const scheduledItem =
+    item && mediaQueue.includes(item) && isQueueItemSong(item) ? item : null;
+  if (scheduledItem) {
+    message.transition = slideTransitionPayloadForQueueItem(scheduledItem);
+  }
+  send("update-text", message);
 }
 
 async function syncActiveScheduledSongPresentation() {
@@ -8911,7 +9035,8 @@ async function checkIfSongInLibrary(songId) {
   }
 }
 
-async function updateScheduleSongsWithUpdatedSong(song) {
+async function updateScheduleSongsWithUpdatedSong(song, opts = {}) {
+  const applyTransitionOverride = opts.applyTransitionOverride === true;
   let updatedCount = 0;
   for (let i = 0; i < mediaQueue.length; i++) {
     const item = mediaQueue[i];
@@ -8926,6 +9051,16 @@ async function updateScheduleSongsWithUpdatedSong(song) {
       });
       updatedEntry.autoAdvance = item.autoAdvance;
       updatedEntry.cueStartTime = item.cueStartTime;
+      if (applyTransitionOverride) {
+        const transitionOverride = normalizeItemSlideTransitionOverride(currentSongRenderState.transition);
+        if (transitionOverride) {
+          updatedEntry.transition = transitionOverride;
+        } else {
+          delete updatedEntry.transition;
+        }
+      } else if (item.transition) {
+        updatedEntry.transition = item.transition;
+      }
       mediaQueue[i] = updatedEntry;
       updatedCount++;
     }
@@ -9067,6 +9202,12 @@ async function saveSongToSchedule() {
       });
       updatedEntry.autoAdvance = item.autoAdvance;
       updatedEntry.cueStartTime = item.cueStartTime;
+      const transitionOverride = normalizeItemSlideTransitionOverride(currentSongRenderState.transition);
+      if (transitionOverride) {
+        updatedEntry.transition = transitionOverride;
+      } else {
+        delete updatedEntry.transition;
+      }
       mediaQueue[i] = updatedEntry;
       updatedCount++;
     }
@@ -9790,7 +9931,7 @@ function installBibleMediaControls() {
       if (section) renderSongSectionPreview(section);
     }
   };
-  for (const id of ["songEditorFontInput", "songEditorFontSizeInput", "songEditorAutosizeModeInput", "songEditorMinFontSizeInput", "songEditorTextColor", "songEditorBackgroundColor"]) {
+  for (const id of ["songEditorFontInput", "songEditorFontSizeInput", "songEditorAutosizeModeInput", "songEditorMinFontSizeInput", "songEditorTextColor", "songEditorBackgroundColor", "songEditorTransitionEffect", "songEditorTransitionDuration"]) {
     const input = document.getElementById(id);
     input?.addEventListener("input", syncSongEditorRenderChange);
     input?.addEventListener("change", syncSongEditorRenderChange);
@@ -9991,6 +10132,8 @@ function installBibleMediaControls() {
     "bibleBackgroundColorInput",
     "bibleLowerThirdTextColorInput",
     "bibleLowerThirdChromaKeyInput",
+    "bibleTransitionEffectInput",
+    "bibleTransitionDurationInput",
   ].forEach((id) => {
     const control = document.getElementById(id);
     const handleBibleStyleChange = () => {
@@ -10158,6 +10301,9 @@ function buildProjectQueueItemSnapshot(item) {
     loop: bibleEntry || songEntry ? false : loopEnabledForQueueItem(item),
     pptxSlideIndex: Number.isFinite(item.pptxSlideIndex) && !bibleEntry && !songEntry
       ? item.pptxSlideIndex
+      : undefined,
+    transition: isQueueItemTransitionCapable(item)
+      ? normalizeItemSlideTransitionOverride(item.transition)
       : undefined,
     bible: bibleEntry || undefined,
     source: songEntry?.source,
@@ -10342,6 +10488,13 @@ function applyProjectStateSnapshot(state, opts = {}) {
         cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
         loop: bibleEntry || isSongItem ? false : x.loop === true && mediaPathSupportsLoop(itemPath),
         pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) && !bibleEntry && !isSongItem ? x.pptxSlideIndex : -1,
+        transition: isQueueItemTransitionCapable({
+          type: bibleEntry ? "bible" : isSongItem ? "song" : classifyQueueMediaType(itemPath),
+          path: itemPath,
+          songSnapshot: isSongItem ? x.songSnapshot : undefined,
+        })
+          ? normalizeItemSlideTransitionOverride(x.transition)
+          : undefined,
         bible: bibleEntry || undefined,
         source: isSongItem && x.source ? x.source : undefined,
         songSnapshot: isSongItem && x.songSnapshot ? x.songSnapshot : undefined,
@@ -11051,6 +11204,7 @@ async function captureQueueClearUndoState() {
       cueVolume: x.cueVolume,
       loop: loopEnabledForQueueItem(x),
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
+      transition: normalizeItemSlideTransitionOverride(x.transition),
       bible: x.bible ? { ...x.bible } : undefined,
     })),
     index: currentQueueIndex,
@@ -11172,6 +11326,7 @@ async function restoreQueueClearUndoSnapshot() {
       cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
       loop: x.loop === true && mediaPathSupportsLoop(x.path),
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
+      transition: normalizeItemSlideTransitionOverride(x.transition),
       bible: x.bible ? { ...x.bible } : undefined,
     };
     item.cueStartTime = queueItemCueStartTime(item);
@@ -11618,6 +11773,104 @@ function installCueButtonHandlers() {
  * over-architected.
  */
 const OPTIONS_EXPANDER_STORAGE_KEY = "ems.mediaOptionsExpander.open";
+const GLOBAL_SLIDE_TRANSITION_STORAGE_KEY = "ems.slideTransition.global";
+
+function readSlideTransitionControls(effectId, durationId, { allowInherit = false } = {}) {
+  const effectEl = document.getElementById(effectId);
+  const durationEl = document.getElementById(durationId);
+  if (allowInherit && !effectEl) {
+    return { ...DEFAULT_ITEM_SLIDE_TRANSITION };
+  }
+  const transition = slideTransitionForPlayback(
+    {
+      effect: effectEl?.value || (allowInherit ? SLIDE_TRANSITION_INHERIT : SLIDE_TRANSITION_NONE),
+      durationMs: durationEl?.value,
+    },
+    DEFAULT_SLIDE_TRANSITION,
+  );
+  if (allowInherit && effectEl?.value === SLIDE_TRANSITION_INHERIT) {
+    return {
+      effect: SLIDE_TRANSITION_INHERIT,
+      durationMs: transition.durationMs,
+    };
+  }
+  return transition;
+}
+
+function syncSlideTransitionControls(effectId, durationId, transition, { allowInherit = false } = {}) {
+  const effectEl = document.getElementById(effectId);
+  const durationEl = document.getElementById(durationId);
+  if (!effectEl && !durationEl) return;
+  const normalized =
+    allowInherit && !normalizeItemSlideTransitionOverride(transition)
+      ? DEFAULT_ITEM_SLIDE_TRANSITION
+      : slideTransitionForPlayback(transition, DEFAULT_SLIDE_TRANSITION);
+  if (effectEl) {
+    effectEl.value =
+      allowInherit && normalized.effect === SLIDE_TRANSITION_INHERIT
+        ? SLIDE_TRANSITION_INHERIT
+        : normalized.effect || SLIDE_TRANSITION_NONE;
+  }
+  if (durationEl) {
+    durationEl.value = String(
+      Number.isFinite(normalized.durationMs)
+        ? normalized.durationMs
+        : DEFAULT_SLIDE_TRANSITION_DURATION_MS,
+    );
+  }
+}
+
+function loadGlobalSlideTransitionState() {
+  try {
+    const raw = window.localStorage?.getItem(GLOBAL_SLIDE_TRANSITION_STORAGE_KEY);
+    if (raw) {
+      globalSlideTransitionState = slideTransitionForPlayback(
+        JSON.parse(raw),
+        DEFAULT_SLIDE_TRANSITION,
+      );
+    }
+  } catch {
+    globalSlideTransitionState = { ...DEFAULT_SLIDE_TRANSITION };
+  }
+}
+
+function persistGlobalSlideTransitionState() {
+  try {
+    window.localStorage?.setItem(
+      GLOBAL_SLIDE_TRANSITION_STORAGE_KEY,
+      JSON.stringify(globalSlideTransitionState),
+    );
+  } catch {
+    /* UI-only preference; ignore storage failures. */
+  }
+}
+
+function syncGlobalSlideTransitionControls() {
+  syncSlideTransitionControls(
+    "globalSlideTransitionEffect",
+    "globalSlideTransitionDuration",
+    globalSlideTransitionState,
+  );
+}
+
+function installGlobalSlideTransitionControls() {
+  const effectEl = document.getElementById("globalSlideTransitionEffect");
+  const durationEl = document.getElementById("globalSlideTransitionDuration");
+  if (!effectEl || !durationEl || effectEl.dataset.slideTransitionBound === "1") return;
+  effectEl.dataset.slideTransitionBound = "1";
+  loadGlobalSlideTransitionState();
+  syncGlobalSlideTransitionControls();
+  const handleChange = () => {
+    globalSlideTransitionState = readSlideTransitionControls(
+      "globalSlideTransitionEffect",
+      "globalSlideTransitionDuration",
+    );
+    persistGlobalSlideTransitionState();
+  };
+  effectEl.addEventListener("change", handleChange);
+  durationEl.addEventListener("input", handleChange);
+  durationEl.addEventListener("change", handleChange);
+}
 
 function installMediaOptionsExpander() {
   const expander = document.getElementById("mediaOptionsExpander");
@@ -12830,21 +13083,30 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       ? {
           isText: true,
           mediaFile: nextItem.path,
-          textPayload: buildBibleTextMessage(await resolvedBibleEntryForItem(nextItem), {
-            look: SCRIPTURE_LOOK_FULLSCREEN,
-          }),
+          textPayload: {
+            ...buildBibleTextMessage(await resolvedBibleEntryForItem(nextItem), {
+              look: SCRIPTURE_LOOK_FULLSCREEN,
+            }),
+            transition: slideTransitionPayloadForQueueItem(nextItem),
+          },
+          transition: slideTransitionPayloadForQueueItem(nextItem),
         }
       : isSongItem
         ? {
             isText: true,
             mediaFile: nextItem.path,
-            textPayload: resolvedSongPresentation(nextItem)?.message || null,
+            textPayload: {
+              ...(resolvedSongPresentation(nextItem)?.message || {}),
+              transition: slideTransitionPayloadForQueueItem(nextItem),
+            },
+            transition: slideTransitionPayloadForQueueItem(nextItem),
           }
         : {
           mediaFile: resolvedNextPath,
           isImg: isImgFile,
           isPptx: isPptxFile,
           pptxStartSlide: isPptxFile ? pptxStartSlideForItem(nextItem) : 0,
+          transition: isPptxFile ? slideTransitionPayloadForQueueItem(nextItem) : undefined,
           loopFile: loopEnabledForQueueItem(nextItem),
           startVolume: video ? video.volume : 1,
           startTime: requestedStart,
@@ -15550,6 +15812,7 @@ function setSBFormMediaPlayer() {
   installMediaOpenButton();
   installPreviewEmptyStateHandlers();
   installMediaOptionsExpander();
+  installGlobalSlideTransitionControls();
   installBibleMediaControls();
   const clearQueueBtn = document.getElementById("clearQueueBtn");
   if (clearQueueBtn && clearQueueBtn.dataset.clearBound !== "1") {

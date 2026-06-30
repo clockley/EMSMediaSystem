@@ -2,7 +2,12 @@
 Copyright (C) 2024 Christian Lockley
 */
 
-import { imageRegex, pathToMediaUrl } from "./app-media-utils.mjs";
+import {
+  DEFAULT_ITEM_SLIDE_TRANSITION,
+  imageRegex,
+  pathToMediaUrl,
+  slideTransitionOverrideSnapshot,
+} from "./app-media-utils.mjs";
 import {
   SCRIPTURE_BODY_FONT_SIZE,
   SCRIPTURE_FONT_FAMILY,
@@ -43,6 +48,7 @@ export const DEFAULT_SONG_RENDER = Object.freeze({
   autosizeMode: "fit",
   minFontSize: 38,
   copyrightPlacement: "firstSlide",
+  transition: DEFAULT_ITEM_SLIDE_TRANSITION,
 });
 
 export function songBlockText(block) {
@@ -245,13 +251,21 @@ function firstNonEmptyString(...values) {
   return "";
 }
 
+export function normalizeSongCopyrightText(value) {
+  const text = value == null ? "" : String(value).trim().replace(/\s+/g, " ");
+  if (!text) return "";
+  const compact = text.replace(/[\s_-]+/g, "").toLowerCase();
+  if (compact === "publicdomain") return "Public Domain";
+  return text;
+}
+
 function songCopyrightMetadata(song, render = {}) {
   const metadata = song?.metadata && typeof song.metadata === "object"
     ? song.metadata
     : {};
   return {
     authors: Array.isArray(metadata.authors) ? metadata.authors : [],
-    copyright: firstNonEmptyString(render.copyright, metadata.copyright),
+    copyright: normalizeSongCopyrightText(firstNonEmptyString(render.copyright, metadata.copyright)),
     ccliNumber: firstNonEmptyString(
       render.ccliNumber,
       metadata.ccliNumber,
@@ -271,8 +285,9 @@ export function songCopyrightAttribution(metadata = {}) {
   if (metadata.authors && metadata.authors.length > 0) {
     parts.push(metadata.authors.join(", "));
   }
-  if (metadata.copyright) {
-    parts.push(metadata.copyright);
+  const copyright = normalizeSongCopyrightText(metadata.copyright);
+  if (copyright) {
+    parts.push(copyright);
   }
   if (metadata.ccliNumber) {
     parts.push(`CCLI #${metadata.ccliNumber}`);
@@ -366,7 +381,10 @@ export function songRenderFromItem(item) {
         snapshotStyle.copyrightPlacement ||
         DEFAULT_SONG_RENDER.copyrightPlacement,
       textBoxPosition: render.textBoxPosition || snapshotStyle.textBoxPosition || null,
-      copyright: firstNonEmptyString(render.copyright, item?.songSnapshot?.metadata?.copyright),
+      transition: item?.transition || render.transition || DEFAULT_ITEM_SLIDE_TRANSITION,
+      copyright: normalizeSongCopyrightText(
+        firstNonEmptyString(render.copyright, item?.songSnapshot?.metadata?.copyright),
+      ),
       ccliNumber: firstNonEmptyString(
         render.ccliNumber,
         item?.songSnapshot?.metadata?.ccliNumber,
@@ -472,7 +490,7 @@ export function songSnapshotForSchedule(song, projectMetadata = {}) {
   snapshot.metadata = {
     ...(snapshot.metadata || {}),
     authors: Array.isArray(snapshot.metadata?.authors) ? snapshot.metadata.authors : [],
-    copyright: projectMetadata.copyright || snapshot.metadata?.copyright || "",
+    copyright: normalizeSongCopyrightText(projectMetadata.copyright || snapshot.metadata?.copyright || ""),
     ccliNumber: projectMetadata.ccliNumber ?? snapshot.metadata?.ccliNumber ?? null,
     oneLicense: projectMetadata.oneLicense ?? snapshot.metadata?.oneLicense ?? null,
     meter,
@@ -543,9 +561,10 @@ export function queueEntryFromSong({
         render.oneLicense != null && String(render.oneLicense).trim()
           ? String(render.oneLicense).trim()
           : null,
-      copyright: render.copyright || song.metadata?.copyright || "",
+      copyright: normalizeSongCopyrightText(render.copyright || song.metadata?.copyright || ""),
       currentSectionId: section?.id || null,
     },
+    transition: slideTransitionOverrideSnapshot(render.transition),
   };
 }
 

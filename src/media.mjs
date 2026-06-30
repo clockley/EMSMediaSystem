@@ -81,9 +81,64 @@ const SCRIPTURE_AUTOSIZE_FIT = "fit";
 const SCRIPTURE_AUTOSIZE_NORMALIZE = "normalize";
 const SCRIPTURE_DEFAULT_AUTOSIZE_MODE = SCRIPTURE_AUTOSIZE_FIT;
 const TEXT_BACKGROUND_VIDEO_LOAD_COMPENSATION_SEC = 0.15;
+const SLIDE_TRANSITION_NONE = "none";
+const SLIDE_TRANSITION_DEFAULT_DURATION_MS = 350;
+const slideTransitionEffects = new Set([
+  SLIDE_TRANSITION_NONE,
+  "fade",
+  "slide-left",
+  "slide-right",
+  "zoom",
+]);
 /** Live edge: true HLS-style live (no sync/duration UI); false for YouTube VOD in stream mode. */
 var streamActsAsLiveEdge = false;
 let i = argv.length - 1;
+
+function normalizeSlideTransition(transition = {}) {
+  const source =
+    typeof transition === "string"
+      ? { effect: transition }
+      : transition && typeof transition === "object"
+        ? transition
+        : {};
+  let effect = String(source.effect || source.type || "").trim().toLowerCase();
+  if (effect === "inherit" || effect === "global") effect = SLIDE_TRANSITION_NONE;
+  if (!slideTransitionEffects.has(effect)) effect = SLIDE_TRANSITION_NONE;
+  const duration = Number(source.durationMs ?? source.duration);
+  return {
+    effect,
+    durationMs: Number.isFinite(duration)
+      ? Math.max(0, Math.min(3000, Math.round(duration)))
+      : SLIDE_TRANSITION_DEFAULT_DURATION_MS,
+  };
+}
+
+function applySlideTransition(el, transition) {
+  if (!el) return;
+  const normalized = normalizeSlideTransition(transition);
+  if (normalized.effect === SLIDE_TRANSITION_NONE || normalized.durationMs <= 0) {
+    return;
+  }
+  const classes = [
+    "ems-slide-transition",
+    "ems-slide-transition--fade",
+    "ems-slide-transition--slide-left",
+    "ems-slide-transition--slide-right",
+    "ems-slide-transition--zoom",
+  ];
+  el.classList.remove(...classes);
+  el.style.setProperty("--ems-slide-transition-duration", `${normalized.durationMs}ms`);
+  const token = `${performance.now()}-${Math.random()}`;
+  el.dataset.emsSlideTransitionToken = token;
+  void el.offsetWidth;
+  el.classList.add("ems-slide-transition", `ems-slide-transition--${normalized.effect}`);
+  window.setTimeout(() => {
+    if (el.dataset.emsSlideTransitionToken !== token) return;
+    el.classList.remove(...classes);
+    el.style.removeProperty("--ems-slide-transition-duration");
+    delete el.dataset.emsSlideTransitionToken;
+  }, normalized.durationMs + 80);
+}
 
 function setLoopEnabled(enabled) {
   loopFile = !!enabled;
@@ -588,7 +643,7 @@ async function activatePptxTarget(data) {
     listOptions: getPptxListRenderOptions(),
   });
   await applyPptxContainPolicyMedia();
-  await showPptxSlideInMediaWindow(data.pptxStartSlide || 0);
+  await showPptxSlideInMediaWindow(data.pptxStartSlide || 0, data.transition);
 }
 
 function activateImageTarget() {
@@ -833,7 +888,7 @@ function getPptxSlidesInMediaWindow(pptxCanvas) {
     .map((el, idx) => ({ idx, el }));
 }
 
-async function showPptxSlideInMediaWindow(index) {
+async function showPptxSlideInMediaWindow(index, transition = null) {
   const pptxCanvas = document.getElementById("pptxCanvas");
   if (!pptxCanvas) return;
   pptxCurrentSlide = index;
@@ -852,6 +907,7 @@ async function showPptxSlideInMediaWindow(index) {
     });
   });
   await applyPptxContainPolicyMedia();
+  applySlideTransition(pptxCanvas, transition);
 }
 
 async function applyPptxContainPolicyMedia() {
@@ -868,7 +924,7 @@ function installPptxIpcHandlers() {
   pptxIpcHandlersInstalled = true;
   ipcRenderer.on("pptx-goto-slide", (event, data) => {
     if (typeof data?.slideIndex === "number") {
-      void showPptxSlideInMediaWindow(data.slideIndex);
+      void showPptxSlideInMediaWindow(data.slideIndex, data.transition);
     }
   });
 }
@@ -1024,6 +1080,7 @@ const DEFAULT_TEXT_PRESENTATION = Object.freeze({
   lowerThirdSegments: [],
   lowerThirdSegmentIndex: 0,
   lowerThirdSegmentCount: 0,
+  transition: null,
   position: {
     vertical: "center",
     horizontal: "center",
@@ -1653,6 +1710,8 @@ function applyTextMessage(message) {
   } else {
     applyTextBackgroundVideoState(safeMessage, textCanvas);
   }
+
+  applySlideTransition(textCanvas, safeMessage.transition);
 }
 
 function installTextHandlers() {

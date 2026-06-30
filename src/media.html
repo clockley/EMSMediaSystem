@@ -251,6 +251,49 @@
             margin-top: 0.38em;
         }
 
+        .ems-slide-transition {
+            animation-duration: var(--ems-slide-transition-duration, 350ms);
+            animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+            animation-fill-mode: both;
+            will-change: opacity, transform;
+        }
+
+        .ems-slide-transition--fade {
+            animation-name: ems-slide-transition-fade;
+        }
+
+        .ems-slide-transition--slide-left {
+            animation-name: ems-slide-transition-left;
+        }
+
+        .ems-slide-transition--slide-right {
+            animation-name: ems-slide-transition-right;
+        }
+
+        .ems-slide-transition--zoom {
+            animation-name: ems-slide-transition-zoom;
+        }
+
+        @keyframes ems-slide-transition-fade {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes ems-slide-transition-left {
+            from { opacity: 0; transform: translateX(3.5vw); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes ems-slide-transition-right {
+            from { opacity: 0; transform: translateX(-3.5vw); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes ems-slide-transition-zoom {
+            from { opacity: 0; transform: scale(0.965); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
         #streamStatusOverlay {
             position: absolute;
             inset: 0;
