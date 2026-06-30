@@ -3623,6 +3623,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 /* ── Preview slide ────────────────────────────────────────── */
 
 .songs-preview-slide {
+    position: relative;
     flex: 1;
     min-height: 0;
     width: 100%;
@@ -4002,7 +4003,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     resize: none;
     text-align: center;
     font-size: calc(var(--base-font-size, 66) * 100cqw / 1920);
-    font-family: var(--font-family, 'CMG Sans', sans-serif);
+
     color: inherit;
     line-height: 1.35;
     padding: 0;
@@ -4010,6 +4011,15 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     overflow-y: auto;
     position: relative;
     z-index: 1;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.song-editor-slide-textarea[data-placeholder]:empty::before {
+    content: attr(data-placeholder);
+    color: rgba(255, 255, 255, 0.5);
+    pointer-events: none;
+    display: block;
 }
 
 /* Drag-and-drop text container */
@@ -5886,11 +5896,37 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 #songEditorLivePreviewSlide .song-preview-block {
-    font-size: calc(var(--base-font-size, 66) * 100cqw / 1920) !important;
-    font-family: var(--font-family, 'CMG Sans', sans-serif) !important;
+    font-size: calc(var(--base-font-size, 66) * 100cqw / 1920);
+    font-family: var(--font-family, 'CMG Sans', sans-serif);
     white-space: pre-wrap !important;
     word-break: break-word !important;
     line-height: 1.35;
     text-align: center;
     color: #ffffff;
+}
+
+.song-copyright-overlay {
+    position: absolute;
+    bottom: 2%;
+    left: 2%;
+    max-width: calc(100% - 24px);
+    font-size: clamp(10px, 1.2vw, 15px);
+    line-height: 1.25;
+    color: rgba(255, 255, 255, 0.78);
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
+    white-space: pre-wrap;
+    z-index: 2;
+    text-align: left;
+    pointer-events: none;
+}
+
+.song-copyright-overlay[hidden] {
+    display: none !important;
+}
+
+#songEditorLivePreviewSlide .song-copyright-overlay {
+    bottom: 3%;
+    left: 3%;
+    max-width: 94%;
+    font-size: clamp(8px, 1.35cqw, 13px);
 }

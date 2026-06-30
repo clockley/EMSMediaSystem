@@ -371,24 +371,7 @@ export function generateMediaFormHTML() {
                         </div>
                       </div>
 
-                      <!-- Metadata Boxed List -->
-                      <div class="boxed-list-group">
-                        <div class="boxed-list-title">Metadata</div>
-                        <div class="boxed-list">
-                          <div class="boxed-list-row">
-                            <label for="songEditorCopyright">Copyright</label>
-                            <input type="text" id="songEditorCopyright" placeholder="Copyright" aria-label="Copyright">
-                          </div>
-                          <div class="boxed-list-row">
-                            <label for="songEditorCcli">CCLI #</label>
-                            <input type="text" id="songEditorCcli" placeholder="CCLI #" aria-label="CCLI Number">
-                          </div>
-                          <div class="boxed-list-row">
-                            <label for="songEditorOneLicense">ONE LICENSE #</label>
-                            <input type="text" id="songEditorOneLicense" placeholder="ONE LICENSE #" aria-label="ONE LICENSE Number">
-                          </div>
-                        </div>
-                      </div>
+
 
                       <!-- Presentation Boxed List -->
                       <div class="boxed-list-group">
@@ -491,7 +474,7 @@ export function generateMediaFormHTML() {
                         <div id="snapGuideH" class="snap-guide-line snap-guide-line--h" style="display: none;"></div>
                         <div id="songEditorTextBox" class="draggable-text-box" style="position: absolute; left: 10%; top: 10%; width: 80%; height: 80%; cursor: default;">
                           <div id="songEditorDragHandle" class="draggable-text-box__handle"></div>
-                          <textarea id="songEditorSlideTextarea" class="song-editor-slide-textarea" placeholder="Enter lyrics for this section..."></textarea>
+                          <div id="songEditorSlideTextarea" class="song-editor-slide-textarea" contenteditable="true" data-placeholder="Enter lyrics for this section..."></div>
                           <div id="songEditorResizeHandle" class="draggable-text-box__resize-handle" aria-hidden="true"></div>
                         </div>
                       </div>
