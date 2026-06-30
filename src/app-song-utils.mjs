@@ -91,18 +91,27 @@ export function normalizeToSongAST(song) {
 
     let blocks = [];
     if (Array.isArray(sec.blocks)) {
-      blocks = sec.blocks.map(block => ({
-        type: block.type || "lyricLine",
-        id: block.id || `block_${Math.random().toString(36).substring(2, 9)}`,
-        primary: {
-          lang: block.primary?.lang || "en",
-          segments: Array.isArray(block.primary?.segments) ? block.primary.segments : [
-            { type: "text", text: block.primary?.text || "" }
-          ]
-        },
-        translations: Array.isArray(block.translations) ? block.translations : [],
-        annotations: Array.isArray(block.annotations) ? block.annotations : []
-      }));
+      blocks = sec.blocks.map(block => {
+        const explicitSegments = Array.isArray(block.primary?.segments)
+          ? block.primary.segments
+          : null;
+        const fallbackText = block.primary?.text || "";
+        const isSpacer =
+          block.type === "spacer" ||
+          (explicitSegments ? explicitSegments.length === 0 : fallbackText.trim() === "");
+        return {
+          type: isSpacer ? "spacer" : "lyricLine",
+          id: block.id || `block_${Math.random().toString(36).substring(2, 9)}`,
+          primary: {
+            lang: block.primary?.lang || "en",
+            segments: isSpacer
+              ? []
+              : explicitSegments || [{ type: "text", text: fallbackText }]
+          },
+          translations: Array.isArray(block.translations) ? block.translations : [],
+          annotations: Array.isArray(block.annotations) ? block.annotations : []
+        };
+      });
     }
 
     return {
