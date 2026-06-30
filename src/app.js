@@ -13578,21 +13578,13 @@ function setupCustomMediaControls() {
     timeline.min = 0;
     timeline.max = 100;
 
-    const isPlaying =
-      !mediaEl.paused &&
-      Number.isFinite(mediaEl.currentTime) &&
-      mediaEl.currentTime > 0;
     const hasSeekableMedia = isFinite(mediaEl.duration) && mediaEl.duration > 0;
+    const currentTime = Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0;
 
     timeline.value =
-      isPlaying && hasSeekableMedia
-        ? (mediaEl.currentTime / mediaEl.duration) * 100
-        : 0;
+      hasSeekableMedia ? (currentTime / mediaEl.duration) * 100 : 0;
     if (isTransportControlsPaintVisible()) {
-      paintTransportControlsTime(
-        currentTimeDisplay,
-        isPlaying ? mediaEl.currentTime : 0,
-      );
+      paintTransportControlsTime(currentTimeDisplay, currentTime);
       paintTransportControlsTime(durationTimeDisplay, mediaEl.duration);
     }
 
@@ -13637,11 +13629,9 @@ function setupCustomMediaControls() {
         }
         enableTabFocus();
         const mediaEl = currentControlMedia();
-        if (mediaEl) {
+        if (mediaEl && Number.isFinite(mediaEl.duration) && mediaEl.duration > 0) {
           updateControlsForMetadata(mediaEl);
-          if (!mediaEl.paused && Number.isFinite(mediaEl.duration) && mediaEl.duration > 0) {
-            updateControlsForTime(mediaEl);
-          }
+          updateControlsForTime(mediaEl);
         }
       },
       sig,
