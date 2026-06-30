@@ -138,6 +138,16 @@ const SCRIPTURE_AUTOSIZE_NONE = "none";
 const SCRIPTURE_AUTOSIZE_FIT = "fit";
 const SCRIPTURE_AUTOSIZE_NORMALIZE = "normalize";
 const SCRIPTURE_DEFAULT_AUTOSIZE_MODE = SCRIPTURE_AUTOSIZE_FIT;
+const SLIDE_TRANSITION_INHERIT = "inherit";
+const SLIDE_TRANSITION_NONE = "none";
+const DEFAULT_SLIDE_TRANSITION_DURATION_MS = 350;
+const SLIDE_TRANSITION_EFFECTS = new Set([
+  SLIDE_TRANSITION_NONE,
+  "fade",
+  "slide-left",
+  "slide-right",
+  "zoom",
+]);
 const SHA256_HASH_ALG = "sha256";
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 const PROJECT_GUID_RE =
@@ -203,6 +213,35 @@ function normalizeArchivePath(p) {
 function basenameAny(p) {
   const parts = String(p || "").split(/[/\\]/);
   return parts[parts.length - 1] || String(p || "");
+}
+
+function normalizeProjectSlideTransition(transition = {}, { allowInherit = false } = {}) {
+  const source =
+    typeof transition === "string"
+      ? { effect: transition }
+      : transition && typeof transition === "object"
+        ? transition
+        : {};
+  let effect = String(source.effect || source.type || "").trim().toLowerCase();
+  if (effect === "global") effect = SLIDE_TRANSITION_INHERIT;
+  if (allowInherit && (!effect || effect === SLIDE_TRANSITION_INHERIT)) {
+    effect = SLIDE_TRANSITION_INHERIT;
+  } else if (!SLIDE_TRANSITION_EFFECTS.has(effect)) {
+    effect = SLIDE_TRANSITION_NONE;
+  }
+  const duration = Number(source.durationMs ?? source.duration);
+  return {
+    effect,
+    durationMs: Number.isFinite(duration)
+      ? Math.max(0, Math.min(3000, Math.round(duration)))
+      : DEFAULT_SLIDE_TRANSITION_DURATION_MS,
+  };
+}
+
+function projectSlideTransitionOverride(transition) {
+  if (!transition || typeof transition !== "object") return undefined;
+  const normalized = normalizeProjectSlideTransition(transition, { allowInherit: true });
+  return normalized.effect === SLIDE_TRANSITION_INHERIT ? undefined : normalized;
 }
 
 function bibleArchivePath(reference, version) {
@@ -909,6 +948,7 @@ function queueItemFromSequenceItem(item, resolvedPath, asset = null) {
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
     loop: item?.playback?.loop === true && kind !== "presentation",
     pptxSlideIndex: Number.isFinite(item?.startSlide) ? item.startSlide - 1 : -1,
+    transition: kind === "presentation" ? projectSlideTransitionOverride(item?.transition) : undefined,
     liveSource:
       item?.liveSource && typeof item.liveSource === "object"
         ? liveSourceFields(item.liveSource, resolvedPath, {
@@ -953,6 +993,7 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
     autoAdvance: item?.playback?.autoAdvance !== false,
     cueStartTime: 0,
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
+    transition: projectSlideTransitionOverride(item?.transition),
     bible: scriptureReference,
   };
 }
@@ -1003,6 +1044,7 @@ function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths
     autoAdvance: item?.playback?.autoAdvance !== false,
     cueStartTime: 0,
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
+    transition: projectSlideTransitionOverride(item?.transition),
     source: item?.source,
     songSnapshot: snapshot,
     sequence: item?.sequence,
@@ -1465,6 +1507,7 @@ export async function saveEmprojSnapshot(
           path: scripturePath,
         },
         scripture: projectScripture,
+        transition: projectSlideTransitionOverride(item.transition),
         playback: {
           startTime: 0,
           volume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
@@ -1515,6 +1558,7 @@ export async function saveEmprojSnapshot(
         songSnapshot: snapshot,
         sequence: item.sequence,
         render,
+        transition: projectSlideTransitionOverride(item.transition),
         playback: {
           startTime: 0,
           volume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
@@ -1663,6 +1707,7 @@ export async function saveEmprojSnapshot(
         missingBehavior: sourceKind === "missing" ? "showPlaceholder" : undefined,
       },
       presentationPath: isPresentation ? bundledPath : undefined,
+      transition: isPresentation ? projectSlideTransitionOverride(item.transition) : undefined,
       liveSource: queueLiveSource,
       startSlide:
         Number.isFinite(item.pptxSlideIndex) && item.pptxSlideIndex >= 0

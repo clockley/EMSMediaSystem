@@ -18,6 +18,92 @@ export const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 export const pptxRegex = /\.pptx$/i;
 export const bibleUriPrefix = "bible://";
 export const QUEUE_START_END_GUARD_SECONDS = 0.25;
+export const SLIDE_TRANSITION_INHERIT = "inherit";
+export const SLIDE_TRANSITION_NONE = "none";
+export const SLIDE_TRANSITION_FADE = "fade";
+export const SLIDE_TRANSITION_SLIDE_LEFT = "slide-left";
+export const SLIDE_TRANSITION_SLIDE_RIGHT = "slide-right";
+export const SLIDE_TRANSITION_ZOOM = "zoom";
+export const DEFAULT_SLIDE_TRANSITION_DURATION_MS = 350;
+export const DEFAULT_SLIDE_TRANSITION = Object.freeze({
+  effect: SLIDE_TRANSITION_NONE,
+  durationMs: DEFAULT_SLIDE_TRANSITION_DURATION_MS,
+});
+export const DEFAULT_ITEM_SLIDE_TRANSITION = Object.freeze({
+  effect: SLIDE_TRANSITION_INHERIT,
+  durationMs: DEFAULT_SLIDE_TRANSITION_DURATION_MS,
+});
+export const SLIDE_TRANSITION_EFFECT_LABELS = Object.freeze({
+  [SLIDE_TRANSITION_INHERIT]: "Use Global",
+  [SLIDE_TRANSITION_NONE]: "Off",
+  [SLIDE_TRANSITION_FADE]: "Fade",
+  [SLIDE_TRANSITION_SLIDE_LEFT]: "Slide Left",
+  [SLIDE_TRANSITION_SLIDE_RIGHT]: "Slide Right",
+  [SLIDE_TRANSITION_ZOOM]: "Zoom",
+});
+const slideTransitionEffects = new Set([
+  SLIDE_TRANSITION_NONE,
+  SLIDE_TRANSITION_FADE,
+  SLIDE_TRANSITION_SLIDE_LEFT,
+  SLIDE_TRANSITION_SLIDE_RIGHT,
+  SLIDE_TRANSITION_ZOOM,
+]);
+
+function clampSlideTransitionDuration(value, fallback = DEFAULT_SLIDE_TRANSITION_DURATION_MS) {
+  const numeric = Number(value);
+  const resolved = Number.isFinite(numeric) ? numeric : fallback;
+  return Math.max(0, Math.min(3000, Math.round(resolved)));
+}
+
+export function normalizeSlideTransition(transition = {}, opts = {}) {
+  const allowInherit = opts.allowInherit === true;
+  const source =
+    typeof transition === "string"
+      ? { effect: transition }
+      : transition && typeof transition === "object"
+        ? transition
+        : {};
+  const rawEffect = String(source.effect || source.type || "").trim().toLowerCase();
+  let effect = rawEffect;
+  if (effect === "global") effect = SLIDE_TRANSITION_INHERIT;
+  if (allowInherit && (!effect || effect === SLIDE_TRANSITION_INHERIT)) {
+    effect = SLIDE_TRANSITION_INHERIT;
+  } else if (!slideTransitionEffects.has(effect)) {
+    effect = SLIDE_TRANSITION_NONE;
+  }
+  const fallbackDuration = Number.isFinite(opts.fallbackDurationMs)
+    ? opts.fallbackDurationMs
+    : DEFAULT_SLIDE_TRANSITION_DURATION_MS;
+  return {
+    effect,
+    durationMs: clampSlideTransitionDuration(source.durationMs ?? source.duration, fallbackDuration),
+  };
+}
+
+export function slideTransitionOverridesGlobal(transition) {
+  if (!transition || typeof transition !== "object") return false;
+  return (
+    normalizeSlideTransition(transition, {
+      allowInherit: true,
+    }).effect !== SLIDE_TRANSITION_INHERIT
+  );
+}
+
+export function slideTransitionOverrideSnapshot(transition) {
+  const normalized = normalizeSlideTransition(transition, { allowInherit: true });
+  return normalized.effect === SLIDE_TRANSITION_INHERIT ? undefined : normalized;
+}
+
+export function slideTransitionForPlayback(itemTransition, globalTransition) {
+  const item = normalizeSlideTransition(itemTransition, { allowInherit: true });
+  if (item.effect !== SLIDE_TRANSITION_INHERIT) return item;
+  return normalizeSlideTransition(globalTransition || DEFAULT_SLIDE_TRANSITION);
+}
+
+export function slideTransitionLabel(transition) {
+  const normalized = normalizeSlideTransition(transition, { allowInherit: true });
+  return SLIDE_TRANSITION_EFFECT_LABELS[normalized.effect] || "Off";
+}
 
 export function isBiblePath(filePath) {
   return typeof filePath === "string" && filePath.startsWith(bibleUriPrefix);

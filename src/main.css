@@ -1767,6 +1767,24 @@ select option,
     color: #888;
 }
 
+.transition-inline-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(72px, 92px);
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+}
+
+.transition-inline-controls--global {
+    grid-template-columns: minmax(0, 1fr) 86px;
+}
+
+.transition-duration-input {
+    min-width: 0;
+    text-align: right;
+}
+
 .volume-control {
     display: flex;
     align-items: center;
@@ -2685,6 +2703,14 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .bible-field input[type="number"] {
     width: 100%;
     min-width: 0;
+}
+
+.bible-field--transition {
+    min-width: min(210px, 100%);
+}
+
+.bible-field--transition .transition-inline-controls {
+    grid-template-columns: minmax(0, 1fr) 76px;
 }
 
 #bibleFontSizeInput {
@@ -3798,6 +3824,16 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     background: var(--input-bg-color, rgba(255, 255, 255, 0.05));
     color: var(--window-fg-color);
     font-size: 13px;
+}
+
+.song-editor-sidebar .boxed-list-row .transition-inline-controls {
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr) 76px;
+}
+
+.song-editor-sidebar .boxed-list-row .transition-inline-controls select,
+.song-editor-sidebar .boxed-list-row .transition-inline-controls input[type="number"] {
+    width: 100%;
 }
 
 .song-editor-sidebar .boxed-list-row input[type="text"]:focus,
@@ -5423,6 +5459,11 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .state-badge--changed {
     background: var(--warning-bg-color, #e5a50a);
     color: var(--warning-fg-color, #1d1d1f);
+}
+
+.state-badge--transition {
+    background: color-mix(in srgb, var(--accent-bg-color) 14%, transparent);
+    color: var(--accent-bg-color);
 }
 
 .item-cue-start {

@@ -157,6 +157,20 @@ export function generateMediaFormHTML() {
               </label>
             </div>
           </div>
+
+          <div class="control-group">
+            <span class="control-label">Slide Transition</span>
+            <div class="transition-inline-controls transition-inline-controls--global">
+              <select id="globalSlideTransitionEffect" class="display-select" aria-label="Default slide transition">
+                <option value="none">Off</option>
+                <option value="fade">Fade</option>
+                <option value="slide-left">Slide Left</option>
+                <option value="slide-right">Slide Right</option>
+                <option value="zoom">Zoom</option>
+              </select>
+              <input id="globalSlideTransitionDuration" class="url-input transition-duration-input" type="number" min="0" max="3000" step="50" value="350" aria-label="Default transition duration in milliseconds">
+            </div>
+          </div>
         </div>
       </details>
     </form>
@@ -401,6 +415,20 @@ export function generateMediaFormHTML() {
                             </select>
                           </div>
                           <div class="boxed-list-row">
+                            <label for="songEditorTransitionEffect">Transition</label>
+                            <div class="transition-inline-controls">
+                              <select id="songEditorTransitionEffect" class="display-select" aria-label="Song slide transition">
+                                <option value="inherit">Use Global</option>
+                                <option value="none">Off</option>
+                                <option value="fade">Fade</option>
+                                <option value="slide-left">Slide Left</option>
+                                <option value="slide-right">Slide Right</option>
+                                <option value="zoom">Zoom</option>
+                              </select>
+                              <input id="songEditorTransitionDuration" class="url-input transition-duration-input" type="number" min="0" max="3000" step="50" value="350" aria-label="Song transition duration in milliseconds">
+                            </div>
+                          </div>
+                          <div class="boxed-list-row">
                             <label for="songEditorTextColor">Text Color</label>
                             <div style="position: relative; display: flex; align-items: center; gap: 8px; flex: 1;">
                               <input type="color" id="songEditorTextColor" value="#ffffff" aria-label="Song text color" style="width: 40px; height: 28px; border: 1px solid var(--border-color); border-radius: 4px; padding: 0; cursor: pointer;">
@@ -642,6 +670,19 @@ export function generateMediaFormHTML() {
                 <label class="bible-field">Audience Backdrop <input id="bibleBackgroundColorInput" type="color" value="#000000"></label>
                 <label class="bible-field" data-lower-third-feature hidden>Lower Text <input id="bibleLowerThirdTextColorInput" type="color" value="#ffffff"></label>
                 <label class="bible-field" data-lower-third-feature data-lower-third-key-color hidden>Key Color <input id="bibleLowerThirdChromaKeyInput" type="color" value="#00ff00"></label>
+                <label class="bible-field bible-field--transition">Transition
+                  <span class="transition-inline-controls">
+                    <select id="bibleTransitionEffectInput" class="display-select" aria-label="Bible text slide transition">
+                      <option value="inherit">Use Global</option>
+                      <option value="none">Off</option>
+                      <option value="fade">Fade</option>
+                      <option value="slide-left">Slide Left</option>
+                      <option value="slide-right">Slide Right</option>
+                      <option value="zoom">Zoom</option>
+                    </select>
+                    <input id="bibleTransitionDurationInput" type="number" min="0" max="3000" step="50" value="350" class="url-input transition-duration-input" aria-label="Bible text transition duration in milliseconds">
+                  </span>
+                </label>
                 <label class="file-input-label bible-background-picker">
                   <input id="bibleBackgroundInput" type="file" accept="image/*,video/*" hidden>
                   <span id="bibleBackgroundLabel">Choose Background…</span>
