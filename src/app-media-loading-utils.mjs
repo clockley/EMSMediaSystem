@@ -18,6 +18,20 @@ export const HAVE_NOTHING = 0;
 export const HAVE_METADATA = 1;
 export const WAIT_FOR_METADATA_TIMEOUT_MS = 4000;
 
+function mediaMetadataError(mediaEl, fallbackMessage) {
+  const mediaError = mediaEl?.error;
+  if (!mediaError) return new Error(fallbackMessage);
+  const code = Number.isFinite(mediaError.code) ? ` (code ${mediaError.code})` : "";
+  const message =
+    typeof mediaError.message === "string" && mediaError.message.length > 0
+      ? `: ${mediaError.message}`
+      : "";
+  const error = new Error(`${fallbackMessage}${code}${message}`);
+  error.name = "MediaMetadataError";
+  error.mediaErrorCode = mediaError.code;
+  return error;
+}
+
 export function waitForLoadedMetadata(mediaEl) {
   if (!mediaEl || !mediaEl.src || mediaEl.src === "") {
     return Promise.reject(new Error("Invalid media element source."));
@@ -49,7 +63,7 @@ export function waitForLoadedMetadata(mediaEl) {
       if (settled) return;
       settled = true;
       cleanup();
-      reject(mediaEl.error ?? new Error("Failed to load media metadata"));
+      reject(mediaMetadataError(mediaEl, "Failed to load media metadata"));
     };
 
     mediaEl.addEventListener("loadedmetadata", onLoaded, { once: true });
@@ -75,7 +89,7 @@ export function waitForMetadata(mediaEl, callbacks = {}) {
     isImg(mediaEl.src)
   ) {
     onRejected();
-    return Promise.reject("Invalid source or live stream.");
+    return Promise.reject(new Error("Invalid source or live stream."));
   }
 
   return new Promise((resolve, reject) => {
@@ -103,7 +117,7 @@ export function waitForMetadata(mediaEl, callbacks = {}) {
       if (settled) return;
       settled = true;
       cleanup();
-      reject(event);
+      reject(mediaMetadataError(mediaEl, "Failed to load media metadata"));
     };
 
     if (mediaEl.readyState >= HAVE_METADATA) {

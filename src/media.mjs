@@ -38,6 +38,10 @@ let dashPlayer = null;
 let dashManifestObjectUrl = null;
 /** Guards one-time installation of the <video> playback event wiring. */
 let videoPlaybackWiringInstalled = false;
+/** Sent with playback-state-change so the control preview ignores source-swap churn. */
+let playbackSyncPhase = "stable";
+/** Tags the next paused playback-state-change as operator intent, not source churn. */
+let explicitPauseSyncPending = false;
 let lastTimeRemainingMediaFile = "";
 var img = null;
 var mediaFile;
@@ -144,6 +148,25 @@ function setLoopEnabled(enabled) {
     video.loop = loopFile;
   }
   return loopFile;
+}
+
+function beginPlaybackStateStabilizing() {
+  playbackSyncPhase = "stabilizing";
+}
+
+function markPlaybackStateStable() {
+  playbackSyncPhase = "stable";
+}
+
+function markNextPauseSyncExplicit() {
+  explicitPauseSyncPending = true;
+}
+
+function consumePauseSyncIntent() {
+  if (!video?.paused) return undefined;
+  const intent = explicitPauseSyncPending ? "explicit" : "implicit";
+  explicitPauseSyncPending = false;
+  return intent;
 }
 
 function waitForDomReady() {
@@ -655,6 +678,7 @@ function activateImageTarget() {
 }
 
 async function activateVideoTarget(data) {
+  beginPlaybackStateStabilizing();
   // A previous live stream could still own the <video> element; drop its
   // player so it can't keep pushing data into the element we're reusing.
   teardownStreamingPlayers();
@@ -678,7 +702,10 @@ async function activateVideoTarget(data) {
       await applyVideoStartTime(video, data.startTime);
     } catch {}
   }
-  await video.play().catch(() => {});
+  await video.play().catch(() => {
+    markPlaybackStateStable();
+    playbackStateUpdate();
+  });
 }
 
 /**
@@ -689,6 +716,7 @@ async function activateVideoTarget(data) {
  * for them.
  */
 async function startLiveStreamPlayback(url) {
+  beginPlaybackStateStabilizing();
   teardownStreamingPlayers();
   try {
     video.pause();
@@ -852,7 +880,10 @@ function installICPHandlers() {
 
   ipcRenderer.on("play-ctl", async function (event, cmd) {
     if (cmd == "pause") {
+      markPlaybackStateStable();
+      markNextPauseSyncExplicit();
       video.pause();
+      playbackStateUpdate();
     } else if (cmd == "play") {
       await video.play();
     }
@@ -961,8 +992,11 @@ function sendRemainingTime(video) {
 }
 
 function pauseMediaSessionHandler() {
+  markPlaybackStateStable();
+  markNextPauseSyncExplicit();
   ipcRenderer.send("remoteplaypause", true);
   video.pause();
+  playbackStateUpdate();
 }
 
 function playMediaSessionHandler() {
@@ -995,6 +1029,8 @@ function playbackStateUpdate() {
   const playbackState = {
     currentTime: video.currentTime,
     playing: !video.paused,
+    syncPhase: playbackSyncPhase,
+    pauseIntent: consumePauseSyncIntent(),
   };
   ipcRenderer.send("playback-state-change", playbackState);
   if (strtvl != null) {
@@ -1028,6 +1064,10 @@ function installVideoPlaybackWiring() {
 
   video.addEventListener("play", playbackStateUpdate);
   video.addEventListener("pause", playbackStateUpdate);
+  video.addEventListener("playing", (event) => {
+    markPlaybackStateStable();
+    playbackStateUpdate(event);
+  });
 
   video.onended = () => {
     if (loopFile || video.loop) return;
@@ -1994,6 +2034,9 @@ async function loadMedia() {
     return;
   }
 
+  if (autoPlay) {
+    beginPlaybackStateStabilizing();
+  }
   video.src = mediaFile;
 
   let ts = await ipcRenderer.invoke("get-system-time");
@@ -2011,7 +2054,10 @@ async function loadMedia() {
   installVideoPlaybackWiring();
 
   if (autoPlay) {
-    video.play().catch(() => {});
+    video.play().catch(() => {
+      markPlaybackStateStable();
+      playbackStateUpdate();
+    });
   }
 }
 

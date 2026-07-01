@@ -568,6 +568,11 @@ let queueSlipstreamTransitionInProgress = false;
 let pendingQueueSwitchIndex = null;
 let pendingQueueSwitchStartTime = 0;
 let suppressPreviewForwarding = false;
+let projectionPlaybackStartupPending = false;
+let playbackStateSyncGeneration = 0;
+let desiredProjectionPreviewPlayback = null;
+let latestExplicitProjectionPauseState = null;
+let livePreviewMirrorMutedState = null;
 /**
  * When true, the next media-window-closed finishes a full-queue clear (snapshot already taken;
  * presentation was closed from the clear action).
@@ -997,7 +1002,27 @@ function nextQueueBoundaryIndex() {
   return -1;
 }
 
-async function playVideoSafely(mediaEl, context = "") {
+function rememberLivePreviewMirrorMuteState(mediaEl = video) {
+  if (!mediaEl || livePreviewMirrorMutedState !== null) return;
+  livePreviewMirrorMutedState = !!mediaEl.muted;
+}
+
+function restoreLivePreviewMirrorMuteState(mediaEl = video) {
+  if (!mediaEl || livePreviewMirrorMutedState === null) return;
+  mediaEl.muted = livePreviewMirrorMutedState;
+  mediaEl.defaultMuted = livePreviewMirrorMutedState;
+  livePreviewMirrorMutedState = null;
+}
+
+function beginProjectionPlaybackStartupSync() {
+  projectionPlaybackStartupPending = true;
+}
+
+function finishProjectionPlaybackStartupSync() {
+  projectionPlaybackStartupPending = false;
+}
+
+async function playVideoSafely(mediaEl, context = "", options = {}) {
   if (!mediaEl || typeof mediaEl.play !== "function") return false;
   if (
     mediaEl === video &&
@@ -1016,9 +1041,52 @@ async function playVideoSafely(mediaEl, context = "") {
       return false;
     }
     const suffix = context ? ` (${context})` : "";
-    console.error(`Failed to start playback${suffix}:`, error);
+    if (options.logFailure !== false) {
+      console.error(`Failed to start playback${suffix}:`, error);
+    }
     return false;
   }
+}
+
+async function playLivePreviewMirrorSafely(context = "") {
+  if (!video || isImg(video.src)) return false;
+  const previousSuppression = suppressPreviewForwarding;
+  suppressPreviewForwarding = true;
+  try {
+    if (await playVideoSafely(video, context, { logFailure: false })) {
+      return true;
+    }
+
+    if (!isActiveMediaWindow() || video.muted) {
+      return false;
+    }
+
+    rememberLivePreviewMirrorMuteState(video);
+    video.muted = true;
+    video.defaultMuted = true;
+    return playVideoSafely(video, `${context} muted retry`);
+  } finally {
+    suppressPreviewForwarding = previousSuppression;
+  }
+}
+
+async function pauseLivePreviewMirrorFromProjection(playbackState) {
+  if (!video || video.paused) return;
+  suppressPreviewForwarding = true;
+  try {
+    if (Number.isFinite(playbackState?.currentTime)) {
+      video.currentTime = playbackState.currentTime;
+    }
+    await video.pause();
+  } finally {
+    suppressPreviewForwarding = false;
+  }
+}
+
+async function reconcileStalePlaybackSync(generation) {
+  if (generation === playbackStateSyncGeneration) return;
+  if (desiredProjectionPreviewPlayback !== "paused") return;
+  await pauseLivePreviewMirrorFromProjection(latestExplicitProjectionPauseState || {});
 }
 
 function seekMedia(mediaEl, requestedTime) {
@@ -2486,6 +2554,10 @@ function queueItemNeedsDefaultSnapshotPin(item) {
   return !liveSource.snapshotId || liveSource.snapshotId.length === 0;
 }
 
+function queueItemUsesPackagedMedia(item) {
+  return queueItemLiveSource(item)?.mode === "packaged";
+}
+
 async function pinQueueMediaSources(items, opts = {}) {
   const targets = (Array.isArray(items) ? items : [])
     .filter(
@@ -2493,7 +2565,8 @@ async function pinQueueMediaSources(items, opts = {}) {
         item &&
         !isQueueItemBible(item) &&
         !isQueueItemSong(item) &&
-        isFileBackedMediaPath(item.path),
+        isFileBackedMediaPath(item.path) &&
+        !queueItemUsesPackagedMedia(item),
     )
     .filter(
       (item) =>
@@ -2541,6 +2614,9 @@ async function resolveQueueItemMediaPath(item) {
     const payload = mediaPinPayloadForItem(item);
     if (!payload) return item?.path || "";
     const liveSource = queueItemLiveSource(item);
+    if (liveSource?.mode === "packaged") {
+      return item.path;
+    }
     const hasSnapshotId =
       typeof liveSource?.snapshotId === "string" && liveSource.snapshotId.length > 0;
     if (
@@ -3070,7 +3146,11 @@ function isPreparingSeparateCue() {
 }
 
 function shouldSuppressPreviewForwarding() {
-  return suppressPreviewForwarding || isPreparingSeparateCue();
+  return (
+    suppressPreviewForwarding ||
+    projectionPlaybackStartupPending ||
+    isPreparingSeparateCue()
+  );
 }
 
 function updatePreviewCueUI() {
@@ -17471,6 +17551,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
   }
 
   queueSlipstreamTransitionInProgress = true;
+  let startupSyncStarted = false;
   try {
     const nextItem = mediaQueue[index];
     const nextType = nextItem.type || classifyQueueMediaType(nextItem.path);
@@ -17540,9 +17621,17 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
           startTime: requestedStart,
         };
 
+    if (!isBibleItem && !isSongItem && !isImgFile && !isPptxFile) {
+      beginProjectionPlaybackStartupSync();
+      startupSyncStarted = true;
+    }
+
     const slipstreamSuccess = await invoke("slipstream-media-window", slipstreamData);
     resolveQueuePresentationVideo();
-    if (!slipstreamSuccess) return false;
+    if (!slipstreamSuccess) {
+      if (startupSyncStarted) finishProjectionPlaybackStartupSync();
+      return false;
+    }
     activeResolvedMediaFile = resolvedNextPath;
     activePreviewResolvedMediaFile = resolvedNextPath;
 
@@ -17586,10 +17675,13 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     // what's projecting. In the non-slipstream path createMediaWindow's
     // "media-window autoplay" call does this; we must do it ourselves here.
     if (video && !isImgFile && !isPptxFile) {
-      await playVideoSafely(video, "slipstream preview play");
+      await playLivePreviewMirrorSafely("slipstream preview play");
     }
 
     return true;
+  } catch (err) {
+    if (startupSyncStarted) finishProjectionPlaybackStartupSync();
+    throw err;
   } finally {
     queueSlipstreamTransitionInProgress = false;
   }
@@ -18117,8 +18209,18 @@ function setupCustomMediaControls() {
           void playMedia();
           return;
         }
-        await playVideoSafely(mediaEl, "custom controls toggle");
+        if (previewMediaControlsLiveProjection(mediaEl)) {
+          masterPauseState = false;
+          await unPauseMedia({ target: mediaEl });
+          await playLivePreviewMirrorSafely("custom controls toggle");
+        } else {
+          await playVideoSafely(mediaEl, "custom controls toggle");
+        }
       } else {
+        if (previewMediaControlsLiveProjection(mediaEl)) {
+          masterPauseState = true;
+          await pauseMedia({ target: mediaEl });
+        }
         await mediaEl.pause();
       }
     },
@@ -18423,8 +18525,18 @@ function setupCustomMediaControls() {
               void playMedia();
               return;
             }
-            void playVideoSafely(mediaEl, "preview click toggle");
+            if (previewMediaControlsLiveProjection(mediaEl)) {
+              masterPauseState = false;
+              void unPauseMedia({ target: mediaEl });
+              void playLivePreviewMirrorSafely("preview click toggle");
+            } else {
+              void playVideoSafely(mediaEl, "preview click toggle");
+            }
           } else {
+            if (previewMediaControlsLiveProjection(mediaEl)) {
+              masterPauseState = true;
+              void pauseMedia({ target: mediaEl });
+            }
             mediaEl.pause();
           }
         }
@@ -18711,25 +18823,38 @@ async function handlePlaybackState(event, playbackState) {
   // by an audio glitch as it catches up. The explicit
   // suppressPreviewForwarding window prevents the sync-induced play/pause
   // event from looping back through pauseLocalMedia / playLocalMedia.
-  if (playbackState.playing && video.paused) {
+  // While the projection is swapping/starting a source it marks playback-state
+  // updates as stabilizing; those pause/play events are browser churn, not user
+  // intent, so the live preview waits for the first stable state.
+  if (playbackState.syncPhase === "stabilizing") {
+    beginProjectionPlaybackStartupSync();
+    return;
+  }
+  if (playbackState.playing) {
+    const syncGeneration = ++playbackStateSyncGeneration;
+    desiredProjectionPreviewPlayback = "playing";
+    finishProjectionPlaybackStartupSync();
     masterPauseState = false;
-    if (!isImg(mediaFile)) {
-      suppressPreviewForwarding = true;
-      try {
-        await playVideoSafely(video, "playback state sync");
-      } finally {
-        suppressPreviewForwarding = false;
-      }
+    if (video.paused && !isImg(mediaFile)) {
+      await playLivePreviewMirrorSafely("playback state sync");
+      await reconcileStalePlaybackSync(syncGeneration);
     }
-  } else if (!playbackState.playing && !video.paused) {
+    return;
+  }
+  if (!playbackState.playing) {
+    if (playbackState.pauseIntent !== "explicit") {
+      finishProjectionPlaybackStartupSync();
+      return;
+    }
+    ++playbackStateSyncGeneration;
+    desiredProjectionPreviewPlayback = "paused";
+    latestExplicitProjectionPauseState = playbackState;
+    finishProjectionPlaybackStartupSync();
     masterPauseState = true;
-    suppressPreviewForwarding = true;
-    try {
-      video.currentTime = playbackState.currentTime;
-      await video.pause();
-    } finally {
-      suppressPreviewForwarding = false;
+    if (video.paused) {
+      return;
     }
+    await pauseLivePreviewMirrorFromProjection(playbackState);
   }
 }
 
@@ -18826,6 +18951,8 @@ function installIPCHandler() {
 async function handleMediaWindowClosed(event, id) {
   resolveQueuePresentationVideo();
   const localVideo = video;
+  finishProjectionPlaybackStartupSync();
+  restoreLivePreviewMirrorMuteState(localVideo);
   stopStreamRendererPreviewCapture();
   activeMediaWindowContentType = null;
   activeResolvedMediaFile = "";
@@ -19194,12 +19321,21 @@ function vlCtl(v) {
   }
 }
 
+function previewMediaControlsLiveProjection(mediaEl) {
+  return Boolean(
+    mediaEl && mediaEl === video && isActiveMediaWindow() && !playingMediaAudioOnly,
+  );
+}
+
 async function pauseMedia(e) {
   if (activeLiveStream) {
     await send("play-ctl", "pause");
     return;
   }
-  if (video.src === "" || video.readyState === 0) {
+  if (
+    !previewMediaControlsLiveProjection(video) &&
+    (video.src === "" || video.readyState === 0)
+  ) {
     return;
   }
 
@@ -19217,7 +19353,10 @@ async function unPauseMedia(e) {
     await send("play-ctl", "play");
     return;
   }
-  if (video.src === "" || video.readyState === 0) {
+  if (
+    !previewMediaControlsLiveProjection(video) &&
+    (video.src === "" || video.readyState === 0)
+  ) {
     return;
   }
 
@@ -19225,7 +19364,7 @@ async function unPauseMedia(e) {
     !playingMediaAudioOnly &&
     e !== null &&
     e !== undefined &&
-    e.target.isConnected
+    e.target?.isConnected === true
   ) {
     resetPIDOnSeek();
     await send("play-ctl", "play");
@@ -20280,7 +20419,7 @@ function setSBFormMediaPlayer() {
         if (video) {
           if (targetTime !== null) {
             if (!masterPauseState && !isImgFile) {
-              void playVideoSafely(video, "restore active media preview");
+              void playLivePreviewMirrorSafely("restore active media preview");
             }
           }
         }
@@ -21700,19 +21839,26 @@ async function createMediaWindow(options) {
     return false;
   }
 
+  const startupSyncNeeded =
+    autoPlayEnabled && !liveStreamMode && !isTextItem && !isImgFile && !isPptxFile;
   isActiveMediaWindowCache = true;
   activeResolvedMediaFile = projectionMediaFile;
   activePreviewResolvedMediaFile = projectionMediaFile;
+  if (startupSyncNeeded) {
+    beginProjectionPlaybackStartupSync();
+  }
   try {
     const windowId = await invoke("create-media-window", windowOptions, selectedIndex);
     if (!windowId) {
       isActiveMediaWindowCache = false;
+      if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
       return false;
     }
     queueBiblePreviewMediaWindowSizeRefresh();
   } catch (err) {
     isActiveMediaWindowCache = false;
     activeMediaWindowContentType = null;
+    if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
     throw err;
   }
   activeMediaWindowContentType = isTextItem
@@ -21770,7 +21916,7 @@ async function createMediaWindow(options) {
     if (isQueuePlaybackContext || currentMode !== STREAMPLAYER) {
       if (video !== null && !isImgFile && !isPptxFile) {
         beginPidSeekSuppression();
-        await playVideoSafely(video, "media-window autoplay");
+        await playLivePreviewMirrorSafely("media-window autoplay");
       }
     }
   }

@@ -36,14 +36,15 @@ function closeTimeRemainingPort() {
 }
 
 function handleTimeRemainingMessage(messageEvent) {
-  const data = messageEvent.data;
-
-  if (timeRemainingTickListener) {
-    try {
-      timeRemainingTickListener(data[0], data[1], data[2], data[3]);
-    } catch (err) {
-      console.error("timeRemaining tick listener failed:", err);
-    }
+  try {
+    timeRemainingTickListener(
+      messageEvent.data[0],
+      messageEvent.data[1],
+      messageEvent.data[2],
+      messageEvent.data[3],
+    );
+  } catch (err) {
+    console.error("timeRemaining tick listener failed:", err);
   }
 }
 
