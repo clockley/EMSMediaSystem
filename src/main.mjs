@@ -81,6 +81,7 @@ let preflightDialogWindow = null;
 const PREFLIGHT_DIALOG_IPC_CHANNEL = "preflight-dialog-response";
 let preflightDialogResponseListener = null;
 let allowMainWindowClose = false;
+let quitCleanupStarted = false;
 const TIME_REMAINING_PORT_CHANNEL = "timeRemaining-port";
 let pendingProjectOpenPath = null;
 const bibleRpcClient = new BibleRpcClient({
@@ -1744,11 +1745,38 @@ function autosaveProjectPathFromSettings() {
   return typeof savedPath === "string" && savedPath.length > 0 ? savedPath : "";
 }
 
+function isExtractedProjectTempPath(filePath) {
+  if (typeof filePath !== "string" || filePath.length === 0) return false;
+  return localFileSystemPathFromMediaPath(filePath).includes(`${path.sep}ems-emproj-`);
+}
+
+async function autosaveSnapshotHasMissingExtractedMedia(snapshot) {
+  const queue = Array.isArray(snapshot?.mediaQueue) ? snapshot.mediaQueue : [];
+  for (const item of queue) {
+    const itemPath = typeof item?.path === "string" ? item.path : "";
+    if (!isExtractedProjectTempPath(itemPath)) continue;
+    try {
+      const info = await stat(localFileSystemPathFromMediaPath(itemPath));
+      if (!info.isFile()) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function loadAutosaveProjectSnapshotFromSettings() {
   const filePath = autosaveProjectPathFromSettings();
   if (!filePath) return null;
   try {
-    return await loadEmprojSnapshot(filePath);
+    const snapshot = await loadEmprojSnapshot(filePath);
+    if (await autosaveSnapshotHasMissingExtractedMedia(snapshot)) {
+      console.warn("Ignoring autosave with missing extracted project media:", filePath);
+      await cleanupExtractedProjectMedia(snapshot).catch(() => {});
+      await writeSettings({ [AUTOSAVE_PROJECT_PATH_KEY]: "" });
+      return null;
+    }
+    return snapshot;
   } catch (err) {
     console.error("Failed to load autosave project:", err);
     return null;
@@ -2268,8 +2296,9 @@ async function handleSaveAutosaveProjectState(_, state) {
     activeProjectPath = state.projectPath;
   }
   const filePath = autosaveProjectFilePath();
+  const packAutosaveMedia = state.projectStorageMode === "packed";
   const result = await saveEmprojSnapshot(filePath, state, projectWriterAppInfo(), {
-    packMedia: false,
+    packMedia: packAutosaveMedia,
   });
   const projectGuid =
     normalizeProjectGuid(result?.projectGuid) ||
@@ -2280,7 +2309,7 @@ async function handleSaveAutosaveProjectState(_, state) {
     projectPath: filePath,
     projectGuid,
     projectCreated: result?.projectCreated || state.projectCreated,
-    projectStorageMode: "working",
+    projectStorageMode: packAutosaveMedia ? "packed" : "working",
     project: {
       ...(state.project && typeof state.project === "object" ? state.project : {}),
       guid: projectGuid,
@@ -2311,6 +2340,11 @@ async function handleSetActiveProjectPath(_, payload = {}) {
 async function handleLoadAutosaveProjectState() {
   const snapshot = await loadAutosaveProjectSnapshotFromSettings();
   if (!snapshot) return null;
+  const previousSnapshot = activeProjectSnapshot;
+  activeProjectSnapshot = snapshot;
+  if (previousSnapshot) {
+    await cleanupExtractedProjectMedia(previousSnapshot).catch(() => {});
+  }
   activeProjectPath = typeof snapshot.projectPath === "string" ? snapshot.projectPath : "";
   activeProjectGuid = projectGuidFromSnapshot(snapshot) || activeProjectGuid;
   return snapshot;
@@ -2667,6 +2701,9 @@ async function cleanupMediaStagingDir() {
   sessionProjectQueues.clear();
   sessionProjectPaths.clear();
   stagingCapabilityCache.clear();
+  if (autosaveSnapshot && autosaveSnapshot !== activeProjectSnapshot) {
+    await cleanupExtractedProjectMedia(autosaveSnapshot).catch(() => {});
+  }
 }
 
 async function handleCleanupProjectStaging(_, payload = {}) {
@@ -3914,15 +3951,21 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (quitCleanupStarted) return;
+  quitCleanupStarted = true;
+  event.preventDefault();
   bibleRpcClient.stop();
   mediaWatcher.closeAll();
-  void cleanupMediaStagingDir().catch(() => {});
+  const cleanupTasks = [cleanupMediaStagingDir()];
   if (activeProjectSnapshot) {
     const snapshotToClean = activeProjectSnapshot;
     activeProjectSnapshot = null;
-    void cleanupExtractedProjectMedia(snapshotToClean).catch(() => {});
+    cleanupTasks.push(cleanupExtractedProjectMedia(snapshotToClean));
   }
+  void Promise.allSettled(cleanupTasks).finally(() => {
+    app.quit();
+  });
 });
 
 app.on("activate", () => {
