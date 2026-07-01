@@ -19,6 +19,8 @@ const { contextBridge, ipcRenderer } = require("electron/renderer");
 
 const audioFxPromise = import(`./audioFx.min.mjs`);
 let timeRemainingPort = null;
+const TIME_REMAINING_PAYLOAD = [0, 0, 0, ""];
+const TIME_REMAINING_PAYLOAD_NO_FILE = [0, 0, 0];
 
 ipcRenderer.on("timeRemaining-port", (event) => {
   const [port] = event.ports || [];
@@ -34,7 +36,7 @@ ipcRenderer.on("timeRemaining-port", (event) => {
   timeRemainingPort.start?.();
 });
 
-function sendTimeRemaining(payload) {
+function postTimeRemainingPayload(payload) {
   if (!timeRemainingPort) return false;
   try {
     timeRemainingPort.postMessage(payload);
@@ -46,6 +48,20 @@ function sendTimeRemaining(payload) {
     timeRemainingPort = null;
     return false;
   }
+}
+
+function sendTimeRemainingTick(duration, currentTime, timestamp, mediaFile) {
+  const hasMediaFile = typeof mediaFile === "string" && mediaFile.length > 0;
+  const payload = hasMediaFile
+    ? TIME_REMAINING_PAYLOAD
+    : TIME_REMAINING_PAYLOAD_NO_FILE;
+  payload[0] = duration;
+  payload[1] = currentTime;
+  payload[2] = timestamp;
+  if (hasMediaFile) {
+    payload[3] = mediaFile;
+  }
+  return postTimeRemainingPayload(payload);
 }
 
 function exposeMediaApi() {
@@ -69,7 +85,7 @@ contextBridge.exposeInMainWorld("electron", {
     invoke: ipcRenderer.invoke.bind(ipcRenderer),
   },
   timeRemaining: {
-    send: sendTimeRemaining,
+    sendTick: sendTimeRemainingTick,
     isPortReady: () => Boolean(timeRemainingPort),
   },
   attachCubicWaveShaper: async (...args) => {

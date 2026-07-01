@@ -419,16 +419,12 @@ function updateCountdownNode() {
 }
 
 let now = 0;
-export function handleTimeMessage(_, message) {
-  const duration = Array.isArray(message) ? message[0] : message?.duration;
-  const currentTime = Array.isArray(message)
-    ? message[1]
-    : message?.currentTime;
-  const timestamp = Array.isArray(message) ? message[2] : message?.timestamp;
-  const messageMediaFile = Array.isArray(message)
-    ? message[3]
-    : message?.mediaFile;
-
+export function handleTimeMessage(
+  duration,
+  currentTime,
+  timestamp,
+  messageMediaFile,
+) {
   if (
     messageMediaFile &&
     getMediaFile() &&

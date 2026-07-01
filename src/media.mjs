@@ -22,8 +22,8 @@ const {
   attachCubicWaveShaper,
   timeRemaining,
 } = window.electron;
-const sendTimeRemaining =
-  timeRemaining?.send ||
+const sendTimeRemainingTick =
+  timeRemaining?.sendTick ||
   (() => false);
 let video = null;
 /**
@@ -38,8 +38,6 @@ let dashPlayer = null;
 let dashManifestObjectUrl = null;
 /** Guards one-time installation of the <video> playback event wiring. */
 let videoPlaybackWiringInstalled = false;
-const TIME_REMAINING_PAYLOAD = [0, 0, 0, ""];
-const TIME_REMAINING_PAYLOAD_NO_FILE = [0, 0, 0];
 let lastTimeRemainingMediaFile = "";
 var img = null;
 var mediaFile;
@@ -947,19 +945,13 @@ function sendRemainingTime(video) {
       const duration = video.duration;
       const playbackTime = video.currentTime;
       const timestamp = Date.now() + (currentTime - performance.now());
-      TIME_REMAINING_PAYLOAD[0] = duration;
-      TIME_REMAINING_PAYLOAD[1] = playbackTime;
-      TIME_REMAINING_PAYLOAD[2] = timestamp;
-      TIME_REMAINING_PAYLOAD_NO_FILE[0] = duration;
-      TIME_REMAINING_PAYLOAD_NO_FILE[1] = playbackTime;
-      TIME_REMAINING_PAYLOAD_NO_FILE[2] = timestamp;
       const mediaFileChanged = mediaFile !== lastTimeRemainingMediaFile;
       if (mediaFileChanged) {
-        lastTimeRemainingMediaFile = mediaFile;
-        TIME_REMAINING_PAYLOAD[3] = mediaFile;
-        sendTimeRemaining(TIME_REMAINING_PAYLOAD);
+        if (sendTimeRemainingTick(duration, playbackTime, timestamp, mediaFile)) {
+          lastTimeRemainingMediaFile = mediaFile;
+        }
       } else {
-        sendTimeRemaining(TIME_REMAINING_PAYLOAD_NO_FILE);
+        sendTimeRemainingTick(duration, playbackTime, timestamp);
       }
       lastTime = currentTime;
     }

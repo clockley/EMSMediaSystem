@@ -21,28 +21,39 @@ import { FadeOut, attachCubicWaveShaper } from "./audioFx.min.mjs";
 let isInitialized = false;
 let initPromise = null;
 let timeRemainingPort = null;
-const timeRemainingMessageListeners = new Set();
+let timeRemainingTickListener = null;
+
+function closeTimeRemainingPort() {
+  if (!timeRemainingPort) return;
+
+  const port = timeRemainingPort;
+  timeRemainingPort = null;
+  port.onmessage = null;
+
+  try {
+    port.close();
+  } catch {}
+}
+
+function handleTimeRemainingMessage(messageEvent) {
+  const data = messageEvent.data;
+
+  if (timeRemainingTickListener) {
+    try {
+      timeRemainingTickListener(data[0], data[1], data[2], data[3]);
+    } catch (err) {
+      console.error("timeRemaining tick listener failed:", err);
+    }
+  }
+}
 
 ipcRenderer.on("timeRemaining-port", (event) => {
-  const [port] = event.ports || [];
+  const port = event.ports?.[0];
   if (!port) return;
 
-  if (timeRemainingPort) {
-    try {
-      timeRemainingPort.close();
-    } catch {}
-  }
-
+  closeTimeRemainingPort();
   timeRemainingPort = port;
-  timeRemainingPort.onmessage = (messageEvent) => {
-    for (const listener of timeRemainingMessageListeners) {
-      try {
-        listener(messageEvent.data);
-      } catch (err) {
-        console.error("timeRemaining MessagePort listener failed:", err);
-      }
-    }
-  };
+  timeRemainingPort.onmessage = handleTimeRemainingMessage;
   timeRemainingPort.start?.();
 });
 
@@ -142,10 +153,14 @@ contextBridge.exposeInMainWorld("electron", {
     invoke: ipcRenderer.invoke.bind(ipcRenderer),
   },
   timeRemaining: {
-    onMessage: (listener) => {
+    onTick: (listener) => {
       if (typeof listener !== "function") return () => {};
-      timeRemainingMessageListeners.add(listener);
-      return () => timeRemainingMessageListeners.delete(listener);
+      timeRemainingTickListener = listener;
+      return () => {
+        if (timeRemainingTickListener === listener) {
+          timeRemainingTickListener = null;
+        }
+      };
     },
     isPortReady: () => Boolean(timeRemainingPort),
   },
