@@ -381,6 +381,8 @@ const countdownDigitNodes = [];
 const countdownDigitLastCode = new Int32Array(MEDIA_COUNTDOWN_DIGIT_COUNT);
 countdownDigitLastCode.fill(-1);
 let countdownHasDisplayedDigits = false;
+let mediaCountdownElement = null;
+let countdownDigitParent = null;
 const MEDIA_COUNTDOWN_CHAR_BY_CODE = new Array(128);
 for (let digit = 0; digit < 10; digit++) {
   MEDIA_COUNTDOWN_CHAR_BY_CODE[48 + digit] = String(digit);
@@ -6827,11 +6829,92 @@ async function browseFromBibleSearchResult(index) {
 async function renderBibleVerseList() {
   const list = document.getElementById("bibleVerseList");
   if (!list) return;
+
+  if (!list._delegationInitialized) {
+    list._delegationInitialized = true;
+
+    list.addEventListener("click", (event) => {
+      const button = event.target.closest(".bible-verse-row");
+      if (button) {
+        const verseNumber = Number(button.dataset.verse);
+        const toggleSelection = event.ctrlKey || event.metaKey;
+        const extendSelection = event.shiftKey && bibleVerseSelection.anchor > 0;
+        if (extendSelection) {
+          const rangeStart = Math.min(bibleVerseSelection.anchor, verseNumber);
+          const rangeEnd = Math.max(bibleVerseSelection.anchor, verseNumber);
+          if (!toggleSelection) bibleVerseSelection.verses.clear();
+          for (let v = rangeStart; v <= rangeEnd; v += 1) {
+            bibleVerseSelection.verses.add(v);
+          }
+        } else if (toggleSelection) {
+          if (bibleVerseSelection.verses.has(verseNumber)) {
+            bibleVerseSelection.verses.delete(verseNumber);
+          } else {
+            bibleVerseSelection.verses.add(verseNumber);
+          }
+          bibleVerseSelection.anchor = verseNumber;
+        } else {
+          bibleVerseSelection.verses.clear();
+          bibleVerseSelection.verses.add(verseNumber);
+          bibleVerseSelection.anchor = verseNumber;
+        }
+
+        const selectedVerses = selectedBibleVerseNumbers();
+        bibleDesignerState.verse = selectedVerses[0] || verseNumber;
+        bibleDesignerState.verseEnd =
+          selectedVerses.length > 1 ? selectedVerses[selectedVerses.length - 1] : 0;
+        syncBibleVerseListSelection();
+        scheduleSelectedBibleVersePreview();
+      }
+    });
+
+    list.addEventListener("contextmenu", (event) => {
+      const button = event.target.closest(".bible-verse-row");
+      if (button) {
+        const verseNumber = Number(button.dataset.verse);
+        if (!bibleVerseSelection.verses.has(verseNumber)) {
+          bibleVerseSelection.verses.clear();
+          bibleVerseSelection.verses.add(verseNumber);
+        }
+        bibleVerseSelection.anchor = verseNumber;
+        const selectedVerses = selectedBibleVerseNumbers();
+        bibleDesignerState.verse = selectedVerses[0] || verseNumber;
+        bibleDesignerState.verseEnd =
+          selectedVerses.length > 1 ? selectedVerses[selectedVerses.length - 1] : 0;
+        syncBibleVerseListSelection();
+        cancelBibleVersePreviewSync();
+        void applySelectedBibleVersePreview().catch(console.error);
+        showBibleTextContextMenu(event);
+      }
+    });
+
+    list.addEventListener("dblclick", (event) => {
+      const button = event.target.closest(".bible-verse-row");
+      if (button) {
+        const verseNumber = Number(button.dataset.verse);
+        const verseText = button.dataset.text || "";
+        cancelBibleVersePreviewSync();
+        const keepMultiSelection =
+          bibleVerseSelection.verses.size > 1 && bibleVerseSelection.verses.has(verseNumber);
+        if (!keepMultiSelection) {
+          bibleVerseSelection.verses.clear();
+          bibleVerseSelection.verses.add(verseNumber);
+          bibleVerseSelection.anchor = verseNumber;
+        }
+        const selectedVerses = selectedBibleVerseNumbers();
+        bibleDesignerState.verse = selectedVerses[0] || verseNumber;
+        bibleDesignerState.verseEnd =
+          selectedVerses.length > 1 ? selectedVerses[selectedVerses.length - 1] : 0;
+        syncBibleVerseListSelection();
+        void presentBibleSelectionFromDoubleClick(verseNumber, verseText).catch(console.error);
+      }
+    });
+  }
+
   const requestId = bibleVerseListRequestId + 1;
   bibleVerseListRequestId = requestId;
   cancelBibleVersePreviewSync();
-  list.innerHTML = "";
-  list.setAttribute("aria-multiselectable", "true");
+
   let textData = null;
   try {
     textData = await bibleAPI.getText(
@@ -6844,86 +6927,49 @@ async function renderBibleVerseList() {
   }
   if (requestId !== bibleVerseListRequestId) return;
   const verses = Array.isArray(textData?.verses) ? textData.verses : [];
+
+  const existingButtons = Array.from(list.children);
+  if (
+    existingButtons.length === 1 &&
+    (existingButtons[0].classList.contains("list-placeholder") ||
+      existingButtons[0].innerHTML.includes("No verses found"))
+  ) {
+    list.innerHTML = "";
+    existingButtons.length = 0;
+  }
+
   if (!verses.length) {
     list.innerHTML =
       '<div class="list-placeholder"><span class="list-placeholder-title">No verses found</span></div>';
     return;
   }
-  verses.forEach((verseText, index) => {
+
+  list.setAttribute("aria-multiselectable", "true");
+
+  const numVerses = verses.length;
+  for (let index = 0; index < numVerses; index++) {
+    const verseText = verses[index];
     const verseNumber = index + 1;
     const isSelected = bibleVerseNumberIsSelected(verseNumber);
-    const button = document.createElement("button");
-    button.type = "button";
+    let button = existingButtons[index];
+
+    if (!button || !button.classList.contains("bible-verse-row")) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("role", "option");
+      list.appendChild(button);
+    }
+
     button.className = isSelected ? "bible-verse-row is-selected" : "bible-verse-row";
     button.dataset.verse = String(verseNumber);
-    button.setAttribute("role", "option");
+    button.dataset.text = verseText;
     button.setAttribute("aria-selected", isSelected ? "true" : "false");
     button.innerHTML = `<span class="bible-verse-number">${verseNumber}</span><span class="bible-verse-row-text">${escapeHtml(verseText)}</span>`;
-    button.addEventListener("click", (event) => {
-      const toggleSelection = event.ctrlKey || event.metaKey;
-      const extendSelection = event.shiftKey && bibleVerseSelection.anchor > 0;
-      if (extendSelection) {
-        const rangeStart = Math.min(bibleVerseSelection.anchor, verseNumber);
-        const rangeEnd = Math.max(bibleVerseSelection.anchor, verseNumber);
-        if (!toggleSelection) bibleVerseSelection.verses.clear();
-        for (let v = rangeStart; v <= rangeEnd; v += 1) {
-          bibleVerseSelection.verses.add(v);
-        }
-      } else if (toggleSelection) {
-        if (bibleVerseSelection.verses.has(verseNumber)) {
-          bibleVerseSelection.verses.delete(verseNumber);
-        } else {
-          bibleVerseSelection.verses.add(verseNumber);
-        }
-        bibleVerseSelection.anchor = verseNumber;
-      } else {
-        bibleVerseSelection.verses.clear();
-        bibleVerseSelection.verses.add(verseNumber);
-        bibleVerseSelection.anchor = verseNumber;
-      }
+  }
 
-      const selectedVerses = selectedBibleVerseNumbers();
-      bibleDesignerState.verse = selectedVerses[0] || verseNumber;
-      bibleDesignerState.verseEnd =
-        selectedVerses.length > 1 ? selectedVerses[selectedVerses.length - 1] : 0;
-      syncBibleVerseListSelection();
-      scheduleSelectedBibleVersePreview();
-    });
-    button.addEventListener("contextmenu", (event) => {
-      if (!bibleVerseSelection.verses.has(verseNumber)) {
-        bibleVerseSelection.verses.clear();
-        bibleVerseSelection.verses.add(verseNumber);
-      }
-      bibleVerseSelection.anchor = verseNumber;
-      const selectedVerses = selectedBibleVerseNumbers();
-      bibleDesignerState.verse = selectedVerses[0] || verseNumber;
-      bibleDesignerState.verseEnd =
-        selectedVerses.length > 1 ? selectedVerses[selectedVerses.length - 1] : 0;
-      syncBibleVerseListSelection();
-      cancelBibleVersePreviewSync();
-      void applySelectedBibleVersePreview().catch(console.error);
-      showBibleTextContextMenu(event);
-    });
-    button.addEventListener("dblclick", () => {
-      cancelBibleVersePreviewSync();
-      // Honor an existing multi-verse selection when the double-clicked verse is
-      // part of it; otherwise collapse the selection to just this verse.
-      const keepMultiSelection =
-        bibleVerseSelection.verses.size > 1 && bibleVerseSelection.verses.has(verseNumber);
-      if (!keepMultiSelection) {
-        bibleVerseSelection.verses.clear();
-        bibleVerseSelection.verses.add(verseNumber);
-        bibleVerseSelection.anchor = verseNumber;
-      }
-      const selectedVerses = selectedBibleVerseNumbers();
-      bibleDesignerState.verse = selectedVerses[0] || verseNumber;
-      bibleDesignerState.verseEnd =
-        selectedVerses.length > 1 ? selectedVerses[selectedVerses.length - 1] : 0;
-      syncBibleVerseListSelection();
-      void presentBibleSelectionFromDoubleClick(verseNumber, verseText).catch(console.error);
-    });
-    list.appendChild(button);
-  });
+  while (list.children.length > numVerses) {
+    list.removeChild(list.lastChild);
+  }
 }
 
 async function refreshBibleBrowser() {
@@ -13468,18 +13514,181 @@ async function refreshSongsBrowser(query = "", prefetchedResults = null) {
     const list = document.getElementById("songsList");
     if (!list) return;
 
-    list.innerHTML = "";
+    if (!list._delegationInitialized) {
+      list._delegationInitialized = true;
+
+      list.addEventListener("click", async (event) => {
+        const deleteBtn = event.target.closest(".songs-list-item__delete");
+        if (deleteBtn) {
+          event.stopPropagation();
+          const row = deleteBtn.closest(".songs-list-item");
+          if (row) {
+            const songId = row.dataset.songId;
+            void deleteSongFromLibrary(songId).catch(console.error);
+          }
+          return;
+        }
+
+        const checkbox = event.target.closest(".songs-list-item__checkbox");
+        if (checkbox) {
+          event.stopPropagation();
+          return;
+        }
+
+        const label = event.target.closest(".songs-list-item__label");
+        if (label) {
+          const row = label.closest(".songs-list-item");
+          if (row) {
+            const songId = row.dataset.songId;
+            const songTitle = row.dataset.songTitle;
+            const checkboxEl = row.querySelector(".songs-list-item__checkbox");
+            if (event.shiftKey || event.ctrlKey || event.metaKey) {
+              if (checkboxEl) {
+                checkboxEl.checked = !checkboxEl.checked;
+                setSongRowSelected(row, songId, checkboxEl.checked);
+              }
+              return;
+            }
+            await activateSongFromLibrary({ id: songId, title: songTitle });
+          }
+        }
+      });
+
+      list.addEventListener("change", (event) => {
+        const checkbox = event.target.closest(".songs-list-item__checkbox");
+        if (checkbox) {
+          const row = checkbox.closest(".songs-list-item");
+          if (row) {
+            const songId = row.dataset.songId;
+            setSongRowSelected(row, songId, checkbox.checked);
+          }
+        }
+      });
+
+      list.addEventListener("dblclick", (event) => {
+        const row = event.target.closest(".songs-list-item");
+        if (row) {
+          if (
+            event.target.closest(
+              ".songs-list-item__checkbox, .songs-list-item__delete, .songs-list-item__drag-handle",
+            )
+          ) {
+            return;
+          }
+          event.preventDefault();
+          const songId = row.dataset.songId;
+          const songTitle = row.dataset.songTitle;
+          void scheduleSongFromLibrary({ id: songId, title: songTitle }).catch(console.error);
+        }
+      });
+
+      list.addEventListener("contextmenu", (event) => {
+        const row = event.target.closest(".songs-list-item");
+        if (row) {
+          if (event.target.closest(".songs-list-item__checkbox, .songs-list-item__delete")) {
+            return;
+          }
+          const songId = row.dataset.songId;
+          const songTitle = row.dataset.songTitle;
+          showSongContextMenu(event, { id: songId, title: songTitle });
+        }
+      });
+
+      list.addEventListener("dragstart", (event) => {
+        const row = event.target.closest(".songs-list-item");
+        if (row) {
+          if (event.target.closest(".songs-list-item__checkbox, .songs-list-item__delete")) {
+            event.preventDefault();
+            return;
+          }
+          const songId = row.dataset.songId;
+          const songTitle = row.dataset.songTitle;
+          songDragSongId = songId;
+          event.dataTransfer.setData(SONG_DRAG_MIME, songId);
+          event.dataTransfer.setData("text/plain", songTitle || "Song");
+          event.dataTransfer.effectAllowed = "copyMove";
+          row.classList.add("songs-list-item--dragging");
+        }
+      });
+
+      list.addEventListener("dragend", () => {
+        clearSongDragVisualState();
+      });
+    }
+
+    const existingRows = Array.from(list.children);
+    if (
+      existingRows.length === 1 &&
+      (existingRows[0].classList.contains("list-placeholder-title") ||
+        existingRows[0].classList.contains("list-placeholder") ||
+        existingRows[0].tagName === "SPAN")
+    ) {
+      list.innerHTML = "";
+      existingRows.length = 0;
+    }
+
     if (results.length === 0) {
       list.innerHTML = '<span class="list-placeholder-title">No songs found</span>';
       syncSongsBulkActions();
       return;
     }
 
-    for (const song of results) {
-      const row = document.createElement("div");
-      row.className = "songs-list-item";
+    const numResults = results.length;
+    for (let i = 0; i < numResults; i++) {
+      const song = results[i];
+      let row = existingRows[i];
+      let dragHandle, checkbox, numberEl, label, titleSpan, subtitleSpan, deleteBtn;
+
+      if (row && row.classList.contains("songs-list-item")) {
+        dragHandle = row.querySelector(".songs-list-item__drag-handle");
+        checkbox = row.querySelector(".songs-list-item__checkbox");
+        numberEl = row.querySelector(".songs-list-item__number");
+        label = row.querySelector(".songs-list-item__label");
+        titleSpan = row.querySelector(".songs-list-item__title");
+        subtitleSpan = row.querySelector(".songs-list-item__subtitle");
+        deleteBtn = row.querySelector(".songs-list-item__delete");
+      } else {
+        row = document.createElement("div");
+        row.className = "songs-list-item";
+        row.draggable = true;
+
+        dragHandle = document.createElement("span");
+        dragHandle.className = "songs-list-item__drag-handle";
+        dragHandle.setAttribute("aria-hidden", "true");
+        dragHandle.title = "Drag to schedule or folder";
+        dragHandle.textContent = "⠿";
+
+        checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "songs-list-item__checkbox";
+
+        numberEl = document.createElement("span");
+        numberEl.className = "songs-list-item__number";
+
+        label = document.createElement("div");
+        label.className = "songs-list-item__label";
+
+        titleSpan = document.createElement("span");
+        titleSpan.className = "songs-list-item__title";
+        label.appendChild(titleSpan);
+
+        deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "songs-list-item__delete";
+        deleteBtn.textContent = "✕";
+
+        row.appendChild(dragHandle);
+        row.appendChild(checkbox);
+        row.appendChild(numberEl);
+        row.appendChild(label);
+        row.appendChild(deleteBtn);
+        list.appendChild(row);
+      }
+
       row.dataset.songId = song.id;
-      row.draggable = true;
+      row.dataset.songTitle = song.title || "";
+
+      row.className = "songs-list-item";
       if (currentWorkspaceSong?.id === song.id) {
         row.classList.add("is-selected");
       }
@@ -13487,107 +13696,37 @@ async function refreshSongsBrowser(query = "", prefetchedResults = null) {
         row.classList.add("is-checked");
       }
 
-      const dragHandle = document.createElement("span");
-      dragHandle.className = "songs-list-item__drag-handle";
-      dragHandle.setAttribute("aria-hidden", "true");
-      dragHandle.title = "Drag to schedule or folder";
-      dragHandle.textContent = "⠿";
-
-      const checkbox = document.createElement("input");
-      checkbox.type = "checkbox";
-      checkbox.className = "songs-list-item__checkbox";
       checkbox.checked = selectedSongIds.has(song.id);
       checkbox.setAttribute("aria-label", `Select ${song.title || "song"}`);
-      checkbox.addEventListener("click", (event) => {
-        event.stopPropagation();
-      });
-      checkbox.addEventListener("change", () => {
-        setSongRowSelected(row, song.id, checkbox.checked);
-      });
 
-      const numberEl = document.createElement("span");
-      numberEl.className = "songs-list-item__number";
       numberEl.textContent = formatSongListNumber(song);
 
-      const label = document.createElement("div");
-      label.className = "songs-list-item__label";
-
-      const titleSpan = document.createElement("span");
-      titleSpan.className = "songs-list-item__title";
       titleSpan.textContent = formatSongListLabel(song);
-      label.appendChild(titleSpan);
 
       const firstLyric = songListExcerpt(song);
       if (firstLyric) {
-        const subtitleSpan = document.createElement("span");
-        subtitleSpan.className = "songs-list-item__subtitle";
+        if (!subtitleSpan) {
+          subtitleSpan = document.createElement("span");
+          subtitleSpan.className = "songs-list-item__subtitle";
+          label.appendChild(subtitleSpan);
+        }
         subtitleSpan.textContent = firstLyric;
-        label.appendChild(subtitleSpan);
+        subtitleSpan.style.display = "";
+      } else if (subtitleSpan) {
+        subtitleSpan.style.display = "none";
+        subtitleSpan.textContent = "";
       }
 
       label.title = `${formatSongListNumber(song) ? `${formatSongListNumber(song)} ` : ""}${titleSpan.textContent}`;
-      label.addEventListener("click", async (event) => {
-        if (event.shiftKey || event.ctrlKey || event.metaKey) {
-          checkbox.checked = !checkbox.checked;
-          setSongRowSelected(row, song.id, checkbox.checked);
-          return;
-        }
-        await activateSongFromLibrary(song);
-      });
 
-      const deleteBtn = document.createElement("button");
-      deleteBtn.type = "button";
-      deleteBtn.className = "songs-list-item__delete";
       deleteBtn.title = `Delete ${song.title}`;
       deleteBtn.setAttribute("aria-label", `Delete ${song.title}`);
-      deleteBtn.textContent = "✕";
-      deleteBtn.addEventListener("click", (event) => {
-        event.stopPropagation();
-        void deleteSongFromLibrary(song.id).catch(console.error);
-      });
-
-      row.addEventListener("dblclick", (event) => {
-        if (
-          event.target.closest(
-            ".songs-list-item__checkbox, .songs-list-item__delete, .songs-list-item__drag-handle",
-          )
-        ) {
-          return;
-        }
-        event.preventDefault();
-        void scheduleSongFromLibrary(song).catch(console.error);
-      });
-
-      row.addEventListener("contextmenu", (event) => {
-        if (event.target.closest(".songs-list-item__checkbox, .songs-list-item__delete")) {
-          return;
-        }
-        showSongContextMenu(event, song);
-      });
-
-      row.addEventListener("dragstart", (event) => {
-        if (event.target.closest(".songs-list-item__checkbox, .songs-list-item__delete")) {
-          event.preventDefault();
-          return;
-        }
-        songDragSongId = song.id;
-        event.dataTransfer.setData(SONG_DRAG_MIME, song.id);
-        event.dataTransfer.setData("text/plain", song.title || "Song");
-        event.dataTransfer.effectAllowed = "copyMove";
-        row.classList.add("songs-list-item--dragging");
-      });
-
-      row.addEventListener("dragend", () => {
-        clearSongDragVisualState();
-      });
-
-      row.appendChild(dragHandle);
-      row.appendChild(checkbox);
-      row.appendChild(numberEl);
-      row.appendChild(label);
-      row.appendChild(deleteBtn);
-      list.appendChild(row);
     }
+
+    while (list.children.length > numResults) {
+      list.removeChild(list.lastChild);
+    }
+
     syncSongsBulkActions();
   } catch (err) {
     console.error("Failed to refresh songs browser:", err);
@@ -18617,7 +18756,7 @@ function handleWindowMax(event, isMaximized) {
 }
 
 function installIPCHandler() {
-  timeRemaining?.onMessage?.((message) => handleTimeMessage(null, message));
+  timeRemaining?.onTick?.(handleTimeMessage);
   on("update-playback-state", handlePlaybackState);
   on("remoteplaypause", handlePlayPause);
   on("media-window-closed", handleMediaWindowClosed);
@@ -18858,19 +18997,29 @@ function handleMediaPlayback(isImgFile, sourcePath = mediaFile, cacheBust) {
   }
 }
 
+function getMediaCountdownElement() {
+  if (mediaCountdownElement?.isConnected) {
+    return mediaCountdownElement;
+  }
+  mediaCountdownElement = document.getElementById("mediaCntDn");
+  return mediaCountdownElement;
+}
+
 function ensureMediaCountdownDigitNodes() {
-  const parent = document.getElementById("mediaCntDn");
+  const parent = getMediaCountdownElement();
   if (!parent) return false;
+  if (countdownDigitParent === parent) return true;
   for (let i = 0; i < MEDIA_COUNTDOWN_DIGIT_COUNT; i++) {
     let node = countdownDigitNodes[i];
     if (!node) {
       node = document.createTextNode("");
       countdownDigitNodes[i] = node;
     }
-    if (!parent.contains(node)) {
+    if (node.parentNode !== parent) {
       parent.appendChild(node);
     }
   }
+  countdownDigitParent = parent;
   return true;
 }
 
@@ -18920,7 +19069,7 @@ function setMediaCountdownFromCodes(codes) {
 }
 
 function setMediaCountdownOverlayVisible(isVisible) {
-  const countdownEl = document.getElementById("mediaCntDn");
+  const countdownEl = getMediaCountdownElement();
   if (!countdownEl) return;
   const wasAllowed = countdownEl.dataset.countdownAllowed === "true";
   countdownEl.dataset.countdownAllowed = isVisible ? "true" : "false";
@@ -18938,7 +19087,7 @@ function setMediaCountdownText(value) {
 }
 
 function syncMediaCountdownOverlayState() {
-  const countdownEl = document.getElementById("mediaCntDn");
+  const countdownEl = getMediaCountdownElement();
   if (!countdownEl) return;
   const hasText = countdownHasDisplayedDigits;
   const isAllowed = countdownEl.dataset.countdownAllowed === "true";
@@ -20504,6 +20653,8 @@ function cleanRefs(options = {}) {
       }
     }
   }
+  mediaCountdownElement = null;
+  countdownDigitParent = null;
 
   if (setupCustomMediaControls.controller) {
     try {
