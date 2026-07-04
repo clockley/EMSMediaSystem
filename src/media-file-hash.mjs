@@ -1,5 +1,5 @@
 import { createReadStream } from "fs";
-import { xxh3 } from "@node-rs/xxhash";
+import { createXXHash3 } from "hash-wasm";
 
 /** Algorithm used for media file content fingerprints. */
 export const MEDIA_FILE_HASH_ALG = "xxh3-64";
@@ -44,7 +44,8 @@ async function streamHashFile(filePath, onData) {
 
 /** Stream-hash a local file with XXH3-64 (fast; suitable for large media). */
 export async function hashMediaFile(filePath) {
-  const hasher = xxh3.Xxh3.withSeed(0n);
+  const hasher = await createXXHash3(0, 0);
+  hasher.init();
   await streamHashFile(filePath, (chunk) => hasher.update(chunk));
-  return hasher.digest().toString(16).padStart(16, "0");
+  return hasher.digest();
 }
