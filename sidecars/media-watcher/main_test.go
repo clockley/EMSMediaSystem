@@ -95,7 +95,7 @@ func TestHashLocalFileMatchesMediaHashAlgorithm(t *testing.T) {
 		t.Fatal(err)
 	}
 	if digest != "9555e8555c62dcfd" {
-		t.Fatalf("digest = %q, want node-rs xxh3-64 digest", digest)
+		t.Fatalf("digest = %q, want xxh3-64 digest", digest)
 	}
 }
 
