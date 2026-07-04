@@ -178,7 +178,6 @@ BEGIN IMMEDIATE;
 ${dropTables}
 DELETE FROM bible_version_key WHERE abbreviation IN (${abbreviations}) OR "table" IN (${tables});
 COMMIT;
-VACUUM;
 `,
   );
 }
@@ -190,7 +189,6 @@ function preparePaidDb() {
   assertFile(paidBibleMetadataPath, "paid Bible import metadata");
   assertFile(bibleImporterPath, "paid Bible importer");
   run(process.execPath, [bibleImporterPath, paidBibleMetadataPath, buildDbPath]);
-  runSqlite(buildDbPath, "VACUUM;");
 }
 
 function applyBuiltInAttributionMetadata() {
@@ -218,7 +216,11 @@ COMMIT;
 function optimizeDb() {
   const goBinary = resolveGoBinary();
   console.log("Optimizing Bible DB with chapter-level LZFSE text BLOBs and FTS5 lookup");
-  run(goBinary, ["run", "./cmd/bible-db-optimize", "--db", buildDbPath], {
+  const args = ["run", "./cmd/bible-db-optimize", "--db", buildDbPath];
+  if (process.env.BIBLE_DB_OPTIMIZE_WORKERS) {
+    args.push("--compression-workers", process.env.BIBLE_DB_OPTIMIZE_WORKERS);
+  }
+  run(goBinary, args, {
     cwd: scriptDir,
     env: {
       ...process.env,
