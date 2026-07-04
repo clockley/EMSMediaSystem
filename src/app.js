@@ -20109,6 +20109,15 @@ function rendererCaptureVideoConstraints(mode = activeRendererCaptureQualityMode
   };
 }
 
+function rendererCaptureRequestOptions() {
+  // Ask Electron for the media-window frame first; downscale the track after
+  // capture starts so display-capture constraint validation cannot reject setup.
+  return {
+    video: true,
+    audio: false,
+  };
+}
+
 function syncRendererCaptureQuality(stream, mode = activeRendererCaptureQualityMode()) {
   if (!stream) {
     streamRendererPreviewQualityMode = null;
@@ -20260,10 +20269,9 @@ async function startStreamRendererPreviewCapture() {
 
   streamRendererPreviewStartPromise = (async () => {
     const qualityMode = activeRendererCaptureQualityMode();
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: rendererCaptureVideoConstraints(qualityMode),
-      audio: false,
-    });
+    const stream = await navigator.mediaDevices.getDisplayMedia(
+      rendererCaptureRequestOptions(),
+    );
     if (!mediaRendererCaptureAllowedForCurrentMode() || !isActiveMediaWindow()) {
       stream.getTracks().forEach((track) => track.stop());
       return;
@@ -21829,7 +21837,7 @@ async function createMediaWindow(options) {
         birth,
       ],
       preload: `${__dirname}/media_preload.min.js`,
-      devTools: true,
+      devTools: false,
     },
   };
 
