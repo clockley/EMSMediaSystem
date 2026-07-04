@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
 	"unicode"
 
 	"emsmediasystem/bible-rpc/internal/biblestore"
@@ -21,10 +23,31 @@ type versionRow struct {
 	TableName    string
 }
 
+type optimizeOptions struct {
+	CompressionWorkers int
+}
+
+type chapterJob struct {
+	Sequence int
+	Book     int
+	Chapter  int
+	Verses   []biblestore.ChapterVerse
+}
+
+type compressedChapter struct {
+	Sequence int
+	Book     int
+	Chapter  int
+	Data     []byte
+	Err      error
+}
+
 const sqliteDriverName = "sqlite"
+const searchRowIDVersionMultiplier int64 = 1_000_000_000
 
 func main() {
 	dbPath := flag.String("db", "", "Path to the Bible SQLite database")
+	compressionWorkers := flag.Int("compression-workers", defaultCompressionWorkers(), "Number of parallel chapter compression workers")
 	flag.Parse()
 	log.SetOutput(os.Stderr)
 
@@ -39,14 +62,55 @@ func main() {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 
-	total, err := optimizeBibleDB(db)
+	if err := configureBuildConnection(db); err != nil {
+		log.Fatal(err)
+	}
+
+	options := optimizeOptions{CompressionWorkers: normalizeCompressionWorkers(*compressionWorkers)}
+	total, err := optimizeBibleDBWithOptions(db, options)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("Optimized %d Bible verses with chapter-level LZFSE BLOBs and FTS5 lookup index", total)
+	log.Printf(
+		"Optimized %d Bible verses with chapter-level LZFSE BLOBs and FTS5 lookup index using %d compression worker(s)",
+		total,
+		options.CompressionWorkers,
+	)
+}
+
+func defaultCompressionWorkers() int {
+	return normalizeCompressionWorkers(runtime.GOMAXPROCS(0))
+}
+
+func normalizeCompressionWorkers(workers int) int {
+	if workers < 1 {
+		return 1
+	}
+	return workers
+}
+
+func configureBuildConnection(db *sql.DB) error {
+	statements := []string{
+		`PRAGMA busy_timeout = 5000`,
+		`PRAGMA cache_size = -131072`,
+		`PRAGMA journal_mode = OFF`,
+		`PRAGMA locking_mode = EXCLUSIVE`,
+		`PRAGMA synchronous = OFF`,
+		`PRAGMA temp_store = MEMORY`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			return fmt.Errorf("%s: %w", statement, err)
+		}
+	}
+	return nil
 }
 
 func optimizeBibleDB(db *sql.DB) (int, error) {
+	return optimizeBibleDBWithOptions(db, optimizeOptions{CompressionWorkers: defaultCompressionWorkers()})
+}
+
+func optimizeBibleDBWithOptions(db *sql.DB, options optimizeOptions) (int, error) {
 	versions, err := fetchVersionRows(db)
 	if err != nil {
 		return 0, err
@@ -65,24 +129,6 @@ func optimizeBibleDB(db *sql.DB) (int, error) {
 		return 0, err
 	}
 
-	lookupInsert, err := tx.Prepare(fmt.Sprintf(
-		`INSERT INTO %s (rowid, version, table_name, b, c, v, verse_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		mustQuoteIdentifier(biblestore.LookupTable),
-	))
-	if err != nil {
-		return 0, err
-	}
-	defer lookupInsert.Close()
-
-	ftsInsert, err := tx.Prepare(fmt.Sprintf(
-		`INSERT INTO %s (rowid, t) VALUES (?, ?)`,
-		mustQuoteIdentifier(biblestore.FTSTable),
-	))
-	if err != nil {
-		return 0, err
-	}
-	defer ftsInsert.Close()
-
 	chapterInsert, err := tx.Prepare(fmt.Sprintf(
 		`INSERT INTO %s (table_name, b, c, t) VALUES (?, ?, ?, ?)`,
 		mustQuoteIdentifier(optimizedChapterTableName()),
@@ -93,15 +139,17 @@ func optimizeBibleDB(db *sql.DB) (int, error) {
 	defer chapterInsert.Close()
 
 	total := 0
-	var lookupRowID int64
 	for _, version := range versions {
-		count, err := optimizeVersionTable(tx, version, lookupInsert, ftsInsert, chapterInsert, &lookupRowID)
+		count, err := optimizeVersionTable(tx, version, chapterInsert, options)
 		if err != nil {
 			return 0, err
 		}
 		total += count
 	}
 
+	if err := createLookupIndexes(tx); err != nil {
+		return 0, err
+	}
 	if err := writeStorageMetadata(tx); err != nil {
 		return 0, err
 	}
@@ -171,11 +219,8 @@ func recreateLookupTables(tx *sql.Tx) error {
 			b INTEGER NOT NULL,
 			c INTEGER NOT NULL,
 			v INTEGER NOT NULL,
-			verse_id INTEGER NOT NULL,
-			UNIQUE (version, b, c, v)
+			verse_id INTEGER NOT NULL
 		)`, mustQuoteIdentifier(biblestore.LookupTable)),
-		fmt.Sprintf(`CREATE INDEX idx_bible_verse_lookup_reference ON %s (version, b, c, v)`, mustQuoteIdentifier(biblestore.LookupTable)),
-		fmt.Sprintf(`CREATE INDEX idx_bible_verse_lookup_source ON %s (table_name, verse_id)`, mustQuoteIdentifier(biblestore.LookupTable)),
 		fmt.Sprintf(`CREATE VIRTUAL TABLE %s USING fts5(
 			t,
 			content = '',
@@ -190,6 +235,25 @@ func recreateLookupTables(tx *sql.Tx) error {
 		)`, mustQuoteIdentifier(optimizedChapterTableName())),
 	}
 
+	for _, statement := range statements {
+		if _, err := tx.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func createLookupIndexes(tx *sql.Tx) error {
+	statements := []string{
+		fmt.Sprintf(
+			`CREATE UNIQUE INDEX idx_bible_verse_lookup_reference ON %s (version, b, c, v)`,
+			mustQuoteIdentifier(biblestore.LookupTable),
+		),
+		fmt.Sprintf(
+			`CREATE INDEX idx_bible_verse_lookup_source ON %s (table_name, verse_id)`,
+			mustQuoteIdentifier(biblestore.LookupTable),
+		),
+	}
 	for _, statement := range statements {
 		if _, err := tx.Exec(statement); err != nil {
 			return err
@@ -220,10 +284,8 @@ func writeStorageMetadata(tx *sql.Tx) error {
 func optimizeVersionTable(
 	tx *sql.Tx,
 	version versionRow,
-	lookupInsert *sql.Stmt,
-	ftsInsert *sql.Stmt,
 	chapterInsert *sql.Stmt,
-	lookupRowID *int64,
+	options optimizeOptions,
 ) (int, error) {
 	tableName, err := quoteIdentifier(version.TableName)
 	if err != nil {
@@ -248,93 +310,35 @@ func optimizeVersionTable(
 		return 0, err
 	}
 
-	rows, err := tx.Query(fmt.Sprintf(`SELECT "id", "b", "c", "v", "t" FROM %s ORDER BY "b", "c", "v"`, tableName))
+	count, err := countRows(tx, tableName)
 	if err != nil {
 		return 0, err
 	}
+	if count == 0 {
+		return 0, fmt.Errorf("%s has no verses", version.Abbreviation)
+	}
 
-	verseInsert, err := tx.Prepare(fmt.Sprintf(
-		`INSERT INTO %s ("id", "b", "c", "v") VALUES (?, ?, ?, ?)`,
-		newTable,
-	))
+	if err := bulkInsertVerseCoordinates(tx, tableName, newTable); err != nil {
+		return 0, err
+	}
+	rowIDBase := searchRowIDBase(version)
+	if err := bulkInsertLookupRows(tx, version, tableName, rowIDBase); err != nil {
+		return 0, err
+	}
+	if err := bulkInsertFTSRows(tx, tableName, rowIDBase); err != nil {
+		return 0, err
+	}
+
+	chapterJobs, err := readChapterJobs(tx, version, tableName)
 	if err != nil {
-		rows.Close()
 		return 0, err
 	}
-
-	var pendingChapter []biblestore.ChapterVerse
-	currentBook := 0
-	currentChapter := 0
-	flushChapter := func() error {
-		if pendingChapter == nil {
-			return nil
-		}
-		compressed, err := biblestore.CompressChapterVerses(pendingChapter)
-		if err != nil {
-			return err
-		}
-		if _, err := chapterInsert.Exec(version.TableName, currentBook, currentChapter, compressed); err != nil {
-			return err
-		}
-		pendingChapter = nil
-		return nil
-	}
-
-	count := 0
-	for rows.Next() {
-		var id, book, chapter, verse int
-		var rawText []byte
-		if err := rows.Scan(&id, &book, &chapter, &verse, &rawText); err != nil {
-			rows.Close()
-			verseInsert.Close()
-			return 0, err
-		}
-
-		text := string(rawText)
-
-		if pendingChapter == nil || book != currentBook || chapter != currentChapter {
-			if err := flushChapter(); err != nil {
-				rows.Close()
-				verseInsert.Close()
-				return 0, fmt.Errorf("%s %d:%d: %w", version.Abbreviation, currentBook, currentChapter, err)
-			}
-			currentBook = book
-			currentChapter = chapter
-			pendingChapter = []biblestore.ChapterVerse{}
-		}
-		pendingChapter = append(pendingChapter, biblestore.ChapterVerse{Verse: verse, Text: text})
-
-		(*lookupRowID)++
-		if _, err := lookupInsert.Exec(*lookupRowID, version.Abbreviation, version.TableName, book, chapter, verse, id); err != nil {
-			rows.Close()
-			verseInsert.Close()
-			return 0, err
-		}
-		if _, err := ftsInsert.Exec(*lookupRowID, text); err != nil {
-			rows.Close()
-			verseInsert.Close()
-			return 0, err
-		}
-		if _, err := verseInsert.Exec(id, book, chapter, verse); err != nil {
-			rows.Close()
-			verseInsert.Close()
-			return 0, err
-		}
-		count += 1
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		verseInsert.Close()
+	compressedChapters, err := compressChapters(chapterJobs, options.CompressionWorkers)
+	if err != nil {
 		return 0, err
 	}
-	if err := rows.Close(); err != nil {
+	if err := insertCompressedChapters(chapterInsert, version, compressedChapters); err != nil {
 		return 0, err
-	}
-	if err := verseInsert.Close(); err != nil {
-		return 0, err
-	}
-	if err := flushChapter(); err != nil {
-		return 0, fmt.Errorf("%s final chapter: %w", version.Abbreviation, err)
 	}
 
 	if _, err := tx.Exec(fmt.Sprintf(`DROP TABLE %s`, tableName)); err != nil {
@@ -352,6 +356,191 @@ func optimizeVersionTable(
 	}
 
 	return count, nil
+}
+
+func readChapterJobs(tx *sql.Tx, version versionRow, tableName string) ([]chapterJob, error) {
+	rows, err := tx.Query(fmt.Sprintf(`SELECT "b", "c", "v", "t" FROM %s ORDER BY "b", "c", "v"`, tableName))
+	if err != nil {
+		return nil, err
+	}
+
+	jobs := []chapterJob{}
+	var pendingChapter []biblestore.ChapterVerse
+	currentBook := 0
+	currentChapter := 0
+	flushChapter := func() error {
+		if pendingChapter == nil {
+			return nil
+		}
+		jobs = append(jobs, chapterJob{
+			Sequence: len(jobs),
+			Book:     currentBook,
+			Chapter:  currentChapter,
+			Verses:   pendingChapter,
+		})
+		pendingChapter = nil
+		return nil
+	}
+
+	for rows.Next() {
+		var book, chapter, verse int
+		var rawText []byte
+		if err := rows.Scan(&book, &chapter, &verse, &rawText); err != nil {
+			rows.Close()
+			return nil, err
+		}
+
+		text := string(rawText)
+
+		if pendingChapter == nil || book != currentBook || chapter != currentChapter {
+			if err := flushChapter(); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("%s %d:%d: %w", version.Abbreviation, currentBook, currentChapter, err)
+			}
+			currentBook = book
+			currentChapter = chapter
+			pendingChapter = []biblestore.ChapterVerse{}
+		}
+		pendingChapter = append(pendingChapter, biblestore.ChapterVerse{Verse: verse, Text: text})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := flushChapter(); err != nil {
+		return nil, fmt.Errorf("%s final chapter: %w", version.Abbreviation, err)
+	}
+	return jobs, nil
+}
+
+func compressChapters(jobs []chapterJob, workerCount int) ([]compressedChapter, error) {
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	workerCount = normalizeCompressionWorkers(workerCount)
+	if workerCount > len(jobs) {
+		workerCount = len(jobs)
+	}
+
+	if workerCount == 1 {
+		results := make([]compressedChapter, len(jobs))
+		for _, job := range jobs {
+			data, err := biblestore.CompressChapterVerses(job.Verses)
+			if err != nil {
+				return nil, fmt.Errorf("%d:%d: %w", job.Book, job.Chapter, err)
+			}
+			results[job.Sequence] = compressedChapter{
+				Sequence: job.Sequence,
+				Book:     job.Book,
+				Chapter:  job.Chapter,
+				Data:     data,
+			}
+		}
+		return results, nil
+	}
+
+	jobsCh := make(chan chapterJob)
+	resultsCh := make(chan compressedChapter, len(jobs))
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobsCh {
+				data, err := biblestore.CompressChapterVerses(job.Verses)
+				resultsCh <- compressedChapter{
+					Sequence: job.Sequence,
+					Book:     job.Book,
+					Chapter:  job.Chapter,
+					Data:     data,
+					Err:      err,
+				}
+			}
+		}()
+	}
+
+	for _, job := range jobs {
+		jobsCh <- job
+	}
+	close(jobsCh)
+	wg.Wait()
+	close(resultsCh)
+
+	results := make([]compressedChapter, len(jobs))
+	var firstErr error
+	for result := range resultsCh {
+		if result.Err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%d:%d: %w", result.Book, result.Chapter, result.Err)
+		}
+		results[result.Sequence] = result
+	}
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return results, nil
+}
+
+func insertCompressedChapters(chapterInsert *sql.Stmt, version versionRow, chapters []compressedChapter) error {
+	for _, chapter := range chapters {
+		if _, err := chapterInsert.Exec(version.TableName, chapter.Book, chapter.Chapter, chapter.Data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func countRows(tx *sql.Tx, tableName string) (int, error) {
+	var count int
+	if err := tx.QueryRow(fmt.Sprintf(`SELECT COUNT(*) FROM %s`, tableName)).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func bulkInsertVerseCoordinates(tx *sql.Tx, tableName string, newTable string) error {
+	_, err := tx.Exec(fmt.Sprintf(
+		`INSERT INTO %s ("id", "b", "c", "v")
+		SELECT "id", "b", "c", "v" FROM %s ORDER BY "b", "c", "v"`,
+		newTable,
+		tableName,
+	))
+	if err != nil {
+		return fmt.Errorf("insert verse coordinates: %w", err)
+	}
+	return nil
+}
+
+func searchRowIDBase(version versionRow) int64 {
+	return int64(version.ID) * searchRowIDVersionMultiplier
+}
+
+func bulkInsertLookupRows(tx *sql.Tx, version versionRow, tableName string, rowIDBase int64) error {
+	_, err := tx.Exec(fmt.Sprintf(
+		`INSERT INTO %s (rowid, version, table_name, b, c, v, verse_id)
+		SELECT ? + "id", ?, ?, "b", "c", "v", "id" FROM %s`,
+		mustQuoteIdentifier(biblestore.LookupTable),
+		tableName,
+	), rowIDBase, version.Abbreviation, version.TableName)
+	if err != nil {
+		return fmt.Errorf("insert lookup rows for %s: %w", version.Abbreviation, err)
+	}
+	return nil
+}
+
+func bulkInsertFTSRows(tx *sql.Tx, tableName string, rowIDBase int64) error {
+	_, err := tx.Exec(fmt.Sprintf(
+		`INSERT INTO %s (rowid, t)
+		SELECT ? + "id", "t" FROM %s`,
+		mustQuoteIdentifier(biblestore.FTSTable),
+		tableName,
+	), rowIDBase)
+	if err != nil {
+		return fmt.Errorf("insert FTS rows: %w", err)
+	}
+	return nil
 }
 
 func optimizedChapterTableName() string {

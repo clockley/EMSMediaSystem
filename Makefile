@@ -1,7 +1,7 @@
 # Copyright (C) 2025 Christian Lockley
 # Licensed under GNU General Public License v3
 #TODO: Add derived file path fixups for css, html, js and mjs files. This is needed to prevent refrencing the derived files in the source code.
-.PHONY: all all-paid check-deps clean help js-minify rebuild status FORCE
+.PHONY: all all-paid app bible bible-paid check-deps clean help js-minify rebuild status FORCE
 
 # If any recipe step fails, remove the target instead of leaving a half-written (or empty) file.
 .DELETE_ON_ERROR:
@@ -117,7 +117,7 @@ BIBLE_EDITION_RECORD = $(DERIVED_DIR)/bible/.edition
 
 # Pick the edition from the requested goal (free/public by default).
 BIBLE_EDITION := public
-ifneq (,$(filter all-paid build-paid dist-all-paid,$(MAKECMDGOALS)))
+ifneq (,$(filter all-paid build-paid dist-all-paid bible-paid,$(MAKECMDGOALS)))
   BIBLE_EDITION := paid
 endif
 
@@ -173,7 +173,8 @@ endif
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
 IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
 DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all copied binary/static resources
-BIBLE_RESOURCES = $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(SONGS_SIDECAR_BINS) $(BIBLE_DB_OUT)
+APP_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(SONGS_SIDECAR_BINS)
+BIBLE_RESOURCES = $(BIBLE_DB_OUT)
 
 ifeq ($(NO_COLOR), 1)
   COLOR_GREEN =
@@ -198,11 +199,20 @@ HTML_PROD_FILES := $(patsubst %.html,$(DERIVED_DIR)/%.prod.html,$(HTML_FILES))
 MINIFIED_JS_FILES := $(patsubst %.js,$(DERIVED_DIR)/%.min.js,$(patsubst %.mjs,$(DERIVED_DIR)/%.min.mjs,$(JS_FILES))) $(APP_BUNDLE_OUT)
 
 # Default target
-all: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_RESOURCES)
-	@echo "$(COLOR_GREEN)$($(TICK)) Build complete!$(COLOR_RESET)"
+all: app bible
+	@echo "$(COLOR_GREEN)$(TICK) Build complete!$(COLOR_RESET)"
 
-all-paid: check-deps $(DERIVED_DIR) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_RESOURCES)
-	@echo "$(COLOR_GREEN)$($(TICK)) Paid build complete!$(COLOR_RESET)"
+all-paid: app bible-paid
+	@echo "$(COLOR_GREEN)$(TICK) Paid build complete!$(COLOR_RESET)"
+
+app: check-deps $(DERIVED_DIR) $(APP_RESOURCES)
+	@echo "$(COLOR_GREEN)$(TICK) Built source artifacts$(COLOR_RESET)"
+
+bible: check-deps $(DERIVED_DIR) $(BIBLE_RESOURCES)
+	@echo "$(COLOR_GREEN)$(TICK) Built public Bible assets$(COLOR_RESET)"
+
+bible-paid: check-deps $(DERIVED_DIR) $(BIBLE_RESOURCES)
+	@echo "$(COLOR_GREEN)$(TICK) Built paid Bible assets$(COLOR_RESET)"
 
 # Ensure derived directory exists
 $(DERIVED_DIR):
@@ -448,6 +458,9 @@ help:
 	@echo "$(COLOR_BLUE)Available targets:$(COLOR_RESET)"
 	@echo "  $(COLOR_GREEN)all$(COLOR_RESET)       - Build all artifacts (default)"
 	@echo "  $(COLOR_GREEN)all-paid$(COLOR_RESET)  - Build all artifacts with paid Bible content"
+	@echo "  $(COLOR_GREEN)app$(COLOR_RESET)       - Build source, static, and sidecar artifacts"
+	@echo "  $(COLOR_GREEN)bible$(COLOR_RESET)     - Build public Bible database artifacts"
+	@echo "  $(COLOR_GREEN)bible-paid$(COLOR_RESET) - Build paid Bible database artifacts"
 	@echo "  $(COLOR_GREEN)clean$(COLOR_RESET)     - Remove all build artifacts"
 	@echo "  $(COLOR_GREEN)rebuild$(COLOR_RESET)   - Clean and build all artifacts"
 	@echo "  $(COLOR_GREEN)status$(COLOR_RESET)    - Show build status"
