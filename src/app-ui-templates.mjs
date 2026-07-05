@@ -230,6 +230,9 @@ export function generateMediaFormHTML() {
               <button type="button" id="songsBulkDeleteBtn" class="pill-button">Delete</button>
               <button type="button" id="songsBulkClearBtn" class="pill-button">Clear</button>
             </div>
+            <div id="songSlideNavigator" class="song-slide-navigator" hidden>
+              <div id="songSlideThumbnailList" class="song-slide-thumbnail-list" role="listbox" aria-label="Song slides"></div>
+            </div>
             <div class="songs-folder-panel" aria-label="Song folders">
               <div class="songs-folder-panel__header">
                 <span class="songs-folder-panel__title">Folders</span>
@@ -253,6 +256,7 @@ export function generateMediaFormHTML() {
               </form>
             </div>
           </aside>
+          <div id="songSidebarResizeHandle" class="song-sidebar-resize-handle" role="separator" aria-label="Resize song slides pane" aria-orientation="vertical" tabindex="0"></div>
           <section class="songs-workspace__main" aria-label="Songs preview">
              <div class="songs-workspace__toolbar">
                <span id="songsWorkspaceTitle" class="songs-workspace__title">Select a Song</span>
@@ -624,6 +628,7 @@ export function generateMediaFormHTML() {
                 </div>
                 <div id="slidesPageList" class="slides-page-list" role="listbox" aria-label="Deck pages"></div>
               </aside>
+              <div id="slidesPagesResizeHandle" class="deck-pages-resize-handle" role="separator" aria-label="Resize deck pages pane" aria-orientation="vertical" tabindex="0"></div>
               <div class="slides-workspace__canvas-wrap">
                 <div id="slidesCanvasFrame" class="slides-canvas-frame">
                   <div id="slidesCanvas" class="slides-canvas" aria-label="Slide canvas">

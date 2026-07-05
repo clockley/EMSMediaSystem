@@ -558,11 +558,19 @@ let pptxFilePath = null;
 let pptxLayoutRefreshRaf = 0;
 let pptxPreviewRequestToken = 0;
 const PPTX_SIDEBAR_STORAGE_KEY = "ems.pptxSidebarWidth";
+const SONG_SIDEBAR_STORAGE_KEY = "ems.songSidebarWidth";
+const DECK_PAGES_WIDTH_STORAGE_KEY = "ems.deckPagesWidth";
 const LAST_BIBLE_VERSION_SETTING_KEY = "lastBibleVersion";
 const DEFAULT_BIBLE_VERSION = "KJV";
 const PPTX_SIDEBAR_DEFAULT_WIDTH = 168;
 const PPTX_SIDEBAR_MIN_WIDTH = 128;
 const PPTX_SIDEBAR_MAX_WIDTH = 360;
+const SONG_SIDEBAR_DEFAULT_WIDTH = 320;
+const SONG_SIDEBAR_MIN_WIDTH = 220;
+const SONG_SIDEBAR_MAX_WIDTH = 560;
+const DECK_PAGES_DEFAULT_WIDTH = PPTX_SIDEBAR_DEFAULT_WIDTH;
+const DECK_PAGES_MIN_WIDTH = PPTX_SIDEBAR_MIN_WIDTH;
+const DECK_PAGES_MAX_WIDTH = PPTX_SIDEBAR_MAX_WIDTH;
 /** True after natural playback end (signaled before media window closes). */
 let mediaPlaybackEndedPending = false;
 /** True when the operator pressed Stop, so the close must not advance the queue. */
@@ -969,6 +977,246 @@ function bindPptxSidebarResize(container) {
         handle.releasePointerCapture(pointerId);
       } catch {}
       applyPptxSidebarWidth(currentPptxSidebarWidth());
+      finishResize();
+    };
+
+    handle.addEventListener("pointermove", onPointerMove);
+    handle.addEventListener("pointerup", onPointerUp);
+    handle.addEventListener("pointercancel", onPointerUp);
+  });
+}
+
+function clampSongSidebarWidth(width) {
+  if (!Number.isFinite(width)) return SONG_SIDEBAR_DEFAULT_WIDTH;
+  return Math.min(SONG_SIDEBAR_MAX_WIDTH, Math.max(SONG_SIDEBAR_MIN_WIDTH, Math.round(width)));
+}
+
+function currentSongSidebarWidth() {
+  const workspace = document.getElementById("songsWorkspace");
+  const raw = workspace?.style?.getPropertyValue("--song-sidebar-width") || "";
+  const parsed = Number.parseFloat(raw);
+  return clampSongSidebarWidth(parsed || SONG_SIDEBAR_DEFAULT_WIDTH);
+}
+
+function syncSongResizeHandleAria(width = currentSongSidebarWidth()) {
+  const handle = document.getElementById("songSidebarResizeHandle");
+  if (!handle) return;
+  const safeWidth = clampSongSidebarWidth(width);
+  handle.setAttribute("aria-valuemin", String(SONG_SIDEBAR_MIN_WIDTH));
+  handle.setAttribute("aria-valuemax", String(SONG_SIDEBAR_MAX_WIDTH));
+  handle.setAttribute("aria-valuenow", String(safeWidth));
+  handle.setAttribute("aria-valuetext", `Song slides pane width ${safeWidth} pixels`);
+}
+
+function applySongSidebarWidth(width, opts = {}) {
+  const workspace = document.getElementById("songsWorkspace");
+  if (!workspace) return;
+  const safeWidth = clampSongSidebarWidth(width);
+  workspace.style.setProperty("--song-sidebar-width", `${safeWidth}px`);
+  syncSongResizeHandleAria(safeWidth);
+  scheduleSongPreviewRerender();
+  if (opts.persist !== false) {
+    try {
+      window.localStorage.setItem(SONG_SIDEBAR_STORAGE_KEY, String(safeWidth));
+    } catch {}
+  }
+}
+
+function restoreSongSidebarWidth(workspace = document.getElementById("songsWorkspace")) {
+  if (!workspace) return;
+  let savedWidth = SONG_SIDEBAR_DEFAULT_WIDTH;
+  try {
+    const raw = window.localStorage.getItem(SONG_SIDEBAR_STORAGE_KEY);
+    const parsed = Number.parseFloat(raw || "");
+    if (Number.isFinite(parsed)) savedWidth = parsed;
+  } catch {}
+  workspace.style.setProperty(
+    "--song-sidebar-width",
+    `${clampSongSidebarWidth(savedWidth)}px`,
+  );
+  syncSongResizeHandleAria(savedWidth);
+}
+
+function bindSongSidebarResize(workspace = document.getElementById("songsWorkspace")) {
+  const handle = document.getElementById("songSidebarResizeHandle");
+  if (!workspace || !handle) return;
+  restoreSongSidebarWidth(workspace);
+  if (handle.dataset.resizeBound === "1") return;
+  handle.dataset.resizeBound = "1";
+
+  const finishResize = () => {
+    document.body.classList.remove("is-song-sidebar-resizing");
+    applySongSidebarWidth(currentSongSidebarWidth());
+    scheduleSongPreviewRerender();
+  };
+
+  handle.addEventListener("dblclick", () => {
+    applySongSidebarWidth(SONG_SIDEBAR_DEFAULT_WIDTH);
+    finishResize();
+  });
+
+  handle.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 32 : 16;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      applySongSidebarWidth(currentSongSidebarWidth() - step);
+      finishResize();
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      applySongSidebarWidth(currentSongSidebarWidth() + step);
+      finishResize();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      applySongSidebarWidth(SONG_SIDEBAR_MIN_WIDTH);
+      finishResize();
+    } else if (event.key === "End") {
+      event.preventDefault();
+      applySongSidebarWidth(SONG_SIDEBAR_MAX_WIDTH);
+      finishResize();
+    }
+  });
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    const workspaceRect = workspace.getBoundingClientRect();
+    document.body.classList.add("is-song-sidebar-resizing");
+    handle.setPointerCapture(pointerId);
+
+    const onPointerMove = (moveEvent) => {
+      applySongSidebarWidth(moveEvent.clientX - workspaceRect.left, { persist: false });
+      scheduleSongPreviewRerender();
+    };
+
+    const onPointerUp = () => {
+      handle.removeEventListener("pointermove", onPointerMove);
+      handle.removeEventListener("pointerup", onPointerUp);
+      handle.removeEventListener("pointercancel", onPointerUp);
+      try {
+        handle.releasePointerCapture(pointerId);
+      } catch {}
+      finishResize();
+    };
+
+    handle.addEventListener("pointermove", onPointerMove);
+    handle.addEventListener("pointerup", onPointerUp);
+    handle.addEventListener("pointercancel", onPointerUp);
+  });
+}
+
+function clampDeckPagesWidth(width) {
+  if (!Number.isFinite(width)) return DECK_PAGES_DEFAULT_WIDTH;
+  return Math.min(DECK_PAGES_MAX_WIDTH, Math.max(DECK_PAGES_MIN_WIDTH, Math.round(width)));
+}
+
+function currentDeckPagesWidth() {
+  const workspace = document.getElementById("slidesWorkspace");
+  const raw = workspace?.style?.getPropertyValue("--deck-pages-width") || "";
+  const parsed = Number.parseFloat(raw);
+  return clampDeckPagesWidth(parsed || DECK_PAGES_DEFAULT_WIDTH);
+}
+
+function syncDeckPagesResizeHandleAria(width = currentDeckPagesWidth()) {
+  const handle = document.getElementById("slidesPagesResizeHandle");
+  if (!handle) return;
+  const safeWidth = clampDeckPagesWidth(width);
+  handle.setAttribute("aria-valuemin", String(DECK_PAGES_MIN_WIDTH));
+  handle.setAttribute("aria-valuemax", String(DECK_PAGES_MAX_WIDTH));
+  handle.setAttribute("aria-valuenow", String(safeWidth));
+  handle.setAttribute("aria-valuetext", `Deck pages pane width ${safeWidth} pixels`);
+}
+
+function applyDeckPagesWidth(width, opts = {}) {
+  const workspace = document.getElementById("slidesWorkspace");
+  if (!workspace) return;
+  const safeWidth = clampDeckPagesWidth(width);
+  workspace.style.setProperty("--deck-pages-width", `${safeWidth}px`);
+  syncDeckPagesResizeHandleAria(safeWidth);
+  if (isSlidesWorkspaceVisible()) renderSlideCanvas();
+  if (opts.persist !== false) {
+    try {
+      window.localStorage.setItem(DECK_PAGES_WIDTH_STORAGE_KEY, String(safeWidth));
+    } catch {}
+  }
+}
+
+function restoreDeckPagesWidth(workspace = document.getElementById("slidesWorkspace")) {
+  if (!workspace) return;
+  let savedWidth = DECK_PAGES_DEFAULT_WIDTH;
+  try {
+    const raw = window.localStorage.getItem(DECK_PAGES_WIDTH_STORAGE_KEY);
+    const parsed = Number.parseFloat(raw || "");
+    if (Number.isFinite(parsed)) savedWidth = parsed;
+  } catch {}
+  workspace.style.setProperty(
+    "--deck-pages-width",
+    `${clampDeckPagesWidth(savedWidth)}px`,
+  );
+  syncDeckPagesResizeHandleAria(savedWidth);
+}
+
+function bindDeckPagesResize(workspace = document.getElementById("slidesWorkspace")) {
+  const handle = document.getElementById("slidesPagesResizeHandle");
+  if (!workspace || !handle) return;
+  restoreDeckPagesWidth(workspace);
+  if (handle.dataset.resizeBound === "1") return;
+  handle.dataset.resizeBound = "1";
+
+  const finishResize = () => {
+    document.body.classList.remove("is-deck-pages-resizing");
+    applyDeckPagesWidth(currentDeckPagesWidth());
+  };
+
+  handle.addEventListener("dblclick", () => {
+    applyDeckPagesWidth(DECK_PAGES_DEFAULT_WIDTH);
+    finishResize();
+  });
+
+  handle.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? 32 : 16;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      applyDeckPagesWidth(currentDeckPagesWidth() - step);
+      finishResize();
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      applyDeckPagesWidth(currentDeckPagesWidth() + step);
+      finishResize();
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      applyDeckPagesWidth(DECK_PAGES_MIN_WIDTH);
+      finishResize();
+    } else if (event.key === "End") {
+      event.preventDefault();
+      applyDeckPagesWidth(DECK_PAGES_MAX_WIDTH);
+      finishResize();
+    }
+  });
+
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    const pagesPane = document.querySelector("#slidesWorkspace .slides-workspace__pages");
+    const pagesRect = pagesPane?.getBoundingClientRect();
+    const originLeft = Number.isFinite(pagesRect?.left)
+      ? pagesRect.left
+      : workspace.getBoundingClientRect().left;
+    document.body.classList.add("is-deck-pages-resizing");
+    handle.setPointerCapture(pointerId);
+
+    const onPointerMove = (moveEvent) => {
+      applyDeckPagesWidth(moveEvent.clientX - originLeft, { persist: false });
+    };
+
+    const onPointerUp = () => {
+      handle.removeEventListener("pointermove", onPointerMove);
+      handle.removeEventListener("pointerup", onPointerUp);
+      handle.removeEventListener("pointercancel", onPointerUp);
+      try {
+        handle.releasePointerCapture(pointerId);
+      } catch {}
       finishResize();
     };
 
@@ -4533,6 +4781,7 @@ function showSongsWorkspace() {
   document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   setPreviewStackSurface(PREVIEW_SURFACE_SONGS);
   installSongsWorkspaceEventGuards();
+  bindSongSidebarResize(workspace);
   
   setMediaCountdownOverlayVisible(false);
   setMediaCountdownText("");
@@ -4549,6 +4798,8 @@ function showSongsWorkspace() {
       slide.hidden = true;
     }
   }
+  syncSongSlideNavigator();
+  scheduleSongPreviewRerender();
 }
 
 function hideSongsWorkspace() {
@@ -4571,6 +4822,7 @@ function showSlidesWorkspace() {
   document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   setPreviewStackSurface(PREVIEW_SURFACE_SLIDES);
   installSlidesWorkspaceEventGuards();
+  bindDeckPagesResize(workspace);
   setMediaCountdownOverlayVisible(false);
   setMediaCountdownText("");
   pauseInactivePreviewBehindWorkspace();
@@ -7594,7 +7846,11 @@ let currentSongFolderFilter = "__all__";
 let songFoldersCache = [];
 let selectedSongIds = new Set();
 let songsBulkDeleteArmed = false;
+let songSlideNavigatorRenderToken = 0;
+let songPreviewRerenderRaf = 0;
 
+const SONG_PREVIEW_OUTPUT_WIDTH = 1920;
+const SONG_PREVIEW_OUTPUT_HEIGHT = 1080;
 const SONG_FOLDER_ALL = "__all__";
 const SONG_FOLDER_UNFILED = "__unfiled__";
 
@@ -8489,6 +8745,232 @@ function restoreSongWorkspaceView() {
     launcher.hidden = false;
     slide.hidden = true;
   }
+  syncSongSlideNavigator();
+}
+
+function currentSongEnabledSections() {
+  if (!currentWorkspaceSong) return [];
+  const enabled = enabledSongSections(currentWorkspaceSong);
+  return enabled.length ? enabled : (currentWorkspaceSong.sections || []);
+}
+
+function currentSongActiveSection() {
+  if (!currentWorkspaceSong) return null;
+  const sections = currentSongEnabledSections();
+  return (
+    sections.find((section) => section.id === currentSongSectionId) ||
+    sections[0] ||
+    currentWorkspaceSong.sections?.[0] ||
+    null
+  );
+}
+
+function scheduleSongPreviewRerender() {
+  if (songPreviewRerenderRaf) {
+    cancelAnimationFrame(songPreviewRerenderRaf);
+  }
+  songPreviewRerenderRaf = requestAnimationFrame(() => {
+    songPreviewRerenderRaf = requestAnimationFrame(() => {
+      songPreviewRerenderRaf = 0;
+      if (!isSongsWorkspaceVisible()) return;
+      const section = currentSongActiveSection();
+      if (section) renderSongSectionPreview(section);
+    });
+  });
+}
+
+function layoutSongPreviewStage(preview = document.getElementById("songsPreviewSlide")) {
+  if (!preview) return { width: 0, height: 0, scale: 0 };
+  const container = preview.parentElement;
+  if (!container) return { width: 0, height: 0, scale: 0 };
+  const { width: containerWidth, height: containerHeight } = getElementContentSize(container);
+  if (!containerWidth || !containerHeight) {
+    return { width: 0, height: 0, scale: 0 };
+  }
+  const scale = Math.min(
+    containerWidth / SONG_PREVIEW_OUTPUT_WIDTH,
+    containerHeight / SONG_PREVIEW_OUTPUT_HEIGHT,
+  );
+  const width = Math.max(1, SONG_PREVIEW_OUTPUT_WIDTH * scale);
+  const height = Math.max(1, SONG_PREVIEW_OUTPUT_HEIGHT * scale);
+  preview.style.width = `${width}px`;
+  preview.style.height = `${height}px`;
+  preview.style.setProperty("--song-preview-output-scale", String(scale));
+  return { width, height, scale };
+}
+
+function setSongNavigatorDeckMode(enabled) {
+  const navigator = document.querySelector("#songsWorkspace .songs-workspace__navigator");
+  const slideNavigator = document.getElementById("songSlideNavigator");
+  if (navigator) navigator.dataset.view = enabled ? "deck" : "browser";
+  if (slideNavigator) slideNavigator.hidden = !enabled;
+  if (!enabled) {
+    songSlideNavigatorRenderToken += 1;
+    const list = document.getElementById("songSlideThumbnailList");
+    if (list) list.innerHTML = "";
+  }
+}
+
+function syncSongSlideNavigator() {
+  const hasDeckPages = Boolean(
+    currentWorkspaceSong &&
+      currentWorkspaceSongDeck &&
+      Array.isArray(currentWorkspaceSongDeck.pages) &&
+      currentWorkspaceSongDeck.pages.length > 0,
+  );
+  setSongNavigatorDeckMode(hasDeckPages);
+  if (hasDeckPages) {
+    renderSongSlideNavigator();
+  }
+}
+
+function songDeckPageForSection(section, index = 0) {
+  if (!currentWorkspaceSongDeck) return null;
+  return (
+    findPage(currentWorkspaceSongDeck, section?.id) ||
+    currentWorkspaceSongDeck.pages?.[index] ||
+    null
+  );
+}
+
+function updateSongArrangementSelection() {
+  const strip = document.getElementById("songArrangementStrip");
+  if (!strip) return;
+  strip.querySelectorAll(".pill-button").forEach((btn) => {
+    btn.classList.toggle("primary-action", btn.dataset.sectionId === currentSongSectionId);
+  });
+}
+
+function updateSongSlideNavigatorSelection({ scroll = true } = {}) {
+  const list = document.getElementById("songSlideThumbnailList");
+  if (!list) return;
+  let active = null;
+  list.querySelectorAll(".song-slide-thumbnail-button").forEach((button) => {
+    const isActive = button.dataset.sectionId === currentSongSectionId;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+    button.tabIndex = isActive ? 0 : -1;
+    if (isActive && !active) active = button;
+  });
+  if (scroll) active?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+}
+
+function syncCurrentSongQueueItemSection(sectionId) {
+  if (!currentSongQueueItem || !sectionId) return;
+  if (!currentSongQueueItem.render || typeof currentSongQueueItem.render !== "object") {
+    currentSongQueueItem.render = {};
+  }
+  currentSongQueueItem.render.currentSectionId = sectionId;
+  if (!currentSongQueueItem.source || typeof currentSongQueueItem.source !== "object") {
+    currentSongQueueItem.source = {};
+  }
+  currentSongQueueItem.source.pageId = sectionId;
+  const page = currentWorkspaceSongDeck ? findPage(currentWorkspaceSongDeck, sectionId) : null;
+  const transitionOverride = normalizeItemSlideTransitionOverride(
+    page?.transition || currentSongRenderState.transition,
+  );
+  if (transitionOverride) {
+    currentSongQueueItem.transition = transitionOverride;
+  } else {
+    delete currentSongQueueItem.transition;
+  }
+}
+
+async function selectSongSection(sectionId, opts = {}) {
+  if (!currentWorkspaceSong || !sectionId) return false;
+  const sections = currentSongEnabledSections();
+  const section =
+    sections.find((s) => s.id === sectionId) ||
+    currentWorkspaceSong.sections?.find((s) => s.id === sectionId) ||
+    null;
+  if (!section) return false;
+  currentSongSectionId = section.id;
+  renderSongSectionPreview(section);
+  syncCurrentSongQueueItemSection(section.id);
+  updateSongArrangementSelection();
+  updateSongSlideNavigatorSelection({ scroll: opts.scroll !== false });
+  updateSongNavButtonsState();
+  if (opts.syncLive !== false) {
+    await syncActiveScheduledSongPresentation();
+  }
+  return true;
+}
+
+function renderSongSlideNavigator() {
+  const list = document.getElementById("songSlideThumbnailList");
+  if (!list || !currentWorkspaceSongDeck || !currentWorkspaceSong) return;
+  const deck = currentWorkspaceSongDeck;
+  const sections = currentSongEnabledSections();
+  const token = ++songSlideNavigatorRenderToken;
+  list.innerHTML = "";
+
+  sections.forEach((section, index) => {
+    const page = songDeckPageForSection(section, index);
+    if (!page) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "song-slide-thumbnail-button";
+    button.dataset.sectionId = section.id;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-label", `Go to slide ${index + 1}`);
+
+    const number = document.createElement("span");
+    number.className = "song-slide-thumbnail-button__number";
+    number.textContent = String(index + 1);
+
+    const viewport = document.createElement("span");
+    viewport.className = "song-slide-thumbnail-button__viewport";
+
+    const thumb = document.createElement("span");
+    thumb.className = "slides-page-list__thumb song-slide-thumbnail-button__thumb";
+    renderDeckPageThumbnail(thumb, page, deck);
+    viewport.appendChild(thumb);
+
+    button.appendChild(number);
+    button.appendChild(viewport);
+    button.addEventListener("click", () => {
+      void selectSongSection(section.id).catch(console.error);
+    });
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        const buttons = [...list.querySelectorAll(".song-slide-thumbnail-button")];
+        const currentIndex = buttons.indexOf(button);
+        const next = buttons[Math.min(currentIndex + 1, buttons.length - 1)];
+        next?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const buttons = [...list.querySelectorAll(".song-slide-thumbnail-button")];
+        const currentIndex = buttons.indexOf(button);
+        const prev = buttons[Math.max(currentIndex - 1, 0)];
+        prev?.focus();
+      } else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        void selectSongSection(section.id).catch(console.error);
+      }
+    });
+    list.appendChild(button);
+
+    const signature = slideThumbnailSignature(page, deck);
+    const cached = slideThumbnailCache.get(page.id);
+    if (cached?.signature !== signature || !cached?.dataUrl) {
+      void renderSlidePageThumbnailDataUrl(page, deck)
+        .then((dataUrl) => {
+          if (
+            !dataUrl ||
+            token !== songSlideNavigatorRenderToken ||
+            !thumb.isConnected ||
+            slideThumbnailSignature(page, deck) !== signature
+          ) {
+            return;
+          }
+          slideThumbnailCache.set(page.id, { signature, dataUrl });
+          renderDeckPageThumbnail(thumb, page, deck);
+        })
+        .catch((err) => console.warn("Failed to render song slide thumbnail:", err));
+    }
+  });
+  updateSongSlideNavigatorSelection({ scroll: false });
 }
 
 function closeSongFolderPrompt() {
@@ -9822,6 +10304,7 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     currentSongQueueItem = null;
     currentWorkspaceSongDeck = null;
     syncSongsMoveFolderSelect(null);
+    syncSongSlideNavigator();
     return;
   }
 
@@ -9849,7 +10332,7 @@ async function loadSongIntoWorkspace(song, opts = {}) {
   document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
   syncSongsMoveFolderSelect(currentWorkspaceSongDeck || currentWorkspaceSong, inLibrary);
 
-  const enabledSections = enabledSongSections(song);
+  const enabledSections = currentSongEnabledSections();
   if (!currentSongSectionId || !enabledSections.some((s) => s.id === currentSongSectionId)) {
     currentSongSectionId = enabledSections[0]?.id || currentWorkspaceSong.sections?.[0]?.id || null;
   }
@@ -9862,34 +10345,24 @@ async function loadSongIntoWorkspace(song, opts = {}) {
       chip.className = "pill-button";
       chip.type = "button";
       chip.textContent = section.label;
+      chip.dataset.sectionId = section.id;
       if (section.id === currentSongSectionId) {
         chip.classList.add("primary-action");
       }
       chip.addEventListener("click", () => {
-        currentSongSectionId = section.id;
-        renderSongSectionPreview(section);
-        if (currentSongQueueItem?.render) {
-          currentSongQueueItem.render.currentSectionId = section.id;
-        }
-        strip.querySelectorAll(".pill-button").forEach((btn) => {
-          btn.classList.toggle("primary-action", btn === chip);
-        });
-        void syncActiveScheduledSongPresentation().catch(console.error);
-        updateSongNavButtonsState();
+        void selectSongSection(section.id).catch(console.error);
       });
       strip.appendChild(chip);
     }
   }
 
-  const activeSection =
-    enabledSections.find((s) => s.id === currentSongSectionId) ||
-    enabledSections[0] ||
-    currentWorkspaceSong.sections?.[0] ||
-    null;
+  const activeSection = currentSongActiveSection();
   if (activeSection) {
     renderSongSectionPreview(activeSection);
+    syncCurrentSongQueueItemSection(activeSection.id);
   }
   updateSongNavButtonsState();
+  syncSongSlideNavigator();
 }
 
 function updateSongNavButtonsState() {
@@ -9900,7 +10373,7 @@ function updateSongNavButtonsState() {
     if (nextBtn) nextBtn.disabled = true;
     return;
   }
-  const enabledSections = enabledSongSections(currentWorkspaceSong);
+  const enabledSections = currentSongEnabledSections();
   if (enabledSections.length <= 1) {
     prevBtn.disabled = true;
     nextBtn.disabled = true;
@@ -9913,27 +10386,14 @@ function updateSongNavButtonsState() {
 
 function navigateSongSection(direction) {
   if (!currentWorkspaceSong) return;
-  const enabledSections = enabledSongSections(currentWorkspaceSong);
+  const enabledSections = currentSongEnabledSections();
   if (enabledSections.length === 0) return;
   const currentIndex = enabledSections.findIndex((s) => s.id === currentSongSectionId);
   if (currentIndex === -1) return;
   const nextIndex = currentIndex + direction;
   if (nextIndex >= 0 && nextIndex < enabledSections.length) {
     const nextSection = enabledSections[nextIndex];
-    currentSongSectionId = nextSection.id;
-    renderSongSectionPreview(nextSection);
-    if (currentSongQueueItem?.render) {
-      currentSongQueueItem.render.currentSectionId = nextSection.id;
-    }
-    const strip = document.getElementById("songArrangementStrip");
-    if (strip) {
-      const buttons = strip.querySelectorAll(".pill-button");
-      buttons.forEach((btn, idx) => {
-        btn.classList.toggle("primary-action", idx === nextIndex);
-      });
-    }
-    void syncActiveScheduledSongPresentation().catch(console.error);
-    updateSongNavButtonsState();
+    void selectSongSection(nextSection.id).catch(console.error);
   }
 }
 
@@ -9961,9 +10421,20 @@ function renderSongSectionPreview(section) {
 
   preview.style.backgroundColor = message.backgroundColor || "#000000";
   const outputFontSize = Number(message.fontSize) || DEFAULT_SONG_RENDER.fontSize;
+  const fittedStage = isEditing ? null : layoutSongPreviewStage(preview);
+  const previewRect = preview.getBoundingClientRect?.() || {};
+  const previewWidth =
+    fittedStage?.width ||
+    preview.clientWidth ||
+    previewRect.width ||
+    preview.parentElement?.clientWidth ||
+    0;
+  if (!previewWidth && !isEditing && isSongsWorkspaceVisible()) {
+    scheduleSongPreviewRerender();
+  }
   const scaledPreviewFontSize = Math.max(
     12,
-    outputFontSize * Math.max(preview.clientWidth || 1920, 1) / 1920,
+    outputFontSize * Math.max(previewWidth || 1280, 1) / SONG_PREVIEW_OUTPUT_WIDTH,
   );
   preview.style.setProperty('--base-font-size', outputFontSize);
   preview.style.setProperty('--song-preview-font-size', `${scaledPreviewFontSize}px`);
@@ -10011,6 +10482,9 @@ function renderSongSectionPreview(section) {
 
   if (isEditing) {
     syncSongEditorWorkspaceStyles(message);
+  } else {
+    updateSongArrangementSelection();
+    updateSongSlideNavigatorSelection({ scroll: false });
   }
   } catch (err) {
      try {
@@ -10248,12 +10722,15 @@ async function importSongFromDialog() {
 
 async function openSongsWorkspaceFromButton() {
   currentWorkspaceSong = null;
+  currentWorkspaceSongDeck = null;
+  currentSongSectionId = null;
   currentSongQueueItem = null;
   document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
   const launcher = document.getElementById("songsLauncher");
   const slide = document.getElementById("songsPreviewSlide");
   if (launcher) launcher.hidden = false;
   if (slide) slide.hidden = true;
+  syncSongSlideNavigator();
 
   showSongsWorkspace();
   await songsAPI.waitForReady();
@@ -10996,7 +11473,7 @@ function applyDeckPageThumbnailObjectBox(el, object) {
   el.style.opacity = String(clampSlideOpacity(object?.opacity, 1));
 }
 
-function createDeckPageThumbnailObject(object) {
+function createDeckPageThumbnailObject(object, deck = currentDeck) {
   const kind = object?.kind === "image" || object?.kind === "shape" ? object.kind : "text";
   const el = document.createElement("div");
   el.className = `slides-page-list__thumb-object slides-page-list__thumb-object--${kind}`;
@@ -11043,9 +11520,9 @@ function createDeckPageThumbnailObject(object) {
 
   const style = object.style && typeof object.style === "object" ? object.style : {};
   el.textContent = slideTextObjectText(object);
-  el.style.color = style.color || currentDeck?.theme?.textColor || "#ffffff";
-  el.style.fontFamily = songFontFamilyCSS(style.fontFamily || currentDeck?.theme?.fontFamily);
-  el.style.fontSize = `${Math.max(5, Math.min(14, (Number(style.fontSize) || Number(currentDeck?.theme?.fontSize) || 72) / 10))}px`;
+  el.style.color = style.color || deck?.theme?.textColor || "#ffffff";
+  el.style.fontFamily = songFontFamilyCSS(style.fontFamily || deck?.theme?.fontFamily);
+  el.style.fontSize = `${Math.max(5, Math.min(14, (Number(style.fontSize) || Number(deck?.theme?.fontSize) || 72) / 10))}px`;
   el.style.lineHeight = String(style.lineHeight || 1.15);
   el.style.textAlign = style.align || "center";
   el.style.alignItems =
@@ -11059,9 +11536,9 @@ function createDeckPageThumbnailObject(object) {
   return el;
 }
 
-function renderDeckPageThumbnail(thumb, page) {
+function renderDeckPageThumbnail(thumb, page, deck = currentDeck) {
   thumb.innerHTML = "";
-  const signature = slideThumbnailSignature(page, currentDeck);
+  const signature = slideThumbnailSignature(page, deck);
   const cached = slideThumbnailCache.get(page?.id);
   if (cached?.signature === signature && cached.dataUrl) {
     thumb.classList.add("slides-page-list__thumb--rendered");
@@ -11082,13 +11559,13 @@ function renderDeckPageThumbnail(thumb, page) {
     fallback.style.inset = "0";
     fallback.style.alignItems = "center";
     fallback.style.justifyContent = "center";
-    fallback.style.color = currentDeck?.theme?.textColor || "#ffffff";
+    fallback.style.color = deck?.theme?.textColor || "#ffffff";
     fallback.textContent = txt.length > 80 ? `${txt.slice(0, 77)}...` : txt;
     thumb.appendChild(fallback);
     return;
   }
   for (const object of objects) {
-    thumb.appendChild(createDeckPageThumbnailObject(object));
+    thumb.appendChild(createDeckPageThumbnailObject(object, deck));
   }
 }
 
@@ -11113,7 +11590,7 @@ function renderDeckPageStrip() {
 
     const thumb = document.createElement("div");
     thumb.className = "slides-page-list__thumb";
-    renderDeckPageThumbnail(thumb, page);
+    renderDeckPageThumbnail(thumb, page, currentDeck);
 
     const label = document.createElement("div");
     label.className = "slides-page-list__label";
@@ -14606,6 +15083,14 @@ function installBibleMediaControls() {
         new ResizeObserver(() => {
           if (isSlidesWorkspaceVisible()) renderSlideCanvas();
         }).observe(canvasFrame);
+      } catch {}
+    }
+    const songPreviewContainer = document.querySelector(".songs-preview-container");
+    if (songPreviewContainer) {
+      try {
+        new ResizeObserver(() => {
+          if (isSongsWorkspaceVisible()) scheduleSongPreviewRerender();
+        }).observe(songPreviewContainer);
       } catch {}
     }
   }
