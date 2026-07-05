@@ -3985,6 +3985,45 @@ async function openMediaFilesDialog() {
   }
 }
 
+function cleanBibleVerseTextForDisplay(value) {
+  const text = String(value || "");
+  if (!text.includes("{")) return collapseBibleDisplayLineWhitespace(text);
+  let result = "";
+  let index = 0;
+  while (index < text.length) {
+    const char = text[index];
+    if (char !== "{") {
+      result += char;
+      index += 1;
+      continue;
+    }
+
+    let depth = 1;
+    let closeIndex = index + 1;
+    while (closeIndex < text.length && depth > 0) {
+      const closeChar = text[closeIndex];
+      if (closeChar === "{") depth += 1;
+      if (closeChar === "}") depth -= 1;
+      closeIndex += 1;
+    }
+    if (depth > 0) {
+      result += char;
+      index += 1;
+      continue;
+    }
+    index = closeIndex;
+  }
+  return collapseBibleDisplayLineWhitespace(result);
+}
+
+function collapseBibleDisplayLineWhitespace(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/[^\S\r\n]+/g, " "))
+    .join("\n")
+    .trim();
+}
+
 function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
   const style = {
     fontFamily: entry.fontFamily || bibleDesignerState.fontFamily,
@@ -4027,7 +4066,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
   const backgroundVideo = !isLowerThird && /\.(mp4|m4v|mov|mkv|webm)$/i.test(style.backgroundPath)
     ? backgroundUrl
     : "";
-  const fullBodyText = entry.text || "";
+  const fullBodyText = cleanBibleVerseTextForDisplay(entry.text);
   const attribution = entry.attribution || bibleAttributionForVersion(entry.version || "KJV");
   const referencePresentation = scriptureReferencePresentationForBackground(
     style.backgroundColor,
@@ -4103,7 +4142,10 @@ function shouldApplyLiveTextClearState(type, options = {}) {
   return (
     options.respectLiveTextClearState !== false &&
     liveTextClearActive &&
-    (type === "song" || type === "deck")
+    (type === "bible" ||
+      type === "song" ||
+      type === "deck" ||
+      type === "lower-third")
   );
 }
 
@@ -5361,11 +5403,12 @@ function buildBibleLowerThirdOutputMessage(entry = bibleDesignerState) {
 function sendBibleLowerThirdTextMessage(message, options = {}) {
   const remember = options.remember !== false;
   const clearToggle = options.clearToggle !== false;
+  const applyClearState = shouldApplyLiveTextClearState("lower-third", options);
   if (remember) {
     lastLowerThirdBibleTextMessage = { ...message };
   }
-  send("update-lower-third-text", message);
-  if (clearToggle) {
+  send("update-lower-third-text", audienceTextMessageForSend("lower-third", message, options));
+  if (clearToggle && !applyClearState) {
     liveTextClearActive = false;
   }
   updateClearLiveTextButtonState();
@@ -5393,7 +5436,7 @@ async function liveBibleAudienceTextMessageForClear() {
 }
 
 async function clearLiveBibleText({ quiet = false } = {}) {
-  const audienceLive = isActiveMediaWindow() && activeMediaWindowContentType === "bible";
+  const audienceLive = hasLiveAudienceTextPresentation("bible");
   const lowerThirdLive = isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive;
   if (!audienceLive && !lowerThirdLive) {
     if (!quiet) showGnomeToast("No Bible text is live");
@@ -5436,7 +5479,7 @@ async function clearLiveBibleText({ quiet = false } = {}) {
 }
 
 async function restoreLiveBibleText({ quiet = false } = {}) {
-  const audienceLive = isActiveMediaWindow() && activeMediaWindowContentType === "bible";
+  const audienceLive = hasLiveAudienceTextPresentation("bible");
   const lowerThirdLive = isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive;
   if (!audienceLive && !lowerThirdLive) {
     if (!quiet) showGnomeToast("No Bible text is live");
@@ -5448,7 +5491,7 @@ async function restoreLiveBibleText({ quiet = false } = {}) {
     const message =
       lastAudienceBibleTextMessage || (await liveBibleAudienceTextMessageForClear());
     if (message) {
-      sendAudienceTextMessage("bible", message);
+      sendAudienceTextMessage("bible", message, { respectLiveTextClearState: false });
       restored = true;
     }
   }
@@ -5458,7 +5501,7 @@ async function restoreLiveBibleText({ quiet = false } = {}) {
         buildBibleLowerThirdOutputMessage(bibleDesignerState)),
       outputRole: "lower-third",
     };
-    sendBibleLowerThirdTextMessage(message);
+    sendBibleLowerThirdTextMessage(message, { respectLiveTextClearState: false });
     restored = true;
   }
 
@@ -5472,11 +5515,30 @@ async function restoreLiveBibleText({ quiet = false } = {}) {
 
 function canClearLiveText() {
   return Boolean(
-    (isActiveMediaWindow() &&
-      (activeMediaWindowContentType === "bible" ||
-        activeMediaWindowContentType === "song")) ||
+    hasLiveAudienceTextPresentation("bible") ||
+      hasLiveAudienceTextPresentation("song") ||
       (isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive),
   );
+}
+
+function hasLiveAudienceTextPresentation(type) {
+  if (activeMediaWindowContentType !== type) return false;
+  if (isActiveMediaWindow()) return true;
+  if (type === "bible") {
+    return Boolean(
+      bibleShowNowModeActive ||
+        (isQueuePlaying && isQueueItemBible(currentLiveQueueItem())) ||
+        (isPlaying && !activeLiveStream),
+    );
+  }
+  if (type === "song") {
+    return Boolean(
+      songShowNowModeActive ||
+        (isQueuePlaying && isQueueItemSong(currentLiveQueueItem())) ||
+        (isPlaying && !activeLiveStream),
+    );
+  }
+  return false;
 }
 
 function updateClearLiveTextButtonState() {
@@ -5503,11 +5565,10 @@ function updateClearLiveTextButtonState() {
 }
 
 async function clearLiveText() {
-  const audienceType = isActiveMediaWindow() ? activeMediaWindowContentType : null;
   const hasBibleText =
-    audienceType === "bible" ||
+    hasLiveAudienceTextPresentation("bible") ||
     (isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive);
-  const hasSongText = audienceType === "song";
+  const hasSongText = hasLiveAudienceTextPresentation("song");
   if (!hasBibleText && !hasSongText) {
     showGnomeToast("No live text to clear");
     updateClearLiveTextButtonState();
@@ -6607,7 +6668,10 @@ async function saveCurrentProjectInStorageMode({ quiet = false } = {}) {
 }
 
 async function slipstreamBiblePresentation(entry) {
-  const textPayload = buildBibleTextMessage(entry, { look: SCRIPTURE_LOOK_FULLSCREEN });
+  const textPayload = audienceTextMessageForSend(
+    "bible",
+    buildBibleTextMessage(entry, { look: SCRIPTURE_LOOK_FULLSCREEN }),
+  );
   const slipstreamSuccess = await invoke("slipstream-media-window", {
     isText: true,
     mediaFile: bibleQueuePath(entry.reference, entry.version),
@@ -9985,7 +10049,7 @@ function liveSongAudienceTextMessageForClear() {
 }
 
 async function clearLiveSongText({ quiet = false } = {}) {
-  if (!isActiveMediaWindow() || activeMediaWindowContentType !== "song") {
+  if (!hasLiveAudienceTextPresentation("song")) {
     if (!quiet) showGnomeToast("No song text is live");
     return false;
   }
@@ -10004,7 +10068,7 @@ async function clearLiveSongText({ quiet = false } = {}) {
 }
 
 async function restoreLiveSongText({ quiet = false } = {}) {
-  if (!isActiveMediaWindow() || activeMediaWindowContentType !== "song") {
+  if (!hasLiveAudienceTextPresentation("song")) {
     if (!quiet) showGnomeToast("No song text is live");
     return false;
   }
@@ -10019,7 +10083,7 @@ async function restoreLiveSongText({ quiet = false } = {}) {
 }
 
 async function syncActiveScheduledSongPresentation() {
-  if (!isActiveMediaWindow() || activeMediaWindowContentType !== "song") return false;
+  if (!hasLiveAudienceTextPresentation("song")) return false;
   const liveIndex = currentQueueIndex;
   if (liveIndex < 0 || liveIndex >= mediaQueue.length) {
     if (!isCurrentWorkspaceSongShownNow()) return false;
@@ -18087,12 +18151,12 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       ? {
           isText: true,
           mediaFile: nextItem.path,
-          textPayload: {
+          textPayload: audienceTextMessageForSend("bible", {
             ...buildBibleTextMessage(await resolvedBibleEntryForItem(nextItem), {
               look: SCRIPTURE_LOOK_FULLSCREEN,
             }),
             transition: slideTransitionPayloadForQueueItem(nextItem),
-          },
+          }),
           transition: slideTransitionPayloadForQueueItem(nextItem),
         }
       : isSongItem
@@ -22387,6 +22451,7 @@ async function createMediaWindow(options) {
   } else {
     clearSongShowNowPresentation();
   }
+  updateClearLiveTextButtonState();
   if (isTextItem) {
     window.setTimeout(() => {
       void (async () => {

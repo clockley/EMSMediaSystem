@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"testing"
+
+	"emsmediasystem/bible-rpc/internal/biblestore"
 )
 
 func TestFTSSearchQueryPhraseUsesFinalTokenPrefix(t *testing.T) {
@@ -105,5 +107,50 @@ INSERT INTO bible_chapter_text (table_name, b, c, verse_count, t) VALUES
 	}
 	if verses != 25 {
 		t.Fatalf("chapterVerseCount() = %d, want 25", verses)
+	}
+}
+
+func TestFetchChapterVersesStripsBibleMarkup(t *testing.T) {
+	db, err := sql.Open(sqliteDriverName, ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer db.Close()
+
+	compressed, err := biblestore.CompressChapterVerses([]biblestore.ChapterVerse{
+		{
+			Verse: 1,
+			Text:  `In the beginning God{After "God," the Hebrew has the two letters "Aleph Tav" as a grammatical marker.} created the heavens and the earth.`,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompressChapterVerses() error = %v", err)
+	}
+
+	if _, err := db.Exec(`
+CREATE TABLE bible_chapter_text (
+	table_name TEXT NOT NULL,
+	b INTEGER NOT NULL,
+	c INTEGER NOT NULL,
+	verse_count INTEGER NOT NULL,
+	t BLOB NOT NULL,
+	PRIMARY KEY (table_name, b, c)
+);
+INSERT INTO bible_chapter_text (table_name, b, c, verse_count, t) VALUES
+	('t_test', 1, 1, 1, ?);
+`, compressed); err != nil {
+		t.Fatalf("create optimized chapter table: %v", err)
+	}
+
+	verses, err := fetchChapterVerses(db, "t_test", 1, 1)
+	if err != nil {
+		t.Fatalf("fetchChapterVerses() error = %v", err)
+	}
+	if len(verses) != 1 {
+		t.Fatalf("fetchChapterVerses() length = %d, want 1", len(verses))
+	}
+	const want = "In the beginning God created the heavens and the earth."
+	if verses[0].Text != want {
+		t.Fatalf("fetchChapterVerses()[0].Text = %q, want %q", verses[0].Text, want)
 	}
 }

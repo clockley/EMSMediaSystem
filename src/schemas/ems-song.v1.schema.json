@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emsmediasystem.org/schemas/ems-song.v1.json",
+  "title": "EMS Song",
+  "description": "Canonical EMS semantic song AST (schema ems.song.v1).",
+  "type": "object",
+  "required": ["schema", "id", "title", "sections"],
+  "properties": {
+    "schema": { "const": "ems.song.v1" },
+    "id": { "type": "string", "minLength": 1 },
+    "title": { "type": "string" },
+    "songNumber": { "type": ["integer", "null"], "minimum": 1 },
+    "folderId": { "type": ["string", "null"] },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "authors": { "type": "array", "items": { "type": "string" } },
+        "copyright": { "type": "string" },
+        "ccliNumber": { "type": ["string", "null"] },
+        "oneLicense": { "type": ["string", "null"] },
+        "meter": { "type": "string" },
+        "hymnal": {
+          "type": "object",
+          "properties": {
+            "name": { "type": ["string", "null"] },
+            "number": { "type": ["string", "null"] },
+            "meter": { "type": "string" },
+            "display": { "type": ["string", "null"] }
+          },
+          "additionalProperties": true
+        },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "extra": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "default": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Section" }
+    },
+    "playOrder": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/PlayOrderEntry" }
+    },
+    "arrangements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "sequence"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "sequence": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                { "type": "string" },
+                { "$ref": "#/$defs/PlayOrderEntry" }
+              ]
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "presentation": {
+      "type": "object",
+      "properties": {
+        "defaultChunking": {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["autoFit", "linesPerSlide", "blocksPerSlide"]
+            },
+            "maxLines": { "type": "integer", "minimum": 1 },
+            "maxBlocks": { "type": "integer", "minimum": 1 },
+            "avoidOrphans": { "type": "boolean" }
+          },
+          "additionalProperties": true
+        },
+        "manualBreaks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["sectionId"],
+            "properties": {
+              "sectionId": { "type": "string" },
+              "afterBlockId": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "defaultRender": { "type": "object", "additionalProperties": true }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "Section": {
+      "type": "object",
+      "required": ["id", "kind", "blocks"],
+      "properties": {
+        "id": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "description": "Lowercased section role: verse, chorus, bridge, intro, outro, ending, interlude, pre-chorus, tag, break, title, ..."
+        },
+        "number": { "type": ["integer", "null"], "minimum": 1 },
+        "label": { "type": "string" },
+        "blocks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Block" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "Block": {
+      "type": "object",
+      "required": ["type", "id", "primary"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["lyricLine", "spacer", "comment", "speaker"]
+        },
+        "id": { "type": "string" },
+        "primary": { "$ref": "#/$defs/LineLanguage" },
+        "translations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/LineLanguage" }
+        },
+        "annotations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Annotation" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "LineLanguage": {
+      "type": "object",
+      "required": ["lang", "segments"],
+      "properties": {
+        "lang": { "type": "string" },
+        "segments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Segment" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "Segment": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "type": "string", "enum": ["text"] },
+        "text": { "type": "string" },
+        "style": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    },
+    "Annotation": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["chord", "note", "cue"] },
+        "value": { "type": "string" },
+        "offset": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "PlayOrderEntry": {
+      "type": "object",
+      "required": ["sectionId"],
+      "properties": {
+        "id": { "type": "string" },
+        "sectionId": { "type": "string" },
+        "enabled": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    }
+  }
+}
