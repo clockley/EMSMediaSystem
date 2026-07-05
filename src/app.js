@@ -71,6 +71,7 @@ import {
   getElementContentSize,
   getPptxListRenderOptions,
   getPptxNaturalSlideSize,
+  getPptxPdfjsConfig,
   getPptxRenderedSlideElement,
   isSavedPptxSlideIndex,
   waitForNextFrame,
@@ -1428,6 +1429,7 @@ async function loadPptxPreview(filePath, opts = {}) {
     zipLimits: RECOMMENDED_ZIP_LIMITS,
     fitMode: "contain",
     renderMode: "slide",
+    pdfjs: getPptxPdfjsConfig(),
     // `renderMode: "slide"` keeps preview cheap; these options apply if the
     // viewer is later asked to render a list (windowed mounting by default).
     listOptions: getPptxListRenderOptions(),

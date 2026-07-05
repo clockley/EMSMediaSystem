@@ -9,6 +9,7 @@
     default-src 'self';
     style-src 'self' 'unsafe-inline';
     script-src 'self' 'unsafe-eval' 'unsafe-inline';
+    worker-src 'self' blob:;
     object-src 'self';
     img-src * 'self' 'unsafe-inline' blob: data:;
     connect-src * blob: data:;
