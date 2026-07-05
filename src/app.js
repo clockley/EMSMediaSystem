@@ -410,6 +410,10 @@ let currentProjectStorageMode = "working";
 let currentProjectGuid = generateProjectGuid();
 let currentProjectCreated = new Date().toISOString();
 let activeMediaWindowContentType = null;
+let lastAudienceBibleTextMessage = null;
+let lastAudienceSongTextMessage = null;
+let lastLowerThirdBibleTextMessage = null;
+let liveTextClearActive = false;
 let bibleShowNowModeActive = false;
 let songShowNowModeActive = false;
 let songShowNowSourceId = null;
@@ -590,6 +594,8 @@ let queueItemClickTimer = null;
 let queueDragFromIndex = -1;
 let songDragSongId = "";
 const SONG_DRAG_MIME = "application/x-ems-song-id";
+let bibleVerseDragPayload = null;
+const BIBLE_VERSE_DRAG_MIME = "application/x-ems-bible-verses";
 let queueDropIndicator = null;
 let queueDropIndicatorIndex = -1;
 /** Last <video> element that received cubic waveshaper wiring. */
@@ -3775,6 +3781,32 @@ function clearSongDragVisualState() {
   });
 }
 
+function clearBibleVerseDragVisualState() {
+  bibleVerseDragPayload = null;
+  hideQueueDropIndicator();
+  document.querySelectorAll(".bible-verse-row--dragging").forEach((el) => {
+    el.classList.remove("bible-verse-row--dragging");
+  });
+}
+
+function dataTransferHasType(dataTransfer, mimeType) {
+  return Boolean(
+    dataTransfer?.types &&
+      Array.from(dataTransfer.types).includes(mimeType),
+  );
+}
+
+function bibleVerseDragPayloadFromDataTransfer(dataTransfer) {
+  if (bibleVerseDragPayload) return bibleVerseDragPayload;
+  if (!dataTransferHasType(dataTransfer, BIBLE_VERSE_DRAG_MIME)) return null;
+  try {
+    const raw = dataTransfer.getData(BIBLE_VERSE_DRAG_MIME);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 function updateClearQueueButtonState() {
   const btn = document.getElementById("clearQueueBtn");
   if (btn) {
@@ -4033,6 +4065,58 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     bodyText: isLowerThird ? lowerThird.text : fullBodyText,
     position: { vertical: "center", horizontal: "center" },
   };
+}
+
+function nonTextPresentationObjects(objects) {
+  return (Array.isArray(objects) ? objects : [])
+    .filter((object) => object?.kind === "image" || object?.kind === "shape")
+    .map((object) => ({ ...object }));
+}
+
+function clearTextFromPresentationMessage(message = {}) {
+  const cleared = {
+    ...message,
+    blocks: [],
+    text: "",
+    bodyText: "",
+    fullBodyText: "",
+    referenceText: "",
+    attributionText: "",
+    copyrightText: "",
+    lowerThirdSegments: [],
+    lowerThirdSegmentIndex: 0,
+    lowerThirdSegmentCount: 0,
+  };
+  const slideObjects = nonTextPresentationObjects(message.slideObjects);
+  if (slideObjects.length > 0) {
+    cleared.slideObjects = slideObjects;
+  } else {
+    delete cleared.slideObjects;
+  }
+  delete cleared.slideTextObjects;
+  return cleared;
+}
+
+function rememberAudienceTextMessage(type, message) {
+  const copy = message && typeof message === "object" ? { ...message } : null;
+  if (type === "bible") {
+    lastAudienceBibleTextMessage = copy;
+  } else if (type === "song") {
+    lastAudienceSongTextMessage = copy;
+  }
+}
+
+function sendAudienceTextMessage(type, message, options = {}) {
+  const remember = options.remember !== false;
+  const clearToggle = options.clearToggle !== false;
+  if (remember) {
+    rememberAudienceTextMessage(type, message);
+  }
+  send("update-text", message);
+  if (clearToggle) {
+    liveTextClearActive = false;
+  }
+  updateClearLiveTextButtonState();
 }
 
 function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
@@ -4867,6 +4951,104 @@ async function bibleEntryForSingleVerse(verseNumber) {
   };
 }
 
+function buildBibleVerseDragPayload() {
+  const selectedVerses = selectedBibleVerseNumbers();
+  if (!selectedVerses.length) return null;
+  const transition = readSlideTransitionControls(
+    "bibleTransitionEffectInput",
+    "bibleTransitionDurationInput",
+    { allowInherit: true },
+  );
+  return {
+    version: bibleDesignerState.version || DEFAULT_BIBLE_VERSION,
+    book: bibleDesignerState.book,
+    chapter: bibleDesignerState.chapter,
+    verses: selectedVerses,
+    style: bibleCurrentStylePayload(),
+    look: normalizeScriptureLook(bibleDesignerState.look),
+    transition,
+  };
+}
+
+function normalizeBibleVerseDragPayload(payload) {
+  if (!payload || typeof payload !== "object") return null;
+  const version = normalizedProjectBibleVersion(payload.version, DEFAULT_BIBLE_VERSION);
+  const book = typeof payload.book === "string" ? payload.book.trim() : "";
+  const chapter = Number(payload.chapter);
+  const verses = normalizedProjectBibleSelectedVerses(payload.verses);
+  if (!book || !Number.isFinite(chapter) || chapter < 1 || !verses.length) {
+    return null;
+  }
+  return {
+    version,
+    book,
+    chapter: Math.trunc(chapter),
+    verses,
+    style:
+      payload.style && typeof payload.style === "object" ? payload.style : {},
+    look: normalizeScriptureLook(payload.look || bibleDesignerState.look),
+    transition: payload.transition || DEFAULT_ITEM_SLIDE_TRANSITION,
+  };
+}
+
+async function bibleEntryFromVerseDragPayload(payload) {
+  const normalized = normalizeBibleVerseDragPayload(payload);
+  if (!normalized) return null;
+  let textData = null;
+  try {
+    textData = await bibleAPI.getText(
+      normalized.version,
+      normalized.book,
+      String(normalized.chapter),
+    );
+  } catch (err) {
+    console.error("Failed to load dragged Bible verses:", err);
+    return null;
+  }
+  const verses = Array.isArray(textData?.verses) ? textData.verses : [];
+  const rows = normalized.verses
+    .map((verseNumber) => ({
+      verseNumber,
+      text: verses[verseNumber - 1],
+    }))
+    .filter((row) => typeof row.text === "string" && row.text.trim());
+  if (!rows.length) return null;
+
+  const selectedVerses = rows.map((row) => row.verseNumber);
+  const verseStart = selectedVerses[0];
+  const verseEnd = selectedVerses[selectedVerses.length - 1];
+  const entry = hydrateBibleEntryStyle({
+    ...bibleDesignerState,
+    ...normalized.style,
+    attribution: textData.attribution || bibleAttributionForVersion(normalized.version),
+    version: normalized.version,
+    book: normalized.book,
+    chapter: normalized.chapter,
+    reference: referenceForBibleVerseNumbers(
+      normalized.book,
+      normalized.chapter,
+      selectedVerses,
+    ),
+    text: bibleEntryTextForVerseRows(rows),
+    verse: verseStart,
+    verseEnd: verseEnd > verseStart ? verseEnd : 0,
+    selectedVerses,
+    look: normalized.look,
+    lowerThirdSegments: [],
+    lowerThirdSegmentIndex: 0,
+    lowerThirdSourceText: "",
+  });
+  return {
+    ...entry,
+    transition: normalized.transition,
+  };
+}
+
+async function queueEntriesForBibleVerseDragPayload(payload) {
+  const entry = await bibleEntryFromVerseDragPayload(payload);
+  return entry ? queueEntriesForBibleScheduleEntry(entry) : [];
+}
+
 function queueEntryFromBibleEntry(entry) {
   const { transition, ...bible } = entry || {};
   const transitionOverride = normalizeItemSlideTransitionOverride(transition);
@@ -5128,7 +5310,7 @@ async function sendBibleTextToOutput(entry = bibleDesignerState) {
   if (liveQueueItem) {
     message.transition = slideTransitionPayloadForQueueItem(liveQueueItem);
   }
-  send("update-text", message);
+  sendAudienceTextMessage("bible", message);
 }
 
 function selectedDisplayIndexFromSelect(id) {
@@ -5158,13 +5340,181 @@ function buildBibleLowerThirdOutputMessage(entry = bibleDesignerState) {
   };
 }
 
+function sendBibleLowerThirdTextMessage(message, options = {}) {
+  const remember = options.remember !== false;
+  const clearToggle = options.clearToggle !== false;
+  if (remember) {
+    lastLowerThirdBibleTextMessage = { ...message };
+  }
+  send("update-lower-third-text", message);
+  if (clearToggle) {
+    liveTextClearActive = false;
+  }
+  updateClearLiveTextButtonState();
+}
+
 function sendBibleLowerThirdTextToOutput(entry = bibleDesignerState) {
   if (!isBibleLowerThirdFeatureEnabled()) return;
-  send("update-lower-third-text", buildBibleLowerThirdOutputMessage(entry));
+  const message = buildBibleLowerThirdOutputMessage(entry);
+  sendBibleLowerThirdTextMessage(message);
+}
+
+async function liveBibleAudienceTextMessageForClear() {
+  const liveItem = currentLiveQueueItem();
+  if (isQueueItemBible(liveItem)) {
+    const entry = await resolvedBibleEntryForItem(liveItem);
+    return buildBibleTextMessage(entry, { look: SCRIPTURE_LOOK_FULLSCREEN });
+  }
+  if (lastAudienceBibleTextMessage) return lastAudienceBibleTextMessage;
+  const entry = await currentBibleTextOnlyEntry();
+  return entry
+    ? buildBibleTextMessage(bibleEntryWithShowNowStyle(entry).bible, {
+        look: SCRIPTURE_LOOK_FULLSCREEN,
+      })
+    : null;
+}
+
+async function clearLiveBibleText({ quiet = false } = {}) {
+  const audienceLive = isActiveMediaWindow() && activeMediaWindowContentType === "bible";
+  const lowerThirdLive = isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive;
+  if (!audienceLive && !lowerThirdLive) {
+    if (!quiet) showGnomeToast("No Bible text is live");
+    return false;
+  }
+
+  let cleared = false;
+  if (audienceLive) {
+    const message = await liveBibleAudienceTextMessageForClear();
+    if (message) {
+      const clearedMessage = clearTextFromPresentationMessage(message);
+      sendAudienceTextMessage("bible", clearedMessage, {
+        remember: false,
+        clearToggle: false,
+      });
+      cleared = true;
+    }
+  }
+  if (lowerThirdLive) {
+    const sourceMessage =
+      lastLowerThirdBibleTextMessage ||
+      buildBibleLowerThirdOutputMessage(bibleDesignerState);
+    const clearedMessage = clearTextFromPresentationMessage({
+      ...sourceMessage,
+      outputRole: "lower-third",
+    });
+    sendBibleLowerThirdTextMessage(clearedMessage, {
+      remember: false,
+      clearToggle: false,
+    });
+    cleared = true;
+  }
+
+  if (cleared) {
+    if (!quiet) showGnomeToast("Bible text cleared");
+    return true;
+  }
+  if (!quiet) showGnomeToast("Could not clear Bible text");
+  return false;
+}
+
+async function restoreLiveBibleText({ quiet = false } = {}) {
+  const audienceLive = isActiveMediaWindow() && activeMediaWindowContentType === "bible";
+  const lowerThirdLive = isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive;
+  if (!audienceLive && !lowerThirdLive) {
+    if (!quiet) showGnomeToast("No Bible text is live");
+    return false;
+  }
+
+  let restored = false;
+  if (audienceLive) {
+    const message =
+      lastAudienceBibleTextMessage || (await liveBibleAudienceTextMessageForClear());
+    if (message) {
+      sendAudienceTextMessage("bible", message);
+      restored = true;
+    }
+  }
+  if (lowerThirdLive) {
+    const message = {
+      ...(lastLowerThirdBibleTextMessage ||
+        buildBibleLowerThirdOutputMessage(bibleDesignerState)),
+      outputRole: "lower-third",
+    };
+    sendBibleLowerThirdTextMessage(message);
+    restored = true;
+  }
+
+  if (restored) {
+    if (!quiet) showGnomeToast("Bible text restored");
+    return true;
+  }
+  if (!quiet) showGnomeToast("Could not restore Bible text");
+  return false;
+}
+
+function canClearLiveText() {
+  return Boolean(
+    (isActiveMediaWindow() &&
+      (activeMediaWindowContentType === "bible" ||
+        activeMediaWindowContentType === "song")) ||
+      (isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive),
+  );
+}
+
+function updateClearLiveTextButtonState() {
+  const button = document.getElementById("clearLiveTextButton");
+  if (!button) return;
+  const available = canClearLiveText();
+  if (!available) {
+    liveTextClearActive = false;
+  }
+  button.hidden = !available;
+  button.disabled = !available;
+  button.setAttribute("aria-hidden", available ? "false" : "true");
+  button.setAttribute("aria-pressed", liveTextClearActive ? "true" : "false");
+  button.classList.toggle("is-active", liveTextClearActive);
+}
+
+async function clearLiveText() {
+  const audienceType = isActiveMediaWindow() ? activeMediaWindowContentType : null;
+  const hasBibleText =
+    audienceType === "bible" ||
+    (isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive);
+  const hasSongText = audienceType === "song";
+  if (!hasBibleText && !hasSongText) {
+    showGnomeToast("No live text to clear");
+    updateClearLiveTextButtonState();
+    return false;
+  }
+
+  const restoringText = liveTextClearActive;
+  let changed = false;
+  if (hasBibleText) {
+    changed =
+      (restoringText
+        ? await restoreLiveBibleText({ quiet: true })
+        : await clearLiveBibleText({ quiet: true })) || changed;
+  }
+  if (hasSongText) {
+    changed =
+      (restoringText
+        ? await restoreLiveSongText({ quiet: true })
+        : await clearLiveSongText({ quiet: true })) || changed;
+  }
+  if (changed) {
+    liveTextClearActive = !restoringText;
+    showGnomeToast(restoringText ? "Live text restored" : "Live text cleared");
+  } else {
+    showGnomeToast(restoringText ? "Could not restore live text" : "Could not clear live text");
+  }
+  updateClearLiveTextButtonState();
+  return changed;
 }
 
 async function closeBibleLowerThirdOutput() {
   bibleLowerThirdOutputActive = false;
+  lastLowerThirdBibleTextMessage = null;
+  updateClearLiveTextButtonState();
   try {
     return await invoke("close-lower-third-window-now");
   } catch (err) {
@@ -5205,6 +5555,7 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
   try {
     const windowId = await invoke("create-lower-third-window", windowOptions, displayIndex);
     bibleLowerThirdOutputActive = Boolean(windowId);
+    updateClearLiveTextButtonState();
     if (bibleLowerThirdOutputActive) {
       window.setTimeout(() => sendBibleLowerThirdTextToOutput(entry), 100);
     }
@@ -6989,6 +7340,45 @@ async function renderBibleVerseList() {
         void presentBibleSelectionFromDoubleClick(verseNumber, verseText).catch(console.error);
       }
     });
+
+    list.addEventListener("dragstart", (event) => {
+      const button = event.target.closest(".bible-verse-row");
+      if (!button || !list.contains(button)) return;
+      const verseNumber = Number(button.dataset.verse);
+      if (!Number.isFinite(verseNumber) || verseNumber < 1) {
+        event.preventDefault();
+        return;
+      }
+      if (!bibleVerseSelection.verses.has(verseNumber)) {
+        bibleVerseSelection.verses.clear();
+        bibleVerseSelection.verses.add(verseNumber);
+        bibleVerseSelection.anchor = verseNumber;
+      }
+      const selectedVerses = selectedBibleVerseNumbers();
+      bibleDesignerState.verse = selectedVerses[0] || verseNumber;
+      bibleDesignerState.verseEnd =
+        selectedVerses.length > 1 ? selectedVerses[selectedVerses.length - 1] : 0;
+      syncBibleVerseListSelection();
+
+      const payload = buildBibleVerseDragPayload();
+      if (!payload) {
+        event.preventDefault();
+        return;
+      }
+      bibleVerseDragPayload = payload;
+      hideBibleTextContextMenu();
+      button.classList.add("bible-verse-row--dragging");
+      event.dataTransfer.setData(BIBLE_VERSE_DRAG_MIME, JSON.stringify(payload));
+      event.dataTransfer.setData(
+        "text/plain",
+        referenceForBibleVerseNumbers(payload.book, payload.chapter, payload.verses),
+      );
+      event.dataTransfer.effectAllowed = "copy";
+    });
+
+    list.addEventListener("dragend", () => {
+      clearBibleVerseDragVisualState();
+    });
   }
 
   const requestId = bibleVerseListRequestId + 1;
@@ -7043,6 +7433,7 @@ async function renderBibleVerseList() {
     button.className = isSelected ? "bible-verse-row is-selected" : "bible-verse-row";
     button.dataset.verse = String(verseNumber);
     button.dataset.text = verseText;
+    button.draggable = true;
     button.setAttribute("aria-selected", isSelected ? "true" : "false");
     button.innerHTML = `<span class="bible-verse-number">${verseNumber}</span><span class="bible-verse-row-text">${escapeHtml(verseText)}</span>`;
   }
@@ -9551,7 +9942,53 @@ async function sendSongTextToOutput(item = null) {
   if (transitionItem) {
     message.transition = slideTransitionPayloadForQueueItem(transitionItem);
   }
-  send("update-text", message);
+  sendAudienceTextMessage("song", message);
+}
+
+function liveSongAudienceTextMessageForClear() {
+  const liveItem = currentLiveQueueItem();
+  if (isQueueItemSong(liveItem)) {
+    return resolvedSongPresentation(liveItem)?.message || null;
+  }
+  if (lastAudienceSongTextMessage) return lastAudienceSongTextMessage;
+  const presentation = resolvedSongPresentation(
+    currentSongPresentationItem(),
+  );
+  return presentation?.message || null;
+}
+
+async function clearLiveSongText({ quiet = false } = {}) {
+  if (!isActiveMediaWindow() || activeMediaWindowContentType !== "song") {
+    if (!quiet) showGnomeToast("No song text is live");
+    return false;
+  }
+  const message = liveSongAudienceTextMessageForClear();
+  if (!message) {
+    if (!quiet) showGnomeToast("Could not clear song text");
+    return false;
+  }
+  const clearedMessage = clearTextFromPresentationMessage(message);
+  sendAudienceTextMessage("song", clearedMessage, {
+    remember: false,
+    clearToggle: false,
+  });
+  if (!quiet) showGnomeToast("Song text cleared");
+  return true;
+}
+
+async function restoreLiveSongText({ quiet = false } = {}) {
+  if (!isActiveMediaWindow() || activeMediaWindowContentType !== "song") {
+    if (!quiet) showGnomeToast("No song text is live");
+    return false;
+  }
+  const message = lastAudienceSongTextMessage || liveSongAudienceTextMessageForClear();
+  if (!message) {
+    if (!quiet) showGnomeToast("Could not restore song text");
+    return false;
+  }
+  sendAudienceTextMessage("song", message);
+  if (!quiet) showGnomeToast("Song text restored");
+  return true;
 }
 
 async function syncActiveScheduledSongPresentation() {
@@ -16077,7 +16514,10 @@ function installMediaQueueListDelegation() {
   list.addEventListener("dragover", (e) => {
     const hasInternalQueueDrag = queueDragFromIndex >= 0;
     const hasSongDrag = Boolean(songDragSongId);
-    if (hasSongDrag && !hasInternalQueueDrag) {
+    const hasBibleVerseDrag =
+      Boolean(bibleVerseDragPayload) ||
+      dataTransferHasType(e.dataTransfer, BIBLE_VERSE_DRAG_MIME);
+    if ((hasSongDrag || hasBibleVerseDrag) && !hasInternalQueueDrag) {
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
       list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
@@ -16106,7 +16546,7 @@ function installMediaQueueListDelegation() {
   });
 
   list.addEventListener("dragleave", (e) => {
-    if (songDragSongId && e.target === list) {
+    if ((songDragSongId || bibleVerseDragPayload) && e.target === list) {
       hideQueueDropIndicator();
     }
     const row = e.target.closest(".queue-item[data-queue-index]");
@@ -16124,6 +16564,7 @@ function installMediaQueueListDelegation() {
   list.addEventListener("drop", async (e) => {
     const hasInternalQueueDrag = queueDragFromIndex >= 0;
     const droppedSongId = songDragSongId;
+    const droppedBibleVersePayload = bibleVerseDragPayloadFromDataTransfer(e.dataTransfer);
     if (droppedSongId && !hasInternalQueueDrag) {
       e.preventDefault();
       e.stopPropagation();
@@ -16145,6 +16586,33 @@ function installMediaQueueListDelegation() {
       } catch (err) {
         console.error("Failed to schedule dropped song:", err);
         showGnomeToast("Failed to schedule song");
+      }
+      return;
+    }
+    if (droppedBibleVersePayload && !hasInternalQueueDrag) {
+      e.preventDefault();
+      e.stopPropagation();
+      hideQueueDropIndicator();
+      clearBibleVerseDragVisualState();
+      const insertIndex = queueDropInsertIndexFromEvent(list, e);
+      try {
+        const entries = await queueEntriesForBibleVerseDragPayload(droppedBibleVersePayload);
+        if (!entries.length) {
+          showGnomeToast("No Bible verses found");
+          return;
+        }
+        invalidateQueueUndoToastAfterMutation();
+        insertQueueEntriesAt(entries, insertIndex);
+        renderQueue();
+        saveMediaFile();
+        showGnomeToast(
+          entries.length > 1
+            ? `Scheduled ${entries.length} Bible slides`
+            : `Scheduled ${entries[0]?.name || "Bible text"}`,
+        );
+      } catch (err) {
+        console.error("Failed to schedule dropped Bible verses:", err);
+        showGnomeToast("Failed to schedule Bible verses");
       }
       return;
     }
@@ -19682,6 +20150,7 @@ function updateDynUI() {
       playButton.textContent = isPlaying ? "Stop" : "Present";
     }
   }
+  updateClearLiveTextButtonState();
 
   document.querySelectorAll("#dspSelct, #dspSelctStreams").forEach((sel) => {
     sel.disabled = isPlaying && audioOnlyFile;
@@ -21434,6 +21903,13 @@ async function loadOpMode(mode) {
       if (headerPresentBtn && headerPresentBtn.dataset.presentBound !== "1") {
         headerPresentBtn.dataset.presentBound = "1";
         headerPresentBtn.addEventListener("click", playMedia, { passive: true });
+      }
+      const clearLiveTextBtn = document.getElementById("clearLiveTextButton");
+      if (clearLiveTextBtn && clearLiveTextBtn.dataset.clearLiveTextBound !== "1") {
+        clearLiveTextBtn.dataset.clearLiveTextBound = "1";
+        clearLiveTextBtn.addEventListener("click", () => {
+          void clearLiveText().catch(console.error);
+        });
       }
 
       // Mode setup
