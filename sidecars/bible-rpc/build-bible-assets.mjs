@@ -236,6 +236,13 @@ function versionKeysFromDb(dbPath) {
     .filter(Boolean);
 }
 
+function versionTableNamesFromDb(dbPath) {
+  return querySqlite(dbPath, `SELECT "table" FROM bible_version_key ORDER BY abbreviation;`)
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean);
+}
+
 function tableExists(dbPath, tableName) {
   const escaped = String(tableName).replaceAll("'", "''");
   return Boolean(
@@ -323,11 +330,11 @@ function verifyDb(dbPath) {
       if (!versions.includes(translation.abbreviation)) {
         fail(`paid Bible database is missing ${translation.abbreviation}`);
       }
-      if (!tableExists(dbPath, translation.tableName)) {
-        fail(`paid Bible database is missing ${translation.tableName}`);
-      }
       const verseCount = Number(
-        querySqlite(dbPath, `SELECT COUNT(*) FROM ${mustQuoteSqlIdentifier(translation.tableName)};`).trim(),
+        querySqlite(
+          dbPath,
+          `SELECT COUNT(*) FROM bible_verse_lookup WHERE table_name = ${sqlString(translation.tableName)};`,
+        ).trim(),
       );
       if (!Number.isInteger(verseCount) || verseCount <= 0) {
         fail(`paid Bible database has no ${translation.abbreviation} verses`);
@@ -370,15 +377,15 @@ function verifyDb(dbPath) {
     dbPath,
     "SELECT value FROM bible_storage_metadata WHERE key = 'schema_version';",
   ).trim();
-  if (schemaVersion !== "3") {
-    fail(`Bible database schema version is ${schemaVersion || "unset"}, expected 3`);
+  if (schemaVersion !== "4") {
+    fail(`Bible database schema version is ${schemaVersion || "unset"}, expected 4`);
   }
 
-  const kjvTextColumnCount = Number(
-    querySqlite(dbPath, "SELECT COUNT(*) FROM pragma_table_info('t_kjv') WHERE name = 't';").trim(),
+  const chapterVerseCountColumnCount = Number(
+    querySqlite(dbPath, "SELECT COUNT(*) FROM pragma_table_info('bible_chapter_text') WHERE name = 'verse_count';").trim(),
   );
-  if (kjvTextColumnCount !== 0) {
-    fail("KJV reference table still contains a legacy text column");
+  if (chapterVerseCountColumnCount !== 1) {
+    fail("Bible compressed chapter table is missing verse_count metadata");
   }
 
   const lookupCount = Number(querySqlite(dbPath, "SELECT COUNT(*) FROM bible_verse_lookup;").trim());
@@ -399,6 +406,24 @@ function verifyDb(dbPath) {
   }
   if (chapterTextType !== "blob") {
     fail(`Bible compressed chapter storage is ${chapterTextType || "unset"}, expected blob`);
+  }
+
+  for (const tableName of versionTableNamesFromDb(dbPath)) {
+    if (tableExists(dbPath, tableName)) {
+      fail(`optimized Bible database still contains source verse table ${tableName}`);
+    }
+    const tableLookupCount = Number(
+      querySqlite(dbPath, `SELECT COUNT(*) FROM bible_verse_lookup WHERE table_name = ${sqlString(tableName)};`).trim(),
+    );
+    if (!Number.isInteger(tableLookupCount) || tableLookupCount <= 0) {
+      fail(`Bible lookup table has no rows for ${tableName}`);
+    }
+    const tableChapterCount = Number(
+      querySqlite(dbPath, `SELECT COUNT(*) FROM bible_chapter_text WHERE table_name = ${sqlString(tableName)};`).trim(),
+    );
+    if (!Number.isInteger(tableChapterCount) || tableChapterCount <= 0) {
+      fail(`Bible compressed chapter table has no rows for ${tableName}`);
+    }
   }
 
   console.log(`Prepared ${edition} Bible DB with versions: ${versions.join(", ")}`);

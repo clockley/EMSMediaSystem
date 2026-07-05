@@ -266,7 +266,50 @@ func requireOptimizedBibleDatabase(db *sql.DB) error {
 		return fmt.Errorf("Bible database text storage is %q, expected %q", storage, biblestore.TextStorageChapterLZFSEJSON)
 	}
 
+	schemaVersion, err := fetchBibleMetadataValue(db, "schema_version")
+	if err != nil {
+		return err
+	}
+	if schemaVersion != "4" {
+		return fmt.Errorf("Bible database schema version is %q, expected 4", schemaVersion)
+	}
+
+	hasVerseCount, err := bibleColumnExists(db, biblestore.ChapterTable, "verse_count")
+	if err != nil {
+		return err
+	}
+	if !hasVerseCount {
+		return fmt.Errorf("Bible database is missing %s.verse_count", biblestore.ChapterTable)
+	}
+
 	return nil
+}
+
+func bibleColumnExists(db *sql.DB, tableName string, columnName string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return false, err
+		}
+		if name == columnName {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func fetchBibleMetadataValue(db *sql.DB, key string) (string, error) {
@@ -939,7 +982,11 @@ func bookChapterCount(db *sql.DB, tableName string, bookID int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	row := db.QueryRow(fmt.Sprintf("SELECT COUNT(DISTINCT c) FROM %s WHERE b = ?", tableName), bookID)
+	row := db.QueryRow(
+		fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE table_name = ? AND b = ?", biblestore.ChapterTable),
+		tableName,
+		bookID,
+	)
 	var count int
 	if err := row.Scan(&count); err != nil {
 		return 0, err
@@ -952,9 +999,17 @@ func chapterVerseCount(db *sql.DB, tableName string, bookID int, chapter int) (i
 	if err != nil {
 		return 0, err
 	}
-	row := db.QueryRow(fmt.Sprintf("SELECT COUNT(v) FROM %s WHERE b = ? AND c = ?", tableName), bookID, chapter)
+	row := db.QueryRow(
+		fmt.Sprintf("SELECT verse_count FROM %s WHERE table_name = ? AND b = ? AND c = ?", biblestore.ChapterTable),
+		tableName,
+		bookID,
+		chapter,
+	)
 	var count int
 	if err := row.Scan(&count); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
 		return 0, err
 	}
 	return count, nil
@@ -1165,7 +1220,10 @@ func getBookMetadataResult(version string) BookMetadataResponse {
 		return BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()}
 	}
 
-	rows, err := db.Query(fmt.Sprintf("SELECT b, c, COUNT(v) FROM %s GROUP BY b, c ORDER BY b, c", tableName))
+	rows, err := db.Query(
+		fmt.Sprintf("SELECT b, c, verse_count FROM %s WHERE table_name = ? ORDER BY b, c", biblestore.ChapterTable),
+		tableName,
+	)
 	if err != nil {
 		return BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()}
 	}
@@ -1586,10 +1644,8 @@ func getChapterInfoResult(versionKey, bookName string, chapterNumber int) (int, 
 	if err != nil {
 		return 0, err
 	}
-	query := fmt.Sprintf("SELECT COUNT(v) FROM %s WHERE b = ? AND c = ?", tableName)
-	row := db.QueryRow(query, bookID, chapterNumber)
-	var verseCount int
-	if err := row.Scan(&verseCount); err != nil {
+	verseCount, err := chapterVerseCount(db, tableName, bookID, chapterNumber)
+	if err != nil {
 		return 0, fmt.Errorf("failed to fetch verse count: %w", err)
 	}
 
@@ -1611,10 +1667,8 @@ func getBookInfoResult(versionKey, bookName string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	query := fmt.Sprintf("SELECT COUNT(DISTINCT c) FROM %s WHERE b = ?", tableName)
-	row := db.QueryRow(query, bookID)
-	var chapterCount int
-	if err := row.Scan(&chapterCount); err != nil {
+	chapterCount, err := bookChapterCount(db, tableName, bookID)
+	if err != nil {
 		return 0, fmt.Errorf("failed to fetch chapter count: %w", err)
 	}
 
