@@ -17,6 +17,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 export const PPTX_SMALL_DECK_MAX_SLIDES = 30;
 export const PPTX_LARGE_DECK_MIN_SLIDES = 151;
+const PPTX_PDFJS_MODULE_PATH = "../../node_modules/pdfjs-dist/build/pdf.min.mjs";
+const PPTX_PDFJS_WORKER_PATH = "../../node_modules/pdfjs-dist/build/pdf.worker.min.mjs";
 
 export function clampPptxSlideIndex(index, count) {
   const maxIndex = Math.max(0, (Number.isFinite(count) ? count : 1) - 1);
@@ -51,6 +53,24 @@ export function getPptxListRenderOptions(slideCount) {
     initialSlides: 4,
     overscanViewport: 1.5,
   };
+}
+
+export function getPptxPdfjsConfig() {
+  const baseUrl =
+    globalThis.document?.baseURI ||
+    globalThis.location?.href ||
+    "";
+  try {
+    return {
+      moduleUrl: new URL(PPTX_PDFJS_MODULE_PATH, baseUrl).toString(),
+      workerUrl: new URL(PPTX_PDFJS_WORKER_PATH, baseUrl).toString(),
+    };
+  } catch {
+    return {
+      moduleUrl: PPTX_PDFJS_MODULE_PATH,
+      workerUrl: PPTX_PDFJS_WORKER_PATH,
+    };
+  }
 }
 
 export function enforcePptxCoverFit(slideEl) {

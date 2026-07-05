@@ -15,6 +15,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { getPptxPdfjsConfig } from "./app-pptx-utils.min.mjs";
+
 const {
   ipcRenderer,
   argv,
@@ -660,6 +662,7 @@ async function activatePptxTarget(data) {
     zipLimits: RECOMMENDED_ZIP_LIMITS,
     fitMode: "contain",
     renderMode: "slide",
+    pdfjs: getPptxPdfjsConfig(),
     // Single-slide mode is already cheap; list renders use windowed mounting.
     listOptions: getPptxListRenderOptions(),
   });
@@ -1995,6 +1998,7 @@ async function loadMedia() {
       zipLimits: RECOMMENDED_ZIP_LIMITS,
       fitMode: "contain",
       renderMode: "slide",
+      pdfjs: getPptxPdfjsConfig(),
       // Single-slide mode is already cheap; list renders use windowed mounting.
       listOptions: getPptxListRenderOptions(),
     });
