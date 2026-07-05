@@ -2870,6 +2870,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 /* ── Slides workspace ─────────────────────────────────────── */
 
 .slides-workspace {
+    --deck-pages-width: 168px;
     position: absolute;
     inset: 0;
     display: flex;
@@ -2926,7 +2927,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .slides-workspace__editor {
     flex: 1;
     display: grid;
-    grid-template-columns: 200px 1fr 280px;
+    grid-template-columns: var(--deck-pages-width) 14px minmax(0, 1fr) 280px;
     gap: 0;
     min-height: 0;
     overflow: hidden;
@@ -2956,6 +2957,38 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     border-right: 1px solid var(--border-color);
     overflow: hidden;
     min-height: 0;
+}
+
+.deck-pages-resize-handle {
+    position: relative;
+    align-self: stretch;
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+    background: transparent;
+}
+
+.deck-pages-resize-handle::before {
+    content: "";
+    position: absolute;
+    top: 16px;
+    bottom: 16px;
+    left: 6px;
+    width: 2px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--window-fg-color) 18%, transparent);
+    transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.deck-pages-resize-handle:hover::before,
+.deck-pages-resize-handle:focus-visible::before,
+body.is-deck-pages-resizing .deck-pages-resize-handle::before {
+    background: var(--accent-bg-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-bg-color) 22%, transparent);
+}
+
+.deck-pages-resize-handle:focus-visible {
+    outline: none;
 }
 
 .slides-workspace__pages-header {
@@ -2991,9 +3024,8 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .slides-page-list__item {
-    display: flex;
-    align-items: stretch;
-    gap: 8px;
+    position: relative;
+    display: block;
     padding: 4px;
     border: 1px solid var(--border-color);
     border-radius: 8px;
@@ -3012,11 +3044,20 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .slides-page-list__index {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    z-index: 2;
     font-size: 11px;
-    opacity: 0.55;
+    opacity: 1;
+    color: #ffffff;
+    font-weight: 800;
     font-variant-numeric: tabular-nums;
     min-width: 1.5em;
-    padding-top: 2px;
+    padding-top: 0;
+    text-align: right;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+    pointer-events: none;
 }
 
 .slides-page-list__thumb {
@@ -3423,6 +3464,7 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .songs-workspace {
+    --song-sidebar-width: 320px;
     position: absolute;
     inset: 0;
     display: flex;
@@ -3442,13 +3484,47 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 
 .songs-workspace__navigator {
     position: relative;
-    width: 320px;
+    width: var(--song-sidebar-width);
+    flex: 0 0 var(--song-sidebar-width);
     border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
     padding: 0;
     gap: 0;
     overflow: hidden;
+}
+
+.song-sidebar-resize-handle {
+    position: relative;
+    flex: 0 0 6px;
+    align-self: stretch;
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+    background: transparent;
+}
+
+.song-sidebar-resize-handle::before {
+    content: "";
+    position: absolute;
+    top: 12px;
+    bottom: 12px;
+    left: 2px;
+    width: 1px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--window-fg-color) 12%, transparent);
+    transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.song-sidebar-resize-handle:hover::before,
+.song-sidebar-resize-handle:focus-visible::before,
+body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
+    background: var(--accent-bg-color);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-bg-color) 18%, transparent);
+}
+
+.song-sidebar-resize-handle:focus-visible {
+    outline: none;
 }
 
 .songs-workspace__nav-header {
@@ -3469,6 +3545,98 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 .songs-workspace__nav-actions {
     display: flex;
     gap: 6px;
+}
+
+.songs-workspace__navigator[data-view="deck"] .songs-search-field,
+.songs-workspace__navigator[data-view="deck"] .songs-bulk-actions,
+.songs-workspace__navigator[data-view="deck"] .songs-folder-panel,
+.songs-workspace__navigator[data-view="deck"] .songs-list {
+    display: none !important;
+}
+
+.song-slide-navigator {
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    padding: 10px 6px 12px;
+    overflow: hidden;
+}
+
+.song-slide-navigator[hidden] {
+    display: none !important;
+}
+
+.song-slide-thumbnail-list {
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    padding: 2px;
+    scrollbar-width: thin;
+}
+
+.song-slide-thumbnail-button {
+    position: relative;
+    width: 100%;
+    min-height: 0;
+    display: block;
+    padding: 4px;
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--window-fg-color) 6%, transparent);
+    color: var(--window-fg-color);
+    cursor: pointer;
+    text-align: left;
+    transition: background-color 0.12s, border-color 0.12s, box-shadow 0.12s;
+}
+
+.song-slide-thumbnail-button:hover {
+    background: color-mix(in srgb, var(--window-fg-color) 10%, transparent);
+}
+
+.song-slide-thumbnail-button:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
+.song-slide-thumbnail-button.is-active {
+    border-color: var(--accent-bg-color);
+    background: color-mix(in srgb, var(--accent-bg-color) 22%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-bg-color) 72%, transparent);
+}
+
+.song-slide-thumbnail-button__number {
+    position: absolute;
+    top: 7px;
+    right: 8px;
+    z-index: 2;
+    min-width: 1.5em;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+    pointer-events: none;
+}
+
+.song-slide-thumbnail-button.is-active .song-slide-thumbnail-button__number {
+    color: #ffffff;
+}
+
+.song-slide-thumbnail-button__viewport {
+    min-width: 0;
+    display: block;
+}
+
+.song-slide-thumbnail-button__thumb {
+    width: 100%;
+    display: block;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--window-fg-color) 14%, transparent);
 }
 
 /* ── Icon buttons (GNOME HIG circular) ────────────────────── */
@@ -4190,11 +4358,15 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 
 .songs-preview-container {
     flex: 1;
-    border: 1px solid var(--border-color);
-    border-radius: 14px;
+    border: 0;
+    border-radius: 0;
     background-color: #000;
     position: relative;
     display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    padding: 28px 32px 88px;
     overflow: hidden;
     min-height: 0;
 }
@@ -4258,9 +4430,13 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 
 .songs-preview-slide {
     position: relative;
-    flex: 1;
+    flex: 0 0 auto;
+    min-width: 0;
     min-height: 0;
     width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -4270,6 +4446,13 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     background-repeat: no-repeat;
     background-size: cover;
     background-position: center;
+    box-shadow: 0 0 0 1px color-mix(in srgb, #fff 10%, transparent);
+}
+
+@media (max-width: 760px) {
+    .songs-preview-container {
+        padding: 18px 18px 78px;
+    }
 }
 
 .song-preview-block {
