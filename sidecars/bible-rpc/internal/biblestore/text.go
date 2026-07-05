@@ -3,6 +3,8 @@ package biblestore
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/go-compressions/lzfse"
 )
@@ -23,6 +25,72 @@ const (
 type ChapterVerse struct {
 	Verse int    `json:"verse"`
 	Text  string `json:"text"`
+}
+
+func CleanBibleVerseText(text string) string {
+	return strings.TrimSpace(collapseWhitespace(stripBraceAnnotations(text)))
+}
+
+func stripBraceAnnotations(text string) string {
+	if !strings.Contains(text, "{") {
+		return text
+	}
+
+	runes := []rune(text)
+	var out strings.Builder
+	out.Grow(len(text))
+
+	for index := 0; index < len(runes); index++ {
+		if runes[index] != '{' {
+			out.WriteRune(runes[index])
+			continue
+		}
+
+		closeIndex := closingBraceIndex(runes, index)
+		if closeIndex < 0 {
+			out.WriteRune(runes[index])
+			continue
+		}
+		index = closeIndex
+	}
+
+	return out.String()
+}
+
+func closingBraceIndex(runes []rune, openIndex int) int {
+	depth := 0
+	for index := openIndex; index < len(runes); index++ {
+		switch runes[index] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func collapseWhitespace(text string) string {
+	var out strings.Builder
+	out.Grow(len(text))
+	pendingSpace := false
+
+	for _, r := range text {
+		if unicode.IsSpace(r) {
+			pendingSpace = true
+			continue
+		}
+		if pendingSpace && out.Len() > 0 {
+			out.WriteRune(' ')
+		}
+		out.WriteRune(r)
+		pendingSpace = false
+	}
+
+	return out.String()
 }
 
 func CompressChapterVerses(verses []ChapterVerse) ([]byte, error) {
