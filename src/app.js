@@ -4099,6 +4099,21 @@ function clearTextFromPresentationMessage(message = {}) {
   return cleared;
 }
 
+function shouldApplyLiveTextClearState(type, options = {}) {
+  return (
+    options.respectLiveTextClearState !== false &&
+    liveTextClearActive &&
+    (type === "song" || type === "deck")
+  );
+}
+
+function audienceTextMessageForSend(type, message, options = {}) {
+  if (!message || typeof message !== "object") return message;
+  return shouldApplyLiveTextClearState(type, options)
+    ? clearTextFromPresentationMessage(message)
+    : message;
+}
+
 function rememberAudienceTextMessage(type, message) {
   const copy = message && typeof message === "object" ? { ...message } : null;
   if (type === "bible") {
@@ -4111,11 +4126,12 @@ function rememberAudienceTextMessage(type, message) {
 function sendAudienceTextMessage(type, message, options = {}) {
   const remember = options.remember !== false;
   const clearToggle = options.clearToggle !== false;
+  const applyClearState = shouldApplyLiveTextClearState(type, options);
   if (remember) {
     rememberAudienceTextMessage(type, message);
   }
-  send("update-text", message);
-  if (clearToggle) {
+  send("update-text", audienceTextMessageForSend(type, message, options));
+  if (clearToggle && !applyClearState) {
     liveTextClearActive = false;
   }
   updateClearLiveTextButtonState();
@@ -5470,11 +5486,20 @@ function updateClearLiveTextButtonState() {
   if (!available) {
     liveTextClearActive = false;
   }
+  const textHidden = available && liveTextClearActive;
+  const label = document.getElementById("clearLiveTextButtonLabel");
+  const buttonLabel = textHidden ? "Show Text" : "Clear Text";
+  const buttonDescription = textHidden
+    ? "Show live text"
+    : "Clear live text and keep background";
   button.hidden = !available;
   button.disabled = !available;
   button.setAttribute("aria-hidden", available ? "false" : "true");
-  button.setAttribute("aria-pressed", liveTextClearActive ? "true" : "false");
-  button.classList.toggle("is-active", liveTextClearActive);
+  button.setAttribute("aria-label", buttonDescription);
+  button.title = buttonDescription;
+  button.setAttribute("aria-pressed", textHidden ? "true" : "false");
+  button.classList.toggle("is-active", textHidden);
+  if (label) label.textContent = buttonLabel;
 }
 
 async function clearLiveText() {
@@ -9988,7 +10013,7 @@ async function restoreLiveSongText({ quiet = false } = {}) {
     if (!quiet) showGnomeToast("Could not restore song text");
     return false;
   }
-  sendAudienceTextMessage("song", message);
+  sendAudienceTextMessage("song", message, { respectLiveTextClearState: false });
   if (!quiet) showGnomeToast("Song text restored");
   return true;
 }
@@ -18074,10 +18099,10 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
         ? {
             isText: true,
             mediaFile: nextItem.path,
-            textPayload: {
+            textPayload: audienceTextMessageForSend("song", {
               ...(resolvedSongPresentation(nextItem)?.message || {}),
               transition: slideTransitionPayloadForQueueItem(nextItem),
-            },
+            }),
             transition: slideTransitionPayloadForQueueItem(nextItem),
           }
         : {
