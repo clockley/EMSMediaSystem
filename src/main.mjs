@@ -3849,6 +3849,11 @@ function setIPC() {
       mediaWindow.webContents.send("update-text", message);
     }
   });
+  ipcMain.on("set-output-hold", (_event, payload) => {
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+      mediaWindow.webContents.send("set-output-hold", payload);
+    }
+  });
   ipcMain.on("update-lower-third-text", (_event, message) => {
     if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
       lowerThirdWindow.webContents.send("update-text", message);

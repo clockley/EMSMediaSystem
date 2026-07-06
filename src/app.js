@@ -146,6 +146,14 @@ import {
   showPreviewWarningToast,
 } from "./app-toasts.mjs";
 import {
+  configureOutputHold,
+  handleOutputHoldShortcut,
+  resetAudienceOutputHold,
+  syncAudienceOutputHoldAfterPresentationStart,
+  toggleBlackScreen,
+  updateBlackScreenButtonState,
+} from "./app-output-hold.mjs";
+import {
   DEFAULT_SONG_RENDER,
   arrangementSequenceEntries,
   enabledSongSections,
@@ -497,6 +505,14 @@ configureBibleScriptureRender({
   isQueueItemPptx: (item) => isQueueItemPptx(item),
   resolvedBibleStyleDefaults: (...args) => resolvedBibleStyleDefaults(...args),
 });
+
+function configureOutputHoldBridge() {
+  configureOutputHold({
+    send: (...args) => send(...args),
+    isActiveMediaWindow: () => isActiveMediaWindow(),
+    showGnomeToast: (...args) => showGnomeToast(...args),
+  });
+}
 
 const bibleVersionMetadataByKey = new Map();
 const projectScriptureOverrides = {
@@ -4425,6 +4441,7 @@ function sendAudienceTextMessage(type, message, options = {}) {
     liveTextClearActive = false;
   }
   updateClearLiveTextButtonState();
+  updateBlackScreenButtonState();
 }
 
 function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
@@ -5797,7 +5814,7 @@ function updateClearLiveTextButtonState() {
   const button = document.getElementById("clearLiveTextButton");
   if (!button) return;
   const available = canClearLiveText();
-  if (!available) {
+  if (!available && liveTextClearActive) {
     liveTextClearActive = false;
   }
   const textHidden = available && liveTextClearActive;
@@ -5848,6 +5865,7 @@ async function clearLiveText() {
     showGnomeToast(restoringText ? "Could not restore live text" : "Could not clear live text");
   }
   updateClearLiveTextButtonState();
+  updateBlackScreenButtonState();
   return changed;
 }
 
@@ -18710,6 +18728,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     } else if (isSongItem) {
       await sendSongTextToOutput(nextItem);
     }
+    syncAudienceOutputHoldAfterPresentationStart();
     renderQueue();
     if (opts.clearCue !== false) {
       clearCueAfterTake(index);
@@ -18899,6 +18918,7 @@ async function toggleLocalAudioOnlyPlaybackFromControls() {
 
 async function closeActiveMediaWindowNow() {
   if (!isActiveMediaWindow()) return false;
+  resetAudienceOutputHold({ quiet: true });
   isActiveMediaWindowCache = false;
   syncPreviewAudioTrackState();
   try {
@@ -19998,6 +20018,7 @@ async function handleMediaWindowClosed(event, id) {
   finishProjectionPlaybackStartupSync();
   restoreLivePreviewMirrorMuteState(localVideo);
   stopStreamRendererPreviewCapture();
+  resetAudienceOutputHold({ quiet: true });
   activeMediaWindowContentType = null;
   activeResolvedMediaFile = "";
   activePreviewResolvedMediaFile = "";
@@ -20727,6 +20748,7 @@ function updateDynUI() {
     }
   }
   updateClearLiveTextButtonState();
+  updateBlackScreenButtonState();
 
   document.querySelectorAll("#dspSelct, #dspSelctStreams").forEach((sel) => {
     sel.disabled = isPlaying && audioOnlyFile;
@@ -21764,6 +21786,7 @@ function restoreMediaFile() {
 }
 
 function shortcutHandler(event) {
+  if (handleOutputHoldShortcut(event)) return;
   if (event.key === "F1" || event.code === "F1") {
     invoke("open-help-window");
   }
@@ -22487,6 +22510,14 @@ async function loadOpMode(mode) {
           void clearLiveText().catch(console.error);
         });
       }
+      const blackScreenBtn = document.getElementById("blackScreenButton");
+      if (blackScreenBtn && blackScreenBtn.dataset.blackScreenBound !== "1") {
+        blackScreenBtn.dataset.blackScreenBound = "1";
+        blackScreenBtn.addEventListener("click", () => {
+          toggleBlackScreen();
+        });
+      }
+      updateBlackScreenButtonState();
 
       // Mode setup
       if (mode === STREAMPLAYER) {
@@ -22937,6 +22968,7 @@ async function createMediaWindow(options) {
     clearSongShowNowPresentation();
   }
   updateClearLiveTextButtonState();
+  updateBlackScreenButtonState();
   if (isTextItem) {
     window.setTimeout(() => {
       void (async () => {
@@ -22947,11 +22979,13 @@ async function createMediaWindow(options) {
           const entry = await resolvedBibleEntryForItem(queueItem);
           await sendBibleTextToOutput(entry);
         }
+        syncAudienceOutputHoldAfterPresentationStart();
       })().catch(console.error);
     }, 150);
     syncStreamRendererPreviewCapture();
     return true;
   }
+  syncAudienceOutputHoldAfterPresentationStart();
   if (isPptxFile) {
     setTimeout(() => {
       sendPptxSlideToMediaWindow(pptxStartSlide);
@@ -22994,6 +23028,7 @@ async function createMediaWindow(options) {
 async function bootstrapRenderer() {
   await waitForPreloadBridge();
   attachElectronBridge();
+  configureOutputHoldBridge();
   installIPCHandler();
   installEvents();
   return invoke("get-setting", "operating-mode").then(loadOpMode);
