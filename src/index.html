@@ -34,6 +34,30 @@
     <div id="WindowTitle">EMS Media System</div>
 
     <div class="headerbar-end">
+      <div class="headerbar-end__presentation">
+      <button id="blackScreenButton" class="headerbar-action headerbar-action--black-screen" type="button" aria-label="Black screen (keeps media playing)" title="Black screen (keeps media playing)" aria-pressed="false" hidden>
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" fill="currentColor"/>
+        </svg>
+        <span id="blackScreenButtonLabel">Black</span>
+      </button>
+      <button id="logoHoldButton" class="headerbar-action headerbar-action--logo-hold" type="button" aria-label="Logo hold (keeps media playing)" title="Logo hold (keeps media playing)" aria-pressed="false" hidden>
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <rect x="2" y="3" width="12" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <circle cx="6" cy="7" r="1.25" fill="currentColor"/>
+          <path d="M3 11l3-2.5 2 1.5 3.5-4 2.5 3" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span id="logoHoldButtonLabel">Logo</span>
+      </button>
+      <button id="clearLiveTextButton" class="headerbar-action headerbar-action--clear-text" type="button" aria-label="Clear live text and keep background" title="Clear live text and keep background" aria-pressed="false" hidden>
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M4 4h8M8 4v8M6 12h4"/>
+          <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.5 12.5l9-9"/>
+        </svg>
+        <span id="clearLiveTextButtonLabel">Clear Text</span>
+      </button>
+      </div>
+      <div class="headerbar-end__chrome">
       <button id="headerAddMediaButton" class="headerbar-action" type="button" aria-label="Add media to schedule" title="Add media to schedule">
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
           <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
@@ -50,19 +74,6 @@
         </svg>
         <span id="mediaWindowPlayButtonLabel">Present</span>
       </button>
-      <button id="blackScreenButton" class="headerbar-action headerbar-action--black-screen" type="button" aria-label="Black screen (keeps media playing)" title="Black screen (keeps media playing)" aria-pressed="false" hidden>
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-          <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" fill="currentColor"/>
-        </svg>
-        <span id="blackScreenButtonLabel">Black</span>
-      </button>
-      <button id="clearLiveTextButton" class="headerbar-action headerbar-action--clear-text" type="button" aria-label="Clear live text and keep background" title="Clear live text and keep background" aria-pressed="false" hidden>
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-          <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M4 4h8M8 4v8M6 12h4"/>
-          <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.5 12.5l9-9"/>
-        </svg>
-        <span id="clearLiveTextButtonLabel">Clear Text</span>
-      </button>
       <button id="hamburgerMenuButton" class="hamburger-menu" aria-label="Menu">
         <svg width="16" height="16" viewBox="0 0 16 16">
           <path stroke="currentColor" stroke-width="1.5" stroke-linecap="round" 
@@ -70,7 +81,8 @@
         </svg>
       </button>
       <ul id="gtkDropdownMenu" class="gtk-dropdown hidden">
-        <!-- <li class="menu-item">Preferences</li> -->
+        <li id="menuPreferences" class="menu-item">Preferences…</li>
+        <li class="menu-separator" role="separator"></li>
         <li id="menuOpenProject" class="menu-item">Open…</li>
         <li id="menuSaveProject" class="menu-item">Save Project</li>
         <li id="menuSaveProjectAs" class="menu-item">Save Project As…</li>
@@ -101,6 +113,7 @@
             <path d="M5 5l6 6m0-6l-6 6" stroke="currentColor" stroke-width="1.5" />
           </svg>
         </button>
+      </div>
       </div>
     </div>
   </header>
