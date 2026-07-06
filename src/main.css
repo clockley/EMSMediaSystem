@@ -6447,7 +6447,7 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 
 .row-auto-advance-btn {
     flex: 0 0 auto;
-    min-width: 52px;
+    min-width: 64px;
     min-height: 28px;
     margin-left: 0;
     padding: 4px 8px;
