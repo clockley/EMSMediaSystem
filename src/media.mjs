@@ -846,12 +846,79 @@ async function applySlipstream(data) {
       await activateVideoTarget(data);
       return;
   }
+
+  reapplyOutputHoldIfActive();
 }
 
 window.emsApplySlipstream = applySlipstream;
 window.emsGetPptxCurrentSlide = () => (isPptx ? pptxCurrentSlide : null);
 window.emsSetLoopEnabled = setLoopEnabled;
 window.emsGetLoopEnabled = () => !!loopFile;
+
+const OUTPUT_HOLD_NONE = "none";
+const OUTPUT_HOLD_BLACK = "black";
+const DEFAULT_OUTPUT_HOLD_BLACK = "#000000";
+
+let outputHoldState = {
+  mode: OUTPUT_HOLD_NONE,
+  blackColor: DEFAULT_OUTPUT_HOLD_BLACK,
+};
+
+function normalizeOutputHoldColor(value) {
+  const color = String(value || "").trim();
+  return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color)
+    ? color
+    : DEFAULT_OUTPUT_HOLD_BLACK;
+}
+
+function applyOutputHold(payload = {}) {
+  const overlay = document.getElementById("outputHoldOverlay");
+  const logoImage = document.getElementById("outputHoldLogoImage");
+  if (!overlay) return;
+
+  const mode = payload?.mode === OUTPUT_HOLD_BLACK ? OUTPUT_HOLD_BLACK : OUTPUT_HOLD_NONE;
+  outputHoldState = {
+    mode,
+    blackColor: normalizeOutputHoldColor(payload?.blackColor),
+  };
+
+  if (mode === OUTPUT_HOLD_NONE) {
+    overlay.hidden = true;
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.dataset.mode = OUTPUT_HOLD_NONE;
+    overlay.style.backgroundColor = "";
+    if (logoImage) {
+      logoImage.hidden = true;
+      logoImage.removeAttribute("src");
+    }
+    return;
+  }
+
+  overlay.hidden = false;
+  overlay.setAttribute("aria-hidden", "false");
+  overlay.dataset.mode = mode;
+  overlay.style.backgroundColor = outputHoldState.blackColor;
+  if (logoImage) {
+    logoImage.hidden = true;
+    logoImage.removeAttribute("src");
+  }
+}
+
+function reapplyOutputHoldIfActive() {
+  if (outputHoldState.mode !== OUTPUT_HOLD_NONE) {
+    applyOutputHold(outputHoldState);
+  }
+}
+
+let outputHoldHandlersInstalled = false;
+function installOutputHoldHandlers() {
+  if (outputHoldHandlersInstalled) return;
+  outputHoldHandlersInstalled = true;
+  ipcRenderer.on("set-output-hold", (_event, payload) => {
+    applyOutputHold(payload);
+  });
+}
+installOutputHoldHandlers();
 
 function installICPHandlers() {
   if (ipcHandlersInstalled) return;

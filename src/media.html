@@ -594,6 +594,28 @@
             line-height: 1.45;
         }
 
+        #outputHoldOverlay {
+            position: fixed;
+            inset: 0;
+            z-index: 30;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+            background: #000;
+        }
+
+        #outputHoldOverlay[hidden] {
+            display: none;
+        }
+
+        .output-hold-overlay__logo {
+            max-width: min(72vw, 960px);
+            max-height: min(72vh, 720px);
+            object-fit: contain;
+            pointer-events: none;
+        }
+
         @keyframes stream-status-spin {
             to {
                 transform: rotate(360deg);
@@ -623,6 +645,9 @@
                 <div id="textAttribution" class="scripture-render__attribution"></div>
             </div>
         </div>
+    </div>
+    <div id="outputHoldOverlay" class="output-hold-overlay" hidden aria-hidden="true">
+        <img id="outputHoldLogoImage" class="output-hold-overlay__logo" hidden alt="" />
     </div>
 </body>
 
