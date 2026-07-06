@@ -3507,6 +3507,36 @@ function isQueuePresentationActive() {
   );
 }
 
+function queueIndexIsLiveForDisplay(index) {
+  if (!queueIndexInRange(index) || index !== currentQueueIndex) return false;
+  if (isQueuePresentationActive()) return true;
+  if (userStopPresentationPending || pendingQueueSwitchIndex !== null) return false;
+
+  const item = mediaQueue[index];
+  if (!item || !(isPlaying || isActiveMediaWindow() || isLocalAppWindowPresentationActive())) {
+    return false;
+  }
+
+  const activePath = activeResolvedMediaFile || activePreviewResolvedMediaFile || mediaFile;
+  if (
+    activePath &&
+    item.path &&
+    normalizeMediaPathForCompare(activePath) === normalizeMediaPathForCompare(item.path)
+  ) {
+    return true;
+  }
+
+  if (isQueueItemSong(item)) return activeMediaWindowContentType === "song";
+  if (isQueueItemBible(item)) {
+    return activeMediaWindowContentType === "bible" || bibleLowerThirdOutputActive;
+  }
+  if (isQueueItemPptx(item)) return activeMediaWindowContentType === "pptx";
+  if (isQueueItemImage(item)) return activeMediaWindowContentType === "image";
+  if (isQueueItemAudio(item)) return isLocalAppWindowPresentationActive();
+  if (isQueueItemVideo(item)) return activeMediaWindowContentType === "video";
+  return false;
+}
+
 function isBiblePresentationActive() {
   return isActiveMediaWindow() && activeMediaWindowContentType === "bible";
 }
@@ -3958,7 +3988,6 @@ function renderQueue() {
   } else {
     // Queue order is the primary source of truth. Badges show live/cued
     // state, plus an optional start-offset label for non-zero cue starts.
-    const presentationLive = isQueuePresentationActive();
     const separatePreviewCue = isPreparingSeparateCue();
     const selectedQueueIndex = selectedQueueIndexForDisplay();
 
@@ -3967,7 +3996,7 @@ function renderQueue() {
         const cueStartTime = queueItemCueStartTime(item);
         const hasCueStart = cueStartTime > 0;
 
-        const isLive = presentationLive && index === currentQueueIndex;
+        const isLive = queueIndexIsLiveForDisplay(index);
         const isCued = separatePreviewCue && index === previewCueIndex;
         const isSelected = index === selectedQueueIndex;
 
@@ -4029,7 +4058,8 @@ function renderQueue() {
           statusMarkup || updateActionMarkup
             ? `<span class="item-secondary-row">${statusMarkup}${updateActionMarkup}</span>`
             : "";
-        const autoAdvanceMarkup = `<button type="button" class="row-auto-advance-btn" data-queue-auto="${index}" aria-label="${autoAdvanceEnabled ? "Auto: continue to the next scheduled item" : "Stop: pause after this scheduled item"}" title="${autoAdvanceEnabled ? "Auto: continue to next item" : "Stop after this item"}">${autoAdvanceEnabled ? "Auto" : "Stop"}</button>`;
+        const autoAdvanceLabel = autoAdvanceEnabled ? "Advance" : "Hold";
+        const autoAdvanceMarkup = `<button type="button" class="row-auto-advance-btn" data-queue-auto="${index}" aria-label="${autoAdvanceEnabled ? "Advance: auto-advance into this scheduled item" : "Hold: pause before this scheduled item"}" title="${autoAdvanceEnabled ? "Auto-advance into this item" : "Pause before this item"}">${autoAdvanceLabel}</button>`;
         return `<div class="${classes}" role="listitem" data-queue-index="${index}" draggable="true" ${isSelected ? 'data-selected="true"' : ""} ${isLive ? 'data-live="true"' : ""} ${isCued ? 'data-cued="true"' : ""}>
       <span class="item-icon">${queueTypeIconMarkup(item)}</span>
       <span class="item-text">
@@ -17568,6 +17598,74 @@ function installPreviewEmptyStateHandlers() {
   });
 }
 
+function queueItemUsesWorkspacePreview(item) {
+  return Boolean(
+    item &&
+      (isQueueItemBible(item) ||
+        isQueueItemDeck(item) ||
+        isQueueItemSong(item) ||
+        isQueueItemPptx(item)),
+  );
+}
+
+async function restoreWorkspacePreviewForQueueItem(item, options = {}) {
+  if (!queueItemUsesWorkspacePreview(item)) return false;
+
+  const token = Number.isFinite(options.previewLoadToken)
+    ? options.previewLoadToken
+    : nextPreviewLoadToken();
+  const startTime =
+    typeof options.startTime === "number" && Number.isFinite(options.startTime)
+      ? options.startTime
+      : queueItemCueStartTime(item);
+
+  mediaFile = item.path;
+  mediaPlayerInputState.filePaths = [item.path];
+  updateQueueFileLabel(item.name);
+
+  if (options.preserveCue !== true) {
+    commitActiveCueVolume();
+    previewCueIndex = -1;
+    pendingCueVolume = null;
+    cueVolumeDirty = false;
+    syncGtkSliderToCueState();
+  }
+
+  stopPreviewAudioCue();
+  clearVideoPreviewCueOverlay();
+  setMediaCountdownOverlayVisible(false);
+  setMediaCountdownText("");
+
+  await loadQueueItemIntoControlWindow(item, {
+    previewLoadToken: token,
+    preservePreviewSeek: false,
+    pptxStartSlide: isQueueItemPptx(item)
+      ? Number.isFinite(options.pptxStartSlide)
+        ? options.pptxStartSlide
+        : pptxStartSlideForItem(item)
+      : undefined,
+    startTime,
+  });
+
+  if (!isCurrentPreviewLoad(token)) return true;
+
+  if (isQueueItemBible(item)) {
+    showBibleWorkspace();
+  } else if (isQueueItemDeck(item)) {
+    showSlidesWorkspace();
+  } else if (isQueueItemSong(item)) {
+    showSongsWorkspace();
+  }
+
+  document
+    .getElementById("customControls")
+    ?.style.setProperty("visibility", "hidden");
+  syncMediaLoopState({ notify: false });
+  updatePreviewCueUI();
+  renderQueue();
+  return true;
+}
+
 async function restorePreviewToLiveOutput(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   const item = mediaQueue[index];
@@ -17726,6 +17824,16 @@ async function restorePreviewCueAfterPresentationStopped() {
   mediaFile = cue.item.path;
   mediaPlayerInputState.filePaths = [mediaFile];
   updateQueueFileLabel(cue.item.name);
+
+  if (
+    await restoreWorkspacePreviewForQueueItem(cue.item, {
+      preserveCue: true,
+      startTime: cue.startTime,
+    })
+  ) {
+    syncPreviewMediaAfterPresentationStateChange();
+    return true;
+  }
 
   if (isQueueItemPptx(cue.item)) {
     await loadPptxPreview(cue.item.path, {
@@ -18258,6 +18366,24 @@ async function stopQueuePresentationUserClosed() {
     mediaPlayerInputState.filePaths.length > 0
   ) {
     mediaFile = mediaPlayerInputState.filePaths[0];
+  }
+
+  const stoppedQueueItem =
+    currentMode === MEDIAPLAYER && queueIndexInRange(currentQueueIndex)
+      ? mediaQueue[currentQueueIndex]
+      : null;
+  if (
+    await restoreWorkspacePreviewForQueueItem(stoppedQueueItem, {
+      startTime: queueItemCueStartTime(stoppedQueueItem),
+    })
+  ) {
+    updatePlayButtonOnMediaWindow();
+    masterPauseState = false;
+    saveMediaFile();
+    removeFilenameFromTitlebar();
+    setMediaCountdownText("");
+    syncPreviewMediaAfterPresentationStateChange();
+    return;
   }
 
   let isImgFile = isImg(mediaFile);
@@ -20336,6 +20462,24 @@ async function handleMediaWindowClosed(event, id) {
     mediaPlayerInputState.filePaths.length > 0
   ) {
     mediaFile = mediaPlayerInputState.filePaths[0];
+  }
+
+  const closedQueueItem =
+    currentMode === MEDIAPLAYER && queueIndexInRange(currentQueueIndex)
+      ? mediaQueue[currentQueueIndex]
+      : null;
+  if (
+    await restoreWorkspacePreviewForQueueItem(closedQueueItem, {
+      startTime: queueItemCueStartTime(closedQueueItem),
+    })
+  ) {
+    updatePlayButtonOnMediaWindow();
+    masterPauseState = false;
+    saveMediaFile();
+    removeFilenameFromTitlebar();
+    setMediaCountdownText("");
+    syncPreviewMediaAfterPresentationStateChange();
+    return;
   }
 
   let isImgFile = isImg(mediaFile);
