@@ -610,9 +610,12 @@
         }
 
         .output-hold-overlay__logo {
-            max-width: min(72vw, 960px);
-            max-height: min(72vh, 720px);
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
             object-fit: contain;
+            object-position: center;
             pointer-events: none;
         }
 

@@ -1402,6 +1402,22 @@ button:focus-visible,
     align-items: center;
     gap: 12px;
     padding-right: 6px;
+    min-width: 0;
+}
+
+.headerbar-end__presentation {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.headerbar-end__chrome {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    margin-left: auto;
 }
 
 .tabs {
@@ -1592,6 +1608,14 @@ button:focus-visible,
     width: 16px;
     height: 16px;
     flex-shrink: 0;
+}
+
+.headerbar-action.is-unconfigured:not([aria-pressed="true"]) {
+    opacity: 0.72;
+}
+
+.headerbar-action.is-unconfigured:not([aria-pressed="true"]):hover {
+    opacity: 1;
 }
 
 .window-title {

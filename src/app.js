@@ -146,12 +146,15 @@ import {
   showPreviewWarningToast,
 } from "./app-toasts.mjs";
 import {
+  applyOutputHoldPreferences,
   configureOutputHold,
   handleOutputHoldShortcut,
+  isAudienceLogoHoldActive,
   resetAudienceOutputHold,
   syncAudienceOutputHoldAfterPresentationStart,
   toggleBlackScreen,
-  updateBlackScreenButtonState,
+  toggleLogoHold,
+  updateOutputHoldButtonStates,
 } from "./app-output-hold.mjs";
 import {
   DEFAULT_SONG_RENDER,
@@ -385,6 +388,8 @@ configureCountdown({
   },
 });
 let isActiveMediaWindowCache = false;
+let logoHoldOnlyPresentation = false;
+let logoHoldStagedPlayback = false;
 const MEDIA_COUNTDOWN_DIGIT_COUNT = 12;
 const countdownDigitNodes = [];
 const countdownDigitLastCode = new Int32Array(MEDIA_COUNTDOWN_DIGIT_COUNT);
@@ -511,7 +516,144 @@ function configureOutputHoldBridge() {
     send: (...args) => send(...args),
     isActiveMediaWindow: () => isActiveMediaWindow(),
     showGnomeToast: (...args) => showGnomeToast(...args),
+    pathToMediaUrl: (...args) => pathToMediaUrl(...args),
+    startLogoHoldPresentation: () => startLogoHoldOnlyPresentation(),
+    onLogoHoldDeactivated: () => handleLogoHoldDeactivated(),
   });
+}
+
+async function startLogoHoldOnlyPresentation() {
+  const displaySelectEl =
+    currentMode === STREAMPLAYER
+      ? document.getElementById("dspSelctStreams")
+      : document.getElementById("dspSelct");
+  const selectedIndex =
+    displaySelectEl && displaySelectEl.value !== ""
+      ? Number.parseInt(displaySelectEl.value, 10)
+      : null;
+  if (selectedIndex === null || !Number.isInteger(selectedIndex) || selectedIndex < 0) {
+    showGnomeToast("Choose an audience output display");
+    return false;
+  }
+
+  const ts = await invoke("get-system-time");
+  const perfNow = performance.now() * 0.001;
+  const birth =
+    ts.systemTime +
+    (Date.now() - ts.ipcTimestamp) * 0.001 +
+    (perfNow - (Number.isFinite(itc) ? itc : perfNow)) +
+    "";
+
+  const windowOptions = {
+    webPreferences: {
+      v8CacheOptions: "bypassHeatCheckAndEagerCompile",
+      contextIsolation: true,
+      sandbox: true,
+      enableWebSQL: false,
+      webgl: false,
+      skipTaskbar: true,
+      additionalArguments: ["__logoHoldOnly=true", birth],
+      preload: `${__dirname}/media_preload.min.js`,
+      devTools: false,
+    },
+  };
+
+  logoHoldOnlyPresentation = true;
+  logoHoldStagedPlayback = false;
+  isActiveMediaWindowCache = true;
+  activeMediaWindowContentType = "logo-hold";
+  isPlaying = true;
+  isQueuePlaying = false;
+
+  try {
+    const windowId = await invoke("create-media-window", windowOptions, selectedIndex);
+    if (!windowId) {
+      logoHoldOnlyPresentation = false;
+      isActiveMediaWindowCache = false;
+      activeMediaWindowContentType = null;
+      isPlaying = false;
+      return false;
+    }
+    updateOutputHoldButtonStates();
+    updateDynUI();
+    return true;
+  } catch (err) {
+    logoHoldOnlyPresentation = false;
+    isActiveMediaWindowCache = false;
+    activeMediaWindowContentType = null;
+    isPlaying = false;
+    throw err;
+  }
+}
+
+async function handleLogoHoldDeactivated() {
+  if (logoHoldStagedPlayback) {
+    logoHoldStagedPlayback = false;
+    logoHoldOnlyPresentation = false;
+    await resumeStagedPresentationAfterLogoHold();
+    return;
+  }
+  if (logoHoldOnlyPresentation) {
+    logoHoldOnlyPresentation = false;
+    isPlaying = false;
+    userStopPresentationPending = true;
+    send("close-media-window", 0);
+    updateDynUI();
+  }
+}
+
+async function resumeStagedPresentationAfterLogoHold() {
+  if (activeMediaWindowContentType === "video") {
+    await send("play-ctl", "play");
+    await playLivePreviewMirrorSafely("logo hold release");
+  }
+  isPlaying = true;
+  isQueuePlaying = true;
+  updateDynUI();
+}
+
+async function prepareQueueItemUnderLogoHold(index) {
+  if (index < 0 || index >= mediaQueue.length) return;
+  if (!(await ensurePendingMediaUpdateApproved(index))) return;
+  setSelectedQueueAnchor(index);
+
+  const item = mediaQueue[index];
+  if (isLiveStream(item.path)) {
+    showGnomeToast("Live streams cannot be staged under logo hold");
+    await loadQueueItemIntoPreviewCue(index);
+    return;
+  }
+  if (
+    isQueueItemAudio(item) ||
+    classifyQueueMediaType(item.path) === "audio"
+  ) {
+    showGnomeToast("Audio items cannot be staged under logo hold");
+    await loadQueueItemIntoPreviewCue(index);
+    return;
+  }
+
+  await loadQueueItemIntoPreviewCue(index);
+  const switched = await slipstreamQueueItemAtIndex(index, {
+    startTime: queueItemCueStartTime(item),
+    clearCue: false,
+    underLogoHold: true,
+  });
+  if (!switched) {
+    showGnomeToast("Could not stage item under logo hold");
+    return;
+  }
+  logoHoldStagedPlayback = true;
+  logoHoldOnlyPresentation = false;
+  syncAudienceOutputHoldAfterPresentationStart();
+}
+
+async function loadOutputHoldPreferencesFromSettings() {
+  try {
+    const prefs = await invoke("get-output-hold-preferences");
+    applyOutputHoldPreferences(prefs);
+  } catch (err) {
+    console.error("Failed to load output hold preferences:", err);
+  }
 }
 
 const bibleVersionMetadataByKey = new Map();
@@ -4441,7 +4583,7 @@ function sendAudienceTextMessage(type, message, options = {}) {
     liveTextClearActive = false;
   }
   updateClearLiveTextButtonState();
-  updateBlackScreenButtonState();
+  updateOutputHoldButtonStates();
 }
 
 function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
@@ -5865,7 +6007,7 @@ async function clearLiveText() {
     showGnomeToast(restoringText ? "Could not restore live text" : "Could not clear live text");
   }
   updateClearLiveTextButtonState();
-  updateBlackScreenButtonState();
+  updateOutputHoldButtonStates();
   return changed;
 }
 
@@ -17885,6 +18027,10 @@ async function loadQueueItemIntoPreviewCue(index) {
 async function takeQueueItemLive(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
   if (pendingQueueSwitchIndex !== null) return;
+  if (isAudienceLogoHoldActive() && isActiveMediaWindow()) {
+    await prepareQueueItemUnderLogoHold(index);
+    return;
+  }
   if (!(await ensurePendingMediaUpdateApproved(index))) return;
   setSelectedQueueAnchor(index);
 
@@ -18034,6 +18180,10 @@ async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
 
 async function onQueueItemActivate(index) {
   if (index < 0 || index >= mediaQueue.length) return;
+  if (isAudienceLogoHoldActive() && isActiveMediaWindow()) {
+    await prepareQueueItemUnderLogoHold(index);
+    return;
+  }
   setSelectedQueueAnchor(index);
 
   // Audio-only items play locally without a media window, but they're still
@@ -18599,7 +18749,18 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     isQueueItemSong(nextItem) &&
     activeMediaWindowContentType === "song" &&
     isActiveMediaWindow();
-  if (!isQueuePlaying && !allowBibleInPlaceSwitch && !allowSongInPlaceSwitch) return false;
+  const allowLogoHoldStaging =
+    Boolean(opts.underLogoHold) &&
+    isAudienceLogoHoldActive() &&
+    isActiveMediaWindow();
+  if (
+    !isQueuePlaying &&
+    !allowBibleInPlaceSwitch &&
+    !allowSongInPlaceSwitch &&
+    !allowLogoHoldStaging
+  ) {
+    return false;
+  }
   if (!isActiveMediaWindow()) return false;
   if (index < 0 || index >= mediaQueue.length) return false;
   // Live streams are not slipstreamed. Fall back to the normal close/reopen
@@ -18650,6 +18811,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     }
 
     consumePendingCueVolume(index);
+    const underLogoHold = Boolean(opts.underLogoHold);
     const slipstreamData = isBibleItem
       ? {
           isText: true,
@@ -18661,6 +18823,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
             transition: slideTransitionPayloadForQueueItem(nextItem),
           }),
           transition: slideTransitionPayloadForQueueItem(nextItem),
+          underLogoHold,
         }
       : isSongItem
         ? {
@@ -18671,6 +18834,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
               transition: slideTransitionPayloadForQueueItem(nextItem),
             }),
             transition: slideTransitionPayloadForQueueItem(nextItem),
+            underLogoHold,
           }
         : {
           mediaFile: resolvedNextPath,
@@ -18681,9 +18845,10 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
           loopFile: loopEnabledForQueueItem(nextItem),
           startVolume: video ? video.volume : 1,
           startTime: requestedStart,
+          underLogoHold,
         };
 
-    if (!isBibleItem && !isSongItem && !isImgFile && !isPptxFile) {
+    if (!isBibleItem && !isSongItem && !isImgFile && !isPptxFile && !underLogoHold) {
       beginProjectionPlaybackStartupSync();
       startupSyncStarted = true;
     }
@@ -18737,7 +18902,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     // Mirror the media window: start the local preview so the operator sees
     // what's projecting. In the non-slipstream path createMediaWindow's
     // "media-window autoplay" call does this; we must do it ourselves here.
-    if (video && !isImgFile && !isPptxFile) {
+    if (video && !isImgFile && !isPptxFile && !opts.underLogoHold) {
       await playLivePreviewMirrorSafely("slipstream preview play");
     }
 
@@ -19946,6 +20111,9 @@ function handleWindowMax(event, isMaximized) {
 
 function installIPCHandler() {
   timeRemaining?.onTick?.(handleTimeMessage);
+  on("preferences-updated", (_event, prefs) => {
+    applyOutputHoldPreferences(prefs);
+  });
   on("update-playback-state", handlePlaybackState);
   on("remoteplaypause", handlePlayPause);
   on("media-window-closed", handleMediaWindowClosed);
@@ -20019,6 +20187,8 @@ async function handleMediaWindowClosed(event, id) {
   restoreLivePreviewMirrorMuteState(localVideo);
   stopStreamRendererPreviewCapture();
   resetAudienceOutputHold({ quiet: true });
+  logoHoldOnlyPresentation = false;
+  logoHoldStagedPlayback = false;
   activeMediaWindowContentType = null;
   activeResolvedMediaFile = "";
   activePreviewResolvedMediaFile = "";
@@ -20748,7 +20918,7 @@ function updateDynUI() {
     }
   }
   updateClearLiveTextButtonState();
-  updateBlackScreenButtonState();
+  updateOutputHoldButtonStates();
 
   document.querySelectorAll("#dspSelct, #dspSelctStreams").forEach((sel) => {
     sel.disabled = isPlaying && audioOnlyFile;
@@ -22480,6 +22650,11 @@ async function loadOpMode(mode) {
       document
         .getElementById("menuRelinkMissingFiles")
         ?.addEventListener("click", () => void relinkMissingFilesDialog());
+      document
+        .getElementById("menuPreferences")
+        ?.addEventListener("click", () => {
+          void invoke("open-preferences-window").catch(console.error);
+        });
 
       // Window control functionality
       const minimizeButton = document.querySelector(".window-control.minimize");
@@ -22517,7 +22692,14 @@ async function loadOpMode(mode) {
           toggleBlackScreen();
         });
       }
-      updateBlackScreenButtonState();
+      const logoHoldBtn = document.getElementById("logoHoldButton");
+      if (logoHoldBtn && logoHoldBtn.dataset.logoHoldBound !== "1") {
+        logoHoldBtn.dataset.logoHoldBound = "1";
+        logoHoldBtn.addEventListener("click", () => {
+          void toggleLogoHold().catch(console.error);
+        });
+      }
+      updateOutputHoldButtonStates();
 
       // Mode setup
       if (mode === STREAMPLAYER) {
@@ -22968,7 +23150,7 @@ async function createMediaWindow(options) {
     clearSongShowNowPresentation();
   }
   updateClearLiveTextButtonState();
-  updateBlackScreenButtonState();
+  updateOutputHoldButtonStates();
   if (isTextItem) {
     window.setTimeout(() => {
       void (async () => {
@@ -23029,6 +23211,7 @@ async function bootstrapRenderer() {
   await waitForPreloadBridge();
   attachElectronBridge();
   configureOutputHoldBridge();
+  await loadOutputHoldPreferencesFromSettings();
   installIPCHandler();
   installEvents();
   return invoke("get-setting", "operating-mode").then(loadOpMode);

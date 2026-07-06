@@ -59,6 +59,7 @@ var pptxStartSlide = 0;
 var pptxCurrentSlide = 0;
 var autoPlay = false;
 var seekOnly = false;
+var logoHoldOnly = false;
 let pptxIpcHandlersInstalled = false;
 let textIpcHandlersInstalled = false;
 let ipcHandlersInstalled = false;
@@ -321,6 +322,8 @@ do {
     isText = true;
   } else if (argv[i] === "__lowerThirdOutput") {
     isLowerThirdOutput = true;
+  } else if (argv[i] === "__logoHoldOnly=true") {
+    logoHoldOnly = true;
   }
   --i;
 } while (argv[i][0] !== "-");
@@ -705,6 +708,14 @@ async function activateVideoTarget(data) {
       await applyVideoStartTime(video, data.startTime);
     } catch {}
   }
+  if (data.underLogoHold) {
+    try {
+      video.pause();
+    } catch {}
+    markPlaybackStateStable();
+    playbackStateUpdate();
+    return;
+  }
   await video.play().catch(() => {
     markPlaybackStateStable();
     playbackStateUpdate();
@@ -835,16 +846,16 @@ async function applySlipstream(data) {
   switch (target) {
     case SLIPSTREAM_TARGET_TEXT:
       activateTextTarget(data);
-      return;
+      break;
     case SLIPSTREAM_TARGET_PPTX:
       await activatePptxTarget(data);
-      return;
+      break;
     case SLIPSTREAM_TARGET_IMAGE:
       activateImageTarget();
-      return;
+      break;
     default:
       await activateVideoTarget(data);
-      return;
+      break;
   }
 
   reapplyOutputHoldIfActive();
@@ -857,11 +868,15 @@ window.emsGetLoopEnabled = () => !!loopFile;
 
 const OUTPUT_HOLD_NONE = "none";
 const OUTPUT_HOLD_BLACK = "black";
+const OUTPUT_HOLD_LOGO = "logo";
 const DEFAULT_OUTPUT_HOLD_BLACK = "#000000";
 
 let outputHoldState = {
   mode: OUTPUT_HOLD_NONE,
   blackColor: DEFAULT_OUTPUT_HOLD_BLACK,
+  logoBackground: DEFAULT_OUTPUT_HOLD_BLACK,
+  logoUrl: "",
+  logoFit: "contain",
 };
 
 function normalizeOutputHoldColor(value) {
@@ -876,10 +891,20 @@ function applyOutputHold(payload = {}) {
   const logoImage = document.getElementById("outputHoldLogoImage");
   if (!overlay) return;
 
-  const mode = payload?.mode === OUTPUT_HOLD_BLACK ? OUTPUT_HOLD_BLACK : OUTPUT_HOLD_NONE;
+  const mode =
+    payload?.mode === OUTPUT_HOLD_BLACK
+      ? OUTPUT_HOLD_BLACK
+      : payload?.mode === OUTPUT_HOLD_LOGO
+        ? OUTPUT_HOLD_LOGO
+        : OUTPUT_HOLD_NONE;
   outputHoldState = {
     mode,
     blackColor: normalizeOutputHoldColor(payload?.blackColor),
+    logoBackground: normalizeOutputHoldColor(
+      payload?.logoBackground || payload?.blackColor,
+    ),
+    logoUrl: typeof payload?.logoUrl === "string" ? payload.logoUrl : "",
+    logoFit: payload?.logoFit === "cover" ? "cover" : "contain",
   };
 
   if (mode === OUTPUT_HOLD_NONE) {
@@ -890,6 +915,7 @@ function applyOutputHold(payload = {}) {
     if (logoImage) {
       logoImage.hidden = true;
       logoImage.removeAttribute("src");
+      logoImage.style.objectFit = "contain";
     }
     return;
   }
@@ -897,10 +923,27 @@ function applyOutputHold(payload = {}) {
   overlay.hidden = false;
   overlay.setAttribute("aria-hidden", "false");
   overlay.dataset.mode = mode;
-  overlay.style.backgroundColor = outputHoldState.blackColor;
+
+  if (mode === OUTPUT_HOLD_BLACK) {
+    overlay.style.backgroundColor = outputHoldState.blackColor;
+    if (logoImage) {
+      logoImage.hidden = true;
+      logoImage.removeAttribute("src");
+    }
+    return;
+  }
+
+  overlay.style.backgroundColor = outputHoldState.logoBackground;
   if (logoImage) {
-    logoImage.hidden = true;
-    logoImage.removeAttribute("src");
+    const logoUrl = outputHoldState.logoUrl;
+    if (logoUrl) {
+      logoImage.hidden = false;
+      logoImage.src = logoUrl;
+      logoImage.style.objectFit = outputHoldState.logoFit;
+    } else {
+      logoImage.hidden = true;
+      logoImage.removeAttribute("src");
+    }
   }
 }
 
@@ -2012,6 +2055,15 @@ async function loadMedia() {
   hideStreamStatus();
 
   const textCanvas = document.getElementById("textCanvas");
+
+  if (logoHoldOnly) {
+    installICPHandlers();
+    if (video) video.style.display = "none";
+    if (textCanvas) textCanvas.style.display = "none";
+    const pptxCanvas = document.getElementById("pptxCanvas");
+    if (pptxCanvas) pptxCanvas.style.display = "none";
+    return;
+  }
 
   if (isText) {
     installICPHandlers();

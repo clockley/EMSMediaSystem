@@ -80,6 +80,11 @@ let queueSwitchDialogResponseListener = null;
 let preflightDialogWindow = null;
 const PREFLIGHT_DIALOG_IPC_CHANNEL = "preflight-dialog-response";
 let preflightDialogResponseListener = null;
+let preferencesWindow = null;
+const PREFERENCES_DIALOG_CLOSE_CHANNEL = "preferences-dialog-close";
+const OUTPUT_HOLD_LOGO_PATH_KEY = "outputHoldLogoPath";
+const OUTPUT_HOLD_LOGO_FIT_KEY = "outputHoldLogoFit";
+const OUTPUT_HOLD_LOGO_BACKGROUND_KEY = "outputHoldLogoBackground";
 let allowMainWindowClose = false;
 let quitCleanupStarted = false;
 const TIME_REMAINING_PORT_CHANNEL = "timeRemaining-port";
@@ -1224,6 +1229,80 @@ function createAboutWindow(parentWindow) {
   return aboutWindow;
 }
 
+function createPreferencesWindow(parentWindow) {
+  if (preferencesWindow != null && !preferencesWindow.isDestroyed()) {
+    preferencesWindow.focus();
+    if (!preferencesWindow.webContents.isDestroyed()) {
+      preferencesWindow.webContents.focus();
+    }
+    return preferencesWindow;
+  }
+
+  preferencesWindow = new BrowserWindow({
+    parent: parentWindow,
+    modal: true,
+    width: 560,
+    height: 560,
+    minWidth: 480,
+    minHeight: 480,
+    resizable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    frame: false,
+    transparent: true,
+    acceptFirstMouse: true,
+    show: false,
+    skipTaskbar: true,
+    title: "Preferences",
+    backgroundColor: "#00000000",
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+      webviewTag: false,
+      navigateOnDragDrop: false,
+      spellcheck: false,
+      devTools: isDevMode,
+      preload: path.join(import.meta.dirname, "preferences_dialog_preload.min.mjs"),
+    },
+  });
+
+  preferencesWindow.once("closed", () => {
+    preferencesWindow = null;
+  });
+
+  ipcMain.once(PREFERENCES_DIALOG_CLOSE_CHANNEL, () => {
+    if (preferencesWindow && !preferencesWindow.isDestroyed()) {
+      preferencesWindow.close();
+    }
+  });
+
+  preferencesWindow.loadFile("derived/src/preferences_dialog.prod.html");
+
+  preferencesWindow.once("ready-to-show", () => {
+    if (!preferencesWindow || preferencesWindow.isDestroyed()) return;
+    const parentBounds = parentWindow.getBounds();
+    const w = 560;
+    const h = 560;
+    const x = parentBounds.x + (parentBounds.width - w) / 2;
+    const y = parentBounds.y + (parentBounds.height - h) / 2;
+    preferencesWindow.setBounds({ x, y, width: w, height: h });
+    preferencesWindow.show();
+    preferencesWindow.focus();
+    if (!preferencesWindow.webContents.isDestroyed()) {
+      preferencesWindow.webContents.focus();
+    }
+  });
+
+  preferencesWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  return preferencesWindow;
+}
+
 function createQueueSwitchDialogWindow(parentWindow, message) {
   return new Promise((resolve) => {
     if (queueSwitchDialogWindow && !queueSwitchDialogWindow.isDestroyed()) {
@@ -1706,6 +1785,26 @@ const AUTOSAVE_PROJECT_PATH_KEY = "autosaveProjectPath";
 const EMBEDDED_AUTOSAVE_STATE_KEY = "autosaveProjectState";
 const LAST_BIBLE_VERSION_KEY = "lastBibleVersion";
 
+function normalizeOutputHoldHexColor(value, fallback = "#000000") {
+  const color = String(value || "").trim();
+  return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color) ? color : fallback;
+}
+
+function getOutputHoldPreferencesFromSettings() {
+  const settings = readSettings();
+  return {
+    logoPath:
+      typeof settings[OUTPUT_HOLD_LOGO_PATH_KEY] === "string"
+        ? settings[OUTPUT_HOLD_LOGO_PATH_KEY]
+        : "",
+    logoFit: settings[OUTPUT_HOLD_LOGO_FIT_KEY] === "cover" ? "cover" : "contain",
+    logoBackground: normalizeOutputHoldHexColor(
+      settings[OUTPUT_HOLD_LOGO_BACKGROUND_KEY],
+      "#000000",
+    ),
+  };
+}
+
 function autosaveProjectFilePath() {
   return path.join(app.getPath("userData"), AUTOSAVE_PROJECT_FILENAME);
 }
@@ -1869,6 +1968,55 @@ async function handleShowMediaFilesDialog(event) {
   }
   await rememberMediaFolder(result.filePaths[0]);
   return { canceled: false, filePaths: result.filePaths };
+}
+
+async function handleShowLogoFileDialog(event) {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender);
+  const parentWindow =
+    senderWindow && !senderWindow.isDestroyed()
+      ? senderWindow.getParentWindow?.() || senderWindow
+      : senderWindow;
+  if (!parentWindow || parentWindow.isDestroyed()) {
+    return { canceled: true, filePath: "" };
+  }
+  const result = await dialog.showOpenDialog(parentWindow, {
+    title: "Choose Logo Image",
+    defaultPath: await getInitialMediaFolder(),
+    properties: ["openFile"],
+    filters: [
+      {
+        name: "Images",
+        extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"],
+      },
+    ],
+  });
+  if (result.canceled || !result.filePaths?.length) {
+    return { canceled: true, filePath: "" };
+  }
+  await rememberMediaFolder(result.filePaths[0]);
+  return { canceled: false, filePath: result.filePaths[0] };
+}
+
+function handleGetOutputHoldPreferences() {
+  return getOutputHoldPreferencesFromSettings();
+}
+
+async function handleSaveOutputHoldPreferences(event, prefs) {
+  const logoPath = typeof prefs?.logoPath === "string" ? prefs.logoPath.trim() : "";
+  const logoFit = prefs?.logoFit === "cover" ? "cover" : "contain";
+  const logoBackground = normalizeOutputHoldHexColor(prefs?.logoBackground);
+  await writeSettings({
+    [OUTPUT_HOLD_LOGO_PATH_KEY]: logoPath,
+    [OUTPUT_HOLD_LOGO_FIT_KEY]: logoFit,
+    [OUTPUT_HOLD_LOGO_BACKGROUND_KEY]: logoBackground,
+  });
+  const saved = getOutputHoldPreferencesFromSettings();
+  const prefsWindow = BrowserWindow.fromWebContents(event.sender);
+  const parentWindow = prefsWindow?.getParentWindow?.();
+  if (parentWindow && !parentWindow.isDestroyed()) {
+    parentWindow.webContents.send("preferences-updated", saved);
+  }
+  return saved;
 }
 
 async function handleShowImportSongDialog(event) {
@@ -3901,6 +4049,14 @@ function setIPC() {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
     createAboutWindow(mainWindow);
   });
+  ipcMain.handle("open-preferences-window", (event) => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    createPreferencesWindow(mainWindow);
+  });
+  ipcMain.handle("get-output-hold-preferences", handleGetOutputHoldPreferences);
+  ipcMain.handle("save-output-hold-preferences", handleSaveOutputHoldPreferences);
+  ipcMain.handle("show-logo-file-dialog", handleShowLogoFileDialog);
   ipcMain.handle("show_queue_switch_dialog", async (event, opts) => {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
     if (!mainWindow || mainWindow.isDestroyed()) return false;
