@@ -27,6 +27,7 @@ EXCLUDES = -path "./node_modules/*" -o -path "./fonts/*" -o -path "./dist/*"
 # Source and target files
 CSS_SRC = src/main.css
 CSS_MIN_MAP = $(DERIVED_DIR)/main.min.css.map
+HTML_BUILD_SCRIPT = build-scripts/inline-pruned-css.cjs
 
 # --- Platform Setup and File Finding ---
 
@@ -360,13 +361,13 @@ $(CSS_MIN_MAP): $(CSS_SRC)
 
 # Pattern rule: build .prod.html
 ifeq ($(WINDOWS), 1)
-  $(DERIVED_DIR)/%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP)
+  $(DERIVED_DIR)/%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP) $(HTML_BUILD_SCRIPT) package.json
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 	@echo "$(COLOR_BLUE)Building production HTML for $< with pruned inlined CSS...$(COLOR_RESET)"
 	@$(NODE) build-scripts/inline-pruned-css.cjs --html "$<" --css "$(CSS_SRC)" --out "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Created $@$(COLOR_RESET)"
 else
-  $(DERIVED_DIR)/%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP)
+  $(DERIVED_DIR)/%.prod.html: %.html $(CSS_SRC) $(CSS_MIN_MAP) $(HTML_BUILD_SCRIPT) package.json
 	@mkdir -p $(dir $@)
 	@echo "$(COLOR_BLUE)Building production HTML for $< with pruned inlined CSS...$(COLOR_RESET)"
 	@$(NODE) build-scripts/inline-pruned-css.cjs --html "$<" --css "$(CSS_SRC)" --out "$@"
