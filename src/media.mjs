@@ -655,7 +655,7 @@ async function activatePptxTarget(data) {
   pptxCanvas.style.display = "flex";
   pptxCanvas.innerHTML = "";
   const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
-    "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
+    "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js"
   );
   const arrayBuffer = await ipcRenderer.invoke(
     "read-file-as-arraybuffer",
@@ -2168,7 +2168,7 @@ async function loadMedia() {
     video.load();
     if (pptxCanvas) pptxCanvas.style.display = "flex";
     const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
-      "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
+      "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js"
     );
     const arrayBuffer = await ipcRenderer.invoke(
       "read-file-as-arraybuffer",
