@@ -148,8 +148,12 @@ import {
 import {
   applyOutputHoldPreferences,
   configureOutputHold,
+  getOutputHoldLogoSettings,
   handleOutputHoldShortcut,
   isAudienceLogoHoldActive,
+  isAnyAudienceHoldActive,
+  normalizeOutputHoldPreferences,
+  OUTPUT_HOLD_TRANSITION_MS,
   resetAudienceOutputHold,
   syncAudienceOutputHoldAfterPresentationStart,
   toggleBlackScreen,
@@ -390,6 +394,7 @@ configureCountdown({
 let isActiveMediaWindowCache = false;
 let logoHoldOnlyPresentation = false;
 let logoHoldStagedPlayback = false;
+let outputHoldRecoveryGeneration = 0;
 const MEDIA_COUNTDOWN_DIGIT_COUNT = 12;
 const countdownDigitNodes = [];
 const countdownDigitLastCode = new Int32Array(MEDIA_COUNTDOWN_DIGIT_COUNT);
@@ -527,11 +532,8 @@ async function startLogoHoldOnlyPresentation() {
     currentMode === STREAMPLAYER
       ? document.getElementById("dspSelctStreams")
       : document.getElementById("dspSelct");
-  const selectedIndex =
-    displaySelectEl && displaySelectEl.value !== ""
-      ? Number.parseInt(displaySelectEl.value, 10)
-      : null;
-  if (selectedIndex === null || !Number.isInteger(selectedIndex) || selectedIndex < 0) {
+  const selectedDisplay = displaySelectEl?.value || null;
+  if (!selectedDisplay) {
     showGnomeToast("Choose an audience output display");
     return false;
   }
@@ -566,7 +568,7 @@ async function startLogoHoldOnlyPresentation() {
   isQueuePlaying = false;
 
   try {
-    const windowId = await invoke("create-media-window", windowOptions, selectedIndex);
+    const windowId = await invoke("create-media-window", windowOptions, selectedDisplay);
     if (!windowId) {
       logoHoldOnlyPresentation = false;
       isActiveMediaWindowCache = false;
@@ -614,7 +616,9 @@ async function resumeStagedPresentationAfterLogoHold() {
 
 async function prepareQueueItemUnderLogoHold(index) {
   if (index < 0 || index >= mediaQueue.length) return;
+  const stagingGeneration = outputHoldRecoveryGeneration;
   if (!(await ensurePendingMediaUpdateApproved(index))) return;
+  if (stagingGeneration !== outputHoldRecoveryGeneration) return;
   setSelectedQueueAnchor(index);
 
   const item = mediaQueue[index];
@@ -633,11 +637,13 @@ async function prepareQueueItemUnderLogoHold(index) {
   }
 
   await loadQueueItemIntoPreviewCue(index);
+  if (stagingGeneration !== outputHoldRecoveryGeneration) return;
   const switched = await slipstreamQueueItemAtIndex(index, {
     startTime: queueItemCueStartTime(item),
     clearCue: false,
     underLogoHold: true,
   });
+  if (stagingGeneration !== outputHoldRecoveryGeneration) return;
   if (!switched) {
     showGnomeToast("Could not stage item under logo hold");
     return;
@@ -645,6 +651,122 @@ async function prepareQueueItemUnderLogoHold(index) {
   logoHoldStagedPlayback = true;
   logoHoldOnlyPresentation = false;
   syncAudienceOutputHoldAfterPresentationStart();
+}
+
+function hasActiveOutputRecoveryState() {
+  return (
+    liveTextClearActive ||
+    isAnyAudienceHoldActive() ||
+    logoHoldStagedPlayback
+  );
+}
+
+async function releaseOutputHoldsForRecovery() {
+  outputHoldRecoveryGeneration += 1;
+  let changed = false;
+  if (liveTextClearActive) {
+    const hasBibleText =
+      hasLiveAudienceTextPresentation("bible") ||
+      (isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive);
+    const hasSongText = hasLiveAudienceTextPresentation("song");
+    if (hasBibleText) {
+      changed = (await restoreLiveBibleText({ quiet: true })) || changed;
+    }
+    if (hasSongText) {
+      changed = (await restoreLiveSongText({ quiet: true })) || changed;
+    }
+    liveTextClearActive = false;
+    updateClearLiveTextButtonState();
+    changed = true;
+  }
+  if (isAnyAudienceHoldActive() || logoHoldStagedPlayback) {
+    logoHoldStagedPlayback = false;
+    logoHoldOnlyPresentation = false;
+    resetAudienceOutputHold({ quiet: true, force: true });
+    changed = true;
+  }
+  return changed;
+}
+
+function queueIndexForSongId(songId) {
+  if (!songId) return -1;
+  return mediaQueue.findIndex((item) => {
+    if (!item || (item.type !== "song" && item.type !== "deck")) return false;
+    return (
+      item.source?.songId === songId ||
+      item.deckSnapshot?.id === songId ||
+      item.source?.deckId === songId ||
+      parseSongQueuePath(item.path) === songId ||
+      parseDeckQueuePath(item.path)?.deckId === songId
+    );
+  });
+}
+
+function queueIndexForCurrentWorkspaceSong() {
+  if (currentWorkspaceSongDeck?.id) {
+    const byDeck = mediaQueue.findIndex((item) =>
+      queueItemMatchesDeck(item, currentWorkspaceSongDeck),
+    );
+    if (byDeck >= 0) return byDeck;
+  }
+  if (currentWorkspaceSong?.id) {
+    return queueIndexForSongId(currentWorkspaceSong.id);
+  }
+  return -1;
+}
+
+function queueIndexForCurrentDeck() {
+  if (!currentDeck?.id) return -1;
+  return mediaQueue.findIndex((item) => queueItemMatchesDeck(item, currentDeck));
+}
+
+async function releaseOutputHoldsAndGoLiveQueueIndex(index, startTime = 0) {
+  if (index < 0 || index >= mediaQueue.length) return;
+  if (!(await ensurePendingMediaUpdateApproved(index))) return;
+  await releaseOutputHoldsForRecovery();
+  setSelectedQueueAnchor(index);
+  const item = mediaQueue[index];
+  const itemStart =
+    queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
+      ? startTime
+      : queueItemCueStartTime(item);
+  await takeQueueItemLive(index, itemStart, { skipLogoHoldPrep: true });
+}
+
+async function recoverOutputHoldsToSongSection(sectionId) {
+  if (!currentWorkspaceSong || !sectionId) return false;
+  const hadRecovery = hasActiveOutputRecoveryState();
+  await releaseOutputHoldsForRecovery();
+  await selectSongSection(sectionId, { syncLive: false });
+  const queueIndex = queueIndexForCurrentWorkspaceSong();
+  if (queueIndex >= 0) {
+    if (hadRecovery || !queueIndexIsCurrentLivePresentation(queueIndex)) {
+      await takeQueueItemLive(queueIndex, 0, { skipLogoHoldPrep: true });
+    } else {
+      await syncActiveScheduledSongPresentation();
+    }
+    return true;
+  }
+  if (hadRecovery || !hasLiveAudienceTextPresentation("song")) {
+    if (hasLiveAudienceTextPresentation("song")) {
+      await syncActiveScheduledSongPresentation();
+    } else {
+      await showSongTextNow();
+    }
+  }
+  return true;
+}
+
+async function recoverOutputHoldsToDeckPage(pageId) {
+  if (!currentDeck || !pageId) return false;
+  const hadRecovery = hasActiveOutputRecoveryState();
+  await releaseOutputHoldsForRecovery();
+  selectDeckPage(pageId);
+  const queueIndex = queueIndexForCurrentDeck();
+  if (queueIndex >= 0 && (hadRecovery || !queueIndexIsCurrentLivePresentation(queueIndex))) {
+    await takeQueueItemLive(queueIndex, 0, { skipLogoHoldPrep: true });
+  }
+  return true;
 }
 
 async function loadOutputHoldPreferencesFromSettings() {
@@ -5814,21 +5936,20 @@ async function sendBibleTextToOutput(entry = bibleDesignerState) {
   sendAudienceTextMessage("bible", message);
 }
 
-function selectedDisplayIndexFromSelect(id) {
+function selectedDisplayValueFromSelect(id) {
   const select = document.getElementById(id);
   if (!select || select.value === "") return null;
-  const index = Number.parseInt(select.value, 10);
-  return Number.isInteger(index) && index >= 0 ? index : null;
+  return select.value;
 }
 
 function hasAudienceOutputSelected() {
   const selectId = currentMode === STREAMPLAYER ? "dspSelctStreams" : "dspSelct";
-  return selectedDisplayIndexFromSelect(selectId) !== null;
+  return selectedDisplayValueFromSelect(selectId) !== null;
 }
 
 function hasLowerThirdOutputSelected() {
   if (!isBibleLowerThirdFeatureEnabled()) return false;
-  return selectedDisplayIndexFromSelect("lowerThirdDspSelct") !== null;
+  return selectedDisplayValueFromSelect("lowerThirdDspSelct") !== null;
 }
 
 function buildBibleLowerThirdOutputMessage(entry = bibleDesignerState) {
@@ -6058,8 +6179,8 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
     await closeBibleLowerThirdOutput();
     return false;
   }
-  const displayIndex = selectedDisplayIndexFromSelect("lowerThirdDspSelct");
-  if (displayIndex === null) {
+  const displayValue = selectedDisplayValueFromSelect("lowerThirdDspSelct");
+  if (!displayValue) {
     await closeBibleLowerThirdOutput();
     return false;
   }
@@ -6083,7 +6204,7 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
     },
   };
   try {
-    const windowId = await invoke("create-lower-third-window", windowOptions, displayIndex);
+    const windowId = await invoke("create-lower-third-window", windowOptions, displayValue);
     bibleLowerThirdOutputActive = Boolean(windowId);
     updateClearLiveTextButtonState();
     if (bibleLowerThirdOutputActive) {
@@ -9121,6 +9242,10 @@ function renderSongSlideNavigator() {
     button.addEventListener("click", () => {
       void selectSongSection(section.id).catch(console.error);
     });
+    button.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      void recoverOutputHoldsToSongSection(section.id).catch(console.error);
+    });
     button.addEventListener("keydown", (event) => {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -11791,6 +11916,10 @@ function renderDeckPageStrip() {
     row.appendChild(idxEl);
     row.appendChild(wrap);
     row.addEventListener("click", () => selectDeckPage(page.id));
+    row.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      void recoverOutputHoldsToDeckPage(page.id).catch(console.error);
+    });
     host.appendChild(row);
   });
 }
@@ -15947,6 +16076,16 @@ function buildProjectQueueItemSnapshot(item) {
   };
 }
 
+function buildProjectOutputHoldSnapshot() {
+  const settings = getOutputHoldLogoSettings();
+  return {
+    logoPath: settings.logoPath,
+    logoFit: settings.logoFit,
+    logoBackground: settings.logoBackground,
+    holdTransitionDurationMs: OUTPUT_HOLD_TRANSITION_MS,
+  };
+}
+
 function buildProjectStateSnapshot(opts = {}) {
   const projectGuid = normalizeProjectGuid(opts.projectGuid) || currentProjectGuid;
   const projectCreated =
@@ -15965,6 +16104,7 @@ function buildProjectStateSnapshot(opts = {}) {
     },
     projectStorageMode: currentProjectStorageMode,
     projectScriptureText: projectScriptureTextFromOverrides(projectScriptureOverrides),
+    projectOutputHold: buildProjectOutputHoldSnapshot(),
     currentMode,
     currentQueueIndex,
     previewCueIndex,
@@ -16046,6 +16186,9 @@ function applyProjectStateSnapshot(state, opts = {}) {
     projectScriptureOverrides,
     overridesFromProjectScriptureText(state.projectScriptureText),
   );
+  if (state.projectOutputHold && typeof state.projectOutputHold === "object") {
+    applyOutputHoldPreferences(normalizeOutputHoldPreferences(state.projectOutputHold));
+  }
   bibleStyleDirtyState.fontFamily = false;
   bibleStyleDirtyState.fontSize = false;
   bibleStyleDirtyState.autosizeMode = false;
@@ -17218,7 +17361,13 @@ function installMediaQueueListDelegation() {
     if (Number.isNaN(idx)) return;
     setSelectedQueueAnchor(idx);
     updateQueueSelectionVisual();
-    if (e.detail > 1) return;
+    if (e.detail > 1) {
+      if (queueItemClickTimer !== null) {
+        window.clearTimeout(queueItemClickTimer);
+        queueItemClickTimer = null;
+      }
+      return;
+    }
     if (queueItemClickTimer !== null) {
       window.clearTimeout(queueItemClickTimer);
     }
@@ -17244,7 +17393,7 @@ function installMediaQueueListDelegation() {
     if (Number.isNaN(idx)) return;
     setSelectedQueueAnchor(idx);
     updateQueueSelectionVisual();
-    void switchQueueItemLiveWithConfirmation(idx).catch((err) => console.error(err));
+    void releaseOutputHoldsAndGoLiveQueueIndex(idx).catch((err) => console.error(err));
   });
 
   list.addEventListener("dragstart", (e) => {
@@ -18132,10 +18281,14 @@ async function loadQueueItemIntoPreviewCue(index) {
   renderQueue();
 }
 
-async function takeQueueItemLive(index, startTime = 0) {
+async function takeQueueItemLive(index, startTime = 0, opts = {}) {
   if (index < 0 || index >= mediaQueue.length) return;
   if (pendingQueueSwitchIndex !== null) return;
-  if (isAudienceLogoHoldActive() && isActiveMediaWindow()) {
+  if (
+    !opts.skipLogoHoldPrep &&
+    isAudienceLogoHoldActive() &&
+    isActiveMediaWindow()
+  ) {
     await prepareQueueItemUnderLogoHold(index);
     return;
   }
@@ -18170,6 +18323,7 @@ async function takeQueueItemLive(index, startTime = 0) {
     const switchedInPlace = await slipstreamQueueItemAtIndex(index, {
       startTime: safeStart,
       clearCue: true,
+      clearOutputHold: opts.skipLogoHoldPrep === true || opts.clearOutputHold === true,
     });
     if (switchedInPlace) {
       return;
@@ -18290,6 +18444,11 @@ async function onQueueItemActivate(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   if (isAudienceLogoHoldActive() && isActiveMediaWindow()) {
     await prepareQueueItemUnderLogoHold(index);
+    return;
+  }
+  if (isAnyAudienceHoldActive() && isActiveMediaWindow()) {
+    setSelectedQueueAnchor(index);
+    updateQueueSelectionVisual();
     return;
   }
   setSelectedQueueAnchor(index);
@@ -18938,6 +19097,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
 
     consumePendingCueVolume(index);
     const underLogoHold = Boolean(opts.underLogoHold);
+    const clearOutputHold = Boolean(opts.clearOutputHold);
     const slipstreamData = isBibleItem
       ? {
           isText: true,
@@ -18950,6 +19110,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
           }),
           transition: slideTransitionPayloadForQueueItem(nextItem),
           underLogoHold,
+          clearOutputHold,
         }
       : isSongItem
         ? {
@@ -18961,6 +19122,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
             }),
             transition: slideTransitionPayloadForQueueItem(nextItem),
             underLogoHold,
+            clearOutputHold,
           }
         : {
           mediaFile: resolvedNextPath,
@@ -18972,6 +19134,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
           startVolume: video ? video.volume : 1,
           startTime: requestedStart,
           underLogoHold,
+          clearOutputHold,
         };
 
     if (!isBibleItem && !isSongItem && !isImgFile && !isPptxFile && !underLogoHold) {
@@ -20239,6 +20402,7 @@ function installIPCHandler() {
   timeRemaining?.onTick?.(handleTimeMessage);
   on("preferences-updated", (_event, prefs) => {
     applyOutputHoldPreferences(prefs);
+    scheduleAutosaveProjectState();
   });
   on("update-playback-state", handlePlaybackState);
   on("remoteplaypause", handlePlayPause);
@@ -21117,7 +21281,7 @@ async function populateDisplaySelect(options = {}) {
 
   audienceDisplaySelects.forEach((sel) => {
     sel.onchange = (event) => {
-      const value = event.target.value === "" ? -1 : Number.parseInt(event.target.value, 10);
+      const value = event.target.value || "";
       send("set-display-index", value);
       syncPeerSelects(event.target);
       syncBiblePreviewOutputScale();
@@ -21126,9 +21290,9 @@ async function populateDisplaySelect(options = {}) {
   });
   if (lowerThirdDisplaySelect) {
     lowerThirdDisplaySelect.onchange = (event) => {
-      const value = event.target.value === "" ? -1 : Number.parseInt(event.target.value, 10);
+      const value = event.target.value || "";
       send("set-lower-third-display-index", value);
-      if (value < 0) {
+      if (!value) {
         void closeBibleLowerThirdOutput();
       } else {
         void syncShowNowBiblePresentation().catch(console.error);
@@ -22832,14 +22996,22 @@ async function loadOpMode(mode) {
       const blackScreenBtn = document.getElementById("blackScreenButton");
       if (blackScreenBtn && blackScreenBtn.dataset.blackScreenBound !== "1") {
         blackScreenBtn.dataset.blackScreenBound = "1";
-        blackScreenBtn.addEventListener("click", () => {
+        blackScreenBtn.addEventListener("click", (event) => {
+          if (event.detail > 1) {
+            event.preventDefault();
+            return;
+          }
           toggleBlackScreen();
         });
       }
       const logoHoldBtn = document.getElementById("logoHoldButton");
       if (logoHoldBtn && logoHoldBtn.dataset.logoHoldBound !== "1") {
         logoHoldBtn.dataset.logoHoldBound = "1";
-        logoHoldBtn.addEventListener("click", () => {
+        logoHoldBtn.addEventListener("click", (event) => {
+          if (event.detail > 1) {
+            event.preventDefault();
+            return;
+          }
           void toggleLogoHold().catch(console.error);
         });
       }
@@ -23152,10 +23324,7 @@ async function createMediaWindow(options) {
     currentMode === STREAMPLAYER
       ? document.getElementById("dspSelctStreams")
       : document.getElementById("dspSelct");
-  const selectedIndex =
-    displaySelectEl && displaySelectEl.value !== ""
-      ? Number.parseInt(displaySelectEl.value, 10)
-      : null;
+  const selectedDisplay = displaySelectEl?.value || null;
   activeLiveStream = liveStreamMode;
 
   if (liveStreamMode === true) {
@@ -23250,7 +23419,7 @@ async function createMediaWindow(options) {
     },
   };
 
-  if (selectedIndex === null || !Number.isInteger(selectedIndex) || selectedIndex < 0) {
+  if (!selectedDisplay) {
     showGnomeToast("Choose an audience output display");
     isActiveMediaWindowCache = false;
     return false;
@@ -23265,7 +23434,7 @@ async function createMediaWindow(options) {
     beginProjectionPlaybackStartupSync();
   }
   try {
-    const windowId = await invoke("create-media-window", windowOptions, selectedIndex);
+    const windowId = await invoke("create-media-window", windowOptions, selectedDisplay);
     if (!windowId) {
       isActiveMediaWindowCache = false;
       if (startupSyncNeeded) finishProjectionPlaybackStartupSync();

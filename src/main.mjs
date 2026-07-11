@@ -475,10 +475,59 @@ function localMediaStateUpdate(event, id, state) {
   }
 }
 
-function displayForExplicitIndex(displayIndex) {
-  if (!Number.isInteger(displayIndex) || displayIndex < 0) return null;
+function displayValueForDisplay(display, index) {
+  return Number.isInteger(display?.id) && display.id >= 0
+    ? `display:${display.id}`
+    : `index:${index}`;
+}
+
+function displayIndexForSelection(selection, displays = screen.getAllDisplays()) {
+  if (selection === null || selection === undefined || selection === "") return null;
+
+  if (Number.isInteger(selection)) {
+    return selection >= 0 && displays[selection] ? selection : null;
+  }
+
+  if (typeof selection !== "string") return null;
+  const value = selection.trim();
+  if (!value) return null;
+
+  const displayIdMatch = value.match(/^display:(-?\d+)$/);
+  if (displayIdMatch) {
+    const displayId = Number.parseInt(displayIdMatch[1], 10);
+    const index = displays.findIndex((display) => display.id === displayId);
+    return index >= 0 ? index : null;
+  }
+
+  const displayIndexMatch = value.match(/^index:(\d+)$/);
+  if (displayIndexMatch) {
+    const index = Number.parseInt(displayIndexMatch[1], 10);
+    return displays[index] ? index : null;
+  }
+
+  if (/^\d+$/.test(value)) {
+    const legacyIndex = Number.parseInt(value, 10);
+    return displays[legacyIndex] ? legacyIndex : null;
+  }
+
+  return null;
+}
+
+function resolveDisplaySelection(selection) {
   const displays = screen.getAllDisplays();
-  return displays[displayIndex] || null;
+  const index = displayIndexForSelection(selection, displays);
+  if (index === null) return null;
+  const display = displays[index];
+  if (!display) return null;
+  return {
+    display,
+    value: displayValueForDisplay(display, index),
+  };
+}
+
+function defaultDisplayValueForSavedSelection(selection, displays) {
+  const index = displayIndexForSelection(selection, displays);
+  return index === null ? "" : displayValueForDisplay(displays[index], index);
 }
 
 function fullscreenWindowBoundsForDisplay(display) {
@@ -507,9 +556,9 @@ function handleGetMediaWindowBounds() {
 
 async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-    const targetDisplay = displayForExplicitIndex(displayIndex);
-    if (!targetDisplay) return null;
-    mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetDisplay));
+    const targetSelection = resolveDisplaySelection(displayIndex);
+    if (!targetSelection) return null;
+    mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
     mediaWindow.setFullScreen(true);
     installTimeRemainingMessagePort();
     return mediaWindow.id;
@@ -517,8 +566,8 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
   if (mediaWindowCreatePromise) return mediaWindowCreatePromise;
 
   mediaWindowCreatePromise = measurePerformance("Creating media window", async () => {
-    const targetDisplay = displayForExplicitIndex(displayIndex);
-    if (!targetDisplay) return null;
+    const targetSelection = resolveDisplaySelection(displayIndex);
+    if (!targetSelection) return null;
 
     const { webPreferences: incomingPrefs = {}, ...restWindowOptions } =
       windowOptions;
@@ -531,7 +580,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       fullscreen: true,
       frame: false,
       icon: `${import.meta.dirname}/icon.png`,
-      ...fullscreenWindowBoundsForDisplay(targetDisplay),
+      ...fullscreenWindowBoundsForDisplay(targetSelection.display),
       webPreferences: {
         ...incomingPrefs,
         session: mediaPresentationSession,
@@ -556,8 +605,8 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       }
     });
 
-    // Save the selected display index
-    settings.set("lastDisplayIndex", displayIndex).catch((error) => {
+    // Store a stable display selector; older numeric settings still load as indexes.
+    settings.set("lastDisplayIndex", targetSelection.value).catch((error) => {
       console.error("Error saving display preference:", error);
     });
 
@@ -573,8 +622,8 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
 
 async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) {
   return measurePerformance("Creating lower third window", async () => {
-    const targetDisplay = displayForExplicitIndex(displayIndex);
-    if (!targetDisplay) return null;
+    const targetSelection = resolveDisplaySelection(displayIndex);
+    if (!targetSelection) return null;
 
     const { webPreferences: incomingPrefs = {}, ...restWindowOptions } =
       windowOptions || {};
@@ -584,7 +633,7 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
         : "#00ff00";
 
     if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
-      lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetDisplay));
+      lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
       lowerThirdWindow.setFullScreen(true);
       lowerThirdWindow.setBackgroundColor(backgroundColor);
       return lowerThirdWindow.id;
@@ -599,7 +648,7 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
       frame: false,
       skipTaskbar: true,
       icon: `${import.meta.dirname}/icon.png`,
-      ...fullscreenWindowBoundsForDisplay(targetDisplay),
+      ...fullscreenWindowBoundsForDisplay(targetSelection.display),
       webPreferences: {
         ...incomingPrefs,
         session: mediaPresentationSession,
@@ -616,7 +665,7 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
         }
       }
     });
-    settings.set("lastLowerThirdDisplayIndex", displayIndex).catch((error) => {
+    settings.set("lastLowerThirdDisplayIndex", targetSelection.value).catch((error) => {
       console.error("Error saving lower third display preference:", error);
     });
     return createdLowerThirdWindow.id;
@@ -665,15 +714,14 @@ async function handleDisplayChange() {
       const savedDisplayIndex = settings.getSync("lastDisplayIndex");
 
       if (savedBounds && savedDisplayIndex !== undefined) {
-        const targetDisplay = currentDisplays[savedDisplayIndex];
+        const targetSelection = resolveDisplaySelection(savedDisplayIndex);
 
-        if (targetDisplay) {
-          // Ensure targetDisplay is defined
+        if (targetSelection) {
           mediaWindow.setBounds({
-            x: targetDisplay.bounds.x,
-            y: targetDisplay.bounds.y,
-            width: targetDisplay.bounds.width,
-            height: targetDisplay.bounds.height,
+            x: targetSelection.display.bounds.x,
+            y: targetSelection.display.bounds.y,
+            width: targetSelection.display.bounds.width,
+            height: targetSelection.display.bounds.height,
           });
           wasDisplayDisconnected = false;
           lastKnownDisplayState = null;
@@ -989,14 +1037,14 @@ async function handleGetAllDisplays() {
   const savedDisplayIndex = settings.getSync("lastDisplayIndex");
   const savedLowerThirdDisplayIndex = settings.getSync("lastLowerThirdDisplayIndex");
 
-  const defaultDisplayIndex =
-    Number.isInteger(savedDisplayIndex) && displays[savedDisplayIndex]
-      ? savedDisplayIndex
-      : "";
-  const defaultLowerThirdDisplayIndex =
-    Number.isInteger(savedLowerThirdDisplayIndex) && displays[savedLowerThirdDisplayIndex]
-      ? savedLowerThirdDisplayIndex
-      : "";
+  const defaultDisplayIndex = defaultDisplayValueForSavedSelection(
+    savedDisplayIndex,
+    displays,
+  );
+  const defaultLowerThirdDisplayIndex = defaultDisplayValueForSavedSelection(
+    savedLowerThirdDisplayIndex,
+    displays,
+  );
 
   if (process.platform === "linux") {
     try {
@@ -1054,7 +1102,7 @@ async function handleGetAllDisplays() {
     }
 
     return {
-      value: index,
+      value: displayValueForDisplay(display, index),
       label: `${name} ${display.bounds.width}x${display.bounds.height}`,
       isSecondary: display.bounds.x !== 0 || display.bounds.y !== 0,
       x: display.bounds.x,
@@ -1077,36 +1125,36 @@ async function handleGetAllDisplays() {
 }
 
 function handleSetDisplayIndex(event, index) {
-  const displayIndex = Number.isInteger(index) && index >= 0 ? index : -1;
-  settings.set("lastDisplayIndex", displayIndex).catch((error) => {
+  const targetSelection = resolveDisplaySelection(index);
+  const displayValue = targetSelection?.value || "";
+  settings.set("lastDisplayIndex", displayValue).catch((error) => {
     console.error("Error saving display index:", error);
   });
 
   // If there's an active media window, move it to the new display
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-    const targetDisplay = displayForExplicitIndex(displayIndex);
-    if (!targetDisplay) {
+    if (!targetSelection) {
       mediaWindow.close();
       return;
     }
 
-    mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetDisplay));
+    mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
   }
 }
 
 function handleSetLowerThirdDisplayIndex(event, index) {
-  const displayIndex = Number.isInteger(index) && index >= 0 ? index : -1;
-  settings.set("lastLowerThirdDisplayIndex", displayIndex).catch((error) => {
+  const targetSelection = resolveDisplaySelection(index);
+  const displayValue = targetSelection?.value || "";
+  settings.set("lastLowerThirdDisplayIndex", displayValue).catch((error) => {
     console.error("Error saving lower third display index:", error);
   });
 
   if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
-    const targetDisplay = displayForExplicitIndex(displayIndex);
-    if (!targetDisplay) {
+    if (!targetSelection) {
       lowerThirdWindow.close();
       return;
     }
-    lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetDisplay));
+    lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
     lowerThirdWindow.setFullScreen(true);
   }
 }
@@ -1864,6 +1912,11 @@ async function autosaveSnapshotHasMissingExtractedMedia(snapshot) {
   return false;
 }
 
+function isMissingArchiveMemberError(err) {
+  const message = err instanceof Error ? err.message : String(err || "");
+  return message.includes("Project integrity references missing archive member ");
+}
+
 async function loadAutosaveProjectSnapshotFromSettings() {
   const filePath = autosaveProjectPathFromSettings();
   if (!filePath) return null;
@@ -1878,6 +1931,12 @@ async function loadAutosaveProjectSnapshotFromSettings() {
     return snapshot;
   } catch (err) {
     console.error("Failed to load autosave project:", err);
+    if (isMissingArchiveMemberError(err)) {
+      console.warn("Ignoring corrupt autosave with missing archive member:", filePath);
+      await writeSettings({ [AUTOSAVE_PROJECT_PATH_KEY]: "" }).catch((writeErr) => {
+        console.error("Failed to clear corrupt autosave project path:", writeErr);
+      });
+    }
     return null;
   }
 }
@@ -1985,8 +2044,8 @@ async function handleShowLogoFileDialog(event) {
     properties: ["openFile"],
     filters: [
       {
-        name: "Images",
-        extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"],
+        name: "Logo Media",
+        extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "mp4", "webm", "mov", "m4v"],
       },
     ],
   });

@@ -603,6 +603,12 @@
             justify-content: center;
             pointer-events: none;
             background: #000;
+            opacity: 0;
+            transition: opacity 350ms ease;
+        }
+
+        #outputHoldOverlay.is-output-hold-visible {
+            opacity: 1;
         }
 
         #outputHoldOverlay[hidden] {
@@ -651,6 +657,7 @@
     </div>
     <div id="outputHoldOverlay" class="output-hold-overlay" hidden aria-hidden="true">
         <img id="outputHoldLogoImage" class="output-hold-overlay__logo" hidden alt="" />
+        <video id="outputHoldLogoVideo" class="output-hold-overlay__logo" hidden muted loop playsinline></video>
     </div>
 </body>
 
