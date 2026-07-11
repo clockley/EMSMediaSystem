@@ -822,6 +822,9 @@ async function startLiveStreamPlayback(url) {
  */
 async function applySlipstream(data) {
   hideStreamStatus();
+  if (data?.clearOutputHold === true) {
+    applyOutputHold({ mode: OUTPUT_HOLD_NONE, transitionDurationMs: 0 });
+  }
   const target = resolveSlipstreamTargetType(data);
   mediaFile = data.mediaFile ?? mediaFile;
   setLoopEnabled(!!data.loopFile);
@@ -870,6 +873,7 @@ const OUTPUT_HOLD_NONE = "none";
 const OUTPUT_HOLD_BLACK = "black";
 const OUTPUT_HOLD_LOGO = "logo";
 const DEFAULT_OUTPUT_HOLD_BLACK = "#000000";
+const DEFAULT_OUTPUT_HOLD_TRANSITION_MS = 350;
 
 let outputHoldState = {
   mode: OUTPUT_HOLD_NONE,
@@ -878,6 +882,7 @@ let outputHoldState = {
   logoUrl: "",
   logoFit: "contain",
 };
+let outputHoldHideTimer = null;
 
 function normalizeOutputHoldColor(value) {
   const color = String(value || "").trim();
@@ -886,9 +891,34 @@ function normalizeOutputHoldColor(value) {
     : DEFAULT_OUTPUT_HOLD_BLACK;
 }
 
+function outputHoldTransitionMs(payload = {}) {
+  const ms = Number(payload?.transitionDurationMs);
+  return Number.isFinite(ms) && ms >= 0
+    ? Math.min(3000, Math.round(ms))
+    : DEFAULT_OUTPUT_HOLD_TRANSITION_MS;
+}
+
+function isVideoLogoUrl(url = "") {
+  return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(String(url));
+}
+
+function hideOutputHoldLogoElements(logoImage, logoVideo) {
+  if (logoImage) {
+    logoImage.hidden = true;
+    logoImage.removeAttribute("src");
+  }
+  if (logoVideo) {
+    logoVideo.hidden = true;
+    logoVideo.pause?.();
+    logoVideo.removeAttribute("src");
+    logoVideo.load?.();
+  }
+}
+
 function applyOutputHold(payload = {}) {
   const overlay = document.getElementById("outputHoldOverlay");
   const logoImage = document.getElementById("outputHoldLogoImage");
+  const logoVideo = document.getElementById("outputHoldLogoVideo");
   if (!overlay) return;
 
   const mode =
@@ -897,6 +927,8 @@ function applyOutputHold(payload = {}) {
       : payload?.mode === OUTPUT_HOLD_LOGO
         ? OUTPUT_HOLD_LOGO
         : OUTPUT_HOLD_NONE;
+  const transitionMs = outputHoldTransitionMs(payload);
+  overlay.style.transition = `opacity ${transitionMs}ms ease`;
   outputHoldState = {
     mode,
     blackColor: normalizeOutputHoldColor(payload?.blackColor),
@@ -907,44 +939,73 @@ function applyOutputHold(payload = {}) {
     logoFit: payload?.logoFit === "cover" ? "cover" : "contain",
   };
 
-  if (mode === OUTPUT_HOLD_NONE) {
-    overlay.hidden = true;
-    overlay.setAttribute("aria-hidden", "true");
-    overlay.dataset.mode = OUTPUT_HOLD_NONE;
-    overlay.style.backgroundColor = "";
-    if (logoImage) {
-      logoImage.hidden = true;
-      logoImage.removeAttribute("src");
-      logoImage.style.objectFit = "contain";
+  const paintHoldContent = () => {
+    if (mode === OUTPUT_HOLD_BLACK) {
+      overlay.style.backgroundColor = outputHoldState.blackColor;
+      hideOutputHoldLogoElements(logoImage, logoVideo);
+      return;
     }
-    return;
-  }
-
-  overlay.hidden = false;
-  overlay.setAttribute("aria-hidden", "false");
-  overlay.dataset.mode = mode;
-
-  if (mode === OUTPUT_HOLD_BLACK) {
-    overlay.style.backgroundColor = outputHoldState.blackColor;
-    if (logoImage) {
-      logoImage.hidden = true;
-      logoImage.removeAttribute("src");
-    }
-    return;
-  }
-
-  overlay.style.backgroundColor = outputHoldState.logoBackground;
-  if (logoImage) {
+    overlay.style.backgroundColor = outputHoldState.logoBackground;
     const logoUrl = outputHoldState.logoUrl;
-    if (logoUrl) {
+    if (!logoUrl) {
+      hideOutputHoldLogoElements(logoImage, logoVideo);
+      return;
+    }
+    if (isVideoLogoUrl(logoUrl)) {
+      if (logoImage) {
+        logoImage.hidden = true;
+        logoImage.removeAttribute("src");
+      }
+      if (logoVideo) {
+        logoVideo.hidden = false;
+        logoVideo.style.objectFit = outputHoldState.logoFit;
+        if (logoVideo.getAttribute("src") !== logoUrl) {
+          logoVideo.src = logoUrl;
+        }
+        const playPromise = logoVideo.play?.();
+        if (playPromise?.catch) playPromise.catch(() => {});
+      }
+      return;
+    }
+    if (logoVideo) {
+      logoVideo.hidden = true;
+      logoVideo.pause?.();
+      logoVideo.removeAttribute("src");
+      logoVideo.load?.();
+    }
+    if (logoImage) {
       logoImage.hidden = false;
       logoImage.src = logoUrl;
       logoImage.style.objectFit = outputHoldState.logoFit;
-    } else {
-      logoImage.hidden = true;
-      logoImage.removeAttribute("src");
     }
+  };
+
+  if (mode === OUTPUT_HOLD_NONE) {
+    overlay.classList.remove("is-output-hold-visible");
+    overlay.setAttribute("aria-hidden", "true");
+    overlay.dataset.mode = OUTPUT_HOLD_NONE;
+    if (outputHoldHideTimer) window.clearTimeout(outputHoldHideTimer);
+    outputHoldHideTimer = window.setTimeout(() => {
+      overlay.hidden = true;
+      overlay.style.backgroundColor = "";
+      hideOutputHoldLogoElements(logoImage, logoVideo);
+      outputHoldHideTimer = null;
+    }, transitionMs);
+    return;
   }
+
+  if (outputHoldHideTimer) {
+    window.clearTimeout(outputHoldHideTimer);
+    outputHoldHideTimer = null;
+  }
+  overlay.hidden = false;
+  overlay.setAttribute("aria-hidden", "false");
+  overlay.dataset.mode = mode;
+  paintHoldContent();
+  overlay.classList.remove("is-output-hold-visible");
+  requestAnimationFrame(() => {
+    overlay.classList.add("is-output-hold-visible");
+  });
 }
 
 function reapplyOutputHoldIfActive() {

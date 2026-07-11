@@ -221,21 +221,22 @@
     </header>
     <main class="preferences-dialog__shell">
       <p class="preferences-dialog__intro">
-        Configure output hold options used during live presentation. Logo hold shows your image over the audience
-        output while media keeps playing underneath.
+        Configure output hold options used during live presentation. Logo hold shows your image or video over
+        the audience output while media keeps playing underneath. Double-click a queue row or slide thumbnail
+        during black, logo, or clear-text hold to drop all holds and go live.
       </p>
       <div class="preferences-dialog__body">
         <section class="preferences-group" aria-labelledby="preferences-output-hold-title">
           <h2 class="preferences-group__title" id="preferences-output-hold-title">Output Hold</h2>
 
           <div class="preferences-row">
-            <div class="preferences-row__label" id="preferencesLogoLabel">Logo image</div>
+            <div class="preferences-row__label" id="preferencesLogoLabel">Logo media</div>
             <div class="preferences-logo-field">
               <div id="preferencesLogoPath" class="preferences-logo-path is-empty" aria-live="polite">
                 No logo selected
               </div>
               <div class="preferences-logo-actions">
-                <button type="button" class="pill-button primary-action" id="preferencesBrowseLogoBtn">Choose Image…</button>
+                <button type="button" class="pill-button primary-action" id="preferencesBrowseLogoBtn">Choose Media…</button>
                 <button type="button" class="pill-button" id="preferencesClearLogoBtn">Clear</button>
               </div>
               <div class="preferences-logo-preview" id="preferencesLogoPreview" aria-hidden="true">
@@ -243,7 +244,8 @@
               </div>
             </div>
             <p class="preferences-row__hint">
-              PNG, JPEG, GIF, WebP, or SVG. Used by the Logo button in the header while presenting.
+              PNG, JPEG, GIF, WebP, SVG, MP4, WebM, or MOV. Stored in the project file and used by the Logo
+              button in the header while presenting.
             </p>
           </div>
 

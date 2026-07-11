@@ -39,6 +39,10 @@ function readFormIntoDraft() {
   draft.logoBackground = normalizeHexColor(backgroundInput?.value, "#000000");
 }
 
+function isVideoLogoPath(filePath = "") {
+  return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(String(filePath));
+}
+
 function syncLogoPreview() {
   const pathEl = document.getElementById("preferencesLogoPath");
   const preview = document.getElementById("preferencesLogoPreview");
@@ -62,9 +66,23 @@ function syncLogoPreview() {
   preview.style.backgroundColor = draft.logoBackground;
   preview.setAttribute("aria-hidden", "false");
   preview.innerHTML = "";
+  const mediaUrl = pathToFileUrl(logoPath);
+  if (isVideoLogoPath(logoPath)) {
+    const video = document.createElement("video");
+    video.src = mediaUrl;
+    video.muted = true;
+    video.loop = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    video.style.objectFit = draft.logoFit === "cover" ? "cover" : "contain";
+    video.style.maxWidth = "100%";
+    video.style.maxHeight = "120px";
+    preview.appendChild(video);
+    return;
+  }
   const img = document.createElement("img");
   img.alt = basename(logoPath);
-  img.src = pathToFileUrl(logoPath);
+  img.src = mediaUrl;
   img.style.objectFit = draft.logoFit === "cover" ? "cover" : "contain";
   preview.appendChild(img);
 }

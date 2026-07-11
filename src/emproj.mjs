@@ -1240,6 +1240,41 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
     if (typeof asset.path === "string") assetByPath.set(asset.path, asset);
   }
 
+  let outputsJson = { outputs: [] };
+  const outputsJsonRaw = rootFiles.get("outputs.json");
+  if (outputsJsonRaw) {
+    try {
+      outputsJson = JSON.parse(outputsJsonRaw.toString("utf8"));
+    } catch (err) {
+      throw new Error(`Project outputs.json is corrupt: ${err.message}`);
+    }
+  }
+  const outputHoldConfig =
+    outputsJson.outputHold && typeof outputsJson.outputHold === "object"
+      ? outputsJson.outputHold
+      : null;
+  let projectOutputHold = null;
+  if (outputHoldConfig) {
+    const logoAssetId =
+      typeof outputHoldConfig.logoAssetId === "string" ? outputHoldConfig.logoAssetId : "";
+    const logoAsset = logoAssetId ? assetById.get(logoAssetId) || null : null;
+    const logoPath = logoAsset ? resolveAssetPath(logoAsset, extractedMediaPaths) : "";
+    projectOutputHold = {
+      logoPath,
+      logoFit: outputHoldConfig.logoFit === "cover" ? "cover" : "contain",
+      logoBackground:
+        typeof outputHoldConfig.logoBackground === "string" &&
+        outputHoldConfig.logoBackground.length > 0
+          ? outputHoldConfig.logoBackground
+          : "#000000",
+      holdTransitionDurationMs:
+        Number.isFinite(outputHoldConfig.holdTransitionDurationMs) &&
+        outputHoldConfig.holdTransitionDurationMs >= 0
+          ? outputHoldConfig.holdTransitionDurationMs
+          : 350,
+    };
+  }
+
   const projectScriptureText =
     queueJson.projectScriptureText && typeof queueJson.projectScriptureText === "object"
       ? queueJson.projectScriptureText
@@ -1409,6 +1444,7 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
     previewCueIndex: -1,
     projectStorageMode: manifestJson?.storage?.mode === "packed" ? "packed" : "working",
     projectScriptureText: projectScriptureTextFromOverrides(projectScriptureOverrides),
+    projectOutputHold: projectOutputHold || undefined,
     mediaQueue,
   };
 }
@@ -1471,8 +1507,22 @@ export async function saveEmprojSnapshot(
   const fileEntries = [];
   let itemCounter = 0;
 
+  function bundledArchivePathForFile(normalizedPath, kind, assetIndex) {
+    const folder = contentLocationForKind(kind);
+    const safeBase = path.basename(normalizedPath).replace(/[^A-Za-z0-9._-]/g, "_");
+    const bundledName = `${String(assetIndex).padStart(4, "0")}_${safeBase}`;
+    return `${folder}/${bundledName}`;
+  }
+
+  function ensureFileEntry(realPath, archivePath) {
+    if (!fileEntries.some((entry) => entry.path === archivePath)) {
+      fileEntries.push({ realPath, path: archivePath, compress: false });
+    }
+  }
+
   async function registerAssetForPath(filePath, fallback = {}) {
     if (typeof filePath !== "string" || filePath.length === 0) return null;
+    const forcePack = fallback.forcePack === true;
     const isFileUrl = /^file:\/\//i.test(filePath);
     const normalizedPath = isFileUrl ? fileUrlToPath(filePath) : filePath;
     const isExternalUrl = /^(https?|m3u8|mpd):/i.test(filePath);
@@ -1495,6 +1545,22 @@ export async function saveEmprojSnapshot(
       const kind = classifyKindFromPath(normalizedPath);
       const existing = fileIndex.get(normalizedPath);
       if (existing) {
+        if (forcePack && !isPackedArchiveMediaPath(existing.assetRecord?.path)) {
+          const bundledPath = bundledArchivePathForFile(
+            normalizedPath,
+            kind,
+            existing.assetIndex,
+          );
+          ensureFileEntry(normalizedPath, bundledPath);
+          existing.bundledPath = bundledPath;
+          if (existing.assetRecord) {
+            existing.assetRecord.path = bundledPath;
+            Object.assign(
+              existing.assetRecord,
+              packedIntegrityFields(await sha256File(normalizedPath)),
+            );
+          }
+        }
         return {
           assetId: existing.assetId,
           bundledPath: existing.bundledPath,
@@ -1507,17 +1573,16 @@ export async function saveEmprojSnapshot(
         };
       }
       const ext = path.extname(normalizedPath).toLowerCase();
-      const folder = contentLocationForKind(kind);
-      const safeBase = path.basename(normalizedPath).replace(/[^A-Za-z0-9._-]/g, "_");
-      const assetId = makeId("asset", fileIndex.size + 1);
+      const assetIndex = fileIndex.size + 1;
+      const assetId = makeId("asset", assetIndex);
       let bundledPath = normalizedPath;
-      if (packMedia) {
-        const bundledName = `${String(fileIndex.size + 1).padStart(4, "0")}_${safeBase}`;
-        bundledPath = `${folder}/${bundledName}`;
-        fileEntries.push({ realPath: normalizedPath, path: bundledPath, compress: false });
+      if (packMedia || forcePack) {
+        bundledPath = bundledArchivePathForFile(normalizedPath, kind, assetIndex);
+        ensureFileEntry(normalizedPath, bundledPath);
       }
       if (
         packMedia ||
+        forcePack ||
         !storedFileHashFromRecord(assetFingerprint) ||
         previousSize !== assetSize ||
         previousModifiedTime !== assetModifiedTime
@@ -1528,14 +1593,14 @@ export async function saveEmprojSnapshot(
           assetFingerprint = {};
         }
       }
-      const assetIntegrity = packMedia
-        ? packedIntegrityFields(await sha256File(normalizedPath))
-        : {};
-      fileIndex.set(normalizedPath, { bundledPath, assetId });
-      assets.push({
+      const assetIntegrity =
+        packMedia || forcePack
+          ? packedIntegrityFields(await sha256File(normalizedPath))
+          : {};
+      const assetRecord = {
         id: assetId,
         kind,
-        path: packMedia ? bundledPath : normalizedPath,
+        path: packMedia || forcePack ? bundledPath : normalizedPath,
         originalPath: fallback.originalPath || normalizedPath,
         originalName: fallback.originalName || basenameAny(normalizedPath),
         mimeType: kind === "presentation"
@@ -1549,7 +1614,9 @@ export async function saveEmprojSnapshot(
         modifiedTime: assetModifiedTime,
         missingBehavior: "showPlaceholder",
         compatibilityWarnings: [],
-      });
+      };
+      fileIndex.set(normalizedPath, { bundledPath, assetId, assetIndex, assetRecord });
+      assets.push(assetRecord);
       return {
         assetId,
         bundledPath,
@@ -1756,13 +1823,11 @@ export async function saveEmprojSnapshot(
             assetRegistered = true;
           } else {
             const ext = path.extname(normalizedPath).toLowerCase();
-            const folder = contentLocationForKind(kind);
-            const safeBase = path.basename(normalizedPath).replace(/[^A-Za-z0-9._-]/g, "_");
-            assetId = makeId("asset", fileIndex.size + 1);
+            const assetIndex = fileIndex.size + 1;
+            assetId = makeId("asset", assetIndex);
             if (packMedia) {
-              const bundledName = `${String(fileIndex.size + 1).padStart(4, "0")}_${safeBase}`;
-              bundledPath = `${folder}/${bundledName}`;
-              fileEntries.push({ realPath: normalizedPath, path: bundledPath, compress: false });
+              bundledPath = bundledArchivePathForFile(normalizedPath, kind, assetIndex);
+              ensureFileEntry(normalizedPath, bundledPath);
             }
             if (
               packMedia ||
@@ -1781,8 +1846,7 @@ export async function saveEmprojSnapshot(
             const assetIntegrity = packMedia
               ? packedIntegrityFields(await sha256File(normalizedPath))
               : {};
-            fileIndex.set(normalizedPath, { bundledPath, assetId });
-            assets.push({
+            const assetRecord = {
               id: assetId,
               kind,
               path: packMedia ? bundledPath : normalizedPath,
@@ -1799,7 +1863,9 @@ export async function saveEmprojSnapshot(
               modifiedTime: assetModifiedTime,
               missingBehavior: "showPlaceholder",
               compatibilityWarnings: [],
-            });
+            };
+            fileIndex.set(normalizedPath, { bundledPath, assetId, assetIndex, assetRecord });
+            assets.push(assetRecord);
             assetRegistered = true;
           }
         }
@@ -1815,26 +1881,28 @@ export async function saveEmprojSnapshot(
           assetId = existing.assetId;
           bundledPath = existing.bundledPath;
         } else {
-            assetId = makeId("asset", fileIndex.size + 1);
-            fileIndex.set(normalizedPath, { bundledPath, assetId });
-            assets.push({
-              id: assetId,
-              kind,
-              path: normalizedPath,
-              originalPath: item.originalPath || normalizedPath,
-              originalName: item.originalName || basenameAny(normalizedPath),
-              mimeType: kind === "presentation"
-                ? (ext === ".pptx"
-                    ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    : "application/pdf")
-                : undefined,
-              ...assetFingerprintFields(item),
-              sizeBytes: assetSize,
-              modifiedTime: assetModifiedTime,
-              missingBehavior: "showPlaceholder",
-              compatibilityWarnings: assetMissing ? ["missing"] : [],
-            });
-          }
+          const assetIndex = fileIndex.size + 1;
+          assetId = makeId("asset", assetIndex);
+          const assetRecord = {
+            id: assetId,
+            kind,
+            path: normalizedPath,
+            originalPath: item.originalPath || normalizedPath,
+            originalName: item.originalName || basenameAny(normalizedPath),
+            mimeType: kind === "presentation"
+              ? (ext === ".pptx"
+                  ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                  : "application/pdf")
+              : undefined,
+            ...assetFingerprintFields(item),
+            sizeBytes: assetSize,
+            modifiedTime: assetModifiedTime,
+            missingBehavior: "showPlaceholder",
+            compatibilityWarnings: assetMissing ? ["missing"] : [],
+          };
+          fileIndex.set(normalizedPath, { bundledPath, assetId, assetIndex, assetRecord });
+          assets.push(assetRecord);
+        }
       }
     }
     itemCounter += 1;
@@ -1907,7 +1975,38 @@ export async function saveEmprojSnapshot(
     sequence: queueSequence,
   };
   const assetsJson = { assets };
-  const outputsJson = { outputs: [] };
+  const projectOutputHold =
+    snapshot?.projectOutputHold && typeof snapshot.projectOutputHold === "object"
+      ? snapshot.projectOutputHold
+      : null;
+  let outputHoldExport = null;
+  if (typeof projectOutputHold?.logoPath === "string" && projectOutputHold.logoPath.length > 0) {
+    const logoAsset = await registerAssetForPath(projectOutputHold.logoPath, {
+      originalPath: projectOutputHold.logoPath,
+      originalName: basenameAny(projectOutputHold.logoPath),
+      forcePack: true,
+    });
+    if (logoAsset?.assetId) {
+      outputHoldExport = {
+        logoFit: projectOutputHold.logoFit === "cover" ? "cover" : "contain",
+        logoBackground:
+          typeof projectOutputHold.logoBackground === "string" &&
+          projectOutputHold.logoBackground.length > 0
+            ? projectOutputHold.logoBackground
+            : "#000000",
+        logoAssetId: logoAsset.assetId,
+        holdTransitionDurationMs:
+          Number.isFinite(projectOutputHold.holdTransitionDurationMs) &&
+          projectOutputHold.holdTransitionDurationMs >= 0
+            ? Math.min(3000, Math.round(projectOutputHold.holdTransitionDurationMs))
+            : 350,
+      };
+    }
+  }
+  const outputsJson = {
+    outputs: [],
+    ...(outputHoldExport ? { outputHold: outputHoldExport } : {}),
+  };
   const diagnosticsJson = {
     lastValidated: nowIso,
     status: "clean",
@@ -2034,7 +2133,7 @@ export async function saveEmprojSnapshot(
   await addZipFromBuffersAndFiles(
     tmpPath,
     zipBuffers,
-    packMedia ? fileEntries : [],
+    fileEntries,
     archiveComment,
   );
   try {

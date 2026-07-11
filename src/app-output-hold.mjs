@@ -18,6 +18,7 @@ export const OUTPUT_HOLD_LOGO_BACKGROUND_KEY = "outputHoldLogoBackground";
 export const DEFAULT_BLACK_COLOR = "#000000";
 export const DEFAULT_OUTPUT_HOLD_LOGO_BACKGROUND = "#000000";
 export const DEFAULT_OUTPUT_HOLD_LOGO_FIT = "contain";
+export const OUTPUT_HOLD_TRANSITION_MS = 350;
 
 const LOGO_FIT_VALUES = new Set(["contain", "cover"]);
 
@@ -51,6 +52,10 @@ export function isAudienceBlackScreenActive() {
 
 export function isAudienceLogoHoldActive() {
   return audienceHoldMode === OUTPUT_HOLD_LOGO;
+}
+
+export function isAnyAudienceHoldActive() {
+  return audienceHoldMode !== OUTPUT_HOLD_NONE;
 }
 
 export function getOutputHoldLogoSettings() {
@@ -107,6 +112,7 @@ function buildHoldPayload(mode = audienceHoldMode) {
     return {
       mode: OUTPUT_HOLD_BLACK,
       blackColor: DEFAULT_BLACK_COLOR,
+      transitionDurationMs: OUTPUT_HOLD_TRANSITION_MS,
     };
   }
   if (mode === OUTPUT_HOLD_LOGO) {
@@ -118,9 +124,10 @@ function buildHoldPayload(mode = audienceHoldMode) {
       logoBackground: holdLogoSettings.logoBackground,
       logoUrl,
       logoFit: holdLogoSettings.logoFit,
+      transitionDurationMs: OUTPUT_HOLD_TRANSITION_MS,
     };
   }
-  return { mode: OUTPUT_HOLD_NONE };
+  return { mode: OUTPUT_HOLD_NONE, transitionDurationMs: OUTPUT_HOLD_TRANSITION_MS };
 }
 
 export function sendAudienceOutputHold(mode = audienceHoldMode) {
@@ -138,7 +145,7 @@ export function setAudienceHoldMode(mode, options = {}) {
 
   if (next === OUTPUT_HOLD_LOGO && !hasConfiguredOutputHoldLogo()) {
     if (!options.quiet) {
-      outputHoldDeps.showGnomeToast("Set a logo image in Preferences");
+      outputHoldDeps.showGnomeToast("Set logo media in Preferences");
     }
     return false;
   }
@@ -175,7 +182,7 @@ export function toggleBlackScreen() {
 
 export async function toggleLogoHold() {
   if (!hasConfiguredOutputHoldLogo()) {
-    outputHoldDeps.showGnomeToast("Set a logo image in Preferences");
+    outputHoldDeps.showGnomeToast("Set logo media in Preferences");
     return false;
   }
   if (audienceHoldMode === OUTPUT_HOLD_LOGO) {
@@ -190,22 +197,23 @@ export async function toggleLogoHold() {
 }
 
 export function resetAudienceOutputHold(options = {}) {
-  if (audienceHoldMode === OUTPUT_HOLD_NONE) {
+  const force = options.force === true;
+  if (audienceHoldMode === OUTPUT_HOLD_NONE && !force) {
     updateOutputHoldButtonStates();
     return false;
   }
   const previous = audienceHoldMode;
   audienceHoldMode = OUTPUT_HOLD_NONE;
-  if (canUseAudienceHold()) {
+  if (canUseAudienceHold() || force) {
     sendAudienceOutputHold(OUTPUT_HOLD_NONE);
   }
   updateOutputHoldButtonStates();
-  if (!options.quiet) {
+  if (!options.quiet && previous !== OUTPUT_HOLD_NONE) {
     outputHoldDeps.showGnomeToast(
       previous === OUTPUT_HOLD_LOGO ? "Logo hold off" : "Black screen off",
     );
   }
-  return true;
+  return previous !== OUTPUT_HOLD_NONE || force;
 }
 
 export function syncAudienceOutputHoldAfterPresentationStart() {
