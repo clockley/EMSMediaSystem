@@ -173,12 +173,28 @@ function inlineCss(html, css) {
   return html;
 }
 
+function escapeHtmlText(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function packageVersion() {
+  const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  return typeof packageJson.version === "string" ? packageJson.version : "";
+}
+
+function applyHtmlTemplateVariables(html) {
+  return html.replace(/__EMS_APP_VERSION__/g, escapeHtmlText(packageVersion()));
+}
+
 (async () => {
   const html = readIfExists(htmlPath);
   const css = readIfExists(cssPath);
   const content = collectContent(html, htmlPath);
   const prunedCss = pruneCss(css, content);
-  const withCss = inlineCss(html, prunedCss);
+  const withCss = applyHtmlTemplateVariables(inlineCss(html, prunedCss));
   const minified = await minifyHtml(withCss, {
     collapseWhitespace: true,
     minifyCss: false,
