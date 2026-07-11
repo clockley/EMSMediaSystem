@@ -556,7 +556,7 @@ async function startLogoHoldOnlyPresentation() {
       skipTaskbar: true,
       additionalArguments: ["__logoHoldOnly=true", birth],
       preload: `${__dirname}/media_preload.min.js`,
-      devTools: false,
+      devTools: true,
     },
   };
 
@@ -1909,7 +1909,7 @@ async function loadPptxPreview(filePath, opts = {}) {
     globalThis.process.env = {};
   }
   const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
-    "../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.es.js"
+    "../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js"
   );
   if (!isCurrentPptxPreviewRequest(requestToken)) return;
   const container = document.getElementById("pptxPreviewContainer");
