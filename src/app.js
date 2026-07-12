@@ -9059,6 +9059,20 @@ async function bulkDeleteSelectedSongs() {
   showGnomeToast(`Deleted ${deleted} song${deleted === 1 ? "" : "s"}`);
 }
 
+async function handleSongsDatabaseCleared() {
+  songsBulkDeleteArmed = false;
+  clearSongSelection();
+  currentSongFolderFilter = SONG_FOLDER_ALL;
+  const searchInput = document.getElementById("songsSearchInput");
+  if (searchInput) searchInput.value = "";
+  if (currentWorkspaceSong) {
+    await loadSongIntoWorkspace(null);
+  }
+  await refreshSongFolders();
+  await refreshSongsBrowser("");
+  showGnomeToast("Songs database cleared");
+}
+
 function songSearchOptionsForCurrentFolder() {
   if (currentSongFolderFilter === SONG_FOLDER_ALL) {
     return { all: true };
@@ -20531,6 +20545,9 @@ function installIPCHandler() {
   on("preferences-updated", (_event, prefs) => {
     applyOutputHoldPreferences(prefs);
     scheduleAutosaveProjectState();
+  });
+  on("songs-database-cleared", () => {
+    void handleSongsDatabaseCleared().catch(console.error);
   });
   on("update-playback-state", handlePlaybackState);
   on("remoteplaypause", handlePlayPause);

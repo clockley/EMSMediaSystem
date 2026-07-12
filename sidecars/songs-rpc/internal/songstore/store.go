@@ -1077,6 +1077,34 @@ func (s *SongStore) DeleteSong(id string) error {
 	return tx.Commit()
 }
 
+// ResetDatabase removes every song, folder, and search-index row, leaving the
+// schema intact so the library is immediately ready to load new songs.
+func (s *SongStore) ResetDatabase() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM song_fts`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM songs`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM song_folders`); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Reclaim the freed pages so the on-disk file shrinks. VACUUM cannot run
+	// inside a transaction, and a failure here is not fatal to the reset.
+	_, _ = s.db.Exec(`VACUUM`)
+	return nil
+}
+
 func (s *SongStore) Search(opts SearchOptions) ([]SearchResult, error) {
 	query := strings.TrimSpace(opts.Query)
 	if query != "" {

@@ -129,11 +129,44 @@ function clearLogo() {
   syncLogoPreview();
 }
 
+function setClearSongsStatus(message, variant = "") {
+  const statusEl = document.getElementById("preferencesClearSongsStatus");
+  if (!statusEl) return;
+  const text = String(message || "");
+  statusEl.textContent = text;
+  statusEl.hidden = text === "";
+  statusEl.classList.toggle("is-error", variant === "error");
+  statusEl.classList.toggle("is-success", variant === "success");
+}
+
+async function clearSongsDatabase() {
+  const button = document.getElementById("preferencesClearSongsBtn");
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
+  setClearSongsStatus("Clearing songs database…");
+  try {
+    const result = await ipcRenderer.invoke("clear-songs-database");
+    if (result?.cleared) {
+      setClearSongsStatus("Songs database cleared. Ready to load new songs.", "success");
+    } else {
+      setClearSongsStatus("");
+    }
+  } catch (error) {
+    console.error("Failed to clear songs database:", error);
+    setClearSongsStatus("Could not clear the songs database.", "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function wirePreferencesDialog() {
   document.getElementById("preferencesBrowseLogoBtn")?.addEventListener("click", () => {
     void browseLogo().catch(console.error);
   });
   document.getElementById("preferencesClearLogoBtn")?.addEventListener("click", clearLogo);
+  document.getElementById("preferencesClearSongsBtn")?.addEventListener("click", () => {
+    void clearSongsDatabase().catch(console.error);
+  });
   document.getElementById("preferencesApplyBtn")?.addEventListener("click", () => {
     void applyPreferences().catch(console.error);
   });

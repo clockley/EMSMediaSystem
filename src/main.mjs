@@ -2078,6 +2078,32 @@ async function handleSaveOutputHoldPreferences(event, prefs) {
   return saved;
 }
 
+async function handleClearSongsDatabase(event) {
+  const prefsWindow = BrowserWindow.fromWebContents(event.sender);
+  const dialogParent =
+    prefsWindow && !prefsWindow.isDestroyed() ? prefsWindow : undefined;
+  const { response } = await dialog.showMessageBox(dialogParent, {
+    type: "warning",
+    buttons: ["Cancel", "Clear Songs Database"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "Clear Songs Database",
+    message: "Clear the entire songs database?",
+    detail:
+      "This permanently removes every song and folder from the library and prepares the database to load new songs. Songs already added to projects keep their embedded copies. This cannot be undone.",
+    noLink: true,
+  });
+  if (response !== 1) {
+    return { cleared: false };
+  }
+  await songsRpcClient.call("songs.resetDatabase", []);
+  const parentWindow = prefsWindow?.getParentWindow?.();
+  if (parentWindow && !parentWindow.isDestroyed()) {
+    parentWindow.webContents.send("songs-database-cleared");
+  }
+  return { cleared: true };
+}
+
 async function handleShowImportSongDialog(event) {
   const mainWindow = BrowserWindow.fromWebContents(event.sender);
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -4118,6 +4144,7 @@ function setIPC() {
   });
   ipcMain.handle("get-output-hold-preferences", handleGetOutputHoldPreferences);
   ipcMain.handle("save-output-hold-preferences", handleSaveOutputHoldPreferences);
+  ipcMain.handle("clear-songs-database", handleClearSongsDatabase);
   ipcMain.handle("show-logo-file-dialog", handleShowLogoFileDialog);
   ipcMain.handle("show_queue_switch_dialog", async (event, opts) => {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);

@@ -58,7 +58,9 @@ This command:
 yarn start
 ```
 
-This will build the project and launch the Electron application.
+This will build the development artifacts and launch the Electron application.
+For faster local startup, this path builds only the sidecar binaries needed for
+the current platform. Distribution builds still build the full packaged set.
 
 ## Distribution Building
 
@@ -100,7 +102,8 @@ The project uses a custom Makefile-based build system accessed through Yarn scri
 1. **CSS Processing**: Minifies `src/main.css` and generates source maps
 2. **HTML Processing**: Creates production HTML files with inlined CSS
 3. **JavaScript Processing**: Minifies `.js` and `.mjs` files with source maps
-4. **Electron Packaging**: Uses `electron-builder` for distribution
+4. **Sidecar Processing**: Builds host sidecars for `yarn start` and packaged sidecars for distribution
+5. **Electron Packaging**: Uses `electron-builder` for distribution
 
 ### Build Artifacts
 - `derived/` - Minified and processed files

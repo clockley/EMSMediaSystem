@@ -1,7 +1,7 @@
 # Copyright (C) 2025 Christian Lockley
 # Licensed under GNU General Public License v3
 #TODO: Add derived file path fixups for css, html, js and mjs files. This is needed to prevent refrencing the derived files in the source code.
-.PHONY: all all-paid app bible bible-paid check-deps clean help js-minify rebuild status FORCE
+.PHONY: all all-paid dev dev-paid app app-dev bible bible-paid check-deps clean help js-minify rebuild status FORCE
 
 # If any recipe step fails, remove the target instead of leaving a half-written (or empty) file.
 .DELETE_ON_ERROR:
@@ -118,7 +118,7 @@ BIBLE_EDITION_RECORD = $(DERIVED_DIR)/bible/.edition
 
 # Pick the edition from the requested goal (free/public by default).
 BIBLE_EDITION := public
-ifneq (,$(filter all-paid build-paid dist-all-paid bible-paid,$(MAKECMDGOALS)))
+ifneq (,$(filter all-paid build-paid dist-all-paid dev-paid bible-paid,$(MAKECMDGOALS)))
   BIBLE_EDITION := paid
 endif
 
@@ -170,11 +170,22 @@ ifneq ($(WINDOWS), 1)
   endif
 endif
 
+ifeq ($(WINDOWS), 1)
+  DEV_BIBLE_SIDECAR_BINS := $(DERIVED_DIR)/bin/bible-rpc-win32-x64.exe
+  DEV_MEDIA_WATCHER_BINS := $(DERIVED_DIR)/bin/media-watcher-win32-x64.exe
+  DEV_SONGS_SIDECAR_BINS := $(DERIVED_DIR)/bin/songs-rpc-win32-x64.exe
+else
+  DEV_BIBLE_SIDECAR_BINS := $(HOST_BIN)
+  DEV_MEDIA_WATCHER_BINS := $(MEDIA_WATCHER_HOST_BIN)
+  DEV_SONGS_SIDECAR_BINS := $(SONGS_HOST_BIN)
+endif
+
 # Corresponding destination files in derived directory.
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
 IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
 DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all copied binary/static resources
 APP_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(SONGS_SIDECAR_BINS)
+APP_DEV_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(DEV_BIBLE_SIDECAR_BINS) $(DEV_MEDIA_WATCHER_BINS) $(DEV_SONGS_SIDECAR_BINS)
 BIBLE_RESOURCES = $(BIBLE_DB_OUT)
 
 ifeq ($(NO_COLOR), 1)
@@ -206,8 +217,17 @@ all: app bible
 all-paid: app bible-paid
 	@echo "$(COLOR_GREEN)$(TICK) Paid build complete!$(COLOR_RESET)"
 
+dev: app-dev bible
+	@echo "$(COLOR_GREEN)$(TICK) Development build complete!$(COLOR_RESET)"
+
+dev-paid: app-dev bible-paid
+	@echo "$(COLOR_GREEN)$(TICK) Paid development build complete!$(COLOR_RESET)"
+
 app: check-deps $(DERIVED_DIR) $(APP_RESOURCES)
 	@echo "$(COLOR_GREEN)$(TICK) Built source artifacts$(COLOR_RESET)"
+
+app-dev: check-deps $(DERIVED_DIR) $(APP_DEV_RESOURCES)
+	@echo "$(COLOR_GREEN)$(TICK) Built development source artifacts$(COLOR_RESET)"
 
 bible: check-deps $(DERIVED_DIR) $(BIBLE_RESOURCES)
 	@echo "$(COLOR_GREEN)$(TICK) Built public Bible assets$(COLOR_RESET)"
@@ -348,9 +368,7 @@ check-deps:
 	@test -f node_modules/terser/bin/terser || { echo "$(COLOR_RED)Error: terser not found in node_modules. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@test -f node_modules/esbuild/bin/esbuild || { echo "$(COLOR_RED)Error: esbuild not found in node_modules. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@test -f node_modules/html-minifier-terser/cli.js || { echo "$(COLOR_RED)Error: html-minifier-terser not found in node_modules. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
-	@$(NODE) -e "require('csso')" 2>/dev/null || { echo "$(COLOR_RED)Error: csso module required. Run: npm install csso$(COLOR_RESET)" >&2; exit 1; }
-	@$(HTML_MINIFIER) --version >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: html-minifier-terser required. Run: npm install html-minifier-terser$(COLOR_RESET)" >&2; exit 1; }
-	@$(TERSER) --version >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: terser required. Run: npm install terser$(COLOR_RESET)" >&2; exit 1; }
+	@test -f node_modules/csso/package.json || { echo "$(COLOR_RED)Error: csso module required. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@command -v sqlite3 >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: sqlite3 is required$(COLOR_RESET)" >&2; exit 1; }
 	@$(NODE) -e "const {spawnSync}=require('node:child_process'); const supported=(out)=>{const m=String(out||'').match(/go(\\d+)\\.(\\d+)/); return !!m && (Number(m[1])>1 || Number(m[2])>=22);}; for (const c of [process.env.GO,'/usr/local/go/bin/go','go'].filter(Boolean)) { const r=spawnSync(c,['version'],{encoding:'utf8'}); if (r.status===0 && supported(r.stdout)) process.exit(0); } process.exit(1);" || { echo "$(COLOR_RED)Error: Go 1.22+ is required$(COLOR_RESET)" >&2; exit 1; }
 
@@ -459,7 +477,10 @@ help:
 	@echo "$(COLOR_BLUE)Available targets:$(COLOR_RESET)"
 	@echo "  $(COLOR_GREEN)all$(COLOR_RESET)       - Build all artifacts (default)"
 	@echo "  $(COLOR_GREEN)all-paid$(COLOR_RESET)  - Build all artifacts with paid Bible content"
+	@echo "  $(COLOR_GREEN)dev$(COLOR_RESET)       - Build development artifacts"
+	@echo "  $(COLOR_GREEN)dev-paid$(COLOR_RESET)  - Build development artifacts with paid Bible content"
 	@echo "  $(COLOR_GREEN)app$(COLOR_RESET)       - Build source, static, and sidecar artifacts"
+	@echo "  $(COLOR_GREEN)app-dev$(COLOR_RESET)   - Build source, static, and host sidecar artifacts"
 	@echo "  $(COLOR_GREEN)bible$(COLOR_RESET)     - Build public Bible database artifacts"
 	@echo "  $(COLOR_GREEN)bible-paid$(COLOR_RESET) - Build paid Bible database artifacts"
 	@echo "  $(COLOR_GREEN)clean$(COLOR_RESET)     - Remove all build artifacts"

@@ -117,6 +117,20 @@
       gap: 8px;
     }
 
+    .preferences-clear-status {
+      font-size: 12px;
+      line-height: 1.45;
+      color: color-mix(in srgb, var(--window-fg-color) 62%, transparent);
+    }
+
+    .preferences-clear-status.is-error {
+      color: var(--destructive-bg-color, #c01c28);
+    }
+
+    .preferences-clear-status.is-success {
+      color: var(--success-color, #2ec27e);
+    }
+
     .preferences-logo-preview {
       display: flex;
       align-items: center;
@@ -265,6 +279,26 @@
             <input type="color" id="preferencesLogoBackground" value="#000000" aria-describedby="preferencesLogoBackgroundHint">
             <p class="preferences-row__hint" id="preferencesLogoBackgroundHint">
               Background color behind the logo during logo hold.
+            </p>
+          </div>
+        </section>
+
+        <section class="preferences-group" aria-labelledby="preferences-songs-title">
+          <h2 class="preferences-group__title" id="preferences-songs-title">Songs Library</h2>
+
+          <div class="preferences-row">
+            <div class="preferences-row__label">Songs database</div>
+            <div class="preferences-logo-field">
+              <div class="preferences-logo-actions">
+                <button type="button" class="pill-button destructive-action" id="preferencesClearSongsBtn">
+                  Clear Songs Database…
+                </button>
+              </div>
+              <div id="preferencesClearSongsStatus" class="preferences-clear-status" role="status" aria-live="polite" hidden></div>
+            </div>
+            <p class="preferences-row__hint">
+              Permanently removes every song and folder from the library database and prepares it to load
+              new songs. Songs already added to projects keep their embedded copies. This cannot be undone.
             </p>
           </div>
         </section>

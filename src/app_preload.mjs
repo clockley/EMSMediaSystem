@@ -118,6 +118,7 @@ const songsAPI = {
   renameFolder: (id, name) => callSongs("songs.folders.rename", [id, name]),
   deleteFolder: (id) => callSongs("songs.folders.delete", [id]),
   moveToFolder: (songId, folderId) => callSongs("songs.moveToFolder", [songId, folderId ?? null]),
+  resetDatabase: () => callSongs("songs.resetDatabase", []),
   importFiles: (paths, options = {}) =>
     callSongs("songs.importFiles", [{
       paths,

@@ -162,6 +162,9 @@ func handleRequest(store *songstore.SongStore, req JSONRPCRequest) {
 		} else {
 			err = fmt.Errorf("invalid parameters")
 		}
+	case "songs.resetDatabase":
+		err = store.ResetDatabase()
+		result = true
 	case "songs.folders.list":
 		result, err = store.ListFolders()
 	case "songs.folders.create":
