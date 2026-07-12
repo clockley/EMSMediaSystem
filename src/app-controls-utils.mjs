@@ -14,20 +14,33 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-
-const COEFFICIENT_PROFILES = {
-  stable: { kP: 0.5, kI: 0.05, kD: 0.15 },
-  oscillating: { kP: 0.35, kI: 0.03, kD: 0.22 },
-  lagging: { kP: 0.65, kI: 0.1, kD: 0.12 },
-  systemStress: { kP: 0.4, kI: 0.04, kD: 0.2 },
-};
-
 export class PIDController {
   constructor(video, callbacks = {}) {
     this.video = video;
     this.isActiveMediaWindow = callbacks.isActiveMediaWindow || (() => false);
     this.beginPidSeekSuppression =
       callbacks.beginPidSeekSuppression || (() => {});
+
+    this.adaptiveCoefficients = {
+      kP: {
+        value: 0.5,
+        minValue: 0.2,
+        maxValue: 0.8,
+        adjustmentRate: 0.005,
+      },
+      kI: {
+        value: 0.05,
+        minValue: 0.01,
+        maxValue: 0.15,
+        adjustmentRate: 0.0025,
+      },
+      kD: {
+        value: 0.15,
+        minValue: 0.08,
+        maxValue: 0.25,
+        adjustmentRate: 0.005,
+      },
+    };
 
     this.patterns = {
       STABLE: "stable",
@@ -37,144 +50,98 @@ export class PIDController {
     };
 
     this.performancePatterns = {
-      [this.patterns.STABLE]: { maxRate: 1.1 },
-      [this.patterns.OSCILLATING]: { maxRate: 1.05 },
-      [this.patterns.LAGGING]: { maxRate: 1.2 },
-      [this.patterns.SYSTEM_STRESS]: { maxRate: 1.05 },
-    };
-
-    this.maxTimeGap = 1000;
-    this.synchronizationThreshold = 0.005;
-    this.maxIntegralError = 0.5;
-    this.fastSyncThreshold = 0.75;
-    this.maxFastSyncRate = 2;
-
-    this._initCoefficients();
-    this._resetRuntimeState();
-  }
-
-  _initCoefficients(profile = COEFFICIENT_PROFILES.stable) {
-    this.adaptiveCoefficients = {
-      kP: {
-        value: profile.kP,
-        minValue: 0.2,
-        maxValue: 0.8,
+      [this.patterns.STABLE]: {
+        maxRate: 1.1,
+        threshold: 0.033,
       },
-      kI: {
-        value: profile.kI,
-        minValue: 0.01,
-        maxValue: 0.15,
+      [this.patterns.OSCILLATING]: {
+        maxRate: 1.05,
+        threshold: 0.05,
       },
-      kD: {
-        value: profile.kD,
-        minValue: 0.08,
-        maxValue: 0.25,
+      [this.patterns.LAGGING]: {
+        maxRate: 1.2,
+        threshold: 0.066,
+      },
+      [this.patterns.SYSTEM_STRESS]: {
+        maxRate: 1.05,
+        threshold: 0.1,
       },
     };
-  }
 
-  _resetRuntimeState() {
-    this.currentPattern = this.patterns.STABLE;
     this.systemLag = 0;
     this.overshoots = 0;
     this.avgResponseTime = 0;
-    this.integral = 0;
-    this.lastTimeDifference = 0;
-    this.lastUpdateTime = 0;
+    this.currentPattern = this.patterns.STABLE;
+
     this.lastWallTime = null;
-    this.lastAppliedRate = 1;
-    this.lastErrorSign = 0;
-    this._rateChangeTime = 0;
-    this._errorRing = new Float64Array(10);
-    this._errorRingIdx = 0;
-    this._errorRingSize = 0;
-    this._errorSum = 0;
-    this._errorSqSum = 0;
+    this.maxTimeGap = 1000;
+
+    this.synchronizationThreshold = 0.005;
+    this.maxIntegralError = 0.5;
+    this.fastSyncThreshold = 1;
+    this.maxFastSyncRate = 2;
+
+    this.maxHistoryLength = 32;
+    this.isFirstAdjustment = true;
+
+    this.integral = 0;
+    this.lastError = 0;
+    this.lastTimeDifference = 0;
+    this.lastUpdateTime = performance.now();
+
+    this.timeArray = new Float64Array(this.maxHistoryLength);
+    this.diffArray = new Float64Array(this.maxHistoryLength);
+    this.responseArray = new Float64Array(this.maxHistoryLength);
+    this.historyIndex = 0;
+    this.historySize = 0;
+    this.MASK = 31;
+    this.TREND_MASK = 15;
+    this._trendBuffer = new Float64Array(16);
+    this._trendPos = 0;
+
+    this._rollingSum = 0;
+    this._rollingSquareSum = 0;
+    this._rollingTrend = 0;
   }
 
-  _nudgeCoefficients(pattern) {
-    const profile = COEFFICIENT_PROFILES[pattern] || COEFFICIENT_PROFILES.stable;
-    const step = 0.08;
-    for (const key of ["kP", "kI", "kD"]) {
-      const coeff = this.adaptiveCoefficients[key];
-      const target = profile[key];
-      coeff.value += (target - coeff.value) * step;
-      coeff.value =
-        coeff.value < coeff.minValue
-          ? coeff.minValue
-          : coeff.value > coeff.maxValue
-            ? coeff.maxValue
-            : coeff.value;
-    }
-  }
+  updateSystemMetrics(timeDifference, timestamp) {
+    const oldDiff = this.diffArray[this.historyIndex] || 0;
 
-  _applyPlaybackRate(rate) {
-    if (!Number.isFinite(rate)) {
-      return;
-    }
-    if (Math.abs(rate - this.lastAppliedRate) < 0.002) {
-      return;
-    }
-    this.video.playbackRate = rate;
-    this.lastAppliedRate = rate;
-    this._rateChangeTime = performance.now();
-  }
+    this.timeArray[this.historyIndex] = timestamp;
+    this.diffArray[this.historyIndex] = timeDifference;
+    this.responseArray[this.historyIndex] =
+      this.historySize > 0
+        ? timestamp - this.timeArray[(this.historyIndex - 1) & this.MASK]
+        : 0;
 
-  updateSystemMetrics(timeDifference, wallNow) {
-    const old = this._errorRing[this._errorRingIdx] || 0;
-    this._errorRing[this._errorRingIdx] = timeDifference;
-    this._errorRingIdx = (this._errorRingIdx + 1) % 10;
-    if (this._errorRingSize < 10) {
-      this._errorRingSize++;
-    }
+    this.historyIndex = (this.historyIndex + 1) & this.MASK;
+    if (this.historySize < this.maxHistoryLength) this.historySize++;
 
-    this._errorSum += timeDifference - old;
-    this._errorSqSum +=
-      timeDifference * timeDifference - old * old;
+    if (this.historySize >= 10) {
+      const pos = this._trendPos;
+      const prevIndex = (pos - 1 + 16) & this.TREND_MASK;
+      const prev = this._trendBuffer[prevIndex] || 0;
+      const replaced = this._trendBuffer[pos];
+      this._trendBuffer[pos] = timeDifference;
+      this._trendPos = (pos + 1) & this.TREND_MASK;
 
-    const sign =
-      timeDifference < -0.003 ? -1 : timeDifference > 0.003 ? 1 : 0;
-    if (
-      sign !== 0 &&
-      this.lastErrorSign !== 0 &&
-      sign !== this.lastErrorSign
-    ) {
-      this.overshoots++;
-    }
-    if (sign !== 0) {
-      this.lastErrorSign = sign;
-    }
+      this._rollingSum += timeDifference - oldDiff;
+      this._rollingSquareSum +=
+        timeDifference * timeDifference - oldDiff * oldDiff;
+      this._rollingTrend += timeDifference - prev - (replaced - prev);
 
-    if (
-      this._rateChangeTime > 0 &&
-      Math.abs(timeDifference) < Math.abs(this.lastTimeDifference)
-    ) {
-      const response = (performance.now() - this._rateChangeTime) / 1000;
-      this.avgResponseTime = this.avgResponseTime * 0.8 + response * 0.2;
-    }
-
-    if (this.lastWallTime !== null) {
-      this.systemLag = wallNow - this.lastWallTime;
-    }
-
-    if (this._errorRingSize >= 8) {
-      const n = this._errorRingSize;
-      const mean = this._errorSum / n;
-      const variance = this._errorSqSum / n - mean * mean;
-      const prevPattern = this.currentPattern;
+      const mean = this._rollingSum / 10;
+      const variance = this._rollingSquareSum / 10 - mean * mean;
+      const trend = this._rollingTrend / 9;
 
       this.currentPattern =
-        variance > 0.08 && this.overshoots > 2
+        variance > 0.1 && this.overshoots > 3
           ? this.patterns.OSCILLATING
-          : mean > 0.04 || this.avgResponseTime > 0.15
+          : trend > 0.05 || this.avgResponseTime > 0.15
             ? this.patterns.LAGGING
-            : this.systemLag > 200 || this.avgResponseTime > 0.25
+            : this.systemLag > 100 || this.avgResponseTime > 0.2
               ? this.patterns.SYSTEM_STRESS
               : this.patterns.STABLE;
-
-      if (this.currentPattern !== prevPattern) {
-        this._nudgeCoefficients(this.currentPattern);
-      }
     }
   }
 
@@ -186,11 +153,7 @@ export class PIDController {
     ) {
       return 0;
     }
-
-    const dt =
-      deltaTime < 0.016 ? 0.016 : deltaTime > 0.5 ? 0.5 : deltaTime;
-
-    this.integral += timeDifference * dt;
+    this.integral += timeDifference * deltaTime;
     this.integral =
       this.integral < -this.maxIntegralError
         ? -this.maxIntegralError
@@ -198,7 +161,7 @@ export class PIDController {
           ? this.maxIntegralError
           : this.integral;
 
-    const derivative = (timeDifference - this.lastTimeDifference) / dt;
+    const derivative = (timeDifference - this.lastTimeDifference) / deltaTime;
     this.lastTimeDifference = timeDifference;
 
     return (
@@ -212,60 +175,59 @@ export class PIDController {
     const now = performance.now();
     const wallNow = Date.now();
     if (!this.video || this.video.paused || this.video.seeking) {
-      return 0;
+      return;
     }
 
-    const timeDifference = targetTime - this.video.currentTime;
-    const timeDifferenceAbs =
-      timeDifference < 0 ? -timeDifference : timeDifference;
-
-    if (this.lastWallTime === null) {
+    if (this.isFirstAdjustment || this.lastWallTime === null) {
       this.lastWallTime = wallNow;
       this.lastUpdateTime = now;
+      this.isFirstAdjustment = false;
+      const timeDifference = targetTime - this.video.currentTime;
       this.updateSystemMetrics(timeDifference, wallNow);
       return timeDifference;
     }
 
     const wallTimeDelta = wallNow - this.lastWallTime;
+
     if (wallTimeDelta > this.maxTimeGap) {
       this.beginPidSeekSuppression();
       this.video.currentTime = targetTime;
       this.lastWallTime = wallNow;
-      this.lastUpdateTime = now;
-      this.lastAppliedRate = 1;
-      this.integral = 0;
-      this.lastTimeDifference = 0;
-      const seekError = targetTime - this.video.currentTime;
-      this.updateSystemMetrics(seekError, wallNow);
-      return seekError;
+      this.isFirstAdjustment = false;
+      const timeDifference = targetTime - this.video.currentTime;
+      this.updateSystemMetrics(timeDifference, wallNow);
+      return timeDifference;
     }
 
     const deltaTime = (now - this.lastUpdateTime) / 1000;
     this.lastUpdateTime = now;
     this.lastWallTime = wallNow;
 
-    this.updateSystemMetrics(timeDifference, wallNow);
+    const timeDifference = targetTime - this.video.currentTime;
+    const timeDifferenceAbs =
+      timeDifference < 0 ? -timeDifference : timeDifference;
 
-    if (timeDifferenceAbs > this.fastSyncThreshold) {
-      const catchUpWindow = deltaTime < 0.08 ? 0.08 : deltaTime;
-      let playbackRate;
-      if (timeDifference > 0) {
-        const calcRate = 1 + timeDifferenceAbs / catchUpWindow;
-        playbackRate =
-          calcRate > this.maxFastSyncRate ? this.maxFastSyncRate : calcRate;
-      } else {
-        const calcRate = 1 - timeDifferenceAbs / catchUpWindow;
-        const minRate = 1 / this.maxFastSyncRate;
-        playbackRate = calcRate < minRate ? minRate : calcRate;
-      }
-      this._applyPlaybackRate(playbackRate);
-      return timeDifference;
-    }
+    this.updateSystemMetrics(timeDifference, wallNow);
 
     const finalAdjustment = this.calculateHistoricalAdjustment(
       timeDifference,
       deltaTime,
     );
+
+    if (timeDifferenceAbs > this.fastSyncThreshold) {
+      let playbackRate;
+      if (timeDifference > 0) {
+        const calcRate = 1 + timeDifferenceAbs / deltaTime;
+        playbackRate =
+          calcRate > this.maxFastSyncRate ? this.maxFastSyncRate : calcRate;
+      } else {
+        const calcRate = 1 - timeDifferenceAbs / deltaTime;
+        const minRate = 1 / this.maxFastSyncRate;
+        playbackRate = calcRate < minRate ? minRate : calcRate;
+      }
+      this.video.playbackRate = playbackRate;
+      return timeDifference;
+    }
 
     const maxRate = this.performancePatterns[this.currentPattern].maxRate;
     const minRate = 2 - maxRate;
@@ -283,7 +245,10 @@ export class PIDController {
       this.integral = 0;
     }
 
-    this._applyPlaybackRate(playbackRate);
+    if (Number.isFinite(playbackRate)) {
+      this.video.playbackRate = playbackRate;
+    }
+
     return timeDifference;
   }
 
@@ -291,8 +256,41 @@ export class PIDController {
     if (!this.isActiveMediaWindow()) {
       return;
     }
-    this._initCoefficients(COEFFICIENT_PROFILES.lagging);
-    this._resetRuntimeState();
+    this.lastError = 0;
+    this.integral = 0;
+    this.lastTimeDifference = 0;
+    this.lastUpdateTime = performance.now();
+    this.isFirstAdjustment = true;
+    this.lastWallTime = null;
+
+    this.historyIndex = 0;
+    this.historySize = 0;
+
+    this.systemLag = 0;
+    this.overshoots = 0;
+    this.avgResponseTime = 0;
+    this.currentPattern = this.patterns.STABLE;
+
+    this.adaptiveCoefficients = {
+      kP: {
+        value: 0.6,
+        minValue: 0.3,
+        maxValue: 0.9,
+        adjustmentRate: 0.01,
+      },
+      kI: {
+        value: 0.08,
+        minValue: 0.02,
+        maxValue: 0.2,
+        adjustmentRate: 0.005,
+      },
+      kD: {
+        value: 0.12,
+        minValue: 0.05,
+        maxValue: 0.2,
+        adjustmentRate: 0.01,
+      },
+    };
   }
 }
 

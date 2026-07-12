@@ -43,8 +43,6 @@ export function configureCountdown(deps = {}) {
 
 export function resetCountdownSync() {
   lastUpdateTime = 0;
-  lastPidSyncTime = 0;
-  lastSyncErrorAbs = 0;
 }
 
 function getActiveMediaWindowContentType() {
@@ -225,21 +223,6 @@ export function updateTimestamp() {
 }
 
 let lastUpdateTime = 0;
-let lastPidSyncTime = 0;
-let lastSyncErrorAbs = 0;
-
-function pidSyncIntervalMs() {
-  if (lastSyncErrorAbs > 0.15) {
-    return 50;
-  }
-  if (lastSyncErrorAbs > 0.05) {
-    return 100;
-  }
-  if (lastSyncErrorAbs > 0.015) {
-    return 200;
-  }
-  return 400;
-}
 
 const STRING_BUFFER = new Uint16Array(20);
 const ZERO = "0".charCodeAt(0);
@@ -513,17 +496,13 @@ export function handleTimeMessage(
     return;
   }
 
-  const syncNow = Date.now();
-  if (syncNow - lastPidSyncTime >= pidSyncIntervalMs()) {
+  // Perform timestamp calculations only if enough time has passed
+  if (now - lastUpdateTime > 500) {
     const video = getVideo();
     if (video && !video.paused && !video.seeking) {
-      const nextTargetTime = currentTime + (syncNow - timestamp) * 0.001;
+      const nextTargetTime = currentTime - (now - timestamp + (Date.now() - now)) * 0.001;
       setTargetTime(nextTargetTime);
-      const syncError = hybridSync(nextTargetTime);
-      if (Number.isFinite(syncError)) {
-        lastSyncErrorAbs = syncError < 0 ? -syncError : syncError;
-      }
-      lastPidSyncTime = syncNow;
+      hybridSync(nextTargetTime);
       lastUpdateTime = now;
     }
   }
