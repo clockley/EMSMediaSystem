@@ -539,6 +539,12 @@ function fullscreenWindowBoundsForDisplay(display) {
   };
 }
 
+function applyMediaWindowPresentationMode(targetWindow) {
+  targetWindow.setFullScreen(true);
+  targetWindow.setAlwaysOnTop(true, "screen-saver");
+  targetWindow.setIgnoreMouseEvents(false);
+}
+
 function boundsPayload(bounds) {
   if (!bounds) return null;
   return {
@@ -559,7 +565,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     const targetSelection = resolveDisplaySelection(displayIndex);
     if (!targetSelection) return null;
     mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
-    mediaWindow.setFullScreen(true);
+    applyMediaWindowPresentationMode(mediaWindow);
     installTimeRemainingMessagePort();
     return mediaWindow.id;
   }
@@ -589,7 +595,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
 
     const createdMediaWindow = new BrowserWindow(finalWindowOptions);
     mediaWindow = createdMediaWindow;
-    createdMediaWindow.setIgnoreMouseEvents(true);
+    applyMediaWindowPresentationMode(createdMediaWindow);
     //mediaWindow.openDevTools()
     await createdMediaWindow.loadFile("derived/src/media.prod.html");
     installTimeRemainingMessagePort();
@@ -1139,6 +1145,7 @@ function handleSetDisplayIndex(event, index) {
     }
 
     mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
+    applyMediaWindowPresentationMode(mediaWindow);
   }
 }
 
@@ -4063,7 +4070,7 @@ function setIPC() {
   ipcMain.handle("slipstream-media-window", async (event, data) => {
     const targetMediaWindow = mediaWindow;
     if (targetMediaWindow && !targetMediaWindow.isDestroyed()) {
-      targetMediaWindow.setIgnoreMouseEvents(true);
+      applyMediaWindowPresentationMode(targetMediaWindow);
       targetMediaWindow.setSkipTaskbar(false);
       try {
         await targetMediaWindow.webContents.executeJavaScript(
