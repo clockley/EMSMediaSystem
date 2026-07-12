@@ -4,8 +4,10 @@
   "description": "A simple media player",
   "main": "derived/src/main.min.mjs",
   "scripts": {
-    "start": "yarn build:parallel && electron .",
-    "start-paid": "yarn build:parallel-paid && electron .",
+    "start": "yarn build:dev && electron .",
+    "start-paid": "yarn build:dev-paid && electron .",
+    "build:dev": "make -j dev",
+    "build:dev-paid": "make -j dev-paid",
     "build:source": "make -j app",
     "build:bible": "make -j bible",
     "build:bible-paid": "make -j bible-paid",
