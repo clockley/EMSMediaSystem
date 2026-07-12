@@ -4031,6 +4031,9 @@ function setIPC() {
   ipcMain.on("media-window-error", (_event, message) => {
     console.error("[media-window]", message);
   });
+  ipcMain.on("playback-trace", (_event, message) => {
+    console.log("[playback-trace]", message);
+  });
   ipcMain.handle("slipstream-media-window", async (event, data) => {
     const targetMediaWindow = mediaWindow;
     if (targetMediaWindow && !targetMediaWindow.isDestroyed()) {
