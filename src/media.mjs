@@ -60,6 +60,7 @@ var pptxCurrentSlide = 0;
 var autoPlay = false;
 var seekOnly = false;
 var logoHoldOnly = false;
+var debugPlayback = false;
 let pptxIpcHandlersInstalled = false;
 let textIpcHandlersInstalled = false;
 let ipcHandlersInstalled = false;
@@ -150,6 +151,7 @@ function setLoopEnabled(enabled) {
   if (video) {
     video.loop = loopFile;
   }
+  tracePlayback("setLoopEnabled", loopFile, "file=" + mediaFile);
   return loopFile;
 }
 
@@ -324,9 +326,32 @@ do {
     isLowerThirdOutput = true;
   } else if (argv[i] === "__logoHoldOnly=true") {
     logoHoldOnly = true;
+  } else if (argv[i] === "__debug-playback") {
+    debugPlayback = true;
   }
   --i;
 } while (argv[i][0] !== "-");
+
+/**
+ * Forward a timestamped projection-side trace to the main-process terminal so
+ * the queue advance / loop / preview-sync race can be diagnosed on slower
+ * machines (the projection window has no devtools). Enabled only when the
+ * control window was launched with playback tracing on.
+ */
+function tracePlayback(...parts) {
+  if (!debugPlayback) return;
+  try {
+    ipcRenderer.send(
+      "playback-trace",
+      "[media +" +
+        Math.round(performance.now()) +
+        "ms] " +
+        parts
+          .map((p) => (typeof p === "string" ? p : JSON.stringify(p)))
+          .join(" "),
+    );
+  } catch {}
+}
 
 function getPptxListRenderOptions(slideCount) {
   if (Number.isFinite(slideCount) && slideCount <= PPTX_SMALL_DECK_MAX_SLIDES) {
@@ -821,6 +846,13 @@ async function startLiveStreamPlayback(url) {
  * streams are not slipstreamed; the queue close/reopens the window for those.)
  */
 async function applySlipstream(data) {
+  tracePlayback(
+    "applySlipstream",
+    "file=" + (data?.mediaFile || ""),
+    "loopFile=" + !!data?.loopFile,
+    "isImg=" + !!data?.isImg,
+    "isPptx=" + !!data?.isPptx,
+  );
   hideStreamStatus();
   if (data?.clearOutputHold === true) {
     applyOutputHold({ mode: OUTPUT_HOLD_NONE, transitionDurationMs: 0 });
@@ -1244,6 +1276,14 @@ function installVideoPlaybackWiring() {
   });
 
   video.onended = () => {
+    tracePlayback(
+      "video.onended",
+      "file=" + mediaFile,
+      "loopFile=" + loopFile,
+      "video.loop=" + video.loop,
+      "t=" + video.currentTime,
+      "dur=" + video.duration,
+    );
     if (loopFile || video.loop) return;
     video.style.display = "none";
     ipcRenderer.send("media-playback-ended", mediaFile);

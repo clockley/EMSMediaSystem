@@ -259,6 +259,37 @@ function attachElectronBridge() {
   globalThis.invoke = invoke;
 }
 
+/**
+ * Playback tracing: when enabled, the control renderer forwards timestamped
+ * transition traces to the main-process terminal (visible where `yarn start`
+ * runs). Enable at runtime with
+ * `localStorage.setItem("emsDebugPlayback", "1")` then reload, or set it before
+ * launch. This is a diagnostics aid for the queue advance / loop / preview
+ * sync race that only manifests on slower machines.
+ */
+let playbackTraceEnabled = false;
+try {
+  playbackTraceEnabled =
+    globalThis.localStorage?.getItem("emsDebugPlayback") === "1";
+} catch {}
+
+function tracePlayback(...parts) {
+  if (!playbackTraceEnabled) return;
+  const line =
+    "[app +" +
+    Math.round(performance.now()) +
+    "ms] " +
+    parts
+      .map((p) => (typeof p === "string" ? p : JSON.stringify(p)))
+      .join(" ");
+  try {
+    send?.("playback-trace", line);
+  } catch {}
+  try {
+    console.debug(line);
+  } catch {}
+}
+
 var pidSeeking = false;
 /**
  * Timer id (or null) for the deferred reset of `pidSeeking`. Writing
@@ -853,6 +884,19 @@ const DECK_PAGES_MIN_WIDTH = PPTX_SIDEBAR_MIN_WIDTH;
 const DECK_PAGES_MAX_WIDTH = PPTX_SIDEBAR_MAX_WIDTH;
 /** True after natural playback end (signaled before media window closes). */
 let mediaPlaybackEndedPending = false;
+/**
+ * Monotonic id of the clip currently live in the audience media window. It is
+ * bumped every time a new clip starts projecting (window created or
+ * slipstreamed in). The projection window fires its natural-end IPC
+ * (media-playback-ended) while the control side may be mid-transition on a
+ * slower machine, and a stale/duplicate end can arrive after the control side
+ * has already advanced. Keying the end-of-clip decision to this epoch makes it
+ * idempotent so a duplicate/stale end can neither replay the finished clip
+ * ("loop") nor advance past the clip the mirror is still showing (desync).
+ */
+let liveMediaWindowEpoch = 0;
+/** liveMediaWindowEpoch whose natural end has already driven a transition. */
+let consumedMediaWindowEndEpoch = -1;
 /** True when the operator pressed Stop, so the close must not advance the queue. */
 let userStopPresentationPending = false;
 let presentationStartInProgress = false;
@@ -18631,6 +18675,11 @@ function normalizeMediaPathForCompare(filePath) {
     } else {
       s = decodeURI(s);
     }
+    // The preview mirror loads media via pathToMediaUrl, which appends a
+    // "?v=<hash>" cache-bust. The projection and queue entries carry the raw
+    // path, so comparisons (mediaPathMatchesCurrentLiveMedia, endLocalMedia,
+    // previewShowsSameClipAsPath) would spuriously fail without dropping it.
+    s = s.replace(/[?&]v=[^?&]*$/, "");
     return s.replace(/\\/g, "/");
   } catch {
     return filePath.replace(/\\/g, "/");
@@ -18644,6 +18693,36 @@ function mediaPathMatchesCurrentLiveMedia(filePath) {
     normalized === normalizeMediaPathForCompare(mediaFile) ||
     normalized === normalizeMediaPathForCompare(activeResolvedMediaFile)
   );
+}
+
+/**
+ * Mark that a new clip has become live in the audience media window. Its
+ * natural end can now be claimed exactly once by whichever end signal (the
+ * projection IPC or a fallback) arrives first.
+ */
+function beginLiveMediaWindowEpoch() {
+  liveMediaWindowEpoch += 1;
+  tracePlayback(
+    "beginLiveMediaWindowEpoch",
+    liveMediaWindowEpoch,
+    "idx=" + currentQueueIndex,
+    mediaFile,
+  );
+}
+
+/**
+ * Claim the natural end of the clip currently live in the media window so that
+ * exactly one queue transition happens per clip. Returns false when this
+ * clip's end was already consumed — a duplicate or stale "ended" signal that,
+ * on slower machines, can arrive after the control side has already moved on
+ * and would otherwise replay the finished clip or double-advance the queue.
+ */
+function claimMediaWindowEnd() {
+  if (consumedMediaWindowEndEpoch === liveMediaWindowEpoch) {
+    return false;
+  }
+  consumedMediaWindowEndEpoch = liveMediaWindowEpoch;
+  return true;
 }
 
 /** True when the preview <video> is showing the same local file as `filePath`. */
@@ -18959,6 +19038,12 @@ async function playCurrentQueueItem(opts) {
 }
 
 async function advanceQueueAfterMediaWindowClosed() {
+  tracePlayback(
+    "advanceQueueAfterMediaWindowClosed",
+    "idx=" + currentQueueIndex,
+    "advancing=" + isAdvancingQueue,
+    "loop=" + loopEnabledForLiveMedia(),
+  );
   if (isAdvancingQueue) return;
   if (loopEnabledForLiveMedia()) {
     mediaPlaybackEndedPending = false;
@@ -19022,6 +19107,13 @@ async function advanceQueueAfterMediaWindowClosed() {
  * Returns true if slipstream was dispatched, false if normal close should proceed.
  */
 async function slipstreamQueueItemAtIndex(index, opts = {}) {
+  tracePlayback(
+    "slipstreamQueueItemAtIndex",
+    "index=" + index,
+    "fromIdx=" + currentQueueIndex,
+    "inProgress=" + queueSlipstreamTransitionInProgress,
+    "activeWindow=" + isActiveMediaWindow(),
+  );
   if (queueSlipstreamTransitionInProgress) return false;
   const nextItem = index >= 0 && index < mediaQueue.length ? mediaQueue[index] : null;
   const allowBibleInPlaceSwitch =
@@ -19152,6 +19244,10 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     activePreviewResolvedMediaFile = resolvedNextPath;
 
     // Window stays alive — advance queue state without the normal close/reopen cycle.
+    // A new clip is now live: open a fresh end-of-clip epoch so its natural end
+    // can be claimed exactly once (and any late end from the clip we just left
+    // is ignored).
+    beginLiveMediaWindowEpoch();
     mediaPlaybackEndedPending = false;
     currentQueueIndex = index;
     isQueuePlaying = true;
@@ -19163,9 +19259,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     resetCountdownSync();
     localTimeStampUpdateIsRunning = false;
     setMediaCountdownText("");
-    // endLocalMedia (which runs from the preview's "ended" event right before
-    // this) marks fileEnded so the next pause is treated as a natural stop.
-    // Slipstream is not a stop — clear the flag before the new src is loaded.
+    // A slipstream transition is not a stop. Keep this clear so any incidental
+    // pause/load event from the preview mirror is not treated as a completed
+    // local playback.
     fileEnded = false;
     audioOnlyFile = false;
     playingMediaAudioOnly = false;
@@ -19970,6 +20066,17 @@ function setupCustomMediaControls() {
     "ended",
     () => {
       if (video !== currentControlMedia()) return;
+      // While the audience media window is live, #preview is only a mirror of
+      // the projection. Writing video.currentTime here fires a "seeked" event
+      // that seekLocalMedia forwards to the projection as a timeGoto-message,
+      // seeking the LIVE output back to 0 — i.e. the audience video loops. On
+      // slower machines the mirror reaches "ended" before the projection fires
+      // its own onended, so this reset wins the race and the queue loops
+      // instead of advancing/closing. Let the projection own its end-of-media.
+      if (isActiveMediaWindow()) {
+        tracePlayback("customControls ended: skip reset (projection live)");
+        return;
+      }
       if (!video.loop && currentMode === MEDIAPLAYER) {
         video.currentTime = 0;
         video.pause();
@@ -20421,6 +20528,14 @@ function installIPCHandler() {
     markQueueItemMediaUpdate(payload);
   });
   on("media-playback-ended", async (event, endedMediaFile) => {
+    tracePlayback(
+      "media-playback-ended IN",
+      "ended=" + (endedMediaFile || ""),
+      "live=" + mediaFile,
+      "idx=" + currentQueueIndex,
+      "epoch=" + liveMediaWindowEpoch,
+      "consumed=" + consumedMediaWindowEndEpoch,
+    );
     if (userStopPresentationPending) {
       mediaPlaybackEndedPending = false;
       return;
@@ -20433,11 +20548,22 @@ function installIPCHandler() {
       normalizeMediaPathForCompare(endedMediaFile) !==
         normalizeMediaPathForCompare(mediaQueue[currentQueueIndex].path)
     ) {
+      tracePlayback("media-playback-ended DROP stale (not live clip)");
       return;
     }
     if (loopEnabledForLiveMedia(endedMediaFile || mediaFile)) {
       mediaPlaybackEndedPending = false;
       syncMediaLoopState();
+      tracePlayback("media-playback-ended LOOP (re-sync, no advance)");
+      return;
+    }
+    // On slower machines the projection's end IPC can race the local preview
+    // mirror and the async slipstream transition. Claim the live clip's end so
+    // exactly one transition happens per clip: a duplicate/stale end that
+    // arrives after the control side already advanced is ignored here, which is
+    // what previously let the finished clip replay or the queue skip/desync.
+    if (!claimMediaWindowEnd()) {
+      tracePlayback("media-playback-ended DROP duplicate (epoch consumed)");
       return;
     }
     mediaPlaybackEndedPending = true;
@@ -20471,6 +20597,15 @@ function installIPCHandler() {
 }
 
 async function handleMediaWindowClosed(event, id) {
+  tracePlayback(
+    "handleMediaWindowClosed",
+    "queuePlaying=" + isQueuePlaying,
+    "endedPending=" + mediaPlaybackEndedPending,
+    "userStop=" + userStopPresentationPending,
+    "pendingSwitch=" + pendingQueueSwitchIndex,
+    "idx=" + currentQueueIndex,
+    "loop=" + loopEnabledForLiveMedia(),
+  );
   resolveQueuePresentationVideo();
   const localVideo = video;
   finishProjectionPlaybackStartupSync();
@@ -20598,6 +20733,7 @@ async function handleMediaWindowClosed(event, id) {
       localVideo.currentTime > 0 &&
       localVideo.duration - localVideo.currentTime < 0.5
     ) {
+      tracePlayback("handleMediaWindowClosed LOOP-RESTART (single-file loop)");
       startTime = 0;
       targetTime = 0;
       localVideo.currentTime = 0;
@@ -22615,8 +22751,16 @@ function seekingLocalMedia(e) {
   }
 }
 
-function endLocalMedia() {
+function endLocalMedia(event) {
   setMediaCountdownText("");
+  tracePlayback(
+    "endLocalMedia (preview #preview ended)",
+    "src=" + (event?.target?.src || video?.src || ""),
+    "live=" + mediaFile,
+    "activeWindow=" + isActiveMediaWindow(),
+    "audioOnly=" + playingMediaAudioOnly,
+    "epoch=" + liveMediaWindowEpoch,
+  );
 
   // When queue playback is being projected in the media window, this local
   // preview <video> hitting "ended" is informational only. The authoritative
@@ -22632,34 +22776,24 @@ function endLocalMedia() {
     video &&
     !playingMediaAudioOnly
   ) {
+    const endedPreviewSource = event?.target?.src || video.src || "";
+    if (
+      endedPreviewSource &&
+      !mediaPathMatchesCurrentLiveMedia(endedPreviewSource)
+    ) {
+      return;
+    }
     if (loopEnabledForLiveMedia()) {
       mediaPlaybackEndedPending = false;
       syncMediaLoopState();
       return;
     }
+    // Mark this as a natural boundary in case the projection window closes
+    // before its IPC arrives, but do not drive the transition from the preview.
+    // On slower machines the preview can reach "ended" first; if it slipstreams
+    // here, it races the projection window and can leave preview/scrubber state
+    // one item behind the audience output.
     mediaPlaybackEndedPending = true;
-    void (async () => {
-      try {
-        const slipstreamed = await trySlipstreamNextQueueItem();
-        if (slipstreamed) {
-          return;
-        }
-        if (queueSlipstreamTransitionInProgress) {
-          return;
-        }
-        if (isActiveMediaWindow()) {
-          send("close-media-window", 0);
-        }
-      } catch (err) {
-        console.error("Queue transition after preview end failed:", err);
-        if (queueSlipstreamTransitionInProgress) {
-          return;
-        }
-        if (isActiveMediaWindow()) {
-          send("close-media-window", 0);
-        }
-      }
-    })();
     return;
   }
 
@@ -23142,6 +23276,13 @@ function isLiveStream(mediaFile) {
 }
 
 async function endLiveAudioPresentation() {
+  tracePlayback(
+    "endLiveAudioPresentation (liveAudio ended)",
+    "handling=" + isHandlingLiveEnded,
+    "idx=" + currentQueueIndex,
+    "audioIdx=" + liveAudioQueueIndex,
+    "loop=" + loopEnabledForLiveMedia(),
+  );
   if (isHandlingLiveEnded) return;
   isHandlingLiveEnded = true;
   setMediaCountdownText("");
@@ -23412,6 +23553,7 @@ async function createMediaWindow(options) {
         isPptxFile ? `__pptxSlide=${pptxStartSlide}` : "",
         `__autoplay=${autoPlayEnabled}`,
         seekOnly ? "__seek-only" : "",
+        playbackTraceEnabled ? "__debug-playback" : "",
         birth,
       ],
       preload: `${__dirname}/media_preload.min.js`,
@@ -23440,6 +23582,9 @@ async function createMediaWindow(options) {
       if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
       return false;
     }
+    // A new clip is now live in a freshly created window: open a new
+    // end-of-clip epoch so its natural end is claimed exactly once.
+    beginLiveMediaWindowEpoch();
     queueBiblePreviewMediaWindowSizeRefresh();
   } catch (err) {
     isActiveMediaWindowCache = false;
