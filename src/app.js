@@ -21016,12 +21016,11 @@ function resetPIDOnSeek() {
 }
 
 function hybridSync(targetTime) {
-  if (audioOnlyFile) return 0;
-  if (!isActiveMediaWindow()) return 0;
-  if (!activeLiveStream && pidController) {
-    return pidController.adjustPlaybackRate(targetTime);
+  if (audioOnlyFile) return;
+  if (!isActiveMediaWindow()) return;
+  if (!activeLiveStream) {
+    pidController.adjustPlaybackRate(targetTime);
   }
-  return 0;
 }
 
 function isImg(pathname) {
