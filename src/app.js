@@ -905,6 +905,28 @@ let queueSlipstreamTransitionInProgress = false;
 let pendingQueueSwitchIndex = null;
 let pendingQueueSwitchStartTime = 0;
 let suppressPreviewForwarding = false;
+/**
+ * Re-entrancy depth for preview→projection forwarding suppression. The mirror
+ * play/pause helpers can overlap on slower machines (a slipstream's mirror
+ * play races the projection's "playing" state event, which also plays the
+ * mirror). A boolean save/restore leaves the flag stuck "true" when the nested
+ * calls' finally blocks run out of order — which suppresses all scrub/seek and
+ * play-pause forwarding, so the operator loses control of the media window
+ * after an advance. A counter is order-independent: suppression is active iff
+ * depth > 0.
+ */
+let previewForwardingSuppressionDepth = 0;
+function beginPreviewForwardingSuppression() {
+  previewForwardingSuppressionDepth += 1;
+  suppressPreviewForwarding = true;
+}
+function endPreviewForwardingSuppression() {
+  previewForwardingSuppressionDepth = Math.max(
+    0,
+    previewForwardingSuppressionDepth - 1,
+  );
+  suppressPreviewForwarding = previewForwardingSuppressionDepth > 0;
+}
 let projectionPlaybackStartupPending = false;
 let playbackStateSyncGeneration = 0;
 let desiredProjectionPreviewPlayback = null;
@@ -1629,8 +1651,7 @@ async function playVideoSafely(mediaEl, context = "", options = {}) {
 
 async function playLivePreviewMirrorSafely(context = "") {
   if (!video || isImg(video.src)) return false;
-  const previousSuppression = suppressPreviewForwarding;
-  suppressPreviewForwarding = true;
+  beginPreviewForwardingSuppression();
   try {
     if (await playVideoSafely(video, context, { logFailure: false })) {
       return true;
@@ -1645,20 +1666,20 @@ async function playLivePreviewMirrorSafely(context = "") {
     video.defaultMuted = true;
     return playVideoSafely(video, `${context} muted retry`);
   } finally {
-    suppressPreviewForwarding = previousSuppression;
+    endPreviewForwardingSuppression();
   }
 }
 
 async function pauseLivePreviewMirrorFromProjection(playbackState) {
   if (!video || video.paused) return;
-  suppressPreviewForwarding = true;
+  beginPreviewForwardingSuppression();
   try {
     if (Number.isFinite(playbackState?.currentTime)) {
       video.currentTime = playbackState.currentTime;
     }
     await video.pause();
   } finally {
-    suppressPreviewForwarding = false;
+    endPreviewForwardingSuppression();
   }
 }
 
@@ -22708,8 +22729,16 @@ function seekLocalMedia(e) {
   // any seek that lands here is either projection→preview sync or an
   // explicit user scrub of the live mirror — never a cue write.
   if (shouldSuppressPreviewForwarding()) {
+    tracePlayback(
+      "seekLocalMedia SUPPRESSED",
+      "suppress=" + suppressPreviewForwarding,
+      "depth=" + previewForwardingSuppressionDepth,
+      "startupPending=" + projectionPlaybackStartupPending,
+      "cuePrep=" + isPreparingSeparateCue(),
+    );
     return;
   }
+  tracePlayback("seekLocalMedia FORWARD timeGoto", "t=" + e.target.currentTime);
   syncTrackedPreviewStartTime(e.target, { force: true });
   if (e.target.isConnected) {
     send("timeGoto-message", {
