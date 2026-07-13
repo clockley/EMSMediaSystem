@@ -880,6 +880,260 @@ function validateResolution(width, height) {
   return width >= 640 && width <= 7680 && height >= 480 && height <= 4320;
 }
 
+function parseDetailedTimingResolution(edidBuffer, blockStart) {
+  try {
+    const pixelClock = edidBuffer.readUInt16LE(blockStart);
+    if (!pixelClock) return null;
+
+    const hActive =
+      edidBuffer[blockStart + 2] + ((edidBuffer[blockStart + 4] & 0xf0) << 4);
+    const vActive =
+      edidBuffer[blockStart + 5] + ((edidBuffer[blockStart + 7] & 0xf0) << 4);
+
+    if (validateResolution(hActive, vActive)) {
+      return {
+        width: hActive,
+        height: vActive,
+      };
+    }
+  } catch {
+    // Keep null resolution if timing parsing fails
+  }
+
+  return null;
+}
+
+function parseDisplayModeSize(modeText) {
+  const match = String(modeText || "")
+    .trim()
+    .match(/^(\d+)x(\d+)/);
+  if (!match) return null;
+
+  const width = Number.parseInt(match[1], 10);
+  const height = Number.parseInt(match[2], 10);
+  return validateResolution(width, height) ? { width, height } : null;
+}
+
+function parseDisplayModeSizes(modesText) {
+  const seen = new Set();
+  const sizes = [];
+
+  for (const line of String(modesText || "").split(/\r?\n/)) {
+    const size = parseDisplayModeSize(line);
+    if (!size) continue;
+
+    const key = `${size.width}x${size.height}`;
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    sizes.push(size);
+  }
+
+  return sizes;
+}
+
+function addDisplaySizeCandidate(candidates, width, height) {
+  const candidateWidth = Math.round(Number(width));
+  const candidateHeight = Math.round(Number(height));
+  if (
+    !validateResolution(candidateWidth, candidateHeight) &&
+    !validateResolution(candidateHeight, candidateWidth)
+  ) {
+    return;
+  }
+
+  const key = `${candidateWidth}x${candidateHeight}`;
+  if (!candidates.some((candidate) => candidate.key === key)) {
+    candidates.push({
+      key,
+      width: candidateWidth,
+      height: candidateHeight,
+    });
+  }
+}
+
+function displaySizeCandidates(display) {
+  const candidates = [];
+  const bounds = display?.bounds || {};
+  const size = display?.size || {};
+  const scaleFactor =
+    Number.isFinite(display?.scaleFactor) && display.scaleFactor > 0
+      ? display.scaleFactor
+      : 1;
+
+  addDisplaySizeCandidate(candidates, bounds.width, bounds.height);
+  addDisplaySizeCandidate(candidates, size.width, size.height);
+
+  if (scaleFactor !== 1) {
+    addDisplaySizeCandidate(
+      candidates,
+      bounds.width * scaleFactor,
+      bounds.height * scaleFactor,
+    );
+    addDisplaySizeCandidate(
+      candidates,
+      size.width * scaleFactor,
+      size.height * scaleFactor,
+    );
+  }
+
+  return candidates;
+}
+
+function displaySizeMatches(display, size) {
+  if (!size) return false;
+
+  return displaySizeCandidates(display).some(
+    (candidate) =>
+      (candidate.width === size.width && candidate.height === size.height) ||
+      (candidate.width === size.height && candidate.height === size.width),
+  );
+}
+
+function normalizeConnectorToken(value) {
+  return String(value || "")
+    .replace(/^card\d+-/i, "")
+    .replace(/^HDMI-A-/i, "HDMI-")
+    .replace(/^DP-/i, "DisplayPort-")
+    .toLowerCase();
+}
+
+function connectorAliases(connector) {
+  const withoutCard = String(connector || "").replace(/^card\d+-/i, "");
+  const aliases = new Set([
+    withoutCard,
+    normalizeConnectorToken(withoutCard),
+    withoutCard.replace(/^HDMI-A-/i, "HDMI-"),
+    withoutCard.replace(/^DisplayPort-/i, "DP-"),
+  ]);
+
+  if (/^eDP-/i.test(withoutCard)) {
+    aliases.add("edp");
+    aliases.add("built-in");
+    aliases.add("internal");
+  }
+
+  return Array.from(aliases)
+    .map((alias) => String(alias || "").toLowerCase())
+    .filter(Boolean);
+}
+
+function displayLabelMatchesConnector(display, drmDisplay) {
+  const label = String(display?.label || "").toLowerCase();
+  if (!label) return false;
+
+  return connectorAliases(drmDisplay?.connector).some((alias) =>
+    label.includes(alias),
+  );
+}
+
+function scoreDrmDisplayMatch(display, drmDisplay) {
+  let score = 0;
+
+  if (displayLabelMatchesConnector(display, drmDisplay)) {
+    score += 120;
+  }
+
+  if (displaySizeMatches(display, drmDisplay?.currentResolution)) {
+    score += 80;
+  } else if (displaySizeMatches(display, drmDisplay?.nativeResolution)) {
+    score += 65;
+  } else if (
+    Array.isArray(drmDisplay?.modes) &&
+    drmDisplay.modes.some((modeSize) => displaySizeMatches(display, modeSize))
+  ) {
+    score += 8;
+  }
+
+  if (typeof display?.internal === "boolean") {
+    score += display.internal === Boolean(drmDisplay?.internal) ? 20 : -15;
+  }
+
+  return score;
+}
+
+function matchDrmDisplaysToElectronDisplays(displays, drmDisplays) {
+  const matches = new Map();
+  const usedDrmIndexes = new Set();
+  const minimumScore = 50;
+  const minimumMargin = 20;
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    const confidentMatches = [];
+
+    displays.forEach((display, displayIndex) => {
+      if (matches.has(displayIndex)) return;
+
+      const candidates = drmDisplays
+        .map((drmDisplay, drmIndex) => ({
+          drmDisplay,
+          drmIndex,
+          score: usedDrmIndexes.has(drmIndex)
+            ? Number.NEGATIVE_INFINITY
+            : scoreDrmDisplayMatch(display, drmDisplay),
+        }))
+        .filter((candidate) => candidate.score >= minimumScore)
+        .sort((a, b) => b.score - a.score);
+
+      const best = candidates[0];
+      if (!best) return;
+
+      const secondBest = candidates[1];
+      const margin = secondBest
+        ? best.score - secondBest.score
+        : Number.POSITIVE_INFINITY;
+      if (margin >= minimumMargin) {
+        confidentMatches.push({
+          displayIndex,
+          ...best,
+          margin,
+        });
+      }
+    });
+
+    confidentMatches
+      .sort((a, b) => b.score - a.score || b.margin - a.margin)
+      .forEach((match) => {
+        if (matches.has(match.displayIndex) || usedDrmIndexes.has(match.drmIndex)) {
+          return;
+        }
+
+        matches.set(match.displayIndex, match.drmDisplay);
+        usedDrmIndexes.add(match.drmIndex);
+        changed = true;
+      });
+  }
+
+  const unmatchedDisplayIndexes = displays
+    .map((display, index) => index)
+    .filter((index) => !matches.has(index));
+  const unmatchedDrmIndexes = drmDisplays
+    .map((display, index) => index)
+    .filter((index) => !usedDrmIndexes.has(index));
+
+  if (unmatchedDisplayIndexes.length === 1 && unmatchedDrmIndexes.length === 1) {
+    matches.set(unmatchedDisplayIndexes[0], drmDisplays[unmatchedDrmIndexes[0]]);
+  }
+
+  return matches;
+}
+
+function nameForDrmDisplay(drmDisplay) {
+  const manufacturer = drmDisplay?.manufacturer
+    ? `${drmDisplay.manufacturer} `
+    : "";
+  const name = drmDisplay?.name || "";
+  return name.includes(manufacturer) ? name : `${manufacturer}${name}`.trim();
+}
+
+function fallbackLinuxDisplayName(display, index) {
+  if (display?.label) return display.label;
+  if (display?.internal) return "Internal Display";
+  return `Display ${index + 1}`;
+}
+
 function parseEdid(edidBuffer) {
   try {
     // Verify buffer size
@@ -911,6 +1165,11 @@ function parseEdid(edidBuffer) {
     // Parse descriptor blocks
     for (let i = 54; i <= 108; i += 18) {
       try {
+        const timingResolution = parseDetailedTimingResolution(edidBuffer, i);
+        if (timingResolution && !result.resolution) {
+          result.resolution = timingResolution;
+        }
+
         const block = parseDescriptorBlock(edidBuffer, i);
         if (block) {
           if (block.type === 0xfc && !result.modelName) {
@@ -995,7 +1254,9 @@ async function getConnectedDisplays() {
 
           // Try to read EDID
           const edidPath = displayPath + "/" + "edid";
+          const modesPath = displayPath + "/" + "modes";
           let edidInfo = null;
+          let modeSizes = [];
 
           try {
             const edidBuffer = await readFile(edidPath);
@@ -1004,8 +1265,15 @@ async function getConnectedDisplays() {
             console.debug(`Failed to read EDID for ${entry}:`, edidError);
           }
 
+          try {
+            modeSizes = parseDisplayModeSizes(await readFile(modesPath, "utf8"));
+          } catch (modesError) {
+            console.debug(`Failed to read display modes for ${entry}:`, modesError);
+          }
+
           const isInternalDisplay = entry.includes("eDP");
           const name = edidInfo?.displayName || entry.replace(/^card\d+-/, "");
+          const preferredResolution = modeSizes[0] || null;
 
           // Return all information without attempting to match displays yet
           return {
@@ -1019,7 +1287,9 @@ async function getConnectedDisplays() {
                   week: edidInfo.week,
                 }
               : null,
-            nativeResolution: edidInfo?.resolution || null,
+            nativeResolution: edidInfo?.resolution || preferredResolution,
+            currentResolution: preferredResolution,
+            modes: modeSizes,
             internal: isInternalDisplay,
             connector: entry,
           };
@@ -1055,19 +1325,6 @@ async function handleGetAllDisplays() {
   if (process.platform === "linux") {
     try {
       edidDisplayInfo = await getConnectedDisplays();
-
-      // Sort EDID info to match Electron's display order
-      edidDisplayInfo.sort((a, b) => {
-        // Put internal display (eDP) first
-        const aIsInternal = a.connector.includes("eDP");
-        const bIsInternal = b.connector.includes("eDP");
-        if (aIsInternal !== bIsInternal) return bIsInternal ? 1 : -1;
-
-        // Then sort by connector number
-        const aNum = parseInt(a.connector.match(/\d+/)?.[0] || 0);
-        const bNum = parseInt(b.connector.match(/\d+/)?.[0] || 0);
-        return aNum - bNum;
-      });
     } catch (error) {
       console.error("Failed to get EDID info:", error);
     }
@@ -1078,24 +1335,19 @@ async function handleGetAllDisplays() {
     console.log("Electron Displays:", displays);
   }
 
+  const linuxDrmDisplayMatches =
+    process.platform === "linux"
+      ? matchDrmDisplaysToElectronDisplays(displays, edidDisplayInfo)
+      : new Map();
+
   const displayOptions = displays.map((display, index) => {
     let name;
 
     switch (process.platform) {
       case "linux":
-        // Match displays based on index after sorting
-        const matchingDisplay = edidDisplayInfo[index];
-
-        if (matchingDisplay) {
-          const manufacturer = matchingDisplay.manufacturer
-            ? `${matchingDisplay.manufacturer} `
-            : "";
-          name = matchingDisplay.name.includes(manufacturer)
-            ? matchingDisplay.name
-            : `${manufacturer}${matchingDisplay.name}`;
-        } else {
-          name = display.internal ? "Internal Display" : "External Display";
-        }
+        name =
+          nameForDrmDisplay(linuxDrmDisplayMatches.get(index)) ||
+          fallbackLinuxDisplayName(display, index);
         break;
 
       case "win32":
