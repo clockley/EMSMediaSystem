@@ -20,16 +20,6 @@
 <body class="grid-container">
   <header class="headerbar">
     <div class="headerbar-start">
-      <form>
-        <div class="tabs">
-          <input type="radio" id="MdPlyrRBtnFrmID" name="plystTyp" value="Media Player" checked>
-          <label for="MdPlyrRBtnFrmID" class="tab">Media</label>
-          <input type="radio" id="YtPlyrRBtnFrmID" name="plystTyp" value="YouTube Live Stream">
-          <label for="YtPlyrRBtnFrmID" class="tab">Streams</label>
-          <!-- <input type="radio" id="TxtPlyrRBtnFrmID" name="plystTyp" value="Text">
-          <label for="TxtPlyrRBtnFrmID" class="tab">Text</label> -->
-        </div>
-      </form>
     </div>
     <div id="WindowTitle">EMS Media System</div>
 
@@ -118,12 +108,10 @@
     </div>
   </header>
   <main>
-    <!-- Persistent shells: Media ↔ Streams switches toggle visibility instead of
-         nuking innerHTML, so the browser skips reparsing the large media UI and
-         queue list while a presentation keeps running. -->
+    <!-- Persistent media shell: presentation elements stay mounted while the
+         schedule UI refreshes, so live playback is not interrupted. -->
     <div id="dyneForm">
       <div id="tab-panel-media" class="tab-panel tab-panel--media"></div>
-      <div id="tab-panel-streams" class="tab-panel tab-panel--streams" hidden></div>
     </div>
   </main>
   </div>

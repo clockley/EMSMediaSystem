@@ -36,6 +36,10 @@ let video = null;
  */
 let hlsInstance = null;
 let dashPlayer = null;
+let previewRtcPeer = null;
+let previewRtcSessionId = "";
+let previewRtcStream = null;
+let previewRtcPendingCandidates = [];
 /** Object URL backing the active dash.js manifest, revoked when the player is torn down. */
 let dashManifestObjectUrl = null;
 /** Guards one-time installation of the <video> playback event wiring. */
@@ -52,6 +56,7 @@ var strtvl = 1;
 var strtTm = 0;
 var isText = false;
 var liveStreamMode = false;
+var seekableNetworkMode = false;
 var isImg = false;
 var isPptx = false;
 var isLowerThirdOutput = false;
@@ -64,6 +69,8 @@ var debugPlayback = false;
 let pptxIpcHandlersInstalled = false;
 let textIpcHandlersInstalled = false;
 let ipcHandlersInstalled = false;
+const PRESENTATION_START_BUFFER_SECONDS = 12;
+const PRESENTATION_START_BUFFER_TIMEOUT_MS = 12000;
 const PPTX_SMALL_DECK_MAX_SLIDES = 30;
 const PPTX_LARGE_DECK_MIN_SLIDES = 151;
 const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
@@ -310,6 +317,8 @@ do {
     pptxStartSlide = parseInt(argv[i].substring(12), 10) || 0;
   } else if (argv[i] === "__live-stream=true") {
     liveStreamMode = true;
+  } else if (argv[i] === "__seekable-network=true") {
+    seekableNetworkMode = true;
   } else if (argv[i].startsWith("__start-t")) {
     strtTm = parseFloat(argv[i].substring(13));
   } else if (argv[i].startsWith("__start-v")) {
@@ -408,6 +417,89 @@ function waitForMediaMetadata(mediaEl) {
   });
 }
 
+function mediaElementBufferedAhead(mediaEl) {
+  if (!mediaEl?.buffered || typeof mediaEl.buffered.length !== "number") return 0;
+  const current = Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0;
+  let bestAhead = 0;
+  for (let i = 0; i < mediaEl.buffered.length; i += 1) {
+    let start = 0;
+    let end = 0;
+    try {
+      start = mediaEl.buffered.start(i);
+      end = mediaEl.buffered.end(i);
+    } catch {
+      continue;
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      continue;
+    }
+    if (current >= start && current <= end) {
+      bestAhead = Math.max(bestAhead, end - current);
+    } else if (current < start) {
+      bestAhead = Math.max(bestAhead, end - start);
+    }
+  }
+  return bestAhead;
+}
+
+function waitForMediaStartBuffer(
+  mediaEl,
+  targetSeconds = PRESENTATION_START_BUFFER_SECONDS,
+  timeoutMs = PRESENTATION_START_BUFFER_TIMEOUT_MS,
+) {
+  if (!mediaEl || !Number.isFinite(targetSeconds) || targetSeconds <= 0) {
+    return Promise.resolve();
+  }
+  if (mediaElementBufferedAhead(mediaEl) >= targetSeconds) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      mediaEl.removeEventListener("progress", check);
+      mediaEl.removeEventListener("loadeddata", check);
+      mediaEl.removeEventListener("canplay", check);
+      mediaEl.removeEventListener("canplaythrough", check);
+      mediaEl.removeEventListener("stalled", check);
+      mediaEl.removeEventListener("waiting", check);
+      if (timer !== null) window.clearTimeout(timer);
+      resolve();
+    };
+    const check = () => {
+      const remaining =
+        Number.isFinite(mediaEl.duration) && mediaEl.duration > 0
+          ? Math.max(0, mediaEl.duration - (mediaEl.currentTime || 0))
+          : targetSeconds;
+      const effectiveTarget = Math.min(targetSeconds, remaining || targetSeconds);
+      if (mediaElementBufferedAhead(mediaEl) >= effectiveTarget) {
+        finish();
+      }
+    };
+    mediaEl.addEventListener("progress", check);
+    mediaEl.addEventListener("loadeddata", check);
+    mediaEl.addEventListener("canplay", check);
+    mediaEl.addEventListener("canplaythrough", check);
+    mediaEl.addEventListener("stalled", check);
+    mediaEl.addEventListener("waiting", check);
+    timer = window.setTimeout(finish, timeoutMs);
+    check();
+  });
+}
+
+async function playVideoWithStartupBuffer(errorContext = "Video playback did not start") {
+  await waitForMediaStartBuffer(video);
+  return video.play().catch((error) => {
+    if (typeof errorContext === "string" && errorContext.length > 0) {
+      reportProjectionError(errorContext, error);
+    }
+    markPlaybackStateStable();
+    playbackStateUpdate();
+  });
+}
+
 async function applyVideoStartTime(mediaEl, requestedStartTime) {
   if (!mediaEl || !Number.isFinite(requestedStartTime) || requestedStartTime <= 0) {
     return;
@@ -421,19 +513,30 @@ async function applyVideoStartTime(mediaEl, requestedStartTime) {
   mediaEl.currentTime = safeTime;
 }
 
+async function effectiveWindowStartTime() {
+  if (!Number.isFinite(strtTm) || strtTm <= 0) return 0;
+  if (seekOnly) return strtTm;
+  const ts = await ipcRenderer.invoke("get-system-time");
+  return (
+    strtTm +
+    (ts.systemTime - birth) +
+    (Date.now() - ts.ipcTimestamp) * 0.001
+  );
+}
+
 /**
  * hls.js tuning for network streams (YouTube live HLS, generic m3u8) in the
- * projection window. Start quickly on live streams, then let ABR climb once
- * hls.js has measured real segment throughput.
+ * projection window. Favor a deeper buffer before playback over starting on
+ * the live edge.
  */
 const HLS_PRESENTATION_CONFIG = {
-  maxBufferLength: 30,
-  maxMaxBufferLength: 180,
-  maxBufferSize: 80 * 1000 * 1000,
+  maxBufferLength: 120,
+  maxMaxBufferLength: 720,
+  maxBufferSize: 320 * 1000 * 1000,
   startFragPrefetch: true,
   highBufferWatchdogPeriod: 1,
-  /** Live only: stay about 30s behind live for a larger stability cushion. */
-  liveSyncDuration: 30,
+  /** Live only: stay about 120s behind live for a larger stability cushion. */
+  liveSyncDuration: 120,
   /** Prefer filling the standard buffer over LL-HLS “stay on the edge” behaviour */
   lowLatencyMode: false,
   /** Quality: never cap quality to player render size — projection is fullscreen. */
@@ -458,11 +561,11 @@ function configureDashAggressiveBuffer(player) {
   player.updateSettings({
     streaming: {
       buffer: {
-        bufferTimeDefault: 45,
-        bufferTimeAtTopQuality: 35,
-        bufferTimeAtTopQualityLongForm: 90,
-        initialBufferLevel: 15,
-        bufferToKeep: 40,
+        bufferTimeDefault: 90,
+        bufferTimeAtTopQuality: 70,
+        bufferTimeAtTopQualityLongForm: 180,
+        initialBufferLevel: 30,
+        bufferToKeep: 80,
       },
       scheduling: {
         scheduleWhilePaused: true,
@@ -741,10 +844,7 @@ async function activateVideoTarget(data) {
     playbackStateUpdate();
     return;
   }
-  await video.play().catch(() => {
-    markPlaybackStateStable();
-    playbackStateUpdate();
-  });
+  await playVideoWithStartupBuffer(null);
 }
 
 /**
@@ -763,7 +863,7 @@ async function startLiveStreamPlayback(url) {
   liveStreamMode = true;
 
   let ytResolved = null;
-  streamActsAsLiveEdge = !matchYouTubeUrl(url);
+  streamActsAsLiveEdge = !seekableNetworkMode && !matchYouTubeUrl(url);
   if (matchYouTubeUrl(url)) {
     showStreamLoading("Resolving YouTube stream");
     ytResolved = await ipcRenderer.invoke("resolve-youtube-stream", url);
@@ -824,6 +924,13 @@ async function startLiveStreamPlayback(url) {
     }
     hlsInstance.attachMedia(video);
   }
+  if (!streamActsAsLiveEdge && Number.isFinite(strtTm) && strtTm > 0) {
+    try {
+      await applyVideoStartTime(video, await effectiveWindowStartTime());
+    } catch (err) {
+      console.error("Failed to apply network video start time:", err);
+    }
+  }
   // once:true so each stream load installs exactly one track-selection pass and
   // nothing accumulates on the persistent <video> element across slipstreams.
   video.addEventListener(
@@ -831,11 +938,7 @@ async function startLiveStreamPlayback(url) {
     () => selectPreferredNativeAudioTrack(video),
     { once: true },
   );
-  video
-    .play()
-    .catch((error) =>
-      reportProjectionError("Live stream playback did not start", error),
-    );
+  await playVideoWithStartupBuffer("Live stream playback did not start");
 }
 
 /**
@@ -1046,6 +1149,170 @@ function reapplyOutputHoldIfActive() {
   }
 }
 
+function sendPreviewRtcSignal(message) {
+  ipcRenderer.send("media-preview-rtc-to-control", message);
+}
+
+function closePreviewRtcPeer(options = {}) {
+  const sessionId = previewRtcSessionId;
+  if (options.notifyControl !== false && sessionId) {
+    sendPreviewRtcSignal({ type: "closed", sessionId });
+  }
+  if (previewRtcPeer) {
+    try {
+      previewRtcPeer.onicecandidate = null;
+      previewRtcPeer.onconnectionstatechange = null;
+      previewRtcPeer.close();
+    } catch {}
+  }
+  if (previewRtcStream) {
+    previewRtcStream.getTracks().forEach((track) => {
+      try {
+        track.stop();
+      } catch {}
+    });
+  }
+  previewRtcPeer = null;
+  previewRtcSessionId = "";
+  previewRtcStream = null;
+  previewRtcPendingCandidates = [];
+}
+
+function captureMediaWindowVideoStream() {
+  const mediaEl = video || window.api?.video;
+  const captureStream =
+    typeof mediaEl?.captureStream === "function"
+      ? mediaEl.captureStream.bind(mediaEl)
+      : typeof mediaEl?.mozCaptureStream === "function"
+        ? mediaEl.mozCaptureStream.bind(mediaEl)
+        : null;
+  return captureStream ? captureStream() : null;
+}
+
+function waitForPreviewCaptureTracks(stream) {
+  if (!stream) return Promise.resolve(null);
+  if (stream.getVideoTracks().length > 0) return Promise.resolve(stream);
+  return new Promise((resolve) => {
+    let settled = false;
+    let retryTimer = null;
+    let timeoutTimer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      stream.removeEventListener?.("addtrack", onTrack);
+      video?.removeEventListener?.("loadedmetadata", onMediaReady);
+      video?.removeEventListener?.("playing", onMediaReady);
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      if (timeoutTimer !== null) window.clearTimeout(timeoutTimer);
+      resolve(stream);
+    };
+    const onTrack = () => {
+      if (stream.getVideoTracks().length > 0) finish();
+    };
+    const onMediaReady = () => {
+      if (stream.getVideoTracks().length > 0) {
+        finish();
+        return;
+      }
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        if (stream.getVideoTracks().length > 0) finish();
+      }, 120);
+    };
+    stream.addEventListener?.("addtrack", onTrack);
+    video?.addEventListener?.("loadedmetadata", onMediaReady);
+    video?.addEventListener?.("playing", onMediaReady);
+    timeoutTimer = window.setTimeout(finish, 2000);
+    onMediaReady();
+  });
+}
+
+async function startPreviewRtcPeer(message = {}) {
+  if (!message.sessionId || !message.sdp) return;
+  closePreviewRtcPeer({ notifyControl: false });
+
+  const peer = new RTCPeerConnection();
+  previewRtcPeer = peer;
+  previewRtcSessionId = message.sessionId;
+  previewRtcPendingCandidates = [];
+  peer.onicecandidate = (event) => {
+    if (!event.candidate) return;
+    sendPreviewRtcSignal({
+      type: "candidate",
+      sessionId: previewRtcSessionId,
+      candidate: event.candidate.toJSON
+        ? event.candidate.toJSON()
+        : event.candidate,
+    });
+  };
+  peer.onconnectionstatechange = () => {
+    if (
+      peer.connectionState === "failed" ||
+      peer.connectionState === "closed" ||
+      peer.connectionState === "disconnected"
+    ) {
+      if (previewRtcPeer === peer) {
+        closePreviewRtcPeer({ notifyControl: peer.connectionState !== "closed" });
+      }
+    }
+  };
+
+  try {
+    await peer.setRemoteDescription({ type: "offer", sdp: message.sdp });
+    const pending = previewRtcPendingCandidates;
+    previewRtcPendingCandidates = [];
+    for (const candidate of pending) {
+      await peer.addIceCandidate(candidate);
+    }
+    previewRtcStream = await waitForPreviewCaptureTracks(captureMediaWindowVideoStream());
+    if (!previewRtcStream || previewRtcStream.getVideoTracks().length === 0) {
+      throw new Error("Media window capture stream did not expose tracks");
+    }
+    previewRtcStream.getVideoTracks().forEach((track) => {
+      peer.addTrack(track, previewRtcStream);
+    });
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    sendPreviewRtcSignal({
+      type: "answer",
+      sessionId: previewRtcSessionId,
+      sdp: peer.localDescription?.sdp || answer.sdp,
+    });
+  } catch (err) {
+    reportProjectionError("Preview capture could not start", err);
+    closePreviewRtcPeer();
+  }
+}
+
+async function handlePreviewRtcSignal(_event, message = {}) {
+  if (!message || typeof message !== "object") return;
+  if (message.type === "offer") {
+    await startPreviewRtcPeer(message);
+    return;
+  }
+  if (message.type === "candidate") {
+    if (
+      previewRtcPeer &&
+      message.sessionId === previewRtcSessionId &&
+      message.candidate
+    ) {
+      try {
+        if (!previewRtcPeer.remoteDescription) {
+          previewRtcPendingCandidates.push(message.candidate);
+          return;
+        }
+        await previewRtcPeer.addIceCandidate(message.candidate);
+      } catch (err) {
+        console.error("Failed to add preview RTC candidate:", err);
+      }
+    }
+    return;
+  }
+  if (message.type === "close" && message.sessionId === previewRtcSessionId) {
+    closePreviewRtcPeer({ notifyControl: false });
+  }
+}
+
 let outputHoldHandlersInstalled = false;
 function installOutputHoldHandlers() {
   if (outputHoldHandlersInstalled) return;
@@ -1091,7 +1358,7 @@ function installICPHandlers() {
       video.pause();
       playbackStateUpdate();
     } else if (cmd == "play") {
-      await video.play();
+      await playVideoWithStartupBuffer(null);
     }
   });
 
@@ -1101,6 +1368,14 @@ function installICPHandlers() {
 
   ipcRenderer.on("slipstream", async (event, data) => {
     await applySlipstream(data);
+  });
+
+  ipcRenderer.on("media-preview-rtc-signal", (event, message) => {
+    void handlePreviewRtcSignal(event, message);
+  });
+
+  window.addEventListener("pagehide", () => {
+    closePreviewRtcPeer();
   });
 }
 
@@ -1207,7 +1482,7 @@ function pauseMediaSessionHandler() {
 
 function playMediaSessionHandler() {
   ipcRenderer.send("remoteplaypause", false);
-  video.play();
+  void playVideoWithStartupBuffer(null);
 }
 
 function matchYouTubeUrl(url) {
@@ -2278,10 +2553,7 @@ async function loadMedia() {
   installVideoPlaybackWiring();
 
   if (autoPlay) {
-    video.play().catch(() => {
-      markPlaybackStateStable();
-      playbackStateUpdate();
-    });
+    void playVideoWithStartupBuffer(null);
   }
 }
 

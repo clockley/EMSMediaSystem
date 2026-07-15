@@ -82,6 +82,7 @@ import {
   TAB_PANEL_STREAMS_ID,
   generateDyneTabShellHTML,
   generateMediaFormHTML,
+  generateNetworkItemDialogHTML,
   generateStreamsPanelHTML,
   queueTypeIconMarkup,
 } from "./app-ui-templates.mjs";
@@ -298,8 +299,8 @@ var pidSeeking = false;
  * flag must outlive the first handler call — otherwise the second event
  * sees `pidSeeking === false`, falls through, and echoes a
  * `timeGoto-message` back to the projection (visible as periodic
- * pauses/glitches, especially on the Streams tab where the hidden,
- * throttled preview drifts more and PID corrections fire more often).
+ * pauses/glitches, especially when a hidden preview is throttled and drifts
+ * enough for PID corrections to fire more often).
  * The timer is the single source of truth for when the swallow window
  * closes; handlers no longer reset the flag themselves.
  */
@@ -355,6 +356,29 @@ let previewLoadToken = 0;
 let streamRendererPreviewStream = null;
 let streamRendererPreviewStartPromise = null;
 let streamRendererPreviewQualityMode = null;
+let networkPreviewHlsInstance = null;
+let networkPreviewDashPlayer = null;
+let networkPreviewDashManifestObjectUrl = null;
+let networkPreviewCueHlsInstance = null;
+let networkPreviewCueDashPlayer = null;
+let networkPreviewCueDashManifestObjectUrl = null;
+let networkPreviewCueSource = "";
+let networkPreviewMirrorSource = "";
+let networkPreviewMirrorStream = null;
+let networkPreviewRtcPeer = null;
+let networkPreviewRtcSessionId = "";
+let networkPreviewRtcPendingCandidates = [];
+let networkPreviewTransportState = {
+  currentTime: 0,
+  duration: 0,
+  updatedAt: 0,
+  paused: true,
+  volume: 1,
+  muted: false,
+  mediaFile: "",
+};
+const NETWORK_PREVIEW_PREROLL_BUFFER_SECONDS = 12;
+const NETWORK_PREVIEW_PREROLL_TIMEOUT_MS = 12000;
 let liveStartToken = 0;
 let isHandlingLiveEnded = false;
 let isAdvancingQueue = false;
@@ -412,6 +436,8 @@ configureCountdown({
   isVideoPreviewCueActive: () => isVideoPreviewCueActive(),
   mediaPathMatchesCurrentLiveMedia: (filePath) => mediaPathMatchesCurrentLiveMedia(filePath),
   mediaPlayerMode: MEDIAPLAYER,
+  onRemoteTimeTick: (duration, currentTime, timestamp, tickMediaFile) =>
+    handleRemoteMediaWindowTimeTick(duration, currentTime, timestamp, tickMediaFile),
   setLocalTimeStampUpdateIsRunning: (value) => {
     localTimeStampUpdateIsRunning = value;
   },
@@ -531,6 +557,13 @@ function projectGuidFromState(state) {
     normalizeProjectGuid(state?.projectGuid) ||
     normalizeProjectGuid(state?.project?.guid)
   );
+}
+
+function restoredQueueMediaType(savedType, itemPath) {
+  if (["video", "audio", "image", "pptx", "file"].includes(savedType)) {
+    return savedType;
+  }
+  return classifyQueueMediaType(itemPath);
 }
 
 configureBibleScriptureRender({
@@ -1635,6 +1668,9 @@ async function playVideoSafely(mediaEl, context = "", options = {}) {
     return false;
   }
   try {
+    if (previewMediaElementNeedsBufferedStart(mediaEl)) {
+      await waitForMediaElementBuffer(mediaEl);
+    }
     await mediaEl.play();
     return true;
   } catch (error) {
@@ -1647,6 +1683,24 @@ async function playVideoSafely(mediaEl, context = "", options = {}) {
     }
     return false;
   }
+}
+
+function previewMediaElementNeedsBufferedStart(mediaEl) {
+  if (!mediaEl || mediaEl.srcObject) return false;
+  if (mediaEl === previewCueVideo) {
+    return isNetworkVideoPreviewCueActive();
+  }
+  if (mediaEl !== video || networkPreviewUsesRendererCapture()) {
+    return false;
+  }
+  const source =
+    networkPreviewMirrorSource ||
+    activePreviewResolvedMediaFile ||
+    mediaFile ||
+    mediaEl.currentSrc ||
+    mediaEl.src ||
+    "";
+  return isNetworkStreamSource(source) || isHlsNetworkSource(source);
 }
 
 async function playLivePreviewMirrorSafely(context = "") {
@@ -1875,9 +1929,18 @@ function queueItemSupportsCueStartTime(item) {
       !isQueueItemBible(item) &&
       !isQueueItemImage(item) &&
       !isQueueItemPptx(item) &&
-      !isLiveStream(item.path) &&
+      !queueItemIsLiveEdgeStream(item) &&
       (isQueueItemAudio(item) || isQueueItemVideo(item) || item.type === "file"),
   );
+}
+
+function queueItemIsLiveEdgeStream(item) {
+  if (!item) return false;
+  const network = item.networkSource;
+  if (network?.kind === "stream" || network?.isLive === true) return true;
+  if (network?.kind === "video" || network?.kind === "audio") return false;
+  if (network && matchYouTubeNetworkUrl(item.path)) return false;
+  return isLiveStream(item.path);
 }
 
 function queueItemCueStartTime(item) {
@@ -2445,6 +2508,8 @@ function restoreNonPptxPreviewSurface(options = {}) {
 }
 
 function resetPreviewSurfaceToEmptyState() {
+  stopNetworkPreviewRtcCapture();
+  networkPreviewMirrorSource = "";
   stopLiveAudioPresentation();
   stopPreviewAudioCue();
   clearVideoPreviewCueOverlay();
@@ -2882,6 +2947,16 @@ function isVideoPreviewCueActive() {
       !isQueueItemAudio(cue.item) &&
       previewCueVideoIndex === previewCueIndex &&
       !previewCueVideo.hidden,
+  );
+}
+
+function isNetworkVideoPreviewCueActive() {
+  const cue = currentPreviewCue();
+  return Boolean(
+    isVideoPreviewCueActive() &&
+      cue &&
+      (isNetworkStreamSource(cue.item?.path) ||
+        isNetworkStreamSource(networkPreviewCueSource)),
   );
 }
 
@@ -3950,10 +4025,25 @@ function setActiveCueVolume(vol) {
   if (previewCueIndex >= 0 && previewCueIndex < mediaQueue.length) {
     mediaQueue[previewCueIndex].cueVolume = vol;
   }
+  if (isVideoPreviewCueActive()) {
+    const safe = Math.max(0, Math.min(1, Number.isFinite(vol) ? vol : 1));
+    previewCueVideo.volume = safe;
+    previewCueVideo.muted = safe === 0;
+    previewCueVideo.defaultMuted = false;
+  }
 }
 
 function isPreviewCueVolumeActive() {
   return previewCueIndex >= 0;
+}
+
+function getLivePreviewDisplayVolume() {
+  if (networkPreviewUsesRendererCapture()) {
+    return networkPreviewTransportState.muted
+      ? 0
+      : networkPreviewTransportState.volume;
+  }
+  return video?.muted ? 0 : (video?.volume ?? 1);
 }
 
 /** Slider level while a cue is loaded — stored cueVolume wins over live mirror. */
@@ -3964,7 +4054,7 @@ function getPreviewCueDisplayVolume() {
   const item = mediaQueue[previewCueIndex];
   if (Number.isFinite(item?.cueVolume)) return item.cueVolume;
   if (pendingCueVolume !== null) return pendingCueVolume;
-  return video?.muted ? 0 : (video?.volume ?? 1);
+  return getLivePreviewDisplayVolume();
 }
 
 /** Persist the in-memory cue slider value onto the active queue entry. */
@@ -4061,6 +4151,189 @@ function ensurePreviewCueVideoElement() {
   return previewCueVideo;
 }
 
+function setPreviewCueVideoLocalAudio(el = previewCueVideo) {
+  if (!el) return;
+  const vol = Math.max(
+    0,
+    Math.min(
+      1,
+      Number.isFinite(pendingCueVolume)
+        ? pendingCueVolume
+        : getPreviewCueDisplayVolume() ?? 1,
+    ),
+  );
+  el.muted = vol === 0;
+  el.defaultMuted = false;
+  el.volume = vol;
+  el.playsInline = true;
+  disableNativeVideoControls(el);
+}
+
+function waitForMediaElementSource(mediaEl, timeoutMs = 750) {
+  if (!mediaEl || mediaEl.src) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      mediaEl.removeEventListener("loadstart", finish);
+      mediaEl.removeEventListener("loadedmetadata", finish);
+      if (timer !== null) window.clearTimeout(timer);
+      resolve();
+    };
+    mediaEl.addEventListener("loadstart", finish, { once: true });
+    mediaEl.addEventListener("loadedmetadata", finish, { once: true });
+    timer = window.setTimeout(finish, timeoutMs);
+  });
+}
+
+function waitForMediaElementFrame(mediaEl, timeoutMs = 2500) {
+  if (!mediaEl) return Promise.resolve();
+  if (mediaEl.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      mediaEl.removeEventListener("loadeddata", finish);
+      mediaEl.removeEventListener("canplay", finish);
+      mediaEl.removeEventListener("playing", finish);
+      mediaEl.removeEventListener("timeupdate", finish);
+      if (timer !== null) window.clearTimeout(timer);
+      resolve();
+    };
+    mediaEl.addEventListener("loadeddata", finish, { once: true });
+    mediaEl.addEventListener("canplay", finish, { once: true });
+    mediaEl.addEventListener("playing", finish, { once: true });
+    mediaEl.addEventListener("timeupdate", finish, { once: true });
+    timer = window.setTimeout(finish, timeoutMs);
+  });
+}
+
+function mediaElementBufferedAhead(mediaEl) {
+  if (!mediaEl?.buffered || typeof mediaEl.buffered.length !== "number") return 0;
+  const current = Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0;
+  let bestAhead = 0;
+  for (let i = 0; i < mediaEl.buffered.length; i += 1) {
+    let start = 0;
+    let end = 0;
+    try {
+      start = mediaEl.buffered.start(i);
+      end = mediaEl.buffered.end(i);
+    } catch {
+      continue;
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      continue;
+    }
+    if (current >= start && current <= end) {
+      bestAhead = Math.max(bestAhead, end - current);
+    } else if (current < start) {
+      bestAhead = Math.max(bestAhead, end - start);
+    }
+  }
+  return bestAhead;
+}
+
+function waitForMediaElementBuffer(
+  mediaEl,
+  targetSeconds = NETWORK_PREVIEW_PREROLL_BUFFER_SECONDS,
+  timeoutMs = NETWORK_PREVIEW_PREROLL_TIMEOUT_MS,
+) {
+  if (!mediaEl || !Number.isFinite(targetSeconds) || targetSeconds <= 0) {
+    return Promise.resolve();
+  }
+  if (mediaElementBufferedAhead(mediaEl) >= targetSeconds) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      mediaEl.removeEventListener("progress", check);
+      mediaEl.removeEventListener("canplay", check);
+      mediaEl.removeEventListener("canplaythrough", check);
+      mediaEl.removeEventListener("timeupdate", check);
+      mediaEl.removeEventListener("stalled", check);
+      mediaEl.removeEventListener("waiting", check);
+      if (timer !== null) window.clearTimeout(timer);
+      resolve();
+    };
+    const check = () => {
+      const remaining =
+        Number.isFinite(mediaEl.duration) && mediaEl.duration > 0
+          ? Math.max(0, mediaEl.duration - (mediaEl.currentTime || 0))
+          : targetSeconds;
+      const effectiveTarget = Math.min(targetSeconds, remaining || targetSeconds);
+      if (mediaElementBufferedAhead(mediaEl) >= effectiveTarget) {
+        finish();
+      }
+    };
+    mediaEl.addEventListener("progress", check);
+    mediaEl.addEventListener("canplay", check);
+    mediaEl.addEventListener("canplaythrough", check);
+    mediaEl.addEventListener("timeupdate", check);
+    mediaEl.addEventListener("stalled", check);
+    mediaEl.addEventListener("waiting", check);
+    timer = window.setTimeout(finish, timeoutMs);
+    check();
+  });
+}
+
+async function primeNetworkPreviewElement(mediaEl, restoreAudioState) {
+  if (!mediaEl) return false;
+  if (mediaEl.srcObject) return false;
+  const startTime = Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0;
+
+  beginPreviewForwardingSuppression();
+  try {
+    mediaEl.preload = "auto";
+    await waitForMediaElementFrame(mediaEl);
+    await waitForMediaElementBuffer(mediaEl);
+    if (
+      Number.isFinite(mediaEl.duration) &&
+      mediaEl.duration > 0 &&
+      Number.isFinite(startTime) &&
+      Math.abs(mediaEl.currentTime - startTime) > 0.1
+    ) {
+      try {
+        mediaEl.currentTime = clampMediaTime(startTime, mediaEl.duration);
+      } catch {}
+    }
+    return true;
+  } catch (err) {
+    if (!isPlayInterruptedError(err)) {
+      console.error("Failed to prime network preview:", err);
+    }
+    return false;
+  } finally {
+    if (typeof restoreAudioState === "function") {
+      restoreAudioState(mediaEl);
+    }
+    endPreviewForwardingSuppression();
+  }
+}
+
+async function waitForCueVideoMetadata(el, itemIsNetworkVideo) {
+  if (itemIsNetworkVideo) {
+    await waitForMediaElementSource(el);
+  }
+  try {
+    await waitForLoadedMetadata(el);
+  } catch (err) {
+    if (itemIsNetworkVideo && !el?.error) {
+      return;
+    }
+    throw err;
+  }
+}
+
 /**
  * Load a queued video item into the dedicated cue overlay, seek it to the
  * cue start, and reveal it on top of the live mirror. The main #preview
@@ -4080,29 +4353,42 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, l
   const liveImg = document.querySelector("img#preview");
   if (liveImg) liveImg.style.display = "none";
 
+  const resolvedPath = await resolveQueueItemMediaPath(item);
+  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
+    if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
+    return;
+  }
+  const itemIsNetworkVideo =
+    isNetworkStreamSource(item?.path) || isNetworkStreamSource(resolvedPath);
+
   try {
     el.pause();
   } catch {
     /* ignore */
   }
-  el.muted = true;
-  el.volume = 0;
+  teardownNetworkPreviewCueStreamingPlayers();
+  setPreviewCueVideoLocalAudio(el);
   el.loop = loopEnabledForQueueItem(item);
   el.preload = "metadata";
   el.removeAttribute("src");
   el.removeAttribute("poster");
   el.load();
-  const cueUrl = await stagedMediaUrlForItem(item);
-  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
-    if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
-    return;
+  if (itemIsNetworkVideo) {
+    networkPreviewCueSource = item?.path || resolvedPath;
+    const resources = await attachNetworkMediaSourceToElement(el, networkPreviewCueSource);
+    networkPreviewCueHlsInstance = resources.hlsInstance;
+    networkPreviewCueDashPlayer = resources.dashPlayer;
+    networkPreviewCueDashManifestObjectUrl = resources.dashManifestObjectUrl;
+  } else {
+    const cueUrl = pathToMediaUrl(resolvedPath, queueItemMediaCacheBust(item));
+    el.src = cueUrl;
+    el.load();
   }
-  el.src = cueUrl;
-  el.load();
   el.hidden = false;
   setPreviewStackSurface(PREVIEW_SURFACE_CUE_VIDEO);
+  setPreviewCueVideoLocalAudio(el);
 
-  await waitForLoadedMetadata(el);
+  await waitForCueVideoMetadata(el, itemIsNetworkVideo);
   if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
     if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
     return;
@@ -4112,6 +4398,14 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, l
   if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
     if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
     return;
+  }
+
+  if (itemIsNetworkVideo) {
+    await primeNetworkPreviewElement(el, setPreviewCueVideoLocalAudio);
+    if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
+      if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
+      return;
+    }
   }
 
   setCueStartTime(index, actualStart);
@@ -4170,7 +4464,7 @@ function renderQueue() {
     listContainer.innerHTML =
       '<div class="list-placeholder">' +
       '<span class="list-placeholder-title">No items scheduled</span>' +
-      '<span class="list-placeholder-hint">Add media or Bible text to begin</span>' +
+      '<span class="list-placeholder-hint">Add media, network items, or Bible text</span>' +
       "</div>";
   } else {
     // Queue order is the primary source of truth. Badges show live/cued
@@ -4572,6 +4866,154 @@ function enqueuePathsFromFilePicker(paths) {
   })().catch((err) => console.error(err));
 }
 
+const NETWORK_ITEM_KINDS = new Set(["auto", "stream", "video", "audio"]);
+const NETWORK_ITEM_PROTOCOLS = new Set(["http:", "https:", "rtsp:", "rtmp:"]);
+
+function normalizeNetworkScheduleUrl(value) {
+  let candidate = String(value || "").trim();
+  if (!candidate) return "";
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(candidate);
+  if (!hasScheme) {
+    if (
+      /^(localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:]+\]|[^/\s]+\.[^/\s]+)(?::\d+)?(?:[/?#]|$)/i.test(
+        candidate,
+      )
+    ) {
+      candidate = `https://${candidate}`;
+    } else {
+      return "";
+    }
+  }
+  try {
+    const url = new URL(candidate);
+    if (!NETWORK_ITEM_PROTOCOLS.has(url.protocol)) return "";
+    if (!url.hostname) return "";
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+function networkItemTypeFromKind(url, kind) {
+  switch (kind) {
+    case "audio":
+      return "audio";
+    case "stream":
+    case "video":
+      return "video";
+    default:
+      return classifyQueueMediaType(url);
+  }
+}
+
+function networkItemNameFromUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (/youtu\.be|youtube\.com/i.test(parsed.hostname)) return "YouTube Video";
+    const pathName = decodeURIComponent(parsed.pathname || "");
+    const leaf = pathName.split("/").filter(Boolean).pop();
+    if (leaf) return leaf;
+    return parsed.hostname.replace(/^www\./i, "");
+  } catch {
+    return queueBasename(url);
+  }
+}
+
+async function resolveNetworkItemDisplayName(url, name) {
+  const details = await resolveNetworkItemDetails(url, name);
+  return details.displayName;
+}
+
+async function resolveNetworkItemDetails(url, name) {
+  const explicitName = typeof name === "string" ? name.trim() : "";
+  const details = {
+    displayName: explicitName || networkItemNameFromUrl(url),
+    youtubeMetadata: null,
+  };
+  if (!matchYouTubeNetworkUrl(url)) return details;
+
+  try {
+    const metadata = await invoke("get-youtube-metadata", url);
+    details.youtubeMetadata = metadata && typeof metadata === "object" ? metadata : null;
+    const title = typeof metadata?.title === "string" ? metadata.title.trim() : "";
+    if (!explicitName && title) details.displayName = title;
+  } catch (err) {
+    console.error("Failed to resolve YouTube title:", err);
+  }
+  return details;
+}
+
+function createNetworkQueueEntry({ url, name, kind, youtubeMetadata = null }) {
+  const safeKind = NETWORK_ITEM_KINDS.has(kind) ? kind : "auto";
+  const displayName =
+    typeof name === "string" && name.trim().length > 0
+      ? name.trim()
+      : networkItemNameFromUrl(url);
+  const entry = createQueueEntry(url, {
+    name: displayName,
+    type: networkItemTypeFromKind(url, safeKind),
+  });
+  entry.originalName = displayName;
+  entry.originalPath = url;
+  entry.missing = false;
+  entry.liveSource = undefined;
+  entry.networkSource = {
+    kind: safeKind,
+    addedAt: new Date().toISOString(),
+  };
+  if (youtubeMetadata && typeof youtubeMetadata === "object") {
+    entry.networkSource.youtubeVideoId =
+      typeof youtubeMetadata.videoId === "string" ? youtubeMetadata.videoId : undefined;
+    entry.networkSource.author =
+      typeof youtubeMetadata.author === "string" ? youtubeMetadata.author : undefined;
+    entry.networkSource.isLive = youtubeMetadata.isLive === true;
+  }
+  if (safeKind === "stream") {
+    entry.networkSource.isLive = true;
+  }
+  if (queueItemIsLiveEdgeStream(entry)) {
+    entry.loop = false;
+    entry.cueStartTime = 0;
+  }
+  return entry;
+}
+
+async function enqueueNetworkScheduleItem(options) {
+  const url = normalizeNetworkScheduleUrl(options?.url);
+  if (!url) return false;
+  if (currentMode !== MEDIAPLAYER) {
+    setSBFormMediaPlayer();
+  }
+
+  invalidateQueueUndoToastAfterMutation();
+  const itemDetails = await resolveNetworkItemDetails(url, options?.name);
+  const entry = createNetworkQueueEntry({
+    url,
+    name: itemDetails.displayName,
+    kind: options?.kind,
+    youtubeMetadata: itemDetails.youtubeMetadata,
+  });
+  const firstNewIndex = insertQueueEntriesAfterSelection([entry]);
+  if (firstNewIndex < 0) return false;
+  renderQueue();
+  saveMediaFile();
+  showGnomeToast("Network item added");
+
+  if (
+    !isActiveMediaWindow() &&
+    !isLocalAppWindowPresentationActive() &&
+    currentQueueIndex < 0 &&
+    mediaQueue[firstNewIndex]
+  ) {
+    try {
+      await onQueueItemActivate(firstNewIndex);
+    } catch (err) {
+      console.error("Failed to load network item preview:", err);
+    }
+  }
+  return true;
+}
+
 /** Electron open dialog preserves multi-selection order better than <input type="file">. */
 function installMediaOpenButton() {
   // The Add Media affordance lives in the headerbar (static markup), not the
@@ -4583,10 +5025,136 @@ function installMediaOpenButton() {
   button.addEventListener("click", openMediaFilesDialog);
 }
 
+function ensureNetworkItemDialog(panel = document.getElementById(TAB_PANEL_MEDIA_ID)) {
+  if (!panel) return null;
+  let dialog = document.getElementById("networkItemDialog");
+  if (!dialog) {
+    panel.insertAdjacentHTML("beforeend", generateNetworkItemDialogHTML());
+    dialog = document.getElementById("networkItemDialog");
+  }
+  return dialog;
+}
+
+function networkItemDialogElements() {
+  const dialog = document.getElementById("networkItemDialog");
+  if (!dialog) return {};
+  return {
+    dialog,
+    form: document.getElementById("networkItemForm"),
+    urlInput: document.getElementById("networkItemUrlInput"),
+    nameInput: document.getElementById("networkItemNameInput"),
+    addButton: document.getElementById("networkItemAddBtn"),
+    cancelButton: document.getElementById("networkItemCancelBtn"),
+    validation: document.getElementById("networkItemValidation"),
+  };
+}
+
+function selectedNetworkItemKind(form) {
+  const checked = form?.querySelector?.('input[name="networkItemKind"]:checked');
+  const value = checked?.value || "auto";
+  return NETWORK_ITEM_KINDS.has(value) ? value : "auto";
+}
+
+function updateNetworkItemDialogState() {
+  const { urlInput, addButton, validation } = networkItemDialogElements();
+  if (!urlInput || !addButton) return;
+  const rawUrl = urlInput.value || "";
+  const normalized = normalizeNetworkScheduleUrl(rawUrl);
+  const hasInput = rawUrl.trim().length > 0;
+  const valid = normalized.length > 0;
+  addButton.disabled = !valid;
+  urlInput.setAttribute("aria-invalid", hasInput && !valid ? "true" : "false");
+  if (validation) {
+    validation.textContent = hasInput && !valid
+      ? "Use an HTTP, HTTPS, RTSP, or RTMP URL."
+      : "";
+  }
+}
+
+function resetNetworkItemDialog() {
+  const { form, urlInput, nameInput, validation } = networkItemDialogElements();
+  if (form) form.reset();
+  if (urlInput) urlInput.value = "";
+  if (nameInput) nameInput.value = "";
+  if (validation) validation.textContent = "";
+  updateNetworkItemDialogState();
+}
+
+function openNetworkItemDialog() {
+  const dialog = ensureNetworkItemDialog();
+  if (!dialog) return;
+  installNetworkItemDialog();
+  if (dialog.open) return;
+  resetNetworkItemDialog();
+  if (typeof dialog.showModal === "function") {
+    dialog.showModal();
+  } else {
+    dialog.setAttribute("open", "");
+  }
+  window.setTimeout(() => {
+    document.getElementById("networkItemUrlInput")?.focus();
+  }, 0);
+}
+
+function closeNetworkItemDialog() {
+  const { dialog } = networkItemDialogElements();
+  if (!dialog) return;
+  if (typeof dialog.close === "function" && dialog.open) {
+    dialog.close();
+  } else {
+    dialog.removeAttribute("open");
+  }
+}
+
+function installNetworkItemDialog() {
+  const dialog = ensureNetworkItemDialog();
+  if (!dialog || dialog.dataset.networkItemDialogBound === "1") return;
+  dialog.dataset.networkItemDialogBound = "1";
+  const { form, urlInput, nameInput, cancelButton } = networkItemDialogElements();
+  urlInput?.addEventListener("input", updateNetworkItemDialogState);
+  nameInput?.addEventListener("input", updateNetworkItemDialogState);
+  form?.querySelectorAll?.('input[name="networkItemKind"]').forEach((radio) => {
+    radio.addEventListener("change", updateNetworkItemDialogState);
+  });
+  cancelButton?.addEventListener("click", closeNetworkItemDialog);
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) closeNetworkItemDialog();
+  });
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const normalizedUrl = normalizeNetworkScheduleUrl(urlInput?.value);
+    if (!normalizedUrl) {
+      updateNetworkItemDialogState();
+      urlInput?.focus();
+      return;
+    }
+    const kind = selectedNetworkItemKind(form);
+    const name = nameInput?.value || "";
+    closeNetworkItemDialog();
+    void enqueueNetworkScheduleItem({
+      url: normalizedUrl,
+      name,
+      kind,
+    }).catch((err) => {
+      console.error("Failed to add network item:", err);
+      showGnomeToast("Failed to add network item");
+    });
+  });
+  updateNetworkItemDialogState();
+}
+
+function installNetworkItemButton() {
+  ensureNetworkItemDialog();
+  installNetworkItemDialog();
+  const button = document.getElementById("addNetworkItemBtn");
+  if (!button || button.dataset.networkDialogBound === "1") return;
+  button.dataset.networkDialogBound = "1";
+  button.addEventListener("click", openNetworkItemDialog);
+}
+
 /**
- * The headerbar Add Media button only makes sense in the Media tab — the
- * Streams tab uses a URL field, and the Text tab has its own input. Hide
- * the button in non-Media modes instead of leaving a dead control.
+ * The headerbar Add Media button only makes sense in the schedule view. Hide
+ * it in legacy/non-media modes instead of leaving a dead control.
  */
 function updateHeaderAddMediaButtonVisibility() {
   const button = document.getElementById("headerAddMediaButton");
@@ -16136,6 +16704,10 @@ function buildProjectQueueItemSnapshot(item) {
     modifiedTime:
       typeof item.modifiedTime === "string" && !bibleEntry && !songEntry ? item.modifiedTime : undefined,
     liveSource: !bibleEntry && !songEntry ? liveSourceSnapshotFields(item.liveSource) : undefined,
+    networkSource:
+      !bibleEntry && !songEntry && item.networkSource && typeof item.networkSource === "object"
+        ? { ...item.networkSource }
+        : undefined,
     autoAdvance: item.autoAdvance !== false,
     cueStartTime: bibleEntry || songEntry ? 0 : queueItemCueStartTime(item),
     cueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : undefined,
@@ -16192,18 +16764,12 @@ function buildProjectStateSnapshot(opts = {}) {
 }
 
 function restoreOperatingMode(mode) {
-  const targetMode = mode === STREAMPLAYER ? STREAMPLAYER : MEDIAPLAYER;
+  const targetMode = MEDIAPLAYER;
   if (currentMode === targetMode) return;
-  if (targetMode === STREAMPLAYER) {
-    const radio = document.getElementById("YtPlyrRBtnFrmID");
-    if (radio) radio.checked = true;
-    setSBFormStreamPlayer();
-  } else {
-    const radio = document.getElementById("MdPlyrRBtnFrmID");
-    if (radio) radio.checked = true;
-    setSBFormMediaPlayer();
-    installPreviewEventHandlers();
-  }
+  const radio = document.getElementById("MdPlyrRBtnFrmID");
+  if (radio) radio.checked = true;
+  setSBFormMediaPlayer();
+  installPreviewEventHandlers();
 }
 
 function projectSessionIsActive() {
@@ -16319,10 +16885,11 @@ function applyProjectStateSnapshot(state, opts = {}) {
           : typeof x.name === "string" && x.name.length > 0
             ? x.name
             : queueBasename(itemPath);
+      const mediaType = restoredQueueMediaType(x.type, itemPath);
       const item = {
         path: itemPath,
         name: itemName,
-        type: bibleEntry ? "bible" : isSongItem ? (x.type === "deck" ? "deck" : "song") : classifyQueueMediaType(itemPath),
+        type: bibleEntry ? "bible" : isSongItem ? (x.type === "deck" ? "deck" : "song") : mediaType,
         missing: bibleEntry || isSongItem ? false : x.missing === true,
         originalPath:
           typeof x.originalPath === "string" && x.originalPath.length > 0 && !bibleEntry && !isSongItem
@@ -16338,7 +16905,7 @@ function applyProjectStateSnapshot(state, opts = {}) {
           typeof x.modifiedTime === "string" && !bibleEntry && !isSongItem ? x.modifiedTime : undefined,
         liveSource: !bibleEntry && !isSongItem
           ? normalizeLiveSource(itemPath, x.liveSource, {
-              type: classifyQueueMediaType(itemPath),
+              type: mediaType,
               originalPath:
                 typeof x.originalPath === "string" && x.originalPath.length > 0
                   ? x.originalPath
@@ -16346,13 +16913,19 @@ function applyProjectStateSnapshot(state, opts = {}) {
               mode: currentProjectStorageMode === "packed" ? "packaged" : undefined,
             })
           : undefined,
+        networkSource:
+          !bibleEntry && !isSongItem && x.networkSource && typeof x.networkSource === "object"
+            ? { ...x.networkSource }
+            : !bibleEntry && !isSongItem && isNetworkStreamSource(itemPath)
+              ? { kind: "auto" }
+              : undefined,
         autoAdvance: x.autoAdvance !== false,
         cueStartTime: bibleEntry || isSongItem ? 0 : Number.isFinite(x.cueStartTime) ? x.cueStartTime : 0,
         cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
         loop: bibleEntry || isSongItem ? false : x.loop === true && mediaPathSupportsLoop(itemPath),
         pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) && !bibleEntry && !isSongItem ? x.pptxSlideIndex : -1,
         transition: isQueueItemTransitionCapable({
-          type: bibleEntry ? "bible" : isSongItem ? "song" : classifyQueueMediaType(itemPath),
+          type: bibleEntry ? "bible" : isSongItem ? "song" : mediaType,
           path: itemPath,
           songSnapshot: isSongItem
             ? x.songSnapshot || (x.deckSnapshot ? deckToTransientSong(normalizeSlideDeck(x.deckSnapshot)) : undefined)
@@ -17073,6 +17646,9 @@ async function captureQueueClearUndoState() {
       cueStartTime: queueItemCueStartTime(x),
       cueVolume: x.cueVolume,
       loop: loopEnabledForQueueItem(x),
+      networkSource: x.networkSource && typeof x.networkSource === "object"
+        ? { ...x.networkSource }
+        : undefined,
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
       transition: normalizeItemSlideTransitionOverride(x.transition),
       bible: x.bible ? { ...x.bible } : undefined,
@@ -17153,7 +17729,7 @@ async function resumeQueuePresentationAtTime(seekTime) {
     return;
   }
 
-  const live = isLiveStream(mediaFile);
+  const live = queueItemIsLiveEdgeStream(item);
   if (!live && localVideo && seekTime > 0.05) {
     const d = localVideo.duration;
     let safe = seekTime;
@@ -17179,7 +17755,10 @@ async function resumeQueuePresentationAtTime(seekTime) {
     }
   }
 
-  await createMediaWindow({ seekOnly: !live });
+  await createMediaWindow({
+    seekOnly: !live,
+    startTime: live ? 0 : validMediaStartTime(seekTime),
+  });
 }
 
 async function restoreQueueClearUndoSnapshot() {
@@ -17195,6 +17774,9 @@ async function restoreQueueClearUndoSnapshot() {
       cueStartTime: x.cueStartTime || 0,
       cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
       loop: x.loop === true && mediaPathSupportsLoop(x.path),
+      networkSource: x.networkSource && typeof x.networkSource === "object"
+        ? { ...x.networkSource }
+        : undefined,
       pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
       transition: normalizeItemSlideTransitionOverride(x.transition),
       bible: x.bible ? { ...x.bible } : undefined,
@@ -18164,6 +18746,7 @@ async function loadAudioQueueItemIntoPreviewCue(index, item, startTime, loadToke
 function clearVideoPreviewCueOverlay() {
   const el = previewCueVideo || document.getElementById("previewCue");
   previewCueVideoIndex = -1;
+  teardownNetworkPreviewCueStreamingPlayers();
   if (!el) return;
   const hadPoster = el.hasAttribute("poster");
   try {
@@ -18803,6 +19386,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   const itemIsBible = isQueueItemBible(item);
   const isImgFile = isImg(item.path);
   const itemIsPptx = isQueueItemPptx(item);
+  const itemIsLiveStream = queueItemIsLiveEdgeStream(item);
 
   let resumeAt = null;
   if (
@@ -18895,6 +19479,10 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   const resolvedItemPath = await resolveQueueItemMediaPath(item);
   activePreviewResolvedMediaFile = resolvedItemPath;
   const cacheBust = queueItemMediaCacheBust(item);
+  const itemIsNetworkVideo =
+    !isImgFile &&
+    !itemIsPptx &&
+    (isNetworkStreamSource(item.path) || isNetworkStreamSource(resolvedItemPath));
   if (itemIsPptx) {
     await loadPptxPreview(item.path, {
       startSlide: Number.isFinite(opts?.pptxStartSlide) ? opts.pptxStartSlide : undefined,
@@ -18906,7 +19494,18 @@ async function loadQueueItemIntoControlWindow(item, opts) {
 
   restoreNonPptxPreviewSurface({ isImage: isImgFile });
   localVideo = video;
-  handleMediaPlayback(isImgFile, resolvedItemPath, cacheBust);
+  if (itemIsNetworkVideo) {
+    try {
+      await attachNetworkPreviewMirrorSource(item.path || resolvedItemPath);
+    } catch (err) {
+      console.error("Failed to load network preview mirror:", err);
+      handleMediaPlayback(isImgFile, resolvedItemPath, cacheBust);
+    }
+  } else {
+    stopNetworkPreviewRtcCapture();
+    networkPreviewMirrorSource = "";
+    handleMediaPlayback(isImgFile, resolvedItemPath, cacheBust);
+  }
   handleImageDisplay(isImgFile, document.querySelector("img#preview"), resolvedItemPath, cacheBust);
 
   if (itemIsAudio && !cueOnly) {
@@ -18917,8 +19516,10 @@ async function loadQueueItemIntoControlWindow(item, opts) {
       ?.style.setProperty("visibility", "");
   }
 
-  if (!isImgFile && localVideo) {
-    localVideo.load();
+  if (!isImgFile && localVideo && !itemIsLiveStream) {
+    if (!itemIsNetworkVideo) {
+      localVideo.load();
+    }
     const previousAudioOnlyFile = audioOnlyFile;
     const previousPlayingMediaAudioOnly = playingMediaAudioOnly;
     await waitForMetadata(localVideo);
@@ -18966,6 +19567,12 @@ async function loadQueueItemIntoControlWindow(item, opts) {
         .getElementById("customControls")
         ?.style.setProperty("visibility", "");
     }
+  } else if (itemIsLiveStream && !cueOnly) {
+    audioOnlyFile = false;
+    playingMediaAudioOnly = false;
+    document
+      .getElementById("customControls")
+      ?.style.setProperty("visibility", "");
   } else if (!cueOnly) {
     audioOnlyFile = false;
     playingMediaAudioOnly = false;
@@ -19067,8 +19674,15 @@ async function playCurrentQueueItem(opts) {
   }
 
   const projectionVideo = resolveQueuePresentationVideo();
+  const requestedProjectionStart =
+    queueItemSupportsCueStartTime(item) && Number.isFinite(opts?.startTime)
+      ? validMediaStartTime(opts.startTime)
+      : queueItemCueStartTime(item);
   await createMediaWindow({
-    startTime: validMediaStartTime(projectionVideo?.currentTime),
+    startTime:
+      requestedProjectionStart > 0
+        ? requestedProjectionStart
+        : validMediaStartTime(projectionVideo?.currentTime),
   });
 }
 
@@ -19371,12 +19985,624 @@ function remoteCountdownOwnsLiveMedia() {
   );
 }
 
+function activeNetworkPreviewSource() {
+  const liveItem = currentLiveQueueItem();
+  const candidates = [
+    mediaFile,
+    activeResolvedMediaFile,
+    activePreviewResolvedMediaFile,
+    liveItem?.path,
+  ];
+  return candidates.find((source) => isNetworkStreamSource(source)) || "";
+}
+
+function networkPreviewUsesRendererCapture() {
+  return Boolean(
+    currentMode === MEDIAPLAYER &&
+      isActiveMediaWindow() &&
+      activeMediaWindowContentType === "video" &&
+      activeNetworkPreviewSource(),
+  );
+}
+
+function networkPreviewTransportDuration() {
+  return Number.isFinite(networkPreviewTransportState.duration) &&
+    networkPreviewTransportState.duration > 0
+    ? networkPreviewTransportState.duration
+    : 0;
+}
+
+function networkPreviewTransportCurrentTime() {
+  let current = Number.isFinite(networkPreviewTransportState.currentTime)
+    ? networkPreviewTransportState.currentTime
+    : 0;
+  if (
+    !networkPreviewTransportState.paused &&
+    Number.isFinite(networkPreviewTransportState.updatedAt) &&
+    networkPreviewTransportState.updatedAt > 0
+  ) {
+    current += Math.max(0, (Date.now() - networkPreviewTransportState.updatedAt) * 0.001);
+  }
+  const duration = networkPreviewTransportDuration();
+  return duration > 0 ? clampMediaTime(current, duration) : Math.max(0, current);
+}
+
+function networkPreviewTransportSeekable() {
+  return networkPreviewUsesRendererCapture() && networkPreviewTransportDuration() > 0;
+}
+
+function resetNetworkPreviewTransportState(source = activeNetworkPreviewSource()) {
+  const volume = Math.max(
+    0,
+    Math.min(
+      1,
+      Number.isFinite(video?.volume)
+        ? video.volume
+        : networkPreviewTransportState.volume,
+    ),
+  );
+  networkPreviewTransportState = {
+    currentTime: 0,
+    duration: 0,
+    updatedAt: Date.now(),
+    paused: true,
+    volume,
+    muted: volume === 0,
+    mediaFile: source || "",
+  };
+  refreshNetworkPreviewTransportControls();
+}
+
+function updateNetworkPreviewTransportState(state = {}) {
+  if (!state || typeof state !== "object") return;
+  if (Number.isFinite(state.duration) && state.duration > 0) {
+    networkPreviewTransportState.duration = state.duration;
+  }
+  if (Number.isFinite(state.currentTime) && state.currentTime >= 0) {
+    networkPreviewTransportState.currentTime = state.currentTime;
+  }
+  networkPreviewTransportState.updatedAt = Number.isFinite(state.timestamp)
+    ? state.timestamp
+    : Date.now();
+  if (typeof state.paused === "boolean") {
+    networkPreviewTransportState.paused = state.paused;
+  }
+  if (Number.isFinite(state.volume)) {
+    networkPreviewTransportState.volume = Math.max(0, Math.min(1, state.volume));
+  }
+  if (typeof state.muted === "boolean") {
+    networkPreviewTransportState.muted = state.muted;
+  }
+  if (typeof state.mediaFile === "string" && state.mediaFile.length > 0) {
+    networkPreviewTransportState.mediaFile = state.mediaFile;
+  }
+  if (networkPreviewUsesRendererCapture() && video?.srcObject === networkPreviewMirrorStream) {
+    setNetworkPreviewElementCaptureMuted();
+  }
+  refreshNetworkPreviewTransportControls();
+}
+
+function handleRemoteMediaWindowTimeTick(duration, currentTime, timestamp, tickMediaFile) {
+  if (
+    tickMediaFile &&
+    mediaFile &&
+    !mediaPathMatchesCurrentLiveMedia(tickMediaFile)
+  ) {
+    return;
+  }
+  updateNetworkPreviewTransportState({
+    duration,
+    currentTime,
+    timestamp,
+    paused: false,
+    mediaFile: tickMediaFile || mediaFile || "",
+  });
+}
+
+async function refreshNetworkPreviewTransportState() {
+  if (!networkPreviewUsesRendererCapture()) return null;
+  try {
+    const state = await invoke("get-media-playback-state");
+    if (state && typeof state === "object") {
+      updateNetworkPreviewTransportState({
+        ...state,
+        timestamp: Date.now(),
+        mediaFile: mediaFile || activeNetworkPreviewSource(),
+      });
+      return state;
+    }
+  } catch (err) {
+    console.error("Failed to refresh media-window transport state:", err);
+  }
+  return null;
+}
+
+function refreshNetworkPreviewTransportControls() {
+  if (!networkPreviewUsesRendererCapture()) return;
+  setupCustomMediaControls.updateControlsForNetworkTransport?.();
+  syncGtkSliderToCueState();
+}
+
+function setNetworkPreviewTransportPaused(paused) {
+  networkPreviewTransportState.currentTime = networkPreviewTransportCurrentTime();
+  networkPreviewTransportState.updatedAt = Date.now();
+  networkPreviewTransportState.paused = !!paused;
+  refreshNetworkPreviewTransportControls();
+}
+
+async function seekNetworkPreviewTransport(seekTime) {
+  if (!networkPreviewTransportSeekable()) return networkPreviewTransportCurrentTime();
+  const duration = networkPreviewTransportDuration();
+  const safe = clampMediaTime(seekTime, duration);
+  updateNetworkPreviewTransportState({
+    currentTime: safe,
+    duration,
+    timestamp: Date.now(),
+  });
+  send("timeGoto-message", {
+    currentTime: safe,
+    timestamp: Date.now(),
+  });
+  if (
+    video &&
+    Number.isFinite(video.duration) &&
+    video.duration > 0
+  ) {
+    beginPreviewForwardingSuppression();
+    try {
+      video.currentTime = clampMediaTime(safe, video.duration);
+    } catch {}
+    endPreviewForwardingSuppression();
+  }
+  window.setTimeout(() => {
+    void refreshNetworkPreviewTransportState();
+  }, 80);
+  return safe;
+}
+
+function setNetworkPreviewVolume(volume, muted = false) {
+  const safe = Math.max(0, Math.min(1, Number.isFinite(volume) ? volume : 1));
+  networkPreviewTransportState.volume = safe;
+  networkPreviewTransportState.muted = muted || safe === 0;
+  streamVolume = safe;
+  vlCtl(networkPreviewTransportState.muted ? 0 : safe);
+  if (video && video.srcObject === networkPreviewMirrorStream) {
+    setNetworkPreviewElementCaptureMuted();
+  }
+  syncGtkSliderToCueState();
+}
+
+function matchYouTubeNetworkUrl(url) {
+  if (typeof url !== "string" || url.length === 0) return false;
+  if (/^[\w-]{11}$/.test(url.trim())) return true;
+  try {
+    const parsed = new URL(url.includes("://") ? url : `https://${url}`);
+    const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+    return (
+      host === "youtu.be" ||
+      host === "youtube.com" ||
+      host === "m.youtube.com" ||
+      host === "music.youtube.com"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isHlsNetworkSource(url) {
+  return /\.m3u8(?:[?#]|$)/i.test(String(url || ""));
+}
+
+function isDashNetworkSource(url) {
+  return /\.mpd(?:[?#]|$)/i.test(String(url || ""));
+}
+
+async function createNetworkPreviewHls() {
+  const { default: Hls } = await import("../node_modules/hls.js/dist/hls.mjs");
+  return new Hls({
+    lowLatencyMode: false,
+    backBufferLength: 360,
+    maxBufferLength: 480,
+    maxMaxBufferLength: 960,
+    maxBufferSize: 480 * 1000 * 1000,
+    maxBufferHole: 0.75,
+    liveSyncDurationCount: 24,
+    liveMaxLatencyDurationCount: 48,
+    startFragPrefetch: true,
+    testBandwidth: false,
+    startLevel: -1,
+  });
+}
+
+function configureNetworkPreviewDashPlayer(player) {
+  try {
+    player.updateSettings?.({
+      streaming: {
+        buffer: {
+          stableBufferTime: 120,
+          bufferTimeAtTopQuality: 180,
+          bufferTimeAtTopQualityLongForm: 360,
+          fastSwitchEnabled: true,
+          flushBufferAtTrackSwitch: false,
+        },
+        delay: {
+          liveDelayFragmentCount: 16,
+        },
+        liveCatchup: {
+          enabled: false,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Failed to configure DASH preview buffering:", err);
+  }
+}
+
+function teardownNetworkMediaSourceResources(resources = {}) {
+  if (resources.hlsInstance) {
+    try {
+      resources.hlsInstance.destroy();
+    } catch {}
+  }
+  if (resources.dashPlayer) {
+    try {
+      resources.dashPlayer.reset();
+      resources.dashPlayer.destroy?.();
+    } catch {}
+  }
+  if (resources.dashManifestObjectUrl) {
+    URL.revokeObjectURL(resources.dashManifestObjectUrl);
+  }
+}
+
+async function attachNetworkMediaSourceToElement(targetEl, sourcePath) {
+  const resources = {
+    hlsInstance: null,
+    dashPlayer: null,
+    dashManifestObjectUrl: null,
+  };
+  if (!targetEl || !sourcePath) return resources;
+
+  const originalSource = String(sourcePath);
+  const directUrl = pathToMediaUrl(originalSource);
+  let youtubeResolved = null;
+  if (matchYouTubeNetworkUrl(originalSource)) {
+    youtubeResolved = await invoke("resolve-youtube-stream", originalSource);
+  }
+
+  if (youtubeResolved?.type === "hls") {
+    resources.hlsInstance = await createNetworkPreviewHls();
+    resources.hlsInstance.loadSource(youtubeResolved.url);
+    resources.hlsInstance.attachMedia(targetEl);
+  } else if (youtubeResolved?.type === "dash") {
+    const { MediaPlayer } = await import(
+      "../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
+    );
+    resources.dashPlayer = MediaPlayer().create();
+    resources.dashManifestObjectUrl = URL.createObjectURL(
+      new Blob([youtubeResolved.manifest], { type: "application/dash+xml" }),
+    );
+    configureNetworkPreviewDashPlayer(resources.dashPlayer);
+    resources.dashPlayer.initialize(targetEl, resources.dashManifestObjectUrl, false);
+  } else if (youtubeResolved?.type === "progressive") {
+    targetEl.src = youtubeResolved.url;
+  } else if (isHlsNetworkSource(directUrl)) {
+    resources.hlsInstance = await createNetworkPreviewHls();
+    resources.hlsInstance.loadSource(directUrl);
+    resources.hlsInstance.attachMedia(targetEl);
+  } else if (isDashNetworkSource(directUrl)) {
+    const { MediaPlayer } = await import(
+      "../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
+    );
+    resources.dashPlayer = MediaPlayer().create();
+    configureNetworkPreviewDashPlayer(resources.dashPlayer);
+    resources.dashPlayer.initialize(targetEl, directUrl, false);
+  } else {
+    targetEl.src = directUrl;
+  }
+
+  return resources;
+}
+
+function teardownNetworkPreviewStreamingPlayers() {
+  if (networkPreviewHlsInstance) {
+    try {
+      networkPreviewHlsInstance.destroy();
+    } catch {}
+    networkPreviewHlsInstance = null;
+  }
+  if (networkPreviewDashPlayer) {
+    try {
+      networkPreviewDashPlayer.reset();
+      networkPreviewDashPlayer.destroy?.();
+    } catch {}
+    networkPreviewDashPlayer = null;
+  }
+  if (networkPreviewDashManifestObjectUrl) {
+    URL.revokeObjectURL(networkPreviewDashManifestObjectUrl);
+    networkPreviewDashManifestObjectUrl = null;
+  }
+}
+
+function teardownNetworkPreviewCueStreamingPlayers() {
+  teardownNetworkMediaSourceResources({
+    hlsInstance: networkPreviewCueHlsInstance,
+    dashPlayer: networkPreviewCueDashPlayer,
+    dashManifestObjectUrl: networkPreviewCueDashManifestObjectUrl,
+  });
+  networkPreviewCueHlsInstance = null;
+  networkPreviewCueDashPlayer = null;
+  networkPreviewCueDashManifestObjectUrl = null;
+  networkPreviewCueSource = "";
+}
+
+function clearNetworkPreviewMirrorStream() {
+  if (networkPreviewMirrorStream) {
+    networkPreviewMirrorStream.getTracks().forEach((track) => {
+      try {
+        track.stop();
+      } catch {}
+    });
+  }
+  networkPreviewMirrorStream = null;
+}
+
+function setNetworkPreviewElementCaptureMuted() {
+  if (!video) return;
+  video.muted = true;
+  video.defaultMuted = true;
+  video.volume = 0;
+  video.playsInline = true;
+  disableNativeVideoControls(video);
+  syncPreviewAudioTrackState();
+}
+
+function setNetworkPreviewElementLocalAudio() {
+  if (!video) return;
+  video.muted = false;
+  video.defaultMuted = false;
+  if (!Number.isFinite(video.volume) || video.volume <= 0) {
+    video.volume = 1;
+  }
+  video.playsInline = true;
+  disableNativeVideoControls(video);
+  syncPreviewAudioTrackState();
+}
+
+function prepareNetworkPreviewRtcStream(stream) {
+  if (!stream || !video) return false;
+  networkPreviewMirrorStream = stream;
+  try {
+    video.pause();
+    video.removeAttribute("src");
+    video.srcObject = stream;
+  } catch {}
+  video.hidden = false;
+  video.style.display = "";
+  video.style.visibility = "";
+  setNetworkPreviewElementCaptureMuted();
+  void video.play().catch((err) => {
+    if (!isPlayInterruptedError(err)) {
+      console.error("Failed to play network RTC preview:", err);
+    }
+  });
+
+  const confidenceEl = getConfidenceMonitorElement();
+  if (confidenceEl) {
+    if (confidenceEl.srcObject !== stream) {
+      confidenceEl.srcObject = stream;
+    }
+    confidenceEl.muted = true;
+    confidenceEl.defaultMuted = true;
+    confidenceEl.volume = 0;
+    disableNativeVideoControls(confidenceEl);
+    confidenceEl.hidden = false;
+    void confidenceEl.play().catch((err) => {
+      if (!isPlayInterruptedError(err)) {
+        console.error("Failed to play network confidence preview:", err);
+      }
+    });
+    setConfidenceMonitorActive(true);
+  }
+  return true;
+}
+
+function stopNetworkPreviewRtcCapture(options = {}) {
+  const sessionId = networkPreviewRtcSessionId;
+  if (options.notifyMedia !== false && sessionId) {
+    send("media-preview-rtc-to-media", { type: "close", sessionId });
+  }
+  if (networkPreviewRtcPeer) {
+    try {
+      networkPreviewRtcPeer.ontrack = null;
+      networkPreviewRtcPeer.onicecandidate = null;
+      networkPreviewRtcPeer.onconnectionstatechange = null;
+      networkPreviewRtcPeer.close();
+    } catch {}
+  }
+  networkPreviewRtcPeer = null;
+  networkPreviewRtcSessionId = "";
+  networkPreviewRtcPendingCandidates = [];
+  const stream = networkPreviewMirrorStream;
+  if (video?.srcObject === stream) {
+    try {
+      video.pause();
+      video.srcObject = null;
+    } catch {}
+  }
+  const confidenceEl = getConfidenceMonitorElement();
+  if (confidenceEl?.srcObject === stream) {
+    try {
+      confidenceEl.pause();
+      confidenceEl.srcObject = null;
+      confidenceEl.hidden = true;
+    } catch {}
+  }
+  clearNetworkPreviewMirrorStream();
+}
+
+function syncNetworkPreviewMirrorCapture() {
+  if (!networkPreviewUsesRendererCapture()) {
+    stopNetworkPreviewRtcCapture();
+    return false;
+  }
+  teardownNetworkPreviewStreamingPlayers();
+  if (networkPreviewMirrorStream) {
+    return prepareNetworkPreviewRtcStream(networkPreviewMirrorStream);
+  }
+  void startNetworkPreviewRtcCapture();
+  return false;
+}
+
+async function attachNetworkPreviewMirrorSource(sourcePath) {
+  if (!video || !sourcePath) return false;
+
+  const originalSource = String(sourcePath);
+  stopNetworkPreviewRtcCapture();
+  teardownNetworkPreviewStreamingPlayers();
+  networkPreviewMirrorSource = originalSource;
+  try {
+    video.pause();
+    video.srcObject = null;
+    video.removeAttribute("src");
+    video.load();
+  } catch {}
+
+  const resources = await attachNetworkMediaSourceToElement(video, originalSource);
+  networkPreviewHlsInstance = resources.hlsInstance;
+  networkPreviewDashPlayer = resources.dashPlayer;
+  networkPreviewDashManifestObjectUrl = resources.dashManifestObjectUrl;
+
+  video.hidden = false;
+  video.style.display = "";
+  video.style.visibility = "";
+  setNetworkPreviewElementLocalAudio();
+  await primeNetworkPreviewElement(video, setNetworkPreviewElementLocalAudio);
+  setupCustomMediaControls.updateControlsForMetadata?.(video);
+  return true;
+}
+
+async function playNetworkPreviewMirror(context = "") {
+  if (!video || !networkPreviewUsesRendererCapture()) return false;
+  setNetworkPreviewElementCaptureMuted();
+  if (!networkPreviewMirrorStream) {
+    await startNetworkPreviewRtcCapture();
+  }
+  const played = await playVideoSafely(video, context, { logFailure: false });
+  syncNetworkPreviewMirrorCapture();
+  return played;
+}
+
+async function startNetworkPreviewRtcCapture() {
+  if (!networkPreviewUsesRendererCapture() || typeof RTCPeerConnection !== "function") {
+    return false;
+  }
+  if (
+    networkPreviewRtcPeer &&
+    ["connected", "completed"].includes(networkPreviewRtcPeer.iceConnectionState)
+  ) {
+    return true;
+  }
+
+  teardownNetworkPreviewStreamingPlayers();
+  if (video && video.srcObject !== networkPreviewMirrorStream) {
+    try {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    } catch {}
+  }
+  stopNetworkPreviewRtcCapture();
+  const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const peer = new RTCPeerConnection();
+  networkPreviewRtcPeer = peer;
+  networkPreviewRtcSessionId = sessionId;
+  networkPreviewRtcPendingCandidates = [];
+
+  const inboundStream = new MediaStream();
+  networkPreviewMirrorStream = inboundStream;
+  peer.ontrack = (event) => {
+    const [remoteStream] = event.streams || [];
+    if (remoteStream) {
+      networkPreviewMirrorStream = remoteStream;
+    } else if (event.track && !inboundStream.getTracks().includes(event.track)) {
+      inboundStream.addTrack(event.track);
+    }
+    prepareNetworkPreviewRtcStream(networkPreviewMirrorStream || inboundStream);
+  };
+  peer.onicecandidate = (event) => {
+    if (!event.candidate) return;
+    send("media-preview-rtc-to-media", {
+      type: "candidate",
+      sessionId,
+      candidate: event.candidate.toJSON
+        ? event.candidate.toJSON()
+        : event.candidate,
+    });
+  };
+  peer.onconnectionstatechange = () => {
+    if (
+      peer.connectionState === "failed" ||
+      peer.connectionState === "closed" ||
+      peer.connectionState === "disconnected"
+    ) {
+      if (networkPreviewRtcPeer === peer) {
+        stopNetworkPreviewRtcCapture({ notifyMedia: peer.connectionState !== "closed" });
+      }
+    }
+  };
+
+  try {
+    const offer = await peer.createOffer({
+      offerToReceiveVideo: true,
+    });
+    await peer.setLocalDescription(offer);
+    send("media-preview-rtc-to-media", {
+      type: "offer",
+      sessionId,
+      sdp: peer.localDescription?.sdp || offer.sdp,
+    });
+    return true;
+  } catch (err) {
+    console.error("Failed to start network preview RTC capture:", err);
+    stopNetworkPreviewRtcCapture();
+    return false;
+  }
+}
+
+async function handleMediaPreviewRtcSignal(_event, message = {}) {
+  if (!message || message.sessionId !== networkPreviewRtcSessionId) return;
+  const peer = networkPreviewRtcPeer;
+  if (!peer) return;
+  try {
+    if (message.type === "answer" && message.sdp) {
+      await peer.setRemoteDescription({ type: "answer", sdp: message.sdp });
+      const pending = networkPreviewRtcPendingCandidates;
+      networkPreviewRtcPendingCandidates = [];
+      for (const candidate of pending) {
+        await peer.addIceCandidate(candidate);
+      }
+    } else if (message.type === "candidate" && message.candidate) {
+      if (!peer.remoteDescription) {
+        networkPreviewRtcPendingCandidates.push(message.candidate);
+        return;
+      }
+      await peer.addIceCandidate(message.candidate);
+    } else if (message.type === "closed") {
+      stopNetworkPreviewRtcCapture({ notifyMedia: false });
+    }
+  } catch (err) {
+    console.error("Failed to handle network preview RTC signal:", err);
+  }
+}
+
 function syncPreviewAudioTrackState() {
   if (!video?.audioTracks || typeof video.audioTracks.length !== "number") {
     return;
   }
 
   const previewShouldBeAudible =
+    !networkPreviewUsesRendererCapture() &&
     !shouldSuppressPreviewForwarding() &&
     !isLocalAppWindowPresentationActive() &&
     !isActiveMediaWindow();
@@ -19582,6 +20808,12 @@ function syncPlayPauseIconToControlMedia() {
   ) {
     mediaEl = liveAudio;
   }
+  if (mediaEl === video && networkPreviewUsesRendererCapture()) {
+    glyph.innerHTML = networkPreviewTransportState.paused
+      ? `<path d="M8 5v14l11-7z"/>`
+      : `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
+    return;
+  }
   if (!mediaEl?.src || mediaEl.src === "") return;
 
   glyph.innerHTML = mediaEl.paused
@@ -19742,6 +20974,65 @@ function setupCustomMediaControls() {
     }
     return video;
   };
+  const mediaIsNetworkTransport = (mediaEl) =>
+    Boolean(mediaEl && mediaEl === video && networkPreviewUsesRendererCapture());
+  const mediaIsNetworkCue = (mediaEl) =>
+    Boolean(mediaEl && mediaEl === previewCue && isNetworkVideoPreviewCueActive());
+  const controlMediaHasSource = (mediaEl) =>
+    Boolean(
+      mediaEl &&
+        (mediaIsNetworkTransport(mediaEl) ||
+          mediaIsNetworkCue(mediaEl) ||
+          (typeof mediaEl.src === "string" && mediaEl.src !== "")),
+    );
+  const controlMediaDuration = (mediaEl) =>
+    mediaIsNetworkTransport(mediaEl)
+      ? networkPreviewTransportDuration()
+      : Number.isFinite(mediaEl?.duration)
+        ? mediaEl.duration
+        : 0;
+  const controlMediaCurrentTime = (mediaEl) =>
+    mediaIsNetworkTransport(mediaEl)
+      ? networkPreviewTransportCurrentTime()
+      : Number.isFinite(mediaEl?.currentTime)
+        ? mediaEl.currentTime
+        : 0;
+  const controlMediaPaused = (mediaEl) =>
+    mediaIsNetworkTransport(mediaEl)
+      ? networkPreviewTransportState.paused
+      : mediaEl?.paused !== false;
+  const paintControlPlayPauseIcon = (mediaEl) => {
+    if (!playPauseIcon) return;
+    playPauseIcon.innerHTML = controlMediaPaused(mediaEl)
+      ? `<path d="M8 5v14l11-7z"/>`
+      : `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
+  };
+  const pauseControlMedia = async (mediaEl) => {
+    if (mediaIsNetworkTransport(mediaEl)) {
+      setNetworkPreviewTransportPaused(true);
+      await send("play-ctl", "pause");
+      beginPreviewForwardingSuppression();
+      try {
+        mediaEl.pause();
+      } finally {
+        endPreviewForwardingSuppression();
+      }
+      return;
+    }
+    mediaEl?.pause();
+  };
+  const playControlMedia = async (mediaEl, reason) => {
+    if (mediaIsNetworkTransport(mediaEl)) {
+      setNetworkPreviewTransportPaused(false);
+      await send("play-ctl", "play");
+      await playNetworkPreviewMirror(reason || "network preview transport");
+      window.setTimeout(() => {
+        void refreshNetworkPreviewTransportState();
+      }, 80);
+      return;
+    }
+    await playVideoSafely(mediaEl, reason);
+  };
   const updateControlsForMetadata = (mediaEl) => {
     if (currentMode !== MEDIAPLAYER || mediaEl !== currentControlMedia()) {
       return;
@@ -19749,37 +21040,42 @@ function setupCustomMediaControls() {
     timeline.min = 0;
     timeline.max = 100;
 
-    const hasSeekableMedia = isFinite(mediaEl.duration) && mediaEl.duration > 0;
-    const currentTime = Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0;
+    const duration = controlMediaDuration(mediaEl);
+    const hasSeekableMedia = duration > 0;
+    const currentTime = controlMediaCurrentTime(mediaEl);
 
     timeline.value =
-      hasSeekableMedia ? (currentTime / mediaEl.duration) * 100 : 0;
+      hasSeekableMedia ? (currentTime / duration) * 100 : 0;
+    timeline.disabled = !hasSeekableMedia;
     if (isTransportControlsPaintVisible()) {
       paintTransportControlsTime(currentTimeDisplay, currentTime);
-      paintTransportControlsTime(durationTimeDisplay, mediaEl.duration);
+      paintTransportControlsTime(durationTimeDisplay, duration);
     }
 
-    playPauseIcon.innerHTML = mediaEl.paused
-      ? `<path d="M8 5v14l11-7z"/>`
-      : `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
+    paintControlPlayPauseIcon(mediaEl);
 
     if (overlay) {
       overlay.style.display = "";
-      overlay.style.visibility = hasSeekableMedia ? "visible" : "hidden";
+      overlay.style.visibility =
+        hasSeekableMedia || mediaIsNetworkTransport(mediaEl) || mediaIsNetworkCue(mediaEl)
+          ? "visible"
+          : "hidden";
     }
 
     updateLoopControlState();
   };
   const updateControlsForTime = (mediaEl) => {
     if (mediaEl !== currentControlMedia()) return;
-    if (!mediaEl.duration || timeline === null) return;
+    const duration = controlMediaDuration(mediaEl);
+    const currentTime = controlMediaCurrentTime(mediaEl);
+    if (timeline === null) return;
     if (!isTransportControlsPaintVisible()) {
       return;
     }
-    paintTransportControlsTime(currentTimeDisplay, mediaEl.currentTime);
+    paintTransportControlsTime(currentTimeDisplay, currentTime);
 
-    if (!isDragging) {
-      timeline.value = (mediaEl.currentTime / mediaEl.duration) * 100;
+    if (!isDragging && duration > 0) {
+      timeline.value = (currentTime / duration) * 100;
     }
   };
 
@@ -19788,9 +21084,8 @@ function setupCustomMediaControls() {
     disableTabFocus();
 
     // 2. Event Handlers: Use mouseenter/mouseleave to control the tabindex.
-    // These MUST use `signal` so tab switches (which call setup again) do not
-    // stack duplicate handlers — without it, switching Media ↔ Streams every
-    // few seconds leaks listeners and eventually makes the UI feel sluggish.
+    // These MUST use `signal` so view rebuilds (which call setup again) do not
+    // stack duplicate handlers and eventually make the UI feel sluggish.
     videoWrapper.addEventListener(
       "mouseenter",
       () => {
@@ -19800,7 +21095,12 @@ function setupCustomMediaControls() {
         }
         enableTabFocus();
         const mediaEl = currentControlMedia();
-        if (mediaEl && Number.isFinite(mediaEl.duration) && mediaEl.duration > 0) {
+        if (
+          mediaEl &&
+          (controlMediaDuration(mediaEl) > 0 ||
+            mediaIsNetworkTransport(mediaEl) ||
+            mediaIsNetworkCue(mediaEl))
+        ) {
           updateControlsForMetadata(mediaEl);
           updateControlsForTime(mediaEl);
         }
@@ -19827,19 +21127,23 @@ function setupCustomMediaControls() {
     async () => {
       if (isPreviewWorkspaceOverlayVisible()) return;
       const mediaEl = currentControlMedia();
-      if (!mediaEl || mediaEl.src === "") return;
+      if (!controlMediaHasSource(mediaEl)) return;
 
-        if (mediaEl.paused) {
-          // Audio-only files do not have a separate preview mode: the silent
-          // previewAudio element is just a scrub/cue surface. Pressing Play
-          // here means "present this audio from the queue".
-          if (mediaEl === previewAudio) {
-            const cue = currentPreviewCue();
-            if (cue) {
-              void switchQueueItemLiveWithConfirmation(cue.index, cue.startTime);
-              return;
-            }
+      if (controlMediaPaused(mediaEl)) {
+        if (mediaIsNetworkTransport(mediaEl)) {
+          await playControlMedia(mediaEl, "custom controls network toggle");
+          return;
+        }
+        // Audio-only files do not have a separate preview mode: the silent
+        // previewAudio element is just a scrub/cue surface. Pressing Play
+        // here means "present this audio from the queue".
+        if (mediaEl === previewAudio) {
+          const cue = currentPreviewCue();
+          if (cue) {
+            void switchQueueItemLiveWithConfirmation(cue.index, cue.startTime);
+            return;
           }
+        }
         // When the current control element is the preview <video> with an
         // audio-only file and no live presentation is running, treat the play
         // button as the headerbar "Present" action. Route audio through
@@ -19866,11 +21170,15 @@ function setupCustomMediaControls() {
           await playVideoSafely(mediaEl, "custom controls toggle");
         }
       } else {
+        if (mediaIsNetworkTransport(mediaEl)) {
+          await pauseControlMedia(mediaEl);
+          return;
+        }
         if (previewMediaControlsLiveProjection(mediaEl)) {
           masterPauseState = true;
           await pauseMedia({ target: mediaEl });
         }
-        await mediaEl.pause();
+        mediaEl.pause();
       }
     },
     sig,
@@ -19880,6 +21188,7 @@ function setupCustomMediaControls() {
     "play",
     (event) => {
       if (event.target !== currentControlMedia()) return;
+      if (mediaIsNetworkTransport(event.target)) return;
       if (event.target.src === "" || currentMode !== MEDIAPLAYER) return;
       playPauseIcon.innerHTML = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
     },
@@ -19923,6 +21232,7 @@ function setupCustomMediaControls() {
     "pause",
     (event) => {
       if (event.target !== currentControlMedia()) return;
+      if (mediaIsNetworkTransport(event.target)) return;
       // Play icon
       if (playPauseIcon === null) return;
       playPauseIcon.innerHTML = `<path d="M8 5v14l11-7z"/>`;
@@ -19987,11 +21297,11 @@ function setupCustomMediaControls() {
     "mousedown",
     () => {
       const mediaEl = currentControlMedia();
-      if (!mediaEl?.duration) return;
-      wasPlayingBeforeDrag = !mediaEl.paused;
+      if (controlMediaDuration(mediaEl) <= 0) return;
+      wasPlayingBeforeDrag = !controlMediaPaused(mediaEl);
       isDragging = true;
       // Pause playback for stable seeking
-      mediaEl.pause();
+      void pauseControlMedia(mediaEl);
     },
     sig,
   );
@@ -19999,11 +21309,11 @@ function setupCustomMediaControls() {
     "touchstart",
     () => {
       const mediaEl = currentControlMedia();
-      if (!mediaEl?.duration) return;
-      wasPlayingBeforeDrag = !mediaEl.paused;
+      if (controlMediaDuration(mediaEl) <= 0) return;
+      wasPlayingBeforeDrag = !controlMediaPaused(mediaEl);
       isDragging = true;
       // Pause playback for stable seeking
-      mediaEl.pause();
+      void pauseControlMedia(mediaEl);
     },
     { passive: true, signal: controller.signal },
   );
@@ -20013,12 +21323,16 @@ function setupCustomMediaControls() {
     "input",
     () => {
       const mediaEl = currentControlMedia();
-      if (!mediaEl?.duration) return;
-      const seekTime = (timeline.value / 100) * mediaEl.duration;
+      const duration = controlMediaDuration(mediaEl);
+      if (duration <= 0) return;
+      const seekTime = (timeline.value / 100) * duration;
       const seekToken = ++timelineSeekToken;
 
       currentTimeDisplay && paintTransportTimeDisplay(currentTimeDisplay, seekTime);
-      void seekMedia(mediaEl, seekTime).then((actualTime) => {
+      const seekPromise = mediaIsNetworkTransport(mediaEl)
+        ? seekNetworkPreviewTransport(seekTime)
+        : seekMedia(mediaEl, seekTime);
+      void seekPromise.then((actualTime) => {
         if (seekToken !== timelineSeekToken) return;
         currentTimeDisplay && paintTransportTimeDisplay(currentTimeDisplay, actualTime);
         if (isPreparingSeparateCue()) {
@@ -20035,8 +21349,13 @@ function setupCustomMediaControls() {
       isDragging = false;
 
       if (wasPlayingBeforeDrag) {
+        const mediaEl = currentControlMedia();
+        if (mediaIsNetworkTransport(mediaEl)) {
+          void playControlMedia(mediaEl, "custom controls network scrub resume");
+          return;
+        }
         // Use .catch() for promise errors if browser auto-play is blocked (common with video.play())
-        currentControlMedia()?.play().catch((e) => {
+        mediaEl?.play().catch((e) => {
           if (isPlayInterruptedError(e)) return;
           modeChangeFixups(e);
         });
@@ -20053,6 +21372,7 @@ function setupCustomMediaControls() {
     "timeupdate",
     (event) => {
       updateControlsForTime(event.target);
+      if (mediaIsNetworkTransport(event.target)) return;
       if (!event.target.paused) {
         syncTrackedPreviewStartTime(event.target);
       }
@@ -20101,6 +21421,7 @@ function setupCustomMediaControls() {
     "ended",
     () => {
       if (video !== currentControlMedia()) return;
+      if (mediaIsNetworkTransport(video)) return;
       // While the audience media window is live, #preview is only a mirror of
       // the projection. Writing video.currentTime here fires a "seeked" event
       // that seekLocalMedia forwards to the projection as a timeGoto-message,
@@ -20170,11 +21491,16 @@ function setupCustomMediaControls() {
           return;
         }
         const mediaEl = currentControlMedia();
-        if (!mediaEl || mediaEl.src === "") return;
+        if (!controlMediaHasSource(mediaEl)) return;
         const isControl = event.target.closest("#customControls");
 
         if (!isControl) {
-          if (mediaEl.paused) {
+          if (controlMediaPaused(mediaEl)) {
+            if (mediaIsNetworkTransport(mediaEl)) {
+              void playControlMedia(mediaEl, "network preview click toggle");
+              event.stopPropagation();
+              return;
+            }
             if (
               mediaEl === video &&
               !isLocalAppWindowPresentationActive() &&
@@ -20193,6 +21519,11 @@ function setupCustomMediaControls() {
               void playVideoSafely(mediaEl, "preview click toggle");
             }
           } else {
+            if (mediaIsNetworkTransport(mediaEl)) {
+              void pauseControlMedia(mediaEl);
+              event.stopPropagation();
+              return;
+            }
             if (previewMediaControlsLiveProjection(mediaEl)) {
               masterPauseState = true;
               void pauseMedia({ target: mediaEl });
@@ -20207,6 +21538,12 @@ function setupCustomMediaControls() {
   }
 
   setupCustomMediaControls.updateControlsForMetadata = updateControlsForMetadata;
+  setupCustomMediaControls.updateControlsForNetworkTransport = () => {
+    const mediaEl = currentControlMedia();
+    if (!mediaIsNetworkTransport(mediaEl)) return;
+    updateControlsForMetadata(mediaEl);
+    updateControlsForTime(mediaEl);
+  };
   syncMediaLoopState({ notify: false });
 }
 
@@ -20234,12 +21571,7 @@ function setupGtkVolumeControl() {
 
   if (slider.dataset.gtkVolBound === "1") {
     const cueVol = getPreviewCueDisplayVolume();
-    const displayVol =
-      cueVol !== null
-        ? cueVol
-        : video.muted
-          ? 0
-          : (video.volume ?? 1);
+    const displayVol = cueVol !== null ? cueVol : getLivePreviewDisplayVolume();
     slider.value = Math.round(displayVol * 100);
     gtkUpdateVolIcon?.(slider.value);
     return;
@@ -20258,11 +21590,8 @@ function setupGtkVolumeControl() {
     { passive: true },
   );
 
-  // Initialize slider value based on current video volume (or 100 if undefined)
-  slider.value = Math.round((video.volume || 1) * 100);
-
-  // Initial mute state check
-  if (video.muted) slider.value = 0;
+  // Initialize slider value based on the current live/cue transport volume.
+  slider.value = Math.round(getLivePreviewDisplayVolume() * 100);
 
   // Helper function to update the icon's appearance
   function updateIcon(v) {
@@ -20275,7 +21604,12 @@ function setupGtkVolumeControl() {
     const ARC_3 = `<path id="arc3" d="M 12 4 C 14 4 14 12 12 12" fill="none" stroke="currentColor" stroke-width="1"/>`;
 
     // --- 2. Update Icon based on volume/mute state ---
-    if (video.muted || v == 0) {
+    const mutedForIcon = isPreviewCueVolumeActive()
+      ? v == 0
+      : networkPreviewUsesRendererCapture()
+        ? networkPreviewTransportState.muted
+        : video.muted;
+    if (mutedForIcon || v == 0) {
       // Muted Icon: Cone + Mute Cross
       icon.innerHTML =
         CONE_PATH +
@@ -20320,6 +21654,12 @@ function setupGtkVolumeControl() {
       video.muted = false;
       updateIcon(slider.value);
       video.muted = savedMuted;
+    } else if (networkPreviewUsesRendererCapture()) {
+      setNetworkPreviewVolume(v, v === 0);
+      if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
+        mediaQueue[currentQueueIndex].cueVolume = v;
+      }
+      updateIcon(slider.value);
     } else {
       video.volume = v;
       if (v > 0) video.muted = false;
@@ -20332,6 +21672,7 @@ function setupGtkVolumeControl() {
 
   video.addEventListener("volumechange", () => {
     if (isPreviewCueVolumeActive()) return;
+    if (networkPreviewUsesRendererCapture()) return;
     if (video.muted) {
       slider.value = 0;
     } else {
@@ -20356,6 +21697,20 @@ function setupGtkVolumeControl() {
       video.muted = pendingCueVolume === 0;
       updateIcon(slider.value);
       video.muted = savedMuted;
+    } else if (networkPreviewUsesRendererCapture()) {
+      const currentVol = networkPreviewTransportState.muted
+        ? 0
+        : networkPreviewTransportState.volume;
+      if (currentVol === 0) {
+        const restored = lastVolume > 0 ? lastVolume : 1;
+        setNetworkPreviewVolume(restored, false);
+        slider.value = Math.round(restored * 100);
+      } else {
+        lastVolume = currentVol;
+        setNetworkPreviewVolume(networkPreviewTransportState.volume, true);
+        slider.value = 0;
+      }
+      updateIcon(slider.value);
     } else {
       if (video.muted) {
         video.volume = lastVolume > 0 ? lastVolume : 1;
@@ -20379,10 +21734,7 @@ function syncGtkSliderToCueState() {
   const slider = document.getElementById("gtkVolSlider");
   if (!slider) return;
   const cueVol = getPreviewCueDisplayVolume();
-  const displayVol =
-    cueVol !== null
-      ? cueVol
-      : (video?.muted ? 0 : (video?.volume ?? 1));
+  const displayVol = cueVol !== null ? cueVol : getLivePreviewDisplayVolume();
   slider.value = Math.round(displayVol * 100);
   gtkUpdateVolIcon?.(slider.value);
 }
@@ -20475,6 +21827,47 @@ async function handlePlaybackState(event, playbackState) {
   ) {
     return;
   }
+  if (networkPreviewUsesRendererCapture()) {
+    if (playbackState.syncPhase === "stabilizing") {
+      beginProjectionPlaybackStartupSync();
+      return;
+    }
+    finishProjectionPlaybackStartupSync();
+    masterPauseState = !playbackState.playing;
+    updateNetworkPreviewTransportState({
+      currentTime: playbackState.currentTime,
+      paused: !playbackState.playing,
+      timestamp: Date.now(),
+      mediaFile: mediaFile || activeNetworkPreviewSource(),
+    });
+    if (
+      Number.isFinite(playbackState.currentTime) &&
+      Number.isFinite(video.duration) &&
+      video.duration > 0 &&
+      Math.abs(video.currentTime - playbackState.currentTime) > 0.5
+    ) {
+      beginPreviewForwardingSuppression();
+      try {
+        video.currentTime = clampMediaTime(playbackState.currentTime, video.duration);
+      } catch {}
+      endPreviewForwardingSuppression();
+    }
+    if (playbackState.playing && video.paused) {
+      void playNetworkPreviewMirror("playback state sync").catch((err) => {
+        if (!isPlayInterruptedError(err)) {
+          console.error("Failed to keep network capture preview playing:", err);
+        }
+      });
+    } else if (!playbackState.playing && !video.paused) {
+      beginPreviewForwardingSuppression();
+      try {
+        video.pause();
+      } finally {
+        endPreviewForwardingSuppression();
+      }
+    }
+    return;
+  }
   // The main #preview is the live mirror at all times — including while a
   // cue is loaded into the overlay — so this projection→preview sync must
   // run unconditionally. Without it, the mirror gets stuck in whatever
@@ -20550,6 +21943,9 @@ function installIPCHandler() {
     void handleSongsDatabaseCleared().catch(console.error);
   });
   on("update-playback-state", handlePlaybackState);
+  on("media-preview-rtc-signal", (event, message) => {
+    void handleMediaPreviewRtcSignal(event, message);
+  });
   on("remoteplaypause", handlePlayPause);
   on("media-window-closed", handleMediaWindowClosed);
   on("media-window-closed", () => {
@@ -20648,6 +22044,7 @@ async function handleMediaWindowClosed(event, id) {
   const localVideo = video;
   finishProjectionPlaybackStartupSync();
   restoreLivePreviewMirrorMuteState(localVideo);
+  stopNetworkPreviewRtcCapture({ notifyMedia: false });
   stopStreamRendererPreviewCapture();
   resetAudienceOutputHold({ quiet: true });
   logoHoldOnlyPresentation = false;
@@ -20992,7 +22389,7 @@ function updatePlayButtonOnMediaWindow() {
   } else {
     document
       .getElementById("MdPlyrRBtnFrmID")
-      .addEventListener("click", updateDynUI, { once: true });
+      ?.addEventListener("click", updateDynUI, { once: true });
   }
 }
 
@@ -21212,18 +22609,16 @@ async function playMedia(e) {
   ) {
     const startIdx = queueStartIndexForPresent();
     const item = mediaQueue[startIdx];
-    if (!isLiveStream(item.path)) {
-      return runPresentationStart(async () => {
-        const presentStartTime = presentationStartTimeForQueueItem(startIdx, startTime);
-        isQueuePlaying = true;
-        currentQueueIndex = startIdx;
-        await playCurrentQueueItem({
-          preservePreviewSeek: false,
-          startTime: presentStartTime,
-        });
-        if (previewCueIndex === startIdx) clearCueAfterTake(startIdx);
+    return runPresentationStart(async () => {
+      const presentStartTime = presentationStartTimeForQueueItem(startIdx, startTime);
+      isQueuePlaying = true;
+      currentQueueIndex = startIdx;
+      await playCurrentQueueItem({
+        preservePreviewSeek: false,
+        startTime: presentStartTime,
       });
-    }
+      if (previewCueIndex === startIdx) clearCueAfterTake(startIdx);
+    });
   }
 
   if (
@@ -21623,9 +23018,8 @@ function stashLivePreview() {
 }
 
 /**
- * Ensure the two persistent tab shells exist under `#dyneForm`. Destroyed when
- * switching to Text mode (`cleanRefs({ fullDestroy })`), recreated here on next
- * Media/Streams visit.
+ * Ensure the persistent media panel exists under `#dyneForm`. Destroyed when
+ * switching to legacy full-destroy modes, recreated here on next media visit.
  */
 function ensureDyneTabShell() {
   const dyne = document.getElementById("dyneForm");
@@ -21642,6 +23036,7 @@ function ensureMediaPanelBuilt() {
     return;
   }
   panel.innerHTML = generateMediaFormHTML();
+  ensureNetworkItemDialog(panel);
   panel.dataset.mediaShellBuilt = "1";
 }
 
@@ -21676,10 +23071,10 @@ function getPreviewMountWrapperForPanel(panelEl) {
 
 /**
  * Move the stashed live preview (`video#preview` / `img#preview`) into the
- * given tab panel. Streams uses an empty `.stream-preview-host` (no duplicate
- * `#preview` ids while both shells exist); Media uses `.video-wrapper` with a
- * placeholder `<video id="preview">` from `generateMediaFormHTML`, or inserts one
- * if the wrapper was left empty after a stash.
+ * given panel. Legacy stream layouts use an empty `.stream-preview-host` (no
+ * duplicate `#preview` ids while both shells exist); Media uses `.video-wrapper`
+ * with a placeholder `<video id="preview">` from `generateMediaFormHTML`, or
+ * inserts one if the wrapper was left empty after a stash.
  */
 function restoreLivePreviewIntoPanel(panelEl) {
   const stash = document.getElementById(PREVIEW_STASH_ID);
@@ -21852,15 +23247,27 @@ function syncRendererCaptureQuality(stream, mode = activeRendererCaptureQualityM
 }
 
 function mediaRendererCaptureAllowedForCurrentMode() {
+  if (networkPreviewUsesRendererCapture()) return false;
   if (currentMode === MEDIAPLAYER) return true;
   if (currentMode === STREAMPLAYER) return streamsTabNetworkStreamLoaded();
   return false;
 }
 
+function activeMediaRendererCaptureElements() {
+  const sinks = [];
+  if (currentMode === STREAMPLAYER) {
+    const streamPreview = getStreamRendererPreviewElement();
+    if (streamPreview) sinks.push(streamPreview);
+  }
+  if (currentMode === MEDIAPLAYER) {
+    const confidenceMonitor = getConfidenceMonitorElement();
+    if (confidenceMonitor) sinks.push(confidenceMonitor);
+  }
+  return [...new Set(sinks)];
+}
+
 function activeMediaRendererCaptureElement() {
-  if (currentMode === STREAMPLAYER) return getStreamRendererPreviewElement();
-  if (currentMode === MEDIAPLAYER) return getConfidenceMonitorElement();
-  return null;
+  return activeMediaRendererCaptureElements()[0] || null;
 }
 
 function allMediaRendererCaptureElements() {
@@ -21923,21 +23330,23 @@ function hideRendererCaptureElement(el) {
 }
 
 function syncRendererCaptureSinks(stream = streamRendererPreviewStream) {
-  const activeEl = stream && isActiveMediaWindow()
-    ? activeMediaRendererCaptureElement()
-    : null;
-  if (activeEl) {
+  const activeEls = new Set(
+    stream && isActiveMediaWindow()
+      ? activeMediaRendererCaptureElements()
+      : [],
+  );
+  if (activeEls.size > 0) {
     syncRendererCaptureQuality(stream);
   }
   allMediaRendererCaptureElements().forEach((el) => {
-    if (el === activeEl) {
+    if (activeEls.has(el)) {
       prepareRendererCaptureElement(el, stream);
     } else {
       hideRendererCaptureElement(el);
     }
   });
-  setStreamRendererPreviewActive(activeEl === getStreamRendererPreviewElement());
-  setConfidenceMonitorActive(activeEl === getConfidenceMonitorElement());
+  setStreamRendererPreviewActive(activeEls.has(getStreamRendererPreviewElement()));
+  setConfidenceMonitorActive(activeEls.has(getConfidenceMonitorElement()));
 }
 
 function stopStreamRendererPreviewCapture() {
@@ -21957,8 +23366,8 @@ async function startStreamRendererPreviewCapture() {
     return;
   }
 
-  const previewEl = activeMediaRendererCaptureElement();
-  if (!previewEl || !navigator.mediaDevices?.getDisplayMedia) {
+  const previewEls = activeMediaRendererCaptureElements();
+  if (!previewEls.length || !navigator.mediaDevices?.getDisplayMedia) {
     syncRendererCaptureSinks(null);
     return;
   }
@@ -22018,6 +23427,11 @@ async function startStreamRendererPreviewCapture() {
 }
 
 function syncStreamRendererPreviewCapture() {
+  if (networkPreviewUsesRendererCapture()) {
+    stopStreamRendererPreviewCapture();
+    syncNetworkPreviewMirrorCapture();
+    return;
+  }
   if (!mediaRendererCaptureAllowedForCurrentMode() || !isActiveMediaWindow()) {
     stopStreamRendererPreviewCapture();
     return;
@@ -22038,8 +23452,8 @@ function installDisplayChangeHandler() {
 
 /**
  * `get-platform` cannot change without an app restart — caching avoids an IPC
- * round-trip on every Media-tab activation after the operator has been using
- * Streams or letting playback run in the background.
+ * round-trip on every media view activation after playback has been running
+ * in the background.
  */
 let cachedGetPlatformPromise = null;
 function getCachedPlatformOS() {
@@ -22107,6 +23521,7 @@ function setSBFormMediaPlayer() {
   installPreviewEventHandlers();
 
   installMediaOpenButton();
+  installNetworkItemButton();
   installPreviewEmptyStateHandlers();
   installMediaOptionsExpander();
   installGlobalSlideTransitionControls();
@@ -22546,15 +23961,13 @@ function cleanRefs(options = {}) {
 }
 
 function installEvents() {
-  document.getElementById("MdPlyrRBtnFrmID").addEventListener(
+  document.getElementById("MdPlyrRBtnFrmID")?.addEventListener(
     "click",
     () => {
       if (currentMode === MEDIAPLAYER) {
         return;
       }
-      if (currentMode === STREAMPLAYER) {
-        stashLivePreview();
-      } else if (currentMode === TEXTPLAYER) {
+      if (currentMode === TEXTPLAYER) {
         cleanRefs({ fullDestroy: true });
       }
       if (mediaFile != null && mediaFile != "" && !isLiveStream(mediaFile)) {
@@ -22565,39 +23978,18 @@ function installEvents() {
     { passive: true },
   );
 
-  document.getElementById("YtPlyrRBtnFrmID").addEventListener(
-    "click",
-    () => {
-      if (currentMode === STREAMPLAYER) {
-        return;
-      }
-      if (currentMode === MEDIAPLAYER) {
-        if (setupCustomMediaControls.controller) {
-          try {
-            setupCustomMediaControls.controller.abort();
-          } catch {
-            /* ignore */
-          }
-        }
-        stashLivePreview();
-        clearVideoPreviewCueOverlay();
-        previewCueVideo = null;
-      } else if (currentMode === TEXTPLAYER) {
-        cleanRefs({ fullDestroy: true });
-      }
-      setSBFormStreamPlayer();
-    },
-    { passive: true },
-  );
-
   document.addEventListener("keydown", shortcutHandler, { passive: true });
   document
     .querySelector("form")
-    .addEventListener("change", modeSwitchHandler, { passive: true });
+    ?.addEventListener("change", modeSwitchHandler, { passive: true });
 }
 
 function playLocalMedia(event) {
   if (currentMode !== MEDIAPLAYER) {
+    return;
+  }
+  if (event?.target === video && networkPreviewUsesRendererCapture()) {
+    syncPreviewAudioTrackState();
     return;
   }
   if (
@@ -22695,6 +24087,9 @@ function playLocalMedia(event) {
 }
 
 function loadLocalMediaHandler(event) {
+  if (event?.target === video && networkPreviewUsesRendererCapture()) {
+    return;
+  }
   if (pidController) {
     pidController.reset();
   }
@@ -22705,6 +24100,11 @@ function loadLocalMediaHandler(event) {
 }
 
 function loadedmetadataHandler(e) {
+  if (e?.target === video && networkPreviewUsesRendererCapture()) {
+    syncPreviewAudioTrackState();
+    refreshNetworkPreviewTransportControls();
+    return;
+  }
   if (video.src === "" || isImg(video.src)) {
     return;
   }
@@ -22718,6 +24118,9 @@ function loadedmetadataHandler(e) {
 }
 
 function seekLocalMedia(e) {
+  if (e?.target === video && networkPreviewUsesRendererCapture()) {
+    return;
+  }
   if (pidSeeking) {
     // Critical: a PID-driven seek MUST NOT be echoed back to the
     // projection. Writing video.currentTime fires both `seeking` and
@@ -22727,9 +24130,8 @@ function seekLocalMedia(e) {
     // projection, causing the projection to seek, which the next
     // time message reports back, which the PID corrects again, ad
     // infinitum. The visible symptom was the projection pausing /
-    // glitching every few seconds, worst on the Streams tab where
-    // the hidden preview drifts more and PID corrections fire more
-    // often. beginPidSeekSuppression's timer is the single source of
+    // glitching every few seconds, worst when the hidden preview drifts
+    // more and PID corrections fire more often. beginPidSeekSuppression's timer is the single source of
     // truth for when the swallow window closes.
     e.preventDefault();
     return;
@@ -22769,6 +24171,9 @@ function seekLocalMedia(e) {
 }
 
 function seekingLocalMedia(e) {
+  if (e?.target === video && networkPreviewUsesRendererCapture()) {
+    return;
+  }
   if (pidSeeking) {
     // See seekLocalMedia for the full rationale. The pidSeeking flag
     // is reset by beginPidSeekSuppression's timer, never by this
@@ -22798,6 +24203,9 @@ function seekingLocalMedia(e) {
 }
 
 function endLocalMedia(event) {
+  if (event?.target === video && networkPreviewUsesRendererCapture()) {
+    return;
+  }
   setMediaCountdownText("");
   tracePlayback(
     "endLocalMedia (preview #preview ended)",
@@ -22926,6 +24334,10 @@ function endLocalMedia(event) {
 }
 
 function pauseLocalMedia(event) {
+  if (event?.target === video && networkPreviewUsesRendererCapture()) {
+    syncPreviewAudioTrackState();
+    return;
+  }
   if (shouldSuppressPreviewForwarding()) {
     localTimeStampUpdateIsRunning = false;
     updatePreviewCueUI();
@@ -22981,11 +24393,10 @@ function pauseLocalMedia(event) {
     return;
   }
   if (event.target.clientHeight === 0) {
-    // The Streams tab hosts the persistent <video> inside a wrapper with
-    // `display: none`, so its `clientHeight` is always 0 there. Without this
-    // guard, clicking the Stop button while on the Streams tab with an
-    // audio-only file playing would re-trigger playback immediately, because
-    // this branch was treating "hidden" as "incidentally detached, resume it".
+    // Hidden preview hosts report `clientHeight` as 0. Without this guard,
+    // clicking Stop while an audio-only file is playing would re-trigger
+    // playback immediately because this branch treated "hidden" as
+    // "incidentally detached, resume it".
     if (!isPlaying) return;
     event.preventDefault();
     void playVideoSafely(event.target, "detached media element resume");
@@ -23010,6 +24421,9 @@ function pauseLocalMedia(event) {
 }
 
 function handleVolumeChange(event) {
+  if (event?.target === video && networkPreviewUsesRendererCapture()) {
+    return;
+  }
   if (event.target.id === "volume-slider" && !isLiveStream(mediaFile)) {
     return;
   }
@@ -23197,15 +24611,12 @@ async function loadOpMode(mode) {
       }
       updateOutputHoldButtonStates();
 
-      // Mode setup
-      if (mode === STREAMPLAYER) {
-        document.getElementById("YtPlyrRBtnFrmID").checked = true;
-        setSBFormStreamPlayer();
-      } else {
-        document.getElementById("MdPlyrRBtnFrmID").checked = true;
-        setSBFormMediaPlayer();
-        installPreviewEventHandlers();
-      }
+      // Mode setup. The legacy stream mode is folded into the Media schedule;
+      // stale saved settings for STREAMPLAYER now open the schedule view.
+      const mediaRadio = document.getElementById("MdPlyrRBtnFrmID");
+      if (mediaRadio) mediaRadio.checked = true;
+      setSBFormMediaPlayer();
+      installPreviewEventHandlers();
       await restoreAutosavedProjectState();
 
       // Drag and drop: the renderer is the OS-level drop target (Electron does
@@ -23318,7 +24729,9 @@ function isLiveStream(mediaFile) {
   ) {
     return false;
   }
-  return /(?:m3u8|mpd|youtube\.com|videoplayback|youtu\.be)/i.test(mediaFile);
+  return /(?:^rtsp:|^rtmp:|\.m3u8(?:[?#]|$)|\.mpd(?:[?#]|$)|youtube\.com|videoplayback|youtu\.be)/i.test(
+    String(mediaFile),
+  );
 }
 
 async function endLiveAudioPresentation() {
@@ -23486,6 +24899,9 @@ async function createMediaWindow(options) {
     isQueuePlaying &&
     currentQueueIndex >= 0 &&
     currentQueueIndex < mediaQueue.length;
+  const presentationQueueItem = isQueuePlaybackContext
+    ? mediaQueue[currentQueueIndex]
+    : null;
   const ts = await invoke("get-system-time");
   let birth =
     ts.systemTime +
@@ -23501,18 +24917,20 @@ async function createMediaWindow(options) {
       : mediaPlayerInputState.filePaths[0];
   let projectionMediaFile = mediaFile;
   if (!textItem && isQueuePlaybackContext) {
-    const queueItem = mediaQueue[currentQueueIndex];
-    if (!isQueueItemBible(queueItem) && !isQueueItemSong(queueItem)) {
-      projectionMediaFile = await resolveQueueItemMediaPath(queueItem);
+    if (!isQueueItemBible(presentationQueueItem) && !isQueueItemSong(presentationQueueItem)) {
+      projectionMediaFile = await resolveQueueItemMediaPath(presentationQueueItem);
     }
   }
   var liveStreamMode = textItem ? false : isLiveStream(mediaFile);
+  const liveStreamAtLiveEdge = presentationQueueItem
+    ? queueItemIsLiveEdgeStream(presentationQueueItem)
+    : liveStreamMode;
   const displaySelectEl =
     currentMode === STREAMPLAYER
       ? document.getElementById("dspSelctStreams")
       : document.getElementById("dspSelct");
   const selectedDisplay = displaySelectEl?.value || null;
-  activeLiveStream = liveStreamMode;
+  activeLiveStream = liveStreamAtLiveEdge;
 
   if (liveStreamMode === true) {
     if (currentMode === STREAMPLAYER) {
@@ -23520,10 +24938,6 @@ async function createMediaWindow(options) {
       isQueuePlaying = false;
       currentQueueIndex = -1;
       renderQueue();
-    }
-    if (video && !isImg(video.src)) {
-      video.removeAttribute("src");
-      video.load();
     }
   }
 
@@ -23573,10 +24987,12 @@ async function createMediaWindow(options) {
   const effectiveLoop = loopEnabledForLiveMedia(mediaFile);
   syncMediaLoopState({ notify: false });
 
-  if (liveStreamMode === false) {
+  if (!liveStreamAtLiveEdge) {
     startTime = hasExplicitStartTime
       ? validMediaStartTime(options.startTime)
       : validMediaStartTime(video?.currentTime);
+  } else {
+    startTime = 0;
   }
 
   const windowOptions = {
@@ -23593,6 +25009,7 @@ async function createMediaWindow(options) {
         strtVl !== 1 ? "__start-vol=" + strtVl : "",
         effectiveLoop ? "__media-loop=true" : "",
         liveStreamMode ? "__live-stream=" + liveStreamMode : "",
+        liveStreamMode && !liveStreamAtLiveEdge ? "__seekable-network=true" : "",
         isImgFile ? "__isImg" : "",
         isPptxFile ? "__isPptx" : "",
         isTextItem ? "__isText" : "",
@@ -23614,7 +25031,7 @@ async function createMediaWindow(options) {
   }
 
   const startupSyncNeeded =
-    autoPlayEnabled && !liveStreamMode && !isTextItem && !isImgFile && !isPptxFile;
+    autoPlayEnabled && !liveStreamAtLiveEdge && !isTextItem && !isImgFile && !isPptxFile;
   isActiveMediaWindowCache = true;
   activeResolvedMediaFile = projectionMediaFile;
   activePreviewResolvedMediaFile = projectionMediaFile;
@@ -23647,6 +25064,9 @@ async function createMediaWindow(options) {
       : isImgFile
       ? "image"
       : "video";
+  if (networkPreviewUsesRendererCapture()) {
+    resetNetworkPreviewTransportState(mediaFile || projectionMediaFile);
+  }
   bibleShowNowModeActive = Boolean(isTextItem && transientText && activeMediaWindowContentType === "bible");
   if (isTextItem && transientText && activeMediaWindowContentType === "song") {
     markSongShowNowPresentation(textItem || mediaQueue[currentQueueIndex]);
@@ -23687,7 +25107,11 @@ async function createMediaWindow(options) {
     video.addEventListener("loadedmetadata", syncPreviewAudioTrackState, {
       once: true,
     });
-    video.muted = false;
+    if (networkPreviewUsesRendererCapture()) {
+      setNetworkPreviewElementCaptureMuted();
+    } else {
+      video.muted = false;
+    }
   }
   if (autoPlayEnabled) {
     beginPidSeekSuppression();
@@ -23697,7 +25121,12 @@ async function createMediaWindow(options) {
     if (isQueuePlaybackContext || currentMode !== STREAMPLAYER) {
       if (video !== null && !isImgFile && !isPptxFile) {
         beginPidSeekSuppression();
-        await playLivePreviewMirrorSafely("media-window autoplay");
+        if (networkPreviewUsesRendererCapture()) {
+          await playNetworkPreviewMirror("media-window network mirror autoplay");
+          syncNetworkPreviewMirrorCapture();
+        } else {
+          await playLivePreviewMirrorSafely("media-window autoplay");
+        }
       }
     }
   }
@@ -23708,6 +25137,7 @@ async function createMediaWindow(options) {
     }
   }
   syncStreamRendererPreviewCapture();
+  void refreshNetworkPreviewTransportState();
   return true;
 }
 

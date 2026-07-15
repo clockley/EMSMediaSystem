@@ -35,6 +35,7 @@ let countdownDeps = {
   setMediaCountdownText: () => {},
   setMediaCountdownFromCodes: () => {},
   setTargetTime: () => {},
+  onRemoteTimeTick: () => {},
 };
 
 export function configureCountdown(deps = {}) {
@@ -143,6 +144,10 @@ function setMediaCountdownFromCodes(codes) {
 
 function setTargetTime(value) {
   countdownDeps.setTargetTime(value);
+}
+
+function onRemoteTimeTick(duration, currentTime, timestamp, mediaFile) {
+  countdownDeps.onRemoteTimeTick(duration, currentTime, timestamp, mediaFile);
 }
 
 const SECONDSFLOAT = new Float64Array(1);
@@ -441,6 +446,8 @@ export function handleTimeMessage(
   ) {
     return;
   }
+
+  onRemoteTimeTick(duration, currentTime, timestamp, messageMediaFile);
 
   now = Date.now();
 

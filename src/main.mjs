@@ -67,6 +67,7 @@ import {
 let sessionID = 0;
 let innertubePromise = null;
 const youtubePathNTransformCache = new Map();
+const youtubeMetadataCache = new Map();
 const isDevMode = process.env.ems_dev === "true";
 const openDevConsole = process.env.ems_dev_console === "true";
 let lastKnownDisplayState = null;
@@ -431,7 +432,7 @@ function handleMediaWindowDisplayMediaRequest(request, callback) {
     return;
   }
 
-  // Video-only frame capture keeps the Streams preview in-app; audio stays
+  // Video-only frame capture keeps the schedule preview in-app; audio stays
   // routed through the normal presentation controls.
   callback({ video: mediaWindow.webContents.mainFrame });
 }
@@ -768,6 +769,32 @@ async function handleGetMediaCurrentTime() {
   return 0;
 }
 
+async function handleGetMediaPlaybackState() {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+    const state = await mediaWindow.webContents.executeJavaScript(`(() => {
+      const video = window.api && window.api.video;
+      if (!video) return null;
+      return {
+        currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
+        duration: Number.isFinite(video.duration) ? video.duration : 0,
+        paused: !!video.paused,
+        volume: Number.isFinite(video.volume) ? video.volume : 1,
+        muted: !!video.muted
+      };
+    })()`);
+    if (state && typeof state === "object") {
+      return state;
+    }
+  }
+  return {
+    currentTime: 0,
+    duration: 0,
+    paused: true,
+    volume: 1,
+    muted: false,
+  };
+}
+
 async function handleGetPptxCurrentSlide() {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     const slide = await mediaWindow.webContents.executeJavaScript(
@@ -808,6 +835,18 @@ function handleTimeGotoMessage(event, arg) {
 function handleVlcl(event, v, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     mediaWindow.send("vlcl", v);
+  }
+}
+
+function handleMediaPreviewRtcToMedia(event, message) {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+    mediaWindow.webContents.send("media-preview-rtc-signal", message);
+  }
+}
+
+function handleMediaPreviewRtcToControl(event, message) {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send("media-preview-rtc-signal", message);
   }
 }
 
@@ -1897,6 +1936,41 @@ async function transformYoutubePathNUrl(url) {
   parsed.raw[nIndex + 1] = encodeURIComponent(transformedN);
   parsed.url.pathname = `/${parsed.raw.join("/")}`;
   return parsed.url.href;
+}
+
+async function handleGetYouTubeMetadata(_event, url) {
+  const videoId = extractYouTubeVideoId(url);
+  if (!videoId) {
+    throw new Error(`Could not extract a YouTube video ID from: ${url}`);
+  }
+  const cached = youtubeMetadataCache.get(videoId);
+  if (cached) return cached;
+
+  const yt = await getInnertube();
+  const info = await yt.getBasicInfo(videoId);
+  const details = info?.basic_info || info?.page?.[0]?.video_details || {};
+  const title =
+    typeof details.title === "string" && details.title.trim().length > 0
+      ? details.title.trim()
+      : "";
+  const author =
+    typeof details.author === "string" && details.author.trim().length > 0
+      ? details.author.trim()
+      : typeof details.channel?.name === "string"
+        ? details.channel.name.trim()
+        : "";
+  const metadata = {
+    videoId,
+    title,
+    author,
+    isLive: details.is_live === true,
+  };
+  youtubeMetadataCache.set(videoId, metadata);
+  if (youtubeMetadataCache.size > 256) {
+    const oldestKey = youtubeMetadataCache.keys().next().value;
+    youtubeMetadataCache.delete(oldestKey);
+  }
+  return metadata;
 }
 
 /** Clients to try for live HLS; IOS-first because its manifest works with the iOS UA spoof. */
@@ -4238,6 +4312,7 @@ async function handleSongsRPC(_event, method, params = []) {
 function setIPC() {
   ipcMain.handle("get-system-time", getSystemTIme);
   ipcMain.handle("get-platform", getPlatform);
+  ipcMain.handle("get-youtube-metadata", handleGetYouTubeMetadata);
   ipcMain.handle("resolve-youtube-stream", handleResolveYouTubeStream);
   ipcMain.on("set-mode", handleSetMode);
   ipcMain.handle("get-setting", getSetting);
@@ -4291,6 +4366,7 @@ function setIPC() {
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);
   ipcMain.handle("get-media-current-time", handleGetMediaCurrentTime);
+  ipcMain.handle("get-media-playback-state", handleGetMediaPlaybackState);
   ipcMain.handle("get-media-window-bounds", handleGetMediaWindowBounds);
   ipcMain.handle("get-pptx-current-slide", handleGetPptxCurrentSlide);
   ipcMain.handle("set-media-loop-status", handleSetLoopStatus);
@@ -4339,6 +4415,8 @@ function setIPC() {
     return false;
   });
   ipcMain.on("vlcl", handleVlcl);
+  ipcMain.on("media-preview-rtc-to-media", handleMediaPreviewRtcToMedia);
+  ipcMain.on("media-preview-rtc-to-control", handleMediaPreviewRtcToControl);
   ipcMain.on("update-text", (_event, message) => {
     if (mediaWindow && !mediaWindow.isDestroyed()) {
       mediaWindow.webContents.send("update-text", message);

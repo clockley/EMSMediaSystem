@@ -136,7 +136,7 @@ export function isPlayInterruptedError(error) {
 export function pathToMediaUrl(filePath, cacheBust) {
   if (!filePath || typeof filePath !== "string") return "";
   if (isBiblePath(filePath) || isSongPath(filePath)) return "";
-  if (/^(file|https?|blob):/i.test(filePath)) return filePath;
+  if (/^(file|https?|rtsp|rtmp|blob):/i.test(filePath)) return filePath;
 
   const normalized = filePath.replace(/\\/g, "/");
   let url;
@@ -170,22 +170,57 @@ export function clampQueueStartTime(time, duration) {
 export function classifyQueueMediaType(filePath) {
   if (typeof filePath === "string" && filePath.startsWith(bibleUriPrefix)) return "bible";
   if (typeof filePath === "string" && filePath.startsWith(songUriPrefix)) return "song";
-  if (imageRegex.test(filePath)) return "image";
-  if (pptxRegex.test(filePath)) return "pptx";
-  if (/\.(mp4|m4v|mov|mkv|webm|avi|wmv)$/i.test(filePath)) return "video";
-  if (/\.(mp3|m4a|aac|wav|flac|ogg|opus|wma)$/i.test(filePath)) return "audio";
+  const inspectPath = mediaTypeInspectionPath(filePath);
+  if (imageRegex.test(inspectPath)) return "image";
+  if (pptxRegex.test(inspectPath)) return "pptx";
+  if (/\.(mp4|m4v|mov|mkv|webm|avi|wmv|m3u8|mpd)$/i.test(inspectPath)) return "video";
+  if (/\.(mp3|m4a|aac|wav|flac|ogg|opus|wma)$/i.test(inspectPath)) return "audio";
+  if (isRemoteMediaPath(filePath) && /(?:youtube\.com|youtu\.be|videoplayback)/i.test(filePath)) {
+    return "video";
+  }
+  if (/^(rtsp|rtmp):/i.test(String(filePath || ""))) return "video";
   return "file";
 }
 
 export function queueBasename(filePath) {
+  if (isRemoteMediaPath(filePath)) {
+    const networkName = remoteMediaDisplayName(filePath);
+    if (networkName) return networkName;
+  }
   const parts = filePath.split(/[/\\]/);
   return parts[parts.length - 1] || filePath;
+}
+
+function mediaTypeInspectionPath(filePath) {
+  if (typeof filePath !== "string") return "";
+  try {
+    const url = new URL(filePath.trim());
+    if (["http:", "https:", "rtsp:", "rtmp:", "file:", "blob:"].includes(url.protocol)) {
+      return decodeURIComponent(url.pathname || filePath);
+    }
+  } catch {
+    /* Fall through to raw path inspection. */
+  }
+  return filePath;
+}
+
+function remoteMediaDisplayName(filePath) {
+  try {
+    const url = new URL(String(filePath).trim());
+    const pathname = decodeURIComponent(url.pathname || "");
+    const lastPathPart = pathname.split("/").filter(Boolean).pop();
+    if (lastPathPart) return lastPathPart;
+    if (url.hostname) return url.hostname.replace(/^www\./i, "");
+  } catch {
+    /* Fall through to an empty name. */
+  }
+  return "";
 }
 
 export function isRemoteMediaPath(filePath) {
   return (
     typeof filePath === "string" &&
-    /^(https?|m3u8|mpd|blob):/i.test(filePath)
+    /^(https?|rtsp|rtmp|blob):/i.test(filePath)
   );
 }
 
@@ -244,15 +279,19 @@ export function normalizeLiveSource(filePath, liveSource, opts = {}) {
   });
 }
 
-export function createQueueEntry(filePath) {
-  const type = classifyQueueMediaType(filePath);
+export function createQueueEntry(filePath, opts = {}) {
+  const type = opts.type || classifyQueueMediaType(filePath);
+  const displayName =
+    typeof opts.name === "string" && opts.name.trim().length > 0
+      ? opts.name.trim()
+      : queueBasename(filePath);
   return {
     path: filePath,
-    name: queueBasename(filePath),
+    name: displayName,
     type,
     missing: false,
     originalPath: filePath,
-    originalName: queueBasename(filePath),
+    originalName: displayName,
     autoAdvance: false,
     cueStartTime: 0,
     loop: false,
