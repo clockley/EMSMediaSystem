@@ -1732,7 +1732,7 @@ __metadata:
     esbuild: "npm:^0.28.1"
     fflate: "npm:^0.8.3"
     hash-wasm: "npm:^4.12.0"
-    hls.js: "npm:^1.6.16"
+    hls.js: "npm:v1.7.0-beta.2"
     html-minifier-terser: "npm:^7.0.0"
     pdfjs-dist: "npm:5.4.624"
     terser: "npm:^5.43.1"
@@ -2290,10 +2290,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"hls.js@npm:^1.6.16":
-  version: 1.6.16
-  resolution: "hls.js@npm:1.6.16"
-  checksum: 10c0/dedf0255fdea857f29e46caab990b2bbdfde9410e64932466e03fc95018238b94486ce57e4b6a96aa4d0e8f9fd26c877e3905951f900fd58437f5eab2b284722
+"hls.js@npm:v1.7.0-beta.2":
+  version: 1.7.0-beta.2
+  resolution: "hls.js@npm:1.7.0-beta.2"
+  checksum: 10c0/281962641b1ae288089ddcef46f6f3e248c859e7909786e7da3d45efc054480dd02b2b6c621847c33cc39bb57a8e705c189922f012cfb64fac882128cc06699c
   languageName: node
   linkType: hard
 

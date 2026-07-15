@@ -17,15 +17,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 /** Hidden host for the persistent <video id="preview"> across tab switches. */
 export const PREVIEW_STASH_ID = "previewStash";
-/** Persistent tab shells under `#dyneForm` — built once, shown/hidden per tab. */
+/** Persistent panel shell under `#dyneForm` — built once so live playback survives UI refreshes. */
 export const TAB_PANEL_MEDIA_ID = "tab-panel-media";
 export const TAB_PANEL_STREAMS_ID = "tab-panel-streams";
 
 export function generateDyneTabShellHTML() {
-  return (
-    `<div id="${TAB_PANEL_MEDIA_ID}" class="tab-panel tab-panel--media"></div>` +
-    `<div id="${TAB_PANEL_STREAMS_ID}" class="tab-panel tab-panel--streams" hidden></div>`
-  );
+  return `<div id="${TAB_PANEL_MEDIA_ID}" class="tab-panel tab-panel--media"></div>`;
 }
 
 export function generateStreamsPanelHTML() {
@@ -93,12 +90,20 @@ export function generateMediaFormHTML() {
       <div class="queue-section">
         <div class="list-header">
           <span class="queue-section-title">Schedule</span>
-          <button type="button" id="clearQueueBtn" class="pill-button destructive-action" title="Clear the schedule" aria-label="Clear schedule" hidden>Clear</button>
+          <span class="queue-section-actions">
+            <button type="button" id="addNetworkItemBtn" class="queue-header-button" title="Add network item" aria-label="Add network item">
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M8 3.5v9M3.5 8h9"/>
+              </svg>
+              <span>Network</span>
+            </button>
+            <button type="button" id="clearQueueBtn" class="pill-button destructive-action" title="Clear the schedule" aria-label="Clear schedule" hidden>Clear</button>
+          </span>
         </div>
         <div id="mediaQueueList" class="boxed-list" role="list" aria-label="Schedule">
           <div class="list-placeholder">
             <span class="list-placeholder-title">No items scheduled</span>
-            <span class="list-placeholder-hint">Add media or Bible text to begin</span>
+            <span class="list-placeholder-hint">Add media, network items, or Bible text</span>
           </div>
         </div>
       </div>
@@ -977,6 +982,76 @@ export function generateMediaFormHTML() {
   </div>`;
 }
 
+export function generateNetworkItemDialogHTML() {
+  return `
+    <dialog id="networkItemDialog" class="adw-dialog network-item-dialog" aria-labelledby="networkItemDialogTitle" aria-describedby="networkItemValidation">
+      <form id="networkItemForm" method="dialog" class="adw-dialog__surface" novalidate>
+        <header class="adw-dialog__header">
+          <button type="button" id="networkItemCancelBtn" class="adw-dialog__button">Cancel</button>
+          <h2 id="networkItemDialogTitle" class="adw-dialog__title">Add Network Source</h2>
+          <button type="submit" id="networkItemAddBtn" class="adw-dialog__button adw-dialog__button--suggested" disabled>Add</button>
+        </header>
+        <div class="adw-dialog__body">
+          <section class="network-item-dialog__group" aria-label="Source">
+            <div class="network-item-dialog__group-title">Source</div>
+            <div class="network-item-dialog__list">
+              <label class="network-item-row network-item-row--entry" for="networkItemUrlInput">
+                <span class="network-item-row__text">
+                  <span class="network-item-row__title">Address</span>
+                </span>
+                <input id="networkItemUrlInput" class="network-item-entry" type="url" inputmode="url" autocomplete="url" autocapitalize="none" spellcheck="false" placeholder="https://example.com/live.m3u8" required>
+              </label>
+              <label class="network-item-row network-item-row--entry" for="networkItemNameInput">
+                <span class="network-item-row__text">
+                  <span class="network-item-row__title">Name</span>
+                </span>
+                <input id="networkItemNameInput" class="network-item-entry" type="text" autocomplete="off" placeholder="Optional">
+              </label>
+            </div>
+          </section>
+
+          <section class="network-item-dialog__group" aria-label="Type">
+            <fieldset class="network-item-kind">
+              <legend class="network-item-dialog__group-title">Type</legend>
+              <div class="network-item-dialog__list network-item-dialog__list--radio">
+                <label>
+                  <input type="radio" name="networkItemKind" value="auto" checked>
+                  <span class="network-item-row__text">
+                    <span class="network-item-row__title">Automatic</span>
+                    <span class="network-item-row__subtitle">Detect the best playback mode</span>
+                  </span>
+                </label>
+                <label>
+                  <input type="radio" name="networkItemKind" value="stream">
+                  <span class="network-item-row__text">
+                    <span class="network-item-row__title">Live Stream</span>
+                    <span class="network-item-row__subtitle">Start at the live position</span>
+                  </span>
+                </label>
+                <label>
+                  <input type="radio" name="networkItemKind" value="video">
+                  <span class="network-item-row__text">
+                    <span class="network-item-row__title">Video or File</span>
+                    <span class="network-item-row__subtitle">Allow scheduled start times</span>
+                  </span>
+                </label>
+                <label>
+                  <input type="radio" name="networkItemKind" value="audio">
+                  <span class="network-item-row__text">
+                    <span class="network-item-row__title">Audio</span>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+          </section>
+
+          <p id="networkItemValidation" class="network-item-validation" role="status" aria-live="polite"></p>
+        </div>
+      </form>
+    </dialog>
+  `;
+}
+
 export function queueTypeIconMarkup(itemOrType) {
   const item =
     typeof itemOrType === "object" && itemOrType !== null
@@ -984,6 +1059,9 @@ export function queueTypeIconMarkup(itemOrType) {
       : { type: itemOrType };
   if (item?.missing) {
     return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.5l6.2 11A1 1 0 0 1 13.3 14H2.7a1 1 0 0 1-.9-1.5l6.2-11zM7.3 6.2v3.9h1.4V6.2H7.3zm0 5.2v1.4h1.4v-1.4H7.3z"/></svg>`;
+  }
+  if (typeof item.path === "string" && /^(https?|rtsp|rtmp):/i.test(item.path)) {
+    return `<svg class="queue-item-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M5.5 5.5a3.5 3.5 0 0 0 0 5M10.5 5.5a3.5 3.5 0 0 1 0 5M3.3 3.3a6.7 6.7 0 0 0 0 9.4M12.7 3.3a6.7 6.7 0 0 1 0 9.4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>`;
   }
   const type = item.type;
   switch (type) {
