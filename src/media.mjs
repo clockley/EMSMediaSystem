@@ -71,6 +71,10 @@ let textIpcHandlersInstalled = false;
 let ipcHandlersInstalled = false;
 const PRESENTATION_START_BUFFER_SECONDS = 12;
 const PRESENTATION_START_BUFFER_TIMEOUT_MS = 12000;
+const STREAM_MIN_LOADING_STATUS_MS = 500;
+const PREVIEW_RTC_CAPTURE_ATTEMPTS = 8;
+const PREVIEW_RTC_CAPTURE_TRACK_WAIT_MS = 1200;
+const PREVIEW_RTC_CAPTURE_RETRY_DELAY_MS = 250;
 const PPTX_SMALL_DECK_MAX_SLIDES = 30;
 const PPTX_LARGE_DECK_MIN_SLIDES = 151;
 const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
@@ -201,11 +205,7 @@ function reportProjectionError(context, error) {
   const message = `${context}: ${detail}`;
   console.error(message, error);
   if (liveStreamMode) {
-    showStreamStatus(
-      "error",
-      "Stream unavailable",
-      "The live stream could not be loaded.",
-    );
+    showStreamError("Stream unavailable", "The live stream could not be loaded.");
   }
   try {
     ipcRenderer.send("media-window-error", message);
@@ -225,6 +225,10 @@ function showStreamStatus(state, title, detail = "") {
   const detailEl = document.getElementById("streamStatusDetail");
   if (titleEl) titleEl.textContent = title || "";
   if (detailEl) detailEl.textContent = detail || "";
+  streamStatusState = state;
+  if (state === "loading") {
+    streamStatusShownAt = Date.now();
+  }
 }
 
 function hideStreamStatus() {
@@ -232,6 +236,22 @@ function hideStreamStatus() {
   if (!overlay) return;
   overlay.hidden = true;
   overlay.dataset.state = "";
+  streamStatusState = "";
+}
+
+function showStreamError(title, detail = "") {
+  const elapsed = Date.now() - streamStatusShownAt;
+  if (
+    streamStatusState === "loading" &&
+    elapsed < STREAM_MIN_LOADING_STATUS_MS
+  ) {
+    window.setTimeout(
+      () => showStreamError(title, detail),
+      STREAM_MIN_LOADING_STATUS_MS - elapsed,
+    );
+    return;
+  }
+  showStreamStatus("error", title, detail);
 }
 
 function showStreamLoading(detail = "Connecting to live stream") {
@@ -247,6 +267,8 @@ function showStreamLoading(detail = "Connecting to live stream") {
  * listeners on the persistent <video> element.
  */
 let liveStreamStatusListeners = null;
+let streamStatusState = "";
+let streamStatusShownAt = 0;
 
 function clearLiveStreamStatusHandlers() {
   if (!liveStreamStatusListeners) return;
@@ -530,13 +552,13 @@ async function effectiveWindowStartTime() {
  * the live edge.
  */
 const HLS_PRESENTATION_CONFIG = {
-  maxBufferLength: 120,
-  maxMaxBufferLength: 720,
-  maxBufferSize: 320 * 1000 * 1000,
+  maxBufferLength: 60,
+  maxMaxBufferLength: 360,
+  maxBufferSize: 160 * 1000 * 1000,
   startFragPrefetch: true,
   highBufferWatchdogPeriod: 1,
-  /** Live only: stay about 120s behind live for a larger stability cushion. */
-  liveSyncDuration: 120,
+  /** Live only: stay about 60s behind live for a larger stability cushion. */
+  liveSyncDuration: 60,
   /** Prefer filling the standard buffer over LL-HLS “stay on the edge” behaviour */
   lowLatencyMode: false,
   /** Quality: never cap quality to player render size — projection is fullscreen. */
@@ -561,11 +583,11 @@ function configureDashAggressiveBuffer(player) {
   player.updateSettings({
     streaming: {
       buffer: {
-        bufferTimeDefault: 90,
-        bufferTimeAtTopQuality: 70,
-        bufferTimeAtTopQualityLongForm: 180,
-        initialBufferLevel: 30,
-        bufferToKeep: 80,
+        bufferTimeDefault: 45,
+        bufferTimeAtTopQuality: 35,
+        bufferTimeAtTopQualityLongForm: 90,
+        initialBufferLevel: 15,
+        bufferToKeep: 40,
       },
       scheduling: {
         scheduleWhilePaused: true,
@@ -1189,20 +1211,93 @@ function captureMediaWindowVideoStream() {
   return captureStream ? captureStream() : null;
 }
 
-function waitForPreviewCaptureTracks(stream) {
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function stopPreviewCaptureRetryStream(stream) {
+  if (!stream || stream === previewRtcStream) return;
+  stream.getTracks?.().forEach((track) => {
+    try {
+      track.stop();
+    } catch {}
+  });
+}
+
+function mediaElementHasVideoFrame(mediaEl) {
+  return Boolean(
+    mediaEl &&
+      mediaEl.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+      Number.isFinite(mediaEl.videoWidth) &&
+      mediaEl.videoWidth > 0 &&
+      Number.isFinite(mediaEl.videoHeight) &&
+      mediaEl.videoHeight > 0
+  );
+}
+
+function waitForMediaElementVideoFrame(mediaEl, timeoutMs = PREVIEW_RTC_CAPTURE_RETRY_DELAY_MS) {
+  if (!mediaEl || timeoutMs <= 0 || mediaElementHasVideoFrame(mediaEl)) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let frameHandle = null;
+    let timeoutTimer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      mediaEl.removeEventListener?.("loadedmetadata", finish);
+      mediaEl.removeEventListener?.("loadeddata", finish);
+      mediaEl.removeEventListener?.("canplay", finish);
+      mediaEl.removeEventListener?.("playing", finish);
+      mediaEl.removeEventListener?.("timeupdate", finish);
+      if (
+        frameHandle !== null &&
+        typeof mediaEl.cancelVideoFrameCallback === "function"
+      ) {
+        try {
+          mediaEl.cancelVideoFrameCallback(frameHandle);
+        } catch {}
+      }
+      if (timeoutTimer !== null) window.clearTimeout(timeoutTimer);
+      resolve();
+    };
+
+    mediaEl.addEventListener?.("loadedmetadata", finish, { once: true });
+    mediaEl.addEventListener?.("loadeddata", finish, { once: true });
+    mediaEl.addEventListener?.("canplay", finish, { once: true });
+    mediaEl.addEventListener?.("playing", finish, { once: true });
+    mediaEl.addEventListener?.("timeupdate", finish, { once: true });
+    if (typeof mediaEl.requestVideoFrameCallback === "function") {
+      try {
+        frameHandle = mediaEl.requestVideoFrameCallback(finish);
+      } catch {}
+    }
+    timeoutTimer = window.setTimeout(finish, timeoutMs);
+  });
+}
+
+function waitForPreviewCaptureTracks(
+  stream,
+  mediaEl = video || window.api?.video,
+  timeoutMs = PREVIEW_RTC_CAPTURE_TRACK_WAIT_MS,
+) {
   if (!stream) return Promise.resolve(null);
   if (stream.getVideoTracks().length > 0) return Promise.resolve(stream);
   return new Promise((resolve) => {
     let settled = false;
-    let retryTimer = null;
+    let pollTimer = null;
     let timeoutTimer = null;
     const finish = () => {
       if (settled) return;
       settled = true;
       stream.removeEventListener?.("addtrack", onTrack);
-      video?.removeEventListener?.("loadedmetadata", onMediaReady);
-      video?.removeEventListener?.("playing", onMediaReady);
-      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      mediaEl?.removeEventListener?.("loadedmetadata", onMediaReady);
+      mediaEl?.removeEventListener?.("loadeddata", onMediaReady);
+      mediaEl?.removeEventListener?.("canplay", onMediaReady);
+      mediaEl?.removeEventListener?.("playing", onMediaReady);
+      mediaEl?.removeEventListener?.("timeupdate", onMediaReady);
+      if (pollTimer !== null) window.clearInterval(pollTimer);
       if (timeoutTimer !== null) window.clearTimeout(timeoutTimer);
       resolve(stream);
     };
@@ -1212,19 +1307,38 @@ function waitForPreviewCaptureTracks(stream) {
     const onMediaReady = () => {
       if (stream.getVideoTracks().length > 0) {
         finish();
-        return;
       }
-      retryTimer = window.setTimeout(() => {
-        retryTimer = null;
-        if (stream.getVideoTracks().length > 0) finish();
-      }, 120);
     };
     stream.addEventListener?.("addtrack", onTrack);
-    video?.addEventListener?.("loadedmetadata", onMediaReady);
-    video?.addEventListener?.("playing", onMediaReady);
-    timeoutTimer = window.setTimeout(finish, 2000);
+    mediaEl?.addEventListener?.("loadedmetadata", onMediaReady);
+    mediaEl?.addEventListener?.("loadeddata", onMediaReady);
+    mediaEl?.addEventListener?.("canplay", onMediaReady);
+    mediaEl?.addEventListener?.("playing", onMediaReady);
+    mediaEl?.addEventListener?.("timeupdate", onMediaReady);
+    pollTimer = window.setInterval(onMediaReady, 100);
+    timeoutTimer = window.setTimeout(finish, timeoutMs);
     onMediaReady();
   });
+}
+
+async function captureMediaWindowVideoStreamWithRetries() {
+  const mediaEl = video || window.api?.video;
+  for (let attempt = 0; attempt < PREVIEW_RTC_CAPTURE_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(PREVIEW_RTC_CAPTURE_RETRY_DELAY_MS * attempt);
+    }
+    await waitForMediaElementVideoFrame(mediaEl);
+    const stream = captureMediaWindowVideoStream();
+    const readyStream = await waitForPreviewCaptureTracks(stream, mediaEl);
+    if (readyStream?.getVideoTracks?.().length > 0) {
+      if (attempt > 0) {
+        console.info(`Preview capture started after ${attempt + 1} attempts`);
+      }
+      return readyStream;
+    }
+    stopPreviewCaptureRetryStream(readyStream || stream);
+  }
+  return null;
 }
 
 async function startPreviewRtcPeer(message = {}) {
@@ -1264,7 +1378,12 @@ async function startPreviewRtcPeer(message = {}) {
     for (const candidate of pending) {
       await peer.addIceCandidate(candidate);
     }
-    previewRtcStream = await waitForPreviewCaptureTracks(captureMediaWindowVideoStream());
+    const capturedStream = await captureMediaWindowVideoStreamWithRetries();
+    if (previewRtcPeer !== peer || previewRtcSessionId !== message.sessionId) {
+      stopPreviewCaptureRetryStream(capturedStream);
+      return;
+    }
+    previewRtcStream = capturedStream;
     if (!previewRtcStream || previewRtcStream.getVideoTracks().length === 0) {
       throw new Error("Media window capture stream did not expose tracks");
     }
