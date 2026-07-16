@@ -1075,6 +1075,7 @@ footer {
 .preview-stack>video#preview,
 .preview-stack>img#preview,
 .preview-stack>#previewCue,
+.preview-stack>#networkPreviewStatusOverlay,
 .preview-stack>#pptxPreviewContainer,
 .preview-stack>#bibleWorkspace,
 .preview-stack>#songsWorkspace,
@@ -1103,6 +1104,10 @@ footer {
     z-index: 6;
 }
 
+.preview-stack>#networkPreviewStatusOverlay {
+    z-index: 7;
+}
+
 .preview-stack[data-active-surface="cue-video"]>#previewCue,
 .preview-stack[data-active-surface="cue-image"]>#previewCue,
 .preview-stack[data-active-surface="pptx"]>#pptxPreviewContainer,
@@ -1128,6 +1133,68 @@ footer {
 .preview-stack:has(#slidesWorkspace:not([hidden]))>video#previewCue,
 .preview-stack:has(#slidesWorkspace:not([hidden]))>#pptxPreviewContainer {
     pointer-events: none;
+}
+
+.preview-stream-status {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 32px;
+    box-sizing: border-box;
+    background: #000;
+    color: rgb(255 255 255 / 92%);
+    text-align: center;
+    pointer-events: none;
+}
+
+.preview-stream-status[hidden] {
+    display: none;
+}
+
+.preview-stream-status__spinner {
+    width: 46px;
+    height: 46px;
+    border-radius: 999px;
+    border: 4px solid rgb(255 255 255 / 22%);
+    border-top-color: rgb(255 255 255 / 86%);
+    animation: stream-status-spin 900ms linear infinite;
+}
+
+.preview-stream-status__error-symbol {
+    display: none;
+    width: 74px;
+    height: 74px;
+    color: rgb(255 255 255 / 72%);
+}
+
+.preview-stream-status[data-state="error"] .preview-stream-status__spinner {
+    display: none;
+}
+
+.preview-stream-status[data-state="error"] .preview-stream-status__error-symbol {
+    display: block;
+}
+
+.preview-stream-status__title {
+    margin-top: 2px;
+    font-size: 20px;
+    line-height: 1.2;
+    font-weight: 700;
+}
+
+.preview-stream-status__detail {
+    max-width: min(520px, 82vw);
+    color: rgb(255 255 255 / 62%);
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+@keyframes stream-status-spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 /* Streams mode mirrors the active media renderer into this surface. */
@@ -2582,6 +2649,11 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     width: 100%;
 
     cursor: pointer;
+}
+
+.controls-overlay[data-timeline-hidden="true"] .time-display,
+.controls-overlay[data-timeline-hidden="true"] .timeline-slider {
+    display: none;
 }
 
 /* Style the TRACK to be small and centered within the larger 20px element */

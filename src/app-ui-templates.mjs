@@ -203,6 +203,15 @@ export function generateMediaFormHTML() {
           browser's stock <video> chrome — stacked on top of each other.
         -->
         <video id="previewCue" class="preview-cue-overlay" disablePictureInPicture muted hidden></video>
+        <div id="networkPreviewStatusOverlay" class="preview-stream-status" data-state="loading" role="status" aria-live="polite" hidden>
+          <div class="preview-stream-status__spinner" aria-hidden="true"></div>
+          <svg class="preview-stream-status__error-symbol" viewBox="0 0 96 96" aria-hidden="true">
+            <circle cx="48" cy="48" r="34" fill="none" stroke="currentColor" stroke-width="6"/>
+            <path d="M34 34l28 28M62 34L34 62" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"/>
+          </svg>
+          <div id="networkPreviewStatusTitle" class="preview-stream-status__title"></div>
+          <div id="networkPreviewStatusDetail" class="preview-stream-status__detail"></div>
+        </div>
         
         <div id="songsWorkspace" class="songs-workspace" hidden>
           <aside class="songs-workspace__navigator" aria-label="Songs navigator">
