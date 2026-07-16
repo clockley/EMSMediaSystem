@@ -1945,6 +1945,15 @@ function queueItemIsLiveEdgeStream(item) {
   if (!item) return false;
   const network = item.networkSource;
   if (
+    networkPreviewMirrorLiveEdgeMatches(
+      item.path,
+      item.originalPath,
+      item.liveSource?.originalPath,
+    )
+  ) {
+    return true;
+  }
+  if (
     networkPreviewSourceHidesScrubber(item.path) ||
     networkPreviewSourceHidesScrubber(item.originalPath) ||
     networkPreviewSourceHidesScrubber(item.liveSource?.originalPath)
@@ -2737,6 +2746,40 @@ function mediaSourcesMatch(left, right) {
 function networkPreviewMirrorLiveEdgeMatches(...sources) {
   if (!networkPreviewMirrorLiveEdge || !networkPreviewMirrorSource) return false;
   return sources.some((source) => mediaSourcesMatch(networkPreviewMirrorSource, source));
+}
+
+function queueItemMatchesAnySource(item, sources) {
+  if (!item || !Array.isArray(sources) || sources.length === 0) return false;
+  const candidates = [
+    item.path,
+    item.originalPath,
+    item.liveSource?.originalPath,
+  ];
+  return candidates.some((candidate) =>
+    sources.some((source) => mediaSourcesMatch(candidate, source)),
+  );
+}
+
+function normalizeLiveEdgeQueueItemsForSources(...sources) {
+  let changed = false;
+  mediaQueue.forEach((item) => {
+    if (!queueItemMatchesAnySource(item, sources)) return;
+    if (item.networkSource && typeof item.networkSource === "object") {
+      if (item.networkSource.isLive !== true) {
+        item.networkSource.isLive = true;
+        changed = true;
+      }
+    }
+    if (clearUnsupportedQueueItemCueStartTime(item)) {
+      changed = true;
+    }
+  });
+  if (changed) {
+    renderQueue();
+    updatePreviewCueUI();
+    scheduleAutosaveProjectState();
+  }
+  return changed;
 }
 
 function mediaPathSupportsLoop(filePath) {
@@ -19624,6 +19667,9 @@ async function loadQueueItemIntoControlWindow(item, opts) {
         mirrorWasResolvedLiveEdge ||
         networkPreviewSourceHidesScrubber(mirrorSource) ||
         networkPreviewSourceHidesScrubber(resolvedItemPath);
+      if (networkPreviewMirrorLiveEdge) {
+        normalizeLiveEdgeQueueItemsForSources(item.path, resolvedItemPath, mirrorSource);
+      }
       if (localVideo) {
         try {
           localVideo.pause();
@@ -20836,6 +20882,9 @@ async function attachNetworkPreviewMirrorSource(sourcePath) {
     networkPreviewDashManifestObjectUrl = resources.dashManifestObjectUrl;
     networkPreviewMirrorLiveEdge =
       resources.liveEdge || networkPreviewSourceHidesScrubber(originalSource);
+    if (networkPreviewMirrorLiveEdge) {
+      normalizeLiveEdgeQueueItemsForSources(originalSource);
+    }
     installNetworkPreviewStatusHandlers(video, resources, statusToken);
 
     video.hidden = false;
@@ -25374,6 +25423,14 @@ async function createMediaWindow(options) {
   const liveStreamAtLiveEdge = presentationQueueItem
     ? queueItemIsLiveEdgeStream(presentationQueueItem) || previewResolvedLiveEdge
     : liveStreamMode || previewResolvedLiveEdge;
+  if (previewResolvedLiveEdge) {
+    normalizeLiveEdgeQueueItemsForSources(
+      mediaFile,
+      projectionMediaFile,
+      presentationQueueItem?.path,
+      presentationQueueItem?.originalPath,
+    );
+  }
   const displaySelectEl =
     currentMode === STREAMPLAYER
       ? document.getElementById("dspSelctStreams")
