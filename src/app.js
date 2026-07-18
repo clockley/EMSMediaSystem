@@ -12358,6 +12358,7 @@ async function saveCurrentDeck() {
   }
   try {
     const summary = await slidesAPI.save(currentDeck);
+    if (summary?.id) currentDeck.id = summary.id;
     currentDeck.updatedAt = summary?.updatedAt || new Date().toISOString();
     clearSlideUndoHistory();
     setDeckDirty(false);

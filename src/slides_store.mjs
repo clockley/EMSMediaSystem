@@ -10,18 +10,13 @@ renderers directly — `src/main.mjs` registers `slides:*` IPC handlers that
 call into it.
 */
 
+import { randomUUID } from "crypto";
 import { mkdir, readdir, readFile, rm, stat } from "fs/promises";
 import path from "path";
 import writeFileAtomic from "write-file-atomic";
 
 const DECK_FILE_SUFFIX = ".ems-slide.json";
 const SCHEMA_ID = "ems.slideDeck.v1";
-
-function safeIdComponent(id) {
-  return String(id || "")
-    .trim()
-    .replace(/[^A-Za-z0-9_.-]/g, "_");
-}
 
 function shortId(prefix = "deck") {
   try {
@@ -34,6 +29,14 @@ function shortId(prefix = "deck") {
     if (uuid) return `${prefix}_${uuid.slice(0, 12)}`;
   } catch {}
   return `${prefix}_${Math.random().toString(36).slice(2, 14)}`;
+}
+
+function generatedDeckId() {
+  return `deck_${randomUUID().replace(/-/g, "")}`;
+}
+
+function isGeneratedDeckId(id) {
+  return /^deck_[0-9a-f]{32}$/.test(id);
 }
 
 function normalizePageSequence(pages, pageSequence) {
@@ -94,7 +97,51 @@ export class SlidesStore {
   }
 
   _deckPath(id) {
-    return path.join(this.root, `${safeIdComponent(id)}${DECK_FILE_SUFFIX}`);
+    if (!isGeneratedDeckId(id)) throw new Error("Invalid generated deck storage ID");
+    return path.join(this.root, `${id}${DECK_FILE_SUFFIX}`);
+  }
+
+  async _deckRecords() {
+    await this._ensureDir();
+    let entries;
+    try {
+      entries = await readdir(this.root, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    const records = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(DECK_FILE_SUFFIX)) continue;
+      const filePath = path.join(this.root, entry.name);
+      try {
+        const deck = JSON.parse(await readFile(filePath, "utf8"));
+        if (!deck || typeof deck !== "object" || typeof deck.id !== "string" || !deck.id) {
+          console.warn("SlidesStore: ignored deck with no ID", entry.name);
+          continue;
+        }
+        records.push({ deck, filePath, fileName: entry.name });
+      } catch (err) {
+        console.warn("SlidesStore: failed to parse", entry.name, err);
+      }
+    }
+    return records;
+  }
+
+  async _findDeckRecord(id) {
+    if (typeof id !== "string" || !id) return null;
+    // Generated IDs map directly to filenames, but still verify the embedded ID.
+    if (isGeneratedDeckId(id)) {
+      const filePath = this._deckPath(id);
+      try {
+        const deck = JSON.parse(await readFile(filePath, "utf8"));
+        if (deck?.id === id) return { deck, filePath, fileName: path.basename(filePath) };
+      } catch (err) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+    }
+    // Legacy filenames were lossy sanitizations of IDs. Scan and compare the
+    // exact embedded ID so two different IDs can never resolve to one file.
+    return (await this._deckRecords()).find((record) => record.deck.id === id) || null;
   }
 
   async _loadFolders() {
@@ -121,24 +168,10 @@ export class SlidesStore {
   }
 
   async list({ search = "", folderId = null } = {}) {
-    await this._ensureDir();
-    let entries;
-    try {
-      entries = await readdir(this.root, { withFileTypes: true });
-    } catch {
-      entries = [];
-    }
     const summaries = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(DECK_FILE_SUFFIX)) continue;
-      try {
-        const raw = await readFile(path.join(this.root, entry.name), "utf8");
-        const deck = JSON.parse(raw);
-        const summary = summarizeDeck(deck);
-        if (summary) summaries.push(summary);
-      } catch (err) {
-        console.warn("SlidesStore: failed to parse", entry.name, err);
-      }
+    for (const { deck } of await this._deckRecords()) {
+      const summary = summarizeDeck(deck);
+      if (summary) summaries.push(summary);
     }
     let filtered = summaries;
     if (folderId === null) {
@@ -157,14 +190,7 @@ export class SlidesStore {
   }
 
   async get(id) {
-    if (!id) return null;
-    try {
-      const raw = await readFile(this._deckPath(id), "utf8");
-      return JSON.parse(raw);
-    } catch (err) {
-      if (err && err.code === "ENOENT") return null;
-      throw err;
-    }
+    return (await this._findDeckRecord(id))?.deck || null;
   }
 
   async _save(deck) {
@@ -173,13 +199,19 @@ export class SlidesStore {
       throw new Error(`Unsupported deck schema: ${deck.schema}`);
     }
     await this._ensureDir();
-    const out = { ...deck };
-    if (!out.id) out.id = shortId("deck");
+    const requestedId = typeof deck.id === "string" ? deck.id : "";
+    const existing = requestedId ? await this._findDeckRecord(requestedId) : null;
+    const out = { ...deck, id: existing?.deck.id || generatedDeckId() };
     if (!out.schema) out.schema = SCHEMA_ID;
     out.pageSequence = normalizePageSequence(out.pages, out.pageSequence);
     out.updatedAt = new Date().toISOString();
     if (!out.createdAt) out.createdAt = out.updatedAt;
-    await writeFileAtomic(this._deckPath(out.id), JSON.stringify(out, null, 2), "utf8");
+    const storageId = isGeneratedDeckId(out.id) ? out.id : generatedDeckId();
+    const destination = this._deckPath(storageId);
+    await writeFileAtomic(destination, JSON.stringify(out, null, 2), "utf8");
+    if (existing && existing.filePath !== destination) {
+      await rm(existing.filePath, { force: true });
+    }
     return summarizeDeck(out);
   }
 
@@ -194,7 +226,9 @@ export class SlidesStore {
   async _delete(id) {
     if (!id) return false;
     try {
-      await rm(this._deckPath(id), { force: true });
+      const existing = await this._findDeckRecord(id);
+      if (!existing) return false;
+      await rm(existing.filePath, { force: true });
       return true;
     } catch {
       return false;
@@ -209,13 +243,13 @@ export class SlidesStore {
     const src = await this.get(id);
     if (!src) return null;
     const copy = JSON.parse(JSON.stringify(src));
-    copy.id = shortId("deck");
+    delete copy.id;
     copy.title = title || `${src.title || "Untitled Deck"} (Copy)`;
     const now = new Date().toISOString();
     copy.createdAt = now;
     copy.updatedAt = now;
-    await this._save(copy);
-    return copy;
+    const summary = await this._save(copy);
+    return this.get(summary.id);
   }
 
   async listFolders() {
