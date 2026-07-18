@@ -1,5 +1,6 @@
-import { readdir, rm, stat, mkdir, copyFile } from "fs/promises";
+import { readdir, rm, stat, mkdir, copyFile, rename } from "fs/promises";
 import { constants as fsConstants } from "fs";
+import { randomUUID } from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -702,14 +703,19 @@ async function ensureStagedMediaFile(payload) {
     }
   } catch {}
   await mkdir(path.dirname(stagedPath), { recursive: true });
-  await copyFile(
-    sourcePath,
-    stagedPath,
-    fsConstants.COPYFILE_EXCL | fsConstants.COPYFILE_FICLONE,
-  ).catch(async (err) => {
-    if (err?.code === "EEXIST") return;
-    throw err;
-  });
+  const tmpPath = `${stagedPath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await copyFile(sourcePath, tmpPath, fsConstants.COPYFILE_FICLONE);
+    const copiedHash = (await hashMediaFile(tmpPath)).toLowerCase();
+    if (copiedHash !== snapshotId.toLowerCase()) {
+      throw new Error("Media source changed while its staged snapshot was being created");
+    }
+    await rename(tmpPath, stagedPath).catch(async (err) => {
+      if (err?.code !== "EEXIST") throw err;
+    });
+  } finally {
+    await rm(tmpPath, { force: true }).catch(() => {});
+  }
   await registerSessionStagedSnapshot({ projectGuid, projectPath, snapshotId, stagingDir, activeProjectGuid });
   return stagedPath;
 }

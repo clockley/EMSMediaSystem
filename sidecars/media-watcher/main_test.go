@@ -40,6 +40,28 @@ func TestPathChecksFromDifferentGenerationsDoNotClobberEachOther(t *testing.T) {
 	}
 }
 
+func TestStaleNonReadyResultDoesNotClearCurrentSignature(t *testing.T) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Close()
+
+	server := newWatchServer(watcher, io.Discard)
+	eventKey := comparablePathKey(filepath.Join(t.TempDir(), "media.mp4"))
+	server.targetsByKey[eventKey] = watchTarget{EventKey: eventKey, OriginalPath: eventKey}
+	server.generation = 2
+	want := fileSignature{SizeBytes: 42, MtimeMs: 99, FileHash: "0123456789abcdef"}
+	server.observedByKey[eventKey] = want
+
+	if server.commitNonReadyForGeneration(eventKey, 1, watchChanged{Status: "missing"}) {
+		t.Fatal("stale result was committed")
+	}
+	if got, ok := server.observedByKey[eventKey]; !ok || got != want {
+		t.Fatalf("current signature was changed: got %#v, present %v", got, ok)
+	}
+}
+
 func TestTargetsFromItemsKeepsDuplicateQueueItemsForSameFile(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "media.mp4")
 	targets, dirs := targetsFromItems([]watchItem{
