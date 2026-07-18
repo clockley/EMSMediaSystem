@@ -1473,7 +1473,7 @@ async function addZipFromBuffersAndFiles(targetZipPath, buffers, files, comment 
   await done;
 }
 
-export async function saveEmprojSnapshot(
+async function saveEmprojSnapshotUnlocked(
   projectPath,
   snapshot,
   appInfo = {},
@@ -2148,6 +2148,24 @@ export async function saveEmprojSnapshot(
     projectGuid: projectMetadata.guid,
     projectCreated: projectMetadata.created,
   };
+}
+
+// Serialize writes to the same archive. Atomic rename prevents partial files,
+// but without ordering an older, slower save can still replace a newer one.
+const projectSaveQueues = new Map();
+
+export function saveEmprojSnapshot(projectPath, snapshot, appInfo = {}, opts = {}) {
+  const queueKey = path.resolve(projectPath);
+  const previous = projectSaveQueues.get(queueKey) || Promise.resolve();
+  const save = previous
+    .catch(() => {})
+    .then(() => saveEmprojSnapshotUnlocked(projectPath, snapshot, appInfo, opts));
+  projectSaveQueues.set(queueKey, save);
+  return save.finally(() => {
+    if (projectSaveQueues.get(queueKey) === save) {
+      projectSaveQueues.delete(queueKey);
+    }
+  });
 }
 
 export async function cleanupExtractedProjectMedia(snapshot) {

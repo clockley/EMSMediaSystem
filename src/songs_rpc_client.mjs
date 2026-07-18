@@ -115,24 +115,28 @@ export class SongsRpcClient {
           this.child = spawn(spawnPath, spawnArgs);
       }
 
-      this.child.stdout.on("data", (data) => this.handleData(data));
-      this.child.stderr.on("data", (data) => console.error(`[Songs RPC] ${data}`));
+      const child = this.child;
+      child.stdout.on("data", (data) => this.handleData(data));
+      child.stderr.on("data", (data) => console.error(`[Songs RPC] ${data}`));
 
-      this.child.on("error", (err) => {
+      child.on("error", (err) => {
         console.error("Songs RPC Error:", err);
+        if (this.child === child) {
+          this.child = null;
+          this.rejectAll(err);
+        }
         reject(err);
       });
 
-      this.child.on("exit", (code) => {
+      child.on("exit", (code) => {
         console.log(`Songs RPC exited with code ${code}`);
-        this.child = null;
-        for (const { reject } of this.pending.values()) {
-          reject(new Error("Songs sidecar exited"));
+        if (this.child === child) {
+          this.child = null;
+          this.rejectAll(new Error("Songs sidecar exited"));
         }
-        this.pending.clear();
       });
 
-      resolve();
+      child.once("spawn", resolve);
     });
   }
 
@@ -163,6 +167,11 @@ export class SongsRpcClient {
 
   request(method, params) {
     return new Promise((resolve, reject) => {
+      const child = this.child;
+      if (!child || child.killed || child.stdin.destroyed) {
+        reject(new Error("Songs sidecar is not running"));
+        return;
+      }
       const id = this.nextId++;
       
       const timeout = setTimeout(() => {
@@ -179,7 +188,22 @@ export class SongsRpcClient {
         params,
       });
 
-      this.child.stdin.write(request + "\n");
+      child.stdin.write(request + "\n", (err) => {
+        if (!err) return;
+        const pendingCall = this.pending.get(id);
+        if (!pendingCall) return;
+        clearTimeout(pendingCall.timeout);
+        this.pending.delete(id);
+        pendingCall.reject(err);
+      });
     });
+  }
+
+  rejectAll(err) {
+    for (const pendingCall of this.pending.values()) {
+      clearTimeout(pendingCall.timeout);
+      pendingCall.reject(err);
+    }
+    this.pending.clear();
   }
 }

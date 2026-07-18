@@ -80,6 +80,13 @@ export class SlidesStore {
     this.root = path.join(userDataPath, "decks");
     this.foldersFile = path.join(this.root, ".folders.json");
     this._foldersCache = null;
+    this._mutationQueue = Promise.resolve();
+  }
+
+  _enqueueMutation(task) {
+    const run = this._mutationQueue.catch(() => {}).then(task);
+    this._mutationQueue = run.catch(() => {});
+    return run;
   }
 
   async _ensureDir() {
@@ -160,7 +167,7 @@ export class SlidesStore {
     }
   }
 
-  async save(deck) {
+  async _save(deck) {
     if (!deck || typeof deck !== "object") throw new Error("Invalid deck");
     if (deck.schema && deck.schema !== SCHEMA_ID) {
       throw new Error(`Unsupported deck schema: ${deck.schema}`);
@@ -176,7 +183,15 @@ export class SlidesStore {
     return summarizeDeck(out);
   }
 
-  async delete(id) {
+  save(deck) {
+    return this._enqueueMutation(() => this._save(deck));
+  }
+
+  delete(id) {
+    return this._enqueueMutation(() => this._delete(id));
+  }
+
+  async _delete(id) {
     if (!id) return false;
     try {
       await rm(this._deckPath(id), { force: true });
@@ -186,7 +201,11 @@ export class SlidesStore {
     }
   }
 
-  async duplicate(id, { title = null } = {}) {
+  duplicate(id, { title = null } = {}) {
+    return this._enqueueMutation(() => this._duplicate(id, { title }));
+  }
+
+  async _duplicate(id, { title = null } = {}) {
     const src = await this.get(id);
     if (!src) return null;
     const copy = JSON.parse(JSON.stringify(src));
@@ -195,7 +214,7 @@ export class SlidesStore {
     const now = new Date().toISOString();
     copy.createdAt = now;
     copy.updatedAt = now;
-    await this.save(copy);
+    await this._save(copy);
     return copy;
   }
 
@@ -203,7 +222,11 @@ export class SlidesStore {
     return [...(await this._loadFolders())];
   }
 
-  async createFolder(name) {
+  createFolder(name) {
+    return this._enqueueMutation(() => this._createFolder(name));
+  }
+
+  async _createFolder(name) {
     const trimmed = String(name || "").trim();
     if (!trimmed) throw new Error("Folder name required");
     const folders = await this._loadFolders();
@@ -215,7 +238,11 @@ export class SlidesStore {
     return folder;
   }
 
-  async renameFolder(id, name) {
+  renameFolder(id, name) {
+    return this._enqueueMutation(() => this._renameFolder(id, name));
+  }
+
+  async _renameFolder(id, name) {
     const trimmed = String(name || "").trim();
     if (!trimmed) throw new Error("Folder name required");
     const folders = await this._loadFolders();
@@ -226,7 +253,11 @@ export class SlidesStore {
     return folder;
   }
 
-  async deleteFolder(id) {
+  deleteFolder(id) {
+    return this._enqueueMutation(() => this._deleteFolder(id));
+  }
+
+  async _deleteFolder(id) {
     const folders = await this._loadFolders();
     const before = folders.length;
     this._foldersCache = folders.filter((f) => f.id !== id);
@@ -239,16 +270,20 @@ export class SlidesStore {
       const deck = await this.get(s.id);
       if (!deck) continue;
       deck.folderId = null;
-      await this.save(deck);
+      await this._save(deck);
     }
     return true;
   }
 
-  async moveToFolder(deckId, folderId) {
+  moveToFolder(deckId, folderId) {
+    return this._enqueueMutation(() => this._moveToFolder(deckId, folderId));
+  }
+
+  async _moveToFolder(deckId, folderId) {
     const deck = await this.get(deckId);
     if (!deck) return null;
     deck.folderId = folderId || null;
-    await this.save(deck);
+    await this._save(deck);
     return summarizeDeck(deck);
   }
 
