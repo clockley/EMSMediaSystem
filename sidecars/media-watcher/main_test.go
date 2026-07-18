@@ -2,10 +2,43 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/fsnotify/fsnotify"
 )
+
+func TestPathChecksFromDifferentGenerationsDoNotClobberEachOther(t *testing.T) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Close()
+
+	server := newWatchServer(watcher, io.Discard)
+	eventKey := comparablePathKey(filepath.Join(t.TempDir(), "media.mp4"))
+	server.targetsByKey[eventKey] = watchTarget{EventKey: eventKey, OriginalPath: eventKey}
+	server.generation = 1
+
+	if _, _, ok := server.beginPathCheck(eventKey, 1); !ok {
+		t.Fatal("first-generation check did not start")
+	}
+	server.generation = 2
+	if _, _, ok := server.beginPathCheck(eventKey, 2); !ok {
+		t.Fatal("new-generation check was blocked by stale in-flight work")
+	}
+
+	server.finishPathCheck(eventKey, 1)
+	if got := server.checksInFlight[eventKey]; got != 2 {
+		t.Fatalf("stale completion left generation %d in flight, want 2", got)
+	}
+	server.finishPathCheck(eventKey, 2)
+	if _, ok := server.checksInFlight[eventKey]; ok {
+		t.Fatal("current-generation completion did not clear in-flight state")
+	}
+}
 
 func TestTargetsFromItemsKeepsDuplicateQueueItemsForSameFile(t *testing.T) {
 	sourcePath := filepath.Join(t.TempDir(), "media.mp4")

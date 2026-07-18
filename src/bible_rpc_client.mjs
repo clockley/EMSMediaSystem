@@ -98,21 +98,27 @@ export class BibleRpcClient {
       throw new Error(`Bible database not found: ${databasePath}`);
     }
 
-    this.child = spawn(binaryPath, ["--db", databasePath], {
+    const child = spawn(binaryPath, ["--db", databasePath], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
+    this.child = child;
     this.buffer = "";
 
-    this.child.stdout.setEncoding("utf8");
-    this.child.stdout.on("data", (chunk) => this.handleStdout(chunk));
-    this.child.stderr.setEncoding("utf8");
-    this.child.stderr.on("data", (chunk) => {
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      if (this.child === child) this.handleStdout(chunk);
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
       const message = String(chunk || "").trim();
       if (message) console.error(`[bible-rpc] ${message}`);
     });
-    this.child.on("error", (err) => this.rejectAll(err));
-    this.child.on("exit", (code, signal) => {
+    child.on("error", (err) => {
+      if (this.child === child) this.rejectAll(err);
+    });
+    child.on("exit", (code, signal) => {
+      if (this.child !== child) return;
       const detail = signal ? `signal ${signal}` : `code ${code}`;
       this.rejectAll(new Error(`Bible sidecar exited with ${detail}`));
       this.child = null;
