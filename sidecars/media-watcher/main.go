@@ -160,7 +160,7 @@ type watchServer struct {
 	targetsByDir   map[string][]watchTarget
 	targetsByKey   map[string]watchTarget
 	timers         map[string]*time.Timer
-	checksInFlight map[string]bool
+	checksInFlight map[string]uint64
 	checksQueued   map[string]bool
 	observedByKey  map[string]fileSignature
 	pollCancel     chan struct{}
@@ -175,7 +175,7 @@ func newWatchServer(watcher *fsnotify.Watcher, output io.Writer) *watchServer {
 		targetsByDir:   make(map[string][]watchTarget),
 		targetsByKey:   make(map[string]watchTarget),
 		timers:         make(map[string]*time.Timer),
-		checksInFlight: make(map[string]bool),
+		checksInFlight: make(map[string]uint64),
 		checksQueued:   make(map[string]bool),
 		observedByKey:  make(map[string]fileSignature),
 	}
@@ -537,17 +537,21 @@ func (server *watchServer) beginPathCheck(eventKey string, generation uint64) (w
 	if !ok {
 		return watchTarget{}, watchOptions{}, false
 	}
-	if server.checksInFlight[eventKey] {
+	if inFlightGeneration, inFlight := server.checksInFlight[eventKey]; inFlight && inFlightGeneration == generation {
 		server.checksQueued[eventKey] = true
 		return watchTarget{}, watchOptions{}, false
 	}
-	server.checksInFlight[eventKey] = true
+	server.checksInFlight[eventKey] = generation
 	target.QueueItemIDs = append([]string(nil), target.QueueItemIDs...)
 	return target, server.options, true
 }
 
 func (server *watchServer) finishPathCheck(eventKey string, generation uint64) {
 	server.mu.Lock()
+	if server.checksInFlight[eventKey] != generation {
+		server.mu.Unlock()
+		return
+	}
 	delete(server.checksInFlight, eventKey)
 	queued := server.checksQueued[eventKey]
 	delete(server.checksQueued, eventKey)

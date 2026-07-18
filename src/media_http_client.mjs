@@ -116,23 +116,29 @@ export class MediaHttpClient {
       throw new Error(`Media HTTP sidecar not found: ${binaryPath}`);
     }
 
-    this.child = spawn(binaryPath, [], {
+    const child = spawn(binaryPath, [], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
+    this.child = child;
     this.buffer = "";
     this.readyInfo = null;
     this.urlCache.clear();
 
-    this.child.stdout.setEncoding("utf8");
-    this.child.stdout.on("data", (chunk) => this.handleStdout(chunk));
-    this.child.stderr.setEncoding("utf8");
-    this.child.stderr.on("data", (chunk) => {
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      if (this.child === child) this.handleStdout(chunk);
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
       const message = String(chunk || "").trim();
       if (message) console.error(`[media-http] ${message}`);
     });
-    this.child.on("error", (err) => this.rejectAll(err));
-    this.child.on("exit", (code, signal) => {
+    child.on("error", (err) => {
+      if (this.child === child) this.rejectAll(err);
+    });
+    child.on("exit", (code, signal) => {
+      if (this.child !== child) return;
       const detail = signal ? `signal ${signal}` : `code ${code}`;
       this.rejectAll(new Error(`Media HTTP sidecar exited with ${detail}`));
       this.child = null;

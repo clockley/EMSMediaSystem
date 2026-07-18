@@ -2764,6 +2764,13 @@ async function handleShowRelinkSummaryDialog(event, opts = {}) {
 }
 
 let activeProjectSnapshot = null;
+let activeProjectOperationQueue = Promise.resolve();
+
+function enqueueActiveProjectOperation(operation) {
+  const run = activeProjectOperationQueue.catch(() => {}).then(operation);
+  activeProjectOperationQueue = run.catch(() => {});
+  return run;
+}
 
 function projectGuidFromSnapshot(snapshot) {
   return (
@@ -2831,6 +2838,7 @@ async function handleWriteProjectFile(_, payload) {
   });
   const projectGuid = normalizeProjectGuid(result?.projectGuid) || projectGuidFromSnapshot(snapshot);
   if (activateProject) {
+    activeProjectSnapshot = snapshot;
     activeProjectPath = filePath;
     activeProjectGuid = projectGuid;
     snapshot.projectPath = filePath;
@@ -4328,11 +4336,16 @@ function setIPC() {
   ipcMain.handle("show-relink-folder-dialog", handleShowRelinkFolderDialog);
   ipcMain.handle("relink-missing-media", handleRelinkMissingMedia);
   ipcMain.handle("show-relink-summary-dialog", handleShowRelinkSummaryDialog);
-  ipcMain.handle("read-project-file", handleReadProjectFile);
-  ipcMain.handle("write-project-file", handleWriteProjectFile);
-  ipcMain.handle("save-autosave-project-state", handleSaveAutosaveProjectState);
-  ipcMain.handle("set-active-project-path", handleSetActiveProjectPath);
-  ipcMain.handle("load-autosave-project-state", handleLoadAutosaveProjectState);
+  ipcMain.handle("read-project-file", (...args) =>
+    enqueueActiveProjectOperation(() => handleReadProjectFile(...args)));
+  ipcMain.handle("write-project-file", (...args) =>
+    enqueueActiveProjectOperation(() => handleWriteProjectFile(...args)));
+  ipcMain.handle("save-autosave-project-state", (...args) =>
+    enqueueActiveProjectOperation(() => handleSaveAutosaveProjectState(...args)));
+  ipcMain.handle("set-active-project-path", (...args) =>
+    enqueueActiveProjectOperation(() => handleSetActiveProjectPath(...args)));
+  ipcMain.handle("load-autosave-project-state", (...args) =>
+    enqueueActiveProjectOperation(() => handleLoadAutosaveProjectState(...args)));
   ipcMain.handle("remember-media-folder", handleRememberMediaFolder);
   ipcMain.handle("remember-last-bible-version", handleRememberLastBibleVersion);
   ipcMain.handle("filter-media-drop-paths", handleFilterMediaDropPaths);
