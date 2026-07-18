@@ -566,13 +566,31 @@ func (server *watchServer) observedSignature(eventKey string) (fileSignature, bo
 	return signature, ok
 }
 
-func (server *watchServer) setObservedSignature(eventKey string, signature fileSignature) {
+func (server *watchServer) setObservedSignatureForGeneration(eventKey string, generation uint64, signature fileSignature) bool {
 	server.mu.Lock()
 	defer server.mu.Unlock()
+	if server.generation != generation {
+		return false
+	}
 	if _, ok := server.targetsByKey[eventKey]; !ok {
-		return
+		return false
 	}
 	server.observedByKey[eventKey] = signature
+	return true
+}
+
+func (server *watchServer) commitChangedForGeneration(eventKey string, generation uint64, signature fileSignature, target watchTarget, payload watchChanged) bool {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.generation != generation {
+		return false
+	}
+	if _, ok := server.targetsByKey[eventKey]; !ok {
+		return false
+	}
+	server.observedByKey[eventKey] = signature
+	server.notifyChanged(target, payload)
+	return true
 }
 
 func (server *watchServer) clearObservedSignature(eventKey string) {
@@ -613,11 +631,16 @@ func (server *watchServer) runPathCheck(eventKey string, generation uint64, dete
 	}
 
 	if previous, ok := server.observedSignature(eventKey); ok && signatureMatches(previous, signature) {
-		server.setObservedSignature(eventKey, signature)
+		server.setObservedSignatureForGeneration(eventKey, generation, signature)
 		return
 	}
-	server.setObservedSignature(eventKey, signature)
-	server.notifyChanged(target, changedPayloadFromSignature(signature, detectedBy, options.StabilitySamples))
+	server.commitChangedForGeneration(
+		eventKey,
+		generation,
+		signature,
+		target,
+		changedPayloadFromSignature(signature, detectedBy, options.StabilitySamples),
+	)
 }
 
 func changedPayloadFromSignature(signature fileSignature, detectedBy string, stableSamples int) watchChanged {
@@ -773,9 +796,6 @@ func (server *watchServer) waitForStableFile(target watchTarget, generation uint
 		}
 		time.Sleep(interval)
 	}
-	if stableCount > 0 {
-		return last, "ready", ""
-	}
 	return fileSignature{}, "error", "file did not become stable"
 }
 
@@ -863,7 +883,7 @@ func (server *watchServer) pollOnce(generation uint64) {
 		}
 		previous, observed := server.observedSignature(target.EventKey)
 		if !observed {
-			server.setObservedSignature(target.EventKey, signature)
+			server.setObservedSignatureForGeneration(target.EventKey, generation, signature)
 			continue
 		}
 		if !metadataMatches(previous, signature) {

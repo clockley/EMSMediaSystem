@@ -794,9 +794,14 @@ function queueIndexForCurrentDeck() {
 async function releaseOutputHoldsAndGoLiveQueueIndex(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
   if (!(await ensurePendingMediaUpdateApproved(index))) return;
+  const item = mediaQueue[index];
+  const isCurrentLiveItem =
+    queueIndexIsCurrentLivePresentation(index) ||
+    queueIndexMatchesCurrentLiveOutput(index);
+  if (!isCurrentLiveItem && !confirmLiveSwitchAccepted(item)) return;
+
   await releaseOutputHoldsForRecovery();
   setSelectedQueueAnchor(index);
-  const item = mediaQueue[index];
   const itemStart =
     queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
       ? startTime
@@ -19212,6 +19217,24 @@ function shouldConfirmLiveSwitch(targetItem) {
   return true;
 }
 
+function confirmLiveSwitchAccepted(targetItem) {
+  if (!shouldConfirmLiveSwitch(targetItem)) return true;
+
+  const liveItem = currentLiveQueueItemForSwitchPrompt();
+  const liveLabel = liveItem
+    ? liveItem.name
+    : activeLiveStream || isLiveStream(mediaFile)
+      ? "the current live stream"
+      : "the current presentation";
+  const targetLabel = targetItem?.name || "the selected item";
+  const message = `Switch the live presentation from "${liveLabel}" to "${targetLabel}"?`;
+
+  // Temporary ship-safe fallback: the custom modal has intermittent mouse
+  // hit-testing issues in production, so use the platform-native confirm
+  // dialog until that path is fully debugged and restored.
+  return window.confirm(message);
+}
+
 async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
   const item = mediaQueue[index];
@@ -19234,21 +19257,7 @@ async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
     await onQueueItemActivate(index);
     return;
   }
-  if (shouldConfirmLiveSwitch(item)) {
-    const liveItem = currentLiveQueueItemForSwitchPrompt();
-    const liveLabel = liveItem
-      ? liveItem.name
-      : activeLiveStream || isLiveStream(mediaFile)
-        ? "the current live stream"
-        : "the current presentation";
-    const cueLabel = item?.name || "the selected item";
-    const message = `Switch the live presentation from "${liveLabel}" to "${cueLabel}"?`;
-    // Temporary ship-safe fallback: the custom modal has intermittent mouse
-    // hit-testing issues in production, so use the platform-native confirm
-    // dialog until that path is fully debugged and restored.
-    const accepted = window.confirm(message);
-    if (!accepted) return;
-  }
+  if (!confirmLiveSwitchAccepted(item)) return;
 
   const itemStart =
     queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
