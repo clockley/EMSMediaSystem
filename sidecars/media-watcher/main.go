@@ -597,10 +597,22 @@ func (server *watchServer) commitChangedForGeneration(eventKey string, generatio
 	return true
 }
 
-func (server *watchServer) clearObservedSignature(eventKey string) {
+func (server *watchServer) commitNonReadyForGeneration(eventKey string, generation uint64, payload watchChanged) bool {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	delete(server.observedByKey, eventKey)
+	if server.generation != generation {
+		return false
+	}
+	currentTarget, ok := server.targetsByKey[eventKey]
+	if !ok {
+		return false
+	}
+	if payload.Status == "missing" {
+		delete(server.observedByKey, eventKey)
+	}
+	currentTarget.QueueItemIDs = append([]string(nil), currentTarget.QueueItemIDs...)
+	server.notifyChanged(currentTarget, payload)
+	return true
 }
 
 func metadataMatches(a, b fileSignature) bool {
@@ -623,10 +635,7 @@ func (server *watchServer) runPathCheck(eventKey string, generation uint64, dete
 		if status == "cancelled" {
 			return
 		}
-		if status == "missing" {
-			server.clearObservedSignature(eventKey)
-		}
-		server.notifyChanged(target, watchChanged{
+		server.commitNonReadyForGeneration(eventKey, generation, watchChanged{
 			Status:      status,
 			ErrorReason: reason,
 			DetectedBy:  detectedBy,
