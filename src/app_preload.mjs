@@ -87,6 +87,47 @@ async function callSongs(method, params = []) {
   return ipcRenderer.invoke("songs-rpc", method, params);
 }
 
+// Keep a large selection from becoming one long-running RPC call. Song files are
+// committed individually by the sidecar, so a slow filesystem can otherwise hit
+// the fixed RPC deadline after only part of the selection has been written.
+const SONG_IMPORT_BATCH_SIZE = 50;
+
+async function importSongFiles(paths, options = {}) {
+  const selectedPaths = Array.isArray(paths) ? paths.filter(Boolean) : [];
+  const requestOptions = {
+    defaultFolderId: options.defaultFolderId ?? null,
+    search: {
+      query: options.search?.query ?? "",
+      folderId: options.search?.folderId ?? null,
+      all: options.search?.all === true,
+      unfiled: options.search?.unfiled === true,
+    },
+  };
+  const combined = {
+    imported: [],
+    failed: [],
+    lastSong: null,
+    folders: [],
+    searchResults: [],
+  };
+
+  for (let offset = 0; offset < selectedPaths.length; offset += SONG_IMPORT_BATCH_SIZE) {
+    const batch = selectedPaths.slice(offset, offset + SONG_IMPORT_BATCH_SIZE);
+    const result = await callSongs("songs.importFiles", [{
+      ...requestOptions,
+      paths: batch,
+    }]);
+
+    if (Array.isArray(result?.imported)) combined.imported.push(...result.imported);
+    if (Array.isArray(result?.failed)) combined.failed.push(...result.failed);
+    if (result?.lastSong) combined.lastSong = result.lastSong;
+    if (Array.isArray(result?.folders)) combined.folders = result.folders;
+    if (Array.isArray(result?.searchResults)) combined.searchResults = result.searchResults;
+  }
+
+  return combined;
+}
+
 const bibleAPI = {
   waitForReady: () => initialize(),
   getVersions: () => callBible("bible.getVersions"),
@@ -119,17 +160,7 @@ const songsAPI = {
   deleteFolder: (id) => callSongs("songs.folders.delete", [id]),
   moveToFolder: (songId, folderId) => callSongs("songs.moveToFolder", [songId, folderId ?? null]),
   resetDatabase: () => callSongs("songs.resetDatabase", []),
-  importFiles: (paths, options = {}) =>
-    callSongs("songs.importFiles", [{
-      paths,
-      defaultFolderId: options.defaultFolderId ?? null,
-      search: {
-        query: options.search?.query ?? "",
-        folderId: options.search?.folderId ?? null,
-        all: options.search?.all === true,
-        unfiled: options.search?.unfiled === true,
-      },
-    }]),
+  importFiles: (paths, options = {}) => importSongFiles(paths, options),
   parseLyricsText: (text) => callSongs("songs.parseLyricsText", [text]),
 };
 
