@@ -6005,10 +6005,21 @@ function showBibleWorkspace() {
   pauseInactivePreviewBehindWorkspace();
 }
 
+function setBibleStyleEditorVisible(visible) {
+  const drawer = document.getElementById("bibleEditorDrawer");
+  if (!drawer) return;
+  drawer.hidden = !visible;
+  document.getElementById("bibleWorkspace")?.classList.toggle(
+    "bible-workspace--editing",
+    visible,
+  );
+}
+
 function hideBibleWorkspace() {
   const workspace = document.getElementById("bibleWorkspace");
   const button = document.getElementById("openBibleWorkspaceBtn");
   if (workspace) workspace.hidden = true;
+  setBibleStyleEditorVisible(false);
   button?.setAttribute("data-active", "false");
   syncPreviewStackSurface();
 }
@@ -17059,6 +17070,9 @@ function installBibleMediaControls() {
       await syncShowNowBiblePresentation();
     })().catch(console.error);
   });
+  document.getElementById("bibleEditorCloseBtn")?.addEventListener("click", () => {
+    setBibleStyleEditorVisible(false);
+  });
   document
     .getElementById("bibleShowNowBtn")
     ?.addEventListener("click", () => void showBibleTextNow().catch(console.error));
@@ -18424,6 +18438,7 @@ function ensureScheduleBibleContextMenu() {
   menu.setAttribute("role", "menu");
   menu.hidden = true;
   menu.innerHTML = `
+    <button type="button" role="menuitem" data-schedule-bible-action="edit">Edit</button>
     <button type="button" role="menuitem" data-schedule-bible-action="split">Split into Verses</button>
   `;
 
@@ -18434,7 +18449,15 @@ function ensureScheduleBibleContextMenu() {
     if (!button) return;
     const index = menu._queueIndex;
     hideScheduleBibleContextMenu();
-    if (button.getAttribute("data-schedule-bible-action") === "split") {
+    const action = button.getAttribute("data-schedule-bible-action");
+    if (action === "edit") {
+      void loadQueueItemIntoPreviewCue(index)
+        .then(() => setBibleStyleEditorVisible(true))
+        .catch((err) => {
+          console.error("Failed to open scheduled Bible text for editing:", err);
+          showGnomeToast("Failed to open Bible text editor");
+        });
+    } else if (action === "split") {
       void splitScheduledBiblePassageIntoVerses(index).catch(console.error);
     }
   });

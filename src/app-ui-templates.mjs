@@ -851,8 +851,19 @@ export function generateMediaFormHTML() {
               </div>
             </section>
           </div>
-          <div class="bible-editor-drawer">
+          <div id="bibleEditorDrawer" class="bible-editor-drawer" hidden>
             <div class="bible-editor-controls">
+              <div class="bible-editor-header">
+                <div class="bible-editor-heading">
+                  <span class="bible-editor-title">Bible Style</span>
+                  <span class="bible-editor-subtitle">Changes are previewed as you make them</span>
+                </div>
+                <button type="button" id="bibleEditorCloseBtn" class="bible-editor-close" title="Close editor" aria-label="Close Bible style editor">
+                  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
               <div class="bible-output-controls" data-lower-third-feature hidden>
                 <div id="bibleLowerThirdControls" class="bible-lower-third-controls" aria-label="Lower third cursor controls">
                   <span class="bible-lower-third-label">Lower Third Cursor</span>
