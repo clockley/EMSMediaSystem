@@ -8976,6 +8976,7 @@ let currentWorkspaceSongDeck = null;
 let currentEditingSongId = null;
 let currentSongRenderState = { ...DEFAULT_SONG_RENDER };
 let currentSongSectionId = null;
+let currentSongSequenceEntryId = null;
 let currentSongQueueItem = null;
 let currentSongFolderFilter = "__all__";
 let songFoldersCache = [];
@@ -9356,6 +9357,9 @@ function textStyleFromSegment(segment) {
   const normalized = {};
   if (typeof style.color === "string" && style.color.trim()) normalized.color = style.color.trim();
   if (typeof style.fontFamily === "string" && style.fontFamily.trim()) normalized.fontFamily = style.fontFamily.trim();
+  if (Number.isFinite(Number(style.fontSize)) && Number(style.fontSize) > 0) {
+    normalized.fontSize = Number(style.fontSize);
+  }
   if (typeof style.backgroundColor === "string" && style.backgroundColor.trim()) {
     normalized.backgroundColor = style.backgroundColor.trim();
   }
@@ -9401,6 +9405,7 @@ function applySongSegmentStyleToElement(el, style = {}) {
   const normalized = textStyleFromSegment({ style });
   if (normalized.color) el.style.color = normalized.color;
   if (normalized.fontFamily) el.style.fontFamily = songFontFamilyCSS(normalized.fontFamily);
+  if (normalized.fontSize) el.style.fontSize = `${normalized.fontSize}px`;
   if (normalized.backgroundColor) el.style.backgroundColor = normalized.backgroundColor;
   if (normalized.fontWeight) el.style.fontWeight = normalized.fontWeight;
   if (normalized.fontStyle) el.style.fontStyle = normalized.fontStyle;
@@ -9613,6 +9618,14 @@ function restoreSongEditorCursorPosition(contentEditableEl, savedPosition) {
 
 function refreshSongEditorAfterStyleChange() {
   syncSongEditorHiddenTextarea();
+  if (currentWorkspaceSong) {
+    currentWorkspaceSongDeck = songDeckDocumentFromSongDocument(
+      currentWorkspaceSong,
+      currentSongRenderState,
+    );
+    slideThumbnailCache.clear();
+    syncSongSlideNavigator();
+  }
   const activeSection = songEditorSections[songEditorActiveIndex];
   if (activeSection) {
     renderSongSectionPreview(activeSection);
@@ -9903,6 +9916,29 @@ function currentSongEnabledSections() {
   return enabled.length ? enabled : (currentWorkspaceSong.sections || []);
 }
 
+function currentSongSequenceItems() {
+  if (!currentWorkspaceSong) return [];
+  const sections = Array.isArray(currentWorkspaceSong.sections) ? currentWorkspaceSong.sections : [];
+  const byId = new Map(sections.map((section) => [section.id, section]));
+  return arrangementSequenceEntries(currentWorkspaceSong)
+    .filter((entry) => entry.enabled !== false)
+    .map((entry, index) => ({
+      entry,
+      entryId: entry.id || `play_${index}`,
+      section: byId.get(entry.sectionId),
+    }))
+    .filter((item) => item.section);
+}
+
+function syncCurrentSongSequenceEntry() {
+  const items = currentSongSequenceItems();
+  if (items.some((item) => item.entryId === currentSongSequenceEntryId)) return;
+  currentSongSequenceEntryId =
+    items.find((item) => item.section.id === currentSongSectionId)?.entryId ||
+    items[0]?.entryId ||
+    null;
+}
+
 function currentSongActiveSection() {
   if (!currentWorkspaceSong) return null;
   const sections = currentSongEnabledSections();
@@ -9986,7 +10022,10 @@ function updateSongArrangementSelection() {
   const strip = document.getElementById("songArrangementStrip");
   if (!strip) return;
   strip.querySelectorAll(".pill-button").forEach((btn) => {
-    btn.classList.toggle("primary-action", btn.dataset.sectionId === currentSongSectionId);
+    const isActive = currentSongSequenceEntryId
+      ? btn.dataset.sequenceEntryId === currentSongSequenceEntryId
+      : btn.dataset.sectionId === currentSongSectionId;
+    btn.classList.toggle("primary-action", isActive);
   });
 }
 
@@ -9995,7 +10034,9 @@ function updateSongSlideNavigatorSelection({ scroll = true } = {}) {
   if (!list) return;
   let active = null;
   list.querySelectorAll(".song-slide-thumbnail-button").forEach((button) => {
-    const isActive = button.dataset.sectionId === currentSongSectionId;
+    const isActive = currentSongSequenceEntryId
+      ? button.dataset.sequenceEntryId === currentSongSequenceEntryId
+      : button.dataset.sectionId === currentSongSectionId;
     button.classList.toggle("is-active", isActive);
     button.setAttribute("aria-selected", isActive ? "true" : "false");
     button.tabIndex = isActive ? 0 : -1;
@@ -10034,6 +10075,11 @@ async function selectSongSection(sectionId, opts = {}) {
     null;
   if (!section) return false;
   currentSongSectionId = section.id;
+  if (opts.sequenceEntryId) {
+    currentSongSequenceEntryId = opts.sequenceEntryId;
+  } else {
+    syncCurrentSongSequenceEntry();
+  }
   renderSongSectionPreview(section);
   syncCurrentSongQueueItemSection(section.id);
   updateSongArrangementSelection();
@@ -10049,17 +10095,18 @@ function renderSongSlideNavigator() {
   const list = document.getElementById("songSlideThumbnailList");
   if (!list || !currentWorkspaceSongDeck || !currentWorkspaceSong) return;
   const deck = currentWorkspaceSongDeck;
-  const sections = currentSongEnabledSections();
+  const sequenceItems = currentSongSequenceItems();
   const token = ++songSlideNavigatorRenderToken;
   list.innerHTML = "";
 
-  sections.forEach((section, index) => {
+  sequenceItems.forEach(({ section, entryId }, index) => {
     const page = songDeckPageForSection(section, index);
     if (!page) return;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "song-slide-thumbnail-button";
     button.dataset.sectionId = section.id;
+    button.dataset.sequenceEntryId = entryId;
     button.setAttribute("role", "option");
     button.setAttribute("aria-label", `Go to slide ${index + 1}`);
 
@@ -10078,10 +10125,11 @@ function renderSongSlideNavigator() {
     button.appendChild(number);
     button.appendChild(viewport);
     button.addEventListener("click", () => {
-      void selectSongSection(section.id).catch(console.error);
+      void selectSongSection(section.id, { sequenceEntryId: entryId }).catch(console.error);
     });
     button.addEventListener("dblclick", (event) => {
       event.preventDefault();
+      currentSongSequenceEntryId = entryId;
       void recoverOutputHoldsToSongSection(section.id).catch(console.error);
     });
     button.addEventListener("keydown", (event) => {
@@ -10099,7 +10147,7 @@ function renderSongSlideNavigator() {
         prev?.focus();
       } else if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        void selectSongSection(section.id).catch(console.error);
+        void selectSongSection(section.id, { sequenceEntryId: entryId }).catch(console.error);
       }
     });
     list.appendChild(button);
@@ -10770,6 +10818,7 @@ function handleSongEditorCanvasTextInput(editorDiv) {
           } else if (n.nodeType === 1 && n.tagName !== "BR") {
             const newStyle = { ...currentStyle };
             if (n.style.fontFamily) newStyle.fontFamily = n.style.fontFamily;
+            if (n.style.fontSize) newStyle.fontSize = Number.parseFloat(n.style.fontSize);
             if (n.style.color) newStyle.color = n.style.color;
             for (const child of n.childNodes) walk(child, newStyle);
           }
@@ -11454,6 +11503,7 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     if (nextBtn) nextBtn.disabled = true;
     if (slide) slide.innerHTML = "";
     currentSongSectionId = null;
+    currentSongSequenceEntryId = null;
     currentSongQueueItem = null;
     currentWorkspaceSongDeck = null;
     syncSongsMoveFolderSelect(null);
@@ -11489,21 +11539,23 @@ async function loadSongIntoWorkspace(song, opts = {}) {
   if (!currentSongSectionId || !enabledSections.some((s) => s.id === currentSongSectionId)) {
     currentSongSectionId = enabledSections[0]?.id || currentWorkspaceSong.sections?.[0]?.id || null;
   }
+  syncCurrentSongSequenceEntry();
 
   const strip = document.getElementById("songArrangementStrip");
   if (strip) {
     strip.innerHTML = "";
-    for (const section of enabledSections) {
+    for (const { section, entryId } of currentSongSequenceItems()) {
       const chip = document.createElement("button");
       chip.className = "pill-button";
       chip.type = "button";
       chip.textContent = section.label;
       chip.dataset.sectionId = section.id;
-      if (section.id === currentSongSectionId) {
+      chip.dataset.sequenceEntryId = entryId;
+      if (entryId === currentSongSequenceEntryId) {
         chip.classList.add("primary-action");
       }
       chip.addEventListener("click", () => {
-        void selectSongSection(section.id).catch(console.error);
+        void selectSongSection(section.id, { sequenceEntryId: entryId }).catch(console.error);
       });
       strip.appendChild(chip);
     }
@@ -11526,27 +11578,27 @@ function updateSongNavButtonsState() {
     if (nextBtn) nextBtn.disabled = true;
     return;
   }
-  const enabledSections = currentSongEnabledSections();
-  if (enabledSections.length <= 1) {
+  const sequenceItems = currentSongSequenceItems();
+  if (sequenceItems.length <= 1) {
     prevBtn.disabled = true;
     nextBtn.disabled = true;
     return;
   }
-  const currentIndex = enabledSections.findIndex((s) => s.id === currentSongSectionId);
+  const currentIndex = sequenceItems.findIndex((item) => item.entryId === currentSongSequenceEntryId);
   prevBtn.disabled = currentIndex <= 0;
-  nextBtn.disabled = currentIndex >= enabledSections.length - 1 || currentIndex === -1;
+  nextBtn.disabled = currentIndex >= sequenceItems.length - 1 || currentIndex === -1;
 }
 
 function navigateSongSection(direction) {
   if (!currentWorkspaceSong) return;
-  const enabledSections = currentSongEnabledSections();
-  if (enabledSections.length === 0) return;
-  const currentIndex = enabledSections.findIndex((s) => s.id === currentSongSectionId);
+  const sequenceItems = currentSongSequenceItems();
+  if (sequenceItems.length === 0) return;
+  const currentIndex = sequenceItems.findIndex((item) => item.entryId === currentSongSequenceEntryId);
   if (currentIndex === -1) return;
   const nextIndex = currentIndex + direction;
-  if (nextIndex >= 0 && nextIndex < enabledSections.length) {
-    const nextSection = enabledSections[nextIndex];
-    void selectSongSection(nextSection.id).catch(console.error);
+  if (nextIndex >= 0 && nextIndex < sequenceItems.length) {
+    const nextItem = sequenceItems[nextIndex];
+    void selectSongSection(nextItem.section.id, { sequenceEntryId: nextItem.entryId }).catch(console.error);
   }
 }
 
@@ -11916,6 +11968,12 @@ let slideUndoTransaction = null;
 let slideUndoRestoring = false;
 const SLIDE_THUMBNAIL_WIDTH = 320;
 const SLIDE_THUMBNAIL_HEIGHT = 180;
+const SLIDE_THUMBNAIL_MIN_PIXEL_RATIO = 2;
+
+function slideThumbnailPixelRatio() {
+  const deviceRatio = Number(globalThis.devicePixelRatio) || 1;
+  return Math.max(SLIDE_THUMBNAIL_MIN_PIXEL_RATIO, Math.min(3, deviceRatio));
+}
 const SLIDE_THUMBNAIL_IDLE_MS = 3000;
 const slideThumbnailCache = new Map();
 const slideThumbnailTimers = new Map();
@@ -12673,10 +12731,10 @@ function createDeckPageThumbnailObject(object, deck = currentDeck) {
   }
 
   const style = object.style && typeof object.style === "object" ? object.style : {};
-  el.textContent = slideTextObjectText(object);
   el.style.color = style.color || deck?.theme?.textColor || "#ffffff";
   el.style.fontFamily = songFontFamilyCSS(style.fontFamily || deck?.theme?.fontFamily);
-  el.style.fontSize = `${Math.max(5, Math.min(14, (Number(style.fontSize) || Number(deck?.theme?.fontSize) || 72) / 10))}px`;
+  const thumbnailFontScale = 1 / 10;
+  el.style.fontSize = `${Math.max(3, (Number(style.fontSize) || Number(deck?.theme?.fontSize) || 72) * thumbnailFontScale)}px`;
   el.style.lineHeight = String(style.lineHeight || 1.15);
   el.style.textAlign = style.align || "center";
   el.style.alignItems =
@@ -12687,6 +12745,33 @@ function createDeckPageThumbnailObject(object, deck = currentDeck) {
       : style.verticalAlign === "bottom"
         ? "flex-end"
         : "center";
+  const blocks = Array.isArray(object.blocks) ? object.blocks : [];
+  for (const block of blocks) {
+    const line = document.createElement("div");
+    line.className = "slides-page-list__thumb-text-line";
+    const segments = Array.isArray(block?.primary?.segments) ? block.primary.segments : [];
+    if (block?.type === "spacer" || segments.length === 0) {
+      line.textContent = "\u00a0";
+    } else {
+      for (const segment of segments) {
+        const span = document.createElement("span");
+        span.textContent = segment?.text || "";
+        const segmentStyle = textStyleFromSegment(segment);
+        if (segmentStyle.color) span.style.color = segmentStyle.color;
+        if (segmentStyle.fontFamily) span.style.fontFamily = songFontFamilyCSS(segmentStyle.fontFamily);
+        if (segmentStyle.fontSize) {
+          span.style.fontSize = `${Math.max(3, segmentStyle.fontSize * thumbnailFontScale)}px`;
+        }
+        if (segmentStyle.backgroundColor) span.style.backgroundColor = segmentStyle.backgroundColor;
+        if (segmentStyle.fontWeight) span.style.fontWeight = segmentStyle.fontWeight;
+        if (segmentStyle.fontStyle) span.style.fontStyle = segmentStyle.fontStyle;
+        if (segmentStyle.textDecoration) span.style.textDecoration = segmentStyle.textDecoration;
+        line.appendChild(span);
+      }
+    }
+    el.appendChild(line);
+  }
+  if (blocks.length === 0) el.textContent = slideTextObjectText(object);
   return el;
 }
 
@@ -12778,6 +12863,7 @@ function slideThumbnailSignature(page, deck = currentDeck) {
   try {
     return JSON.stringify({
       canvas: deck.canvas || null,
+      rendererPixelRatio: slideThumbnailPixelRatio(),
       theme: deck.theme || null,
       background: page.background || null,
       objects: Array.isArray(page.objects) ? page.objects : [],
@@ -12950,29 +13036,75 @@ async function drawSlideThumbnailObject(ctx, object, deck) {
 
   const style = object.style && typeof object.style === "object" ? object.style : {};
   const deckFontSize = Number(deck?.theme?.fontSize) || DEFAULT_DECK_THEME.fontSize;
-  const fontSize = Math.max(5, (Number(style.fontSize) || deckFontSize) * (SLIDE_THUMBNAIL_WIDTH / (deck?.canvas?.width || 1920)));
-  const lineHeight = fontSize * (Number(style.lineHeight) || 1.15);
-  const lines = slideTextObjectText(object).split(/\r?\n/);
-  const totalHeight = Math.max(lineHeight, lines.length * lineHeight);
-  const pad = Math.max(3, fontSize * 0.25);
+  const scale = SLIDE_THUMBNAIL_WIDTH / (deck?.canvas?.width || 1920);
+  const baseFontSize = Math.max(3, (Number(style.fontSize) || deckFontSize) * scale);
+  const baseFamily = style.fontFamily || deck?.theme?.fontFamily;
+  const baseColor = style.color || deck?.theme?.textColor || "#ffffff";
+  const blocks = Array.isArray(object.blocks) ? object.blocks : [];
+  const lines = blocks.length
+    ? blocks.map((block) => {
+        const segments = Array.isArray(block?.primary?.segments) ? block.primary.segments : [];
+        return segments.map((segment) => {
+          const segmentStyle = textStyleFromSegment(segment);
+          return {
+            text: segment?.text || "",
+            color: segmentStyle.color || baseColor,
+            backgroundColor: segmentStyle.backgroundColor || "",
+            fontFamily: segmentStyle.fontFamily || baseFamily,
+            fontSize: Math.max(3, (segmentStyle.fontSize || Number(style.fontSize) || deckFontSize) * scale),
+            fontWeight: segmentStyle.fontWeight || style.fontWeight || "700",
+            fontStyle: segmentStyle.fontStyle || style.fontStyle || "normal",
+          };
+        });
+      })
+    : slideTextObjectText(object).split(/\r?\n/).map((text) => [{
+        text,
+        color: baseColor,
+        backgroundColor: "",
+        fontFamily: baseFamily,
+        fontSize: baseFontSize,
+        fontWeight: style.fontWeight || "700",
+        fontStyle: style.fontStyle || "normal",
+      }]);
+  const lineHeights = lines.map((runs) =>
+    Math.max(baseFontSize, ...runs.map((run) => run.fontSize)) * (Number(style.lineHeight) || 1.15));
+  const totalHeight = Math.max(baseFontSize, lineHeights.reduce((sum, height) => sum + height, 0));
+  const pad = Math.max(3, baseFontSize * 0.25);
   const verticalAlign = style.verticalAlign || "center";
   let y = rect.y + pad;
   if (verticalAlign === "center") y = rect.y + (rect.height - totalHeight) / 2;
   if (verticalAlign === "bottom") y = rect.y + rect.height - totalHeight - pad;
   const align = style.align || "center";
-  ctx.textAlign = align;
+  ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  ctx.fillStyle = style.color || deck?.theme?.textColor || "#ffffff";
-  ctx.font = `${style.fontWeight || 700} ${fontSize}px ${songFontFamilyCSS(style.fontFamily || deck?.theme?.fontFamily)}`;
-  const x =
-    align === "left"
-      ? rect.x + pad
-      : align === "right"
-        ? rect.x + rect.width - pad
-        : rect.x + rect.width / 2;
-  for (const line of lines) {
-    ctx.fillText(line || " ", x, y, Math.max(1, rect.width - pad * 2));
-    y += lineHeight;
+  for (const [lineIndex, runs] of lines.entries()) {
+    const measuredRuns = [];
+    let lineWidth = 0;
+    for (const run of runs) {
+      const family = songFontFamilyCSS(run.fontFamily);
+      const font = `${run.fontStyle} ${run.fontWeight} ${run.fontSize}px ${family}`;
+      try {
+        await document.fonts?.load?.(font, run.text || " ");
+      } catch {}
+      ctx.font = font;
+      const width = ctx.measureText(run.text).width;
+      measuredRuns.push({ ...run, font, width });
+      lineWidth += width;
+    }
+    let x = rect.x + pad;
+    if (align === "center") x = rect.x + (rect.width - lineWidth) / 2;
+    if (align === "right") x = rect.x + rect.width - pad - lineWidth;
+    for (const run of measuredRuns) {
+      ctx.font = run.font;
+      if (run.backgroundColor) {
+        ctx.fillStyle = run.backgroundColor;
+        ctx.fillRect(x, y, run.width, lineHeights[lineIndex]);
+      }
+      ctx.fillStyle = run.color;
+      ctx.fillText(run.text || " ", x, y);
+      x += run.width;
+    }
+    y += lineHeights[lineIndex];
   }
   ctx.restore();
 }
@@ -12980,16 +13112,22 @@ async function drawSlideThumbnailObject(ctx, object, deck) {
 async function renderSlidePageThumbnailDataUrl(page, deck) {
   if (typeof document === "undefined") return "";
   const canvas = document.createElement("canvas");
-  canvas.width = SLIDE_THUMBNAIL_WIDTH;
-  canvas.height = SLIDE_THUMBNAIL_HEIGHT;
+  const pixelRatio = slideThumbnailPixelRatio();
+  canvas.width = Math.round(SLIDE_THUMBNAIL_WIDTH * pixelRatio);
+  canvas.height = Math.round(SLIDE_THUMBNAIL_HEIGHT * pixelRatio);
   const ctx = canvas.getContext("2d");
   if (!ctx) return "";
+  ctx.scale(pixelRatio, pixelRatio);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   await drawSlideThumbnailBackground(ctx, page, deck);
   for (const object of orderedSlideObjects(page)) {
     await drawSlideThumbnailObject(ctx, object, deck);
   }
   try {
-    return canvas.toDataURL("image/jpeg", 0.72);
+    // PNG keeps text edges and per-segment colors exact; JPEG introduces
+    // visible color shifts and halos in small lyric thumbnails.
+    return canvas.toDataURL("image/png");
   } catch {
     return "";
   }
@@ -16498,13 +16636,16 @@ function installBibleMediaControls() {
   const syncSongEditorRenderChange = (event) => {
     const controlId = event?.currentTarget?.id || "";
     const isTextStyleControl =
-      controlId === "songEditorTextColor" || controlId === "songEditorFontInput";
+      controlId === "songEditorTextColor" ||
+      controlId === "songEditorFontInput" ||
+      controlId === "songEditorFontSizeInput";
     const scope = currentSongEditorStyleScope();
 
     if (isTextStyleControl) {
-      const style =
-        controlId === "songEditorTextColor"
-          ? { color: event.currentTarget.value }
+      const style = controlId === "songEditorTextColor"
+        ? { color: event.currentTarget.value }
+        : controlId === "songEditorFontSizeInput"
+          ? { fontSize: Number(event.currentTarget.value) }
           : { fontFamily: event.currentTarget.value };
       if (scope === "allSlides") {
         currentSongRenderState = readSongEditorRenderState();
@@ -18140,6 +18281,100 @@ function toggleQueueItemAutoAdvance(index) {
   }
 }
 
+function hideScheduleBibleContextMenu() {
+  document.getElementById("scheduleBibleContextMenu")?.setAttribute("hidden", "");
+}
+
+function ensureScheduleBibleContextMenu() {
+  let menu = document.getElementById("scheduleBibleContextMenu");
+  if (menu) return menu;
+
+  menu = document.createElement("div");
+  menu.id = "scheduleBibleContextMenu";
+  menu.className = "song-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-schedule-bible-action="split">Split into Verses</button>
+  `;
+
+  menu.addEventListener("pointerdown", (event) => event.stopPropagation());
+  menu.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const button = event.target.closest("[data-schedule-bible-action]");
+    if (!button) return;
+    const index = menu._queueIndex;
+    hideScheduleBibleContextMenu();
+    if (button.getAttribute("data-schedule-bible-action") === "split") {
+      void splitScheduledBiblePassageIntoVerses(index).catch(console.error);
+    }
+  });
+
+  document.body.appendChild(menu);
+  if (document.body.dataset.scheduleBibleContextMenuBound !== "1") {
+    document.body.dataset.scheduleBibleContextMenuBound = "1";
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.target.closest?.("#scheduleBibleContextMenu")) return;
+        hideScheduleBibleContextMenu();
+      },
+      true,
+    );
+    window.addEventListener("resize", hideScheduleBibleContextMenu);
+    window.addEventListener("scroll", hideScheduleBibleContextMenu, true);
+  }
+  return menu;
+}
+
+function showScheduleBibleContextMenu(event, index) {
+  event.preventDefault();
+  event.stopPropagation();
+  const menu = ensureScheduleBibleContextMenu();
+  menu._queueIndex = index;
+  menu.hidden = false;
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(event.clientX, window.innerWidth - menuRect.width - 8));
+  const top = Math.max(8, Math.min(event.clientY, window.innerHeight - menuRect.height - 8));
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+async function splitScheduledBiblePassageIntoVerses(index) {
+  if (!queueIndexInRange(index) || !isQueueItemBible(mediaQueue[index])) return false;
+  if (index === currentQueueIndex && isQueuePresentationActive()) {
+    showGnomeToast("Stop the presentation to split the current item");
+    return false;
+  }
+
+  const originalItem = mediaQueue[index];
+  const entry = await resolvedBibleEntryForItem(originalItem);
+  const rows = await bibleVerseRowsForEntry(entry);
+  if (rows.length <= 1) {
+    showGnomeToast("This Bible item contains one verse");
+    return false;
+  }
+
+  const splitEntries = normalizeBibleScheduleEntryGroup(
+    rows.map((row) => bibleEntryForVerseRows(entry, [row])),
+  ).map((verseEntry) => ({
+    ...queueEntryFromBibleEntry(verseEntry),
+    autoAdvance: originalItem.autoAdvance !== false,
+  }));
+  if (splitEntries.length <= 1) return false;
+
+  invalidateQueueUndoToastAfterMutation();
+  mediaQueue.splice(index, 1, ...splitEntries);
+  shiftQueueIndexesForInsertion(index + 1, splitEntries.length - 1);
+  setSelectedQueueAnchor(index);
+  renderQueue();
+  saveMediaFile();
+  showGnomeToast(`Split into ${splitEntries.length} Bible verses`);
+  return true;
+}
+
 async function resumeQueueFromManualBoundaryIfReady(index) {
   if (
     manualBoundaryPauseIndex !== index ||
@@ -18171,6 +18406,16 @@ function installMediaQueueListDelegation() {
   list.dataset.queueDelegation = "1";
   const queueRowActionSelector =
     "[data-queue-remove], [data-queue-reload-update], [data-queue-keep-update], [data-queue-apply-update]";
+  list.addEventListener("contextmenu", (event) => {
+    if (event.target.closest(queueRowActionSelector)) return;
+    const row = event.target.closest(".queue-item[data-queue-index]");
+    if (!row || !list.contains(row)) return;
+    const index = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+    if (!queueIndexInRange(index) || !isQueueItemBible(mediaQueue[index])) return;
+    setSelectedQueueAnchor(index);
+    updateQueueSelectionVisual();
+    showScheduleBibleContextMenu(event, index);
+  });
   list.addEventListener("click", (e) => {
     const autoBtn = e.target.closest("[data-queue-auto]");
     if (autoBtn && list.contains(autoBtn)) {
