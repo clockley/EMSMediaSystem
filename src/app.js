@@ -901,6 +901,8 @@ let mediaQueue = [];
 let currentQueueIndex = -1;
 let previewCueIndex = -1;
 let selectedQueueAnchorIndex = -1;
+let queueSelectionRangeAnchorIndex = -1;
+const selectedQueueItems = new Set();
 let isQueuePlaying = false;
 let manualBoundaryPauseIndex = -1;
 let globalSlideTransitionState = { ...DEFAULT_SLIDE_TRANSITION };
@@ -4651,6 +4653,16 @@ function renderQueue() {
   const listContainer = document.getElementById("mediaQueueList");
   if (!listContainer) return;
 
+  for (const item of selectedQueueItems) {
+    if (!mediaQueue.includes(item)) selectedQueueItems.delete(item);
+  }
+  if (!queueIndexInRange(selectedQueueAnchorIndex)) {
+    selectedQueueItems.clear();
+    queueSelectionRangeAnchorIndex = -1;
+  } else if (selectedQueueItems.size === 0) {
+    selectedQueueItems.add(mediaQueue[selectedQueueAnchorIndex]);
+  }
+
   if (mediaQueue.length === 0) {
     listContainer.innerHTML =
       '<div class="list-placeholder">' +
@@ -4670,7 +4682,10 @@ function renderQueue() {
 
         const isLive = queueIndexIsLiveForDisplay(index);
         const isCued = separatePreviewCue && index === previewCueIndex;
-        const isSelected = index === selectedQueueIndex;
+        const isSelected =
+          selectedQueueItems.size > 0
+            ? selectedQueueItems.has(item)
+            : index === selectedQueueIndex;
 
         const classes = [
           "queue-item",
@@ -4782,13 +4797,37 @@ function queueInsertionIndexAfterSelection() {
 
 function setSelectedQueueAnchor(index) {
   selectedQueueAnchorIndex = queueIndexInRange(index) ? index : -1;
+  queueSelectionRangeAnchorIndex = selectedQueueAnchorIndex;
+  selectedQueueItems.clear();
+  if (selectedQueueAnchorIndex >= 0) {
+    selectedQueueItems.add(mediaQueue[selectedQueueAnchorIndex]);
+  }
+}
+
+function extendQueueSelectionTo(index) {
+  if (!queueIndexInRange(index)) return;
+  const anchor = queueIndexInRange(queueSelectionRangeAnchorIndex)
+    ? queueSelectionRangeAnchorIndex
+    : queueIndexInRange(selectedQueueAnchorIndex)
+      ? selectedQueueAnchorIndex
+      : index;
+  selectedQueueItems.clear();
+  for (let i = Math.min(anchor, index); i <= Math.max(anchor, index); i += 1) {
+    selectedQueueItems.add(mediaQueue[i]);
+  }
+  queueSelectionRangeAnchorIndex = anchor;
+  selectedQueueAnchorIndex = index;
 }
 
 function updateQueueSelectionVisual() {
   const selectedIndex = selectedQueueIndexForDisplay();
   document.querySelectorAll(".queue-item[data-queue-index]").forEach((row) => {
     const index = Number.parseInt(row.getAttribute("data-queue-index"), 10);
-    const isSelected = Number.isFinite(index) && index === selectedIndex;
+    const isSelected =
+      Number.isFinite(index) &&
+      (selectedQueueItems.size > 0
+        ? selectedQueueItems.has(mediaQueue[index])
+        : index === selectedIndex);
     row.classList.toggle("is-selected", isSelected);
     if (isSelected) {
       row.dataset.selected = "true";
@@ -4803,6 +4842,7 @@ function shiftQueueIndexesForInsertion(insertIndex, count) {
   if (currentQueueIndex >= insertIndex) currentQueueIndex += count;
   if (previewCueIndex >= insertIndex) previewCueIndex += count;
   if (selectedQueueAnchorIndex >= insertIndex) selectedQueueAnchorIndex += count;
+  if (queueSelectionRangeAnchorIndex >= insertIndex) queueSelectionRangeAnchorIndex += count;
   if (previewAudioCueIndex >= insertIndex) previewAudioCueIndex += count;
   if (previewCueVideoIndex >= insertIndex) previewCueVideoIndex += count;
   if (liveAudioQueueIndex >= insertIndex) liveAudioQueueIndex += count;
@@ -5013,6 +5053,7 @@ function reorderMediaQueue(fromIndex, toIndex) {
   }
   if (selectedItem) {
     selectedQueueAnchorIndex = mediaQueue.findIndex((q) => q === selectedItem);
+    queueSelectionRangeAnchorIndex = selectedQueueAnchorIndex;
   }
 
   ignoreNextQueueItemClick = true;
@@ -5025,6 +5066,74 @@ function reorderMediaQueue(fromIndex, toIndex) {
   renderQueue();
   // renderQueue() refreshes previous/next status in a single pass.
   if (movedItemWasLiveAudio) {
+    hidePptxPreviewIfNeeded();
+    restoreCountdownForLiveMedia();
+    refreshLiveAudioControls();
+    syncPlayPauseIconToControlMedia();
+    syncPreviewAudioTrackState();
+  }
+  saveMediaFile();
+}
+
+function reorderSelectedMediaQueue(fromIndex, toIndex) {
+  const selectedIndexes = mediaQueue
+    .map((item, index) => (selectedQueueItems.has(item) ? index : -1))
+    .filter((index) => index >= 0);
+  if (selectedIndexes.length <= 1) {
+    reorderMediaQueue(fromIndex, toIndex);
+    return;
+  }
+  if (!queueIndexInRange(toIndex) || selectedIndexes.includes(toIndex)) return;
+
+  const selected = selectedIndexes.map((index) => mediaQueue[index]);
+  const activeItem = queueIndexInRange(currentQueueIndex) ? mediaQueue[currentQueueIndex] : null;
+  const cueItem = queueIndexInRange(previewCueIndex) ? mediaQueue[previewCueIndex] : null;
+  const previewAudioItem = queueIndexInRange(previewAudioCueIndex)
+    ? mediaQueue[previewAudioCueIndex]
+    : null;
+  const liveAudioItem = queueIndexInRange(liveAudioQueueIndex)
+    ? mediaQueue[liveAudioQueueIndex]
+    : null;
+  const boundaryItem = queueIndexInRange(manualBoundaryPauseIndex)
+    ? mediaQueue[manualBoundaryPauseIndex]
+    : null;
+  const pendingSwitchItem = queueIndexInRange(pendingQueueSwitchIndex)
+    ? mediaQueue[pendingQueueSwitchIndex]
+    : null;
+  const movedLiveAudio = Boolean(liveAudioItem && selectedQueueItems.has(liveAudioItem));
+  const rangeAnchorItem = queueIndexInRange(queueSelectionRangeAnchorIndex)
+    ? mediaQueue[queueSelectionRangeAnchorIndex]
+    : selected[0];
+  const focusItem = queueIndexInRange(selectedQueueAnchorIndex)
+    ? mediaQueue[selectedQueueAnchorIndex]
+    : selected[selected.length - 1];
+  const movingDown = selectedIndexes[0] < toIndex;
+  const selectedBeforeOrAtTarget = selectedIndexes.filter((index) => index <= toIndex).length;
+  const remaining = mediaQueue.filter((item) => !selectedQueueItems.has(item));
+  const insertIndex = movingDown
+    ? toIndex - selectedBeforeOrAtTarget + 1
+    : toIndex;
+  remaining.splice(Math.max(0, Math.min(insertIndex, remaining.length)), 0, ...selected);
+  mediaQueue.splice(0, mediaQueue.length, ...remaining);
+
+  currentQueueIndex = activeItem ? mediaQueue.indexOf(activeItem) : -1;
+  previewCueIndex = cueItem ? mediaQueue.indexOf(cueItem) : -1;
+  previewAudioCueIndex = previewAudioItem ? mediaQueue.indexOf(previewAudioItem) : -1;
+  liveAudioQueueIndex = liveAudioItem ? mediaQueue.indexOf(liveAudioItem) : -1;
+  manualBoundaryPauseIndex = boundaryItem ? mediaQueue.indexOf(boundaryItem) : -1;
+  if (pendingSwitchItem) pendingQueueSwitchIndex = mediaQueue.indexOf(pendingSwitchItem);
+  if (previewCueVideoIndex >= 0) previewCueVideoIndex = previewCueIndex;
+  queueSelectionRangeAnchorIndex = mediaQueue.indexOf(rangeAnchorItem);
+  selectedQueueAnchorIndex = mediaQueue.indexOf(focusItem);
+
+  ignoreNextQueueItemClick = true;
+  ignoreQueueItemClicksUntil = performance.now() + 1500;
+  window.setTimeout(() => {
+    ignoreNextQueueItemClick = false;
+  }, 400);
+  invalidateQueueUndoToastAfterMutation();
+  renderQueue();
+  if (movedLiveAudio) {
     hidePptxPreviewIfNeeded();
     restoreCountdownForLiveMedia();
     refreshLiveAudioControls();
@@ -18197,6 +18306,7 @@ async function onClearMediaQueueClick() {
 
 function removeFromQueue(index) {
   if (index < 0 || index >= mediaQueue.length) return;
+  const removedItem = mediaQueue[index];
   const removedCurrentItem = index === currentQueueIndex;
   if (removedCurrentItem && isQueuePresentationActive()) {
     showGnomeToast("Stop the presentation to remove the current item");
@@ -18204,6 +18314,7 @@ function removeFromQueue(index) {
   }
   invalidateQueueUndoToastAfterMutation();
   mediaQueue.splice(index, 1);
+  selectedQueueItems.delete(removedItem);
   if (selectedQueueAnchorIndex === index) {
     selectedQueueAnchorIndex =
       mediaQueue.length > 0 ? Math.min(index, mediaQueue.length - 1) : -1;
@@ -18211,6 +18322,24 @@ function removeFromQueue(index) {
     selectedQueueAnchorIndex--;
   } else if (selectedQueueAnchorIndex >= mediaQueue.length) {
     selectedQueueAnchorIndex = -1;
+  }
+  if (queueSelectionRangeAnchorIndex === index) {
+    queueSelectionRangeAnchorIndex = selectedQueueAnchorIndex;
+  } else if (queueSelectionRangeAnchorIndex > index) {
+    queueSelectionRangeAnchorIndex--;
+  } else if (queueSelectionRangeAnchorIndex >= mediaQueue.length) {
+    queueSelectionRangeAnchorIndex = selectedQueueAnchorIndex;
+  }
+  if (selectedQueueItems.size > 0) {
+    const firstSelectedIndex = mediaQueue.findIndex((item) => selectedQueueItems.has(item));
+    if (!selectedQueueItems.has(mediaQueue[selectedQueueAnchorIndex])) {
+      selectedQueueAnchorIndex = firstSelectedIndex;
+    }
+    if (!selectedQueueItems.has(mediaQueue[queueSelectionRangeAnchorIndex])) {
+      queueSelectionRangeAnchorIndex = firstSelectedIndex;
+    }
+  } else if (queueIndexInRange(selectedQueueAnchorIndex)) {
+    selectedQueueItems.add(mediaQueue[selectedQueueAnchorIndex]);
   }
   if (currentQueueIndex > index) currentQueueIndex--;
   else if (removedCurrentItem) {
@@ -18459,8 +18588,20 @@ function installMediaQueueListDelegation() {
     if (!row || !list.contains(row)) return;
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
-    setSelectedQueueAnchor(idx);
+    if (e.shiftKey) {
+      extendQueueSelectionTo(idx);
+    } else {
+      setSelectedQueueAnchor(idx);
+    }
     updateQueueSelectionVisual();
+    if (e.shiftKey) {
+      e.preventDefault();
+      if (queueItemClickTimer !== null) {
+        window.clearTimeout(queueItemClickTimer);
+        queueItemClickTimer = null;
+      }
+      return;
+    }
     if (e.detail > 1) {
       if (queueItemClickTimer !== null) {
         window.clearTimeout(queueItemClickTimer);
@@ -18506,13 +18647,20 @@ function installMediaQueueListDelegation() {
     e.stopPropagation();
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
-    setSelectedQueueAnchor(idx);
+    if (!selectedQueueItems.has(mediaQueue[idx])) {
+      setSelectedQueueAnchor(idx);
+    }
     updateQueueSelectionVisual();
     queueDragFromIndex = idx;
     e.dataTransfer.setData("application/x-queue-index", String(idx));
     e.dataTransfer.setData("text/plain", String(idx));
     e.dataTransfer.effectAllowed = "move";
-    if (row) row.classList.add("queue-item-dragging");
+    list.querySelectorAll(".queue-item[data-queue-index]").forEach((queueRow) => {
+      const queueIndex = Number.parseInt(queueRow.getAttribute("data-queue-index"), 10);
+      if (selectedQueueItems.has(mediaQueue[queueIndex])) {
+        queueRow.classList.add("queue-item-dragging");
+      }
+    });
   });
 
   list.addEventListener("dragend", (e) => {
@@ -18643,7 +18791,7 @@ function installMediaQueueListDelegation() {
       });
       queueDragFromIndex = -1;
       if (Number.isNaN(to) || Number.isNaN(from)) return;
-      reorderMediaQueue(from, to);
+      reorderSelectedMediaQueue(from, to);
       return;
     }
 
