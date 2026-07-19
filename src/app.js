@@ -353,6 +353,7 @@ let gtkUpdateVolIcon = null;
 let liveAudio = null;
 let liveAudioQueueIndex = -1;
 let previewLoadToken = 0;
+let previewTransportLoadToken = null;
 let streamRendererPreviewStream = null;
 let streamRendererPreviewStartPromise = null;
 let streamRendererPreviewQualityMode = null;
@@ -1802,6 +1803,21 @@ function nextPreviewLoadToken() {
 
 function isCurrentPreviewLoad(token) {
   return token === previewLoadToken;
+}
+
+function beginPreviewTransportLoad(token) {
+  previewTransportLoadToken = token;
+  if (timeline) timeline.disabled = true;
+}
+
+function finishPreviewTransportLoad(token) {
+  if (previewTransportLoadToken !== token) return;
+  previewTransportLoadToken = null;
+  refreshPreviewControlsForCurrentMedia();
+}
+
+function previewTransportLoadIsPending() {
+  return previewTransportLoadToken !== null;
 }
 
 function nextPptxPreviewRequestToken() {
@@ -4493,6 +4509,8 @@ async function waitForCueVideoMetadata(el, itemIsNetworkVideo) {
  */
 async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, loadToken) {
   const token = Number.isFinite(loadToken) ? loadToken : nextPreviewLoadToken();
+  beginPreviewTransportLoad(token);
+  try {
   const el = ensurePreviewCueVideoElement();
   if (!el) return;
   previewCueVideoIndex = index;
@@ -4592,6 +4610,9 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, l
       ?.style.setProperty("visibility", "visible");
   }
   syncMediaLoopState({ notify: false });
+  } finally {
+    finishPreviewTransportLoad(token);
+  }
 }
 
 /**
@@ -19577,6 +19598,14 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   const preservePreviewSeek = !opts || opts.preservePreviewSeek !== false;
   const cueOnly = opts?.cueOnly === true;
   const loadToken = opts?.previewLoadToken;
+  const presentationTakeover = opts?.presentationTakeover === true;
+  const previewRequestStillOwnsMainSurface = () => {
+    if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) {
+      return false;
+    }
+    if (presentationTakeover || !activePresentationOwnsPreviewAudio()) return true;
+    return queueIndexInRange(currentQueueIndex) && mediaQueue[currentQueueIndex] === item;
+  };
   const itemIsBible = isQueueItemBible(item);
   const isImgFile = isImg(item.path);
   const itemIsPptx = isQueueItemPptx(item);
@@ -19671,7 +19700,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   hideSongsWorkspace();
   hideSlidesWorkspace();
   const resolvedItemPath = await resolveQueueItemMediaPath(item);
-  if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) {
+  if (!previewRequestStillOwnsMainSurface()) {
     return;
   }
   activePreviewResolvedMediaFile = resolvedItemPath;
@@ -19723,8 +19752,14 @@ async function loadQueueItemIntoControlWindow(item, opts) {
       }
     } else {
       try {
-        await attachNetworkPreviewMirrorSource(item.path || resolvedItemPath, loadToken);
+        await attachNetworkPreviewMirrorSource(
+          item.path || resolvedItemPath,
+          loadToken,
+          previewRequestStillOwnsMainSurface,
+        );
+        if (!previewRequestStillOwnsMainSurface()) return;
       } catch (err) {
+        if (!previewRequestStillOwnsMainSurface()) return;
         console.error("Failed to load network preview mirror:", err);
         handleMediaPlayback(isImgFile, resolvedItemPath, cacheBust);
       }
@@ -19817,6 +19852,10 @@ async function loadQueueItemIntoControlWindow(item, opts) {
 }
 
 async function playCurrentQueueItem(opts) {
+  // Taking an item live transfers ownership of the main preview/scrubber to
+  // that item. Invalidate any slower preview-only request (notably YouTube
+  // resolution) before it can attach to the shared video element afterward.
+  nextPreviewLoadToken();
   resolveQueuePresentationVideo();
   const localVideo = video;
   manualBoundaryPauseIndex = -1;
@@ -20069,6 +20108,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     await loadQueueItemIntoControlWindow(nextItem, {
       preservePreviewSeek: false,
       startTime: requestedStart,
+      presentationTakeover: true,
     });
     resolveQueuePresentationVideo();
 
@@ -20925,9 +20965,12 @@ function syncNetworkPreviewMirrorCapture() {
   return false;
 }
 
-async function attachNetworkPreviewMirrorSource(sourcePath, loadToken) {
+async function attachNetworkPreviewMirrorSource(sourcePath, loadToken, ownsMainSurface) {
   if (!video || !sourcePath) return false;
-  if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) return false;
+  const isCurrent = () =>
+    (typeof loadToken !== "number" || isCurrentPreviewLoad(loadToken)) &&
+    (typeof ownsMainSurface !== "function" || ownsMainSurface());
+  if (!isCurrent()) return false;
 
   const originalSource = String(sourcePath);
   stopNetworkPreviewRtcCapture();
@@ -20944,8 +20987,7 @@ async function attachNetworkPreviewMirrorSource(sourcePath, loadToken) {
 
   try {
     const resources = await attachNetworkMediaSourceToElement(video, originalSource, {
-      isCurrent: () =>
-        typeof loadToken !== "number" || isCurrentPreviewLoad(loadToken),
+      isCurrent,
     });
     if (resources.cancelled) {
       hideNetworkPreviewStatus(statusToken);
@@ -20966,10 +21008,9 @@ async function attachNetworkPreviewMirrorSource(sourcePath, loadToken) {
     video.style.visibility = "";
     setNetworkPreviewElementLocalAudio();
     await primeNetworkPreviewElement(video, setNetworkPreviewElementLocalAudio, {
-      isCurrent: () =>
-        typeof loadToken !== "number" || isCurrentPreviewLoad(loadToken),
+      isCurrent,
     });
-    if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) {
+    if (!isCurrent()) {
       return false;
     }
     hideNetworkPreviewStatus(statusToken);
@@ -21592,6 +21633,10 @@ function setupCustomMediaControls() {
     if (currentMode !== MEDIAPLAYER || mediaEl !== currentControlMedia()) {
       return;
     }
+    if (previewTransportLoadIsPending()) {
+      timeline.disabled = true;
+      return;
+    }
     timeline.min = 0;
     timeline.max = 100;
 
@@ -21626,6 +21671,7 @@ function setupCustomMediaControls() {
   };
   const updateControlsForTime = (mediaEl) => {
     if (mediaEl !== currentControlMedia()) return;
+    if (previewTransportLoadIsPending()) return;
     if (controlMediaHidesTimeline(mediaEl)) return;
     const duration = controlMediaDuration(mediaEl);
     const currentTime = controlMediaCurrentTime(mediaEl);
