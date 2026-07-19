@@ -5,6 +5,34 @@ import (
 	"testing"
 )
 
+func TestConvertToDeckPreservesRepeatedPlayOrder(t *testing.T) {
+	enabled := true
+	song := Song{
+		ID:    "song_order_test",
+		Title: "Ordered Song",
+		Sections: []SongSection{
+			{ID: "verse_1", Kind: "verse", Label: "Verse 1"},
+			{ID: "chorus", Kind: "chorus", Label: "Chorus"},
+			{ID: "verse_2", Kind: "verse", Label: "Verse 2"},
+		},
+		PlayOrder: []PlayOrderEntry{
+			{ID: "seq_1", SectionID: "verse_1", Enabled: &enabled},
+			{ID: "seq_2", SectionID: "chorus", Enabled: &enabled},
+			{ID: "seq_3", SectionID: "verse_2", Enabled: &enabled},
+			{ID: "seq_4", SectionID: "chorus", Enabled: &enabled},
+		},
+	}
+
+	deck := (&SongStore{}).ConvertToDeck(song)
+	playOrder, ok := deck["playOrder"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("playOrder type = %T", deck["playOrder"])
+	}
+	if len(playOrder) != 4 || playOrder[1]["sectionId"] != "chorus" || playOrder[3]["sectionId"] != "chorus" {
+		t.Fatalf("playOrder = %#v", playOrder)
+	}
+}
+
 func TestSongStorePersistsMeterInSchemaAndAST(t *testing.T) {
 	store, err := InitStore(filepath.Join(t.TempDir(), "songs.db"))
 	if err != nil {

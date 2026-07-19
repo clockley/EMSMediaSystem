@@ -345,6 +345,27 @@ function normalizePageSequence(pages, pageSequence) {
   return sequence;
 }
 
+function normalizeSongPlayOrder(pages, playOrder) {
+  if (!Array.isArray(playOrder)) return null;
+  const validIds = new Set(pages.map((page) => page?.id).filter(Boolean));
+  const normalized = [];
+  for (const [index, entry] of playOrder.entries()) {
+    const sectionId =
+      typeof entry === "string"
+        ? entry
+        : typeof entry?.sectionId === "string"
+          ? entry.sectionId
+          : "";
+    if (!sectionId || !validIds.has(sectionId)) continue;
+    normalized.push({
+      id: typeof entry?.id === "string" && entry.id ? entry.id : `play_${index}`,
+      sectionId,
+      enabled: entry?.enabled !== false,
+    });
+  }
+  return normalized.length ? normalized : null;
+}
+
 export function normalizeSlideDeck(deck) {
   if (!deck || typeof deck !== "object") return null;
   const now = new Date().toISOString();
@@ -355,6 +376,7 @@ export function normalizeSlideDeck(deck) {
     .filter(Boolean);
   if (!pages.length) pages = [createBlankPage({ label: "Page 1" })];
   const pageSequence = normalizePageSequence(pages, deck.pageSequence);
+  const playOrder = normalizeSongPlayOrder(pages, deck.playOrder);
   return {
     schema: EMS_SLIDE_DECK_SCHEMA_ID,
     id: deck.id || shortId("deck"),
@@ -373,6 +395,7 @@ export function normalizeSlideDeck(deck) {
     },
     theme,
     pageSequence,
+    ...(playOrder ? { playOrder } : {}),
     pages,
   };
 }
@@ -636,7 +659,9 @@ export function deckToTransientSong(deck) {
     },
     languages: [{ id: "en", name: "English", default: true }],
     sections,
-    playOrder: sections.map((s) => ({ sectionId: s.id, enabled: true })),
+    playOrder: Array.isArray(norm.playOrder) && norm.playOrder.length
+      ? norm.playOrder.map((entry) => ({ ...entry }))
+      : sections.map((s) => ({ sectionId: s.id, enabled: true })),
     presentation: { defaultChunking: { mode: "blocksPerSlide", maxBlocks: 99 } },
     defaultRender: deckDefaultRender(norm),
   };
@@ -870,6 +895,7 @@ export function songAstToDeck(song, { documentType = SONG_DECK_DOCUMENT_TYPE } =
     ...(documentType === SONG_DECK_DOCUMENT_TYPE ? { type: SONG_DECK_DOCUMENT_TYPE } : {}),
     ...(Number.isFinite(ast.songNumber) && ast.songNumber > 0 ? { songNumber: ast.songNumber } : {}),
     metadata: structuredClone(ast.metadata || {}),
+    playOrder: structuredClone(ast.playOrder || []),
     canvas: DEFAULT_CANVAS,
     theme,
     pages,
