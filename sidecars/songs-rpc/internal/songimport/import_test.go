@@ -1,9 +1,84 @@
 package songimport
 
 import (
+	"encoding/binary"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+	"unicode/utf16"
 )
+
+func encodeUTF16ForTest(text string, order binary.ByteOrder, bom []byte) []byte {
+	units := utf16.Encode([]rune(text))
+	data := append([]byte{}, bom...)
+	for _, unit := range units {
+		pair := make([]byte, 2)
+		order.PutUint16(pair, unit)
+		data = append(data, pair...)
+	}
+	return data
+}
+
+func parseFileBytesForTest(t *testing.T, name string, data []byte) ParsedSong {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	song, _, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("ParseFile(%s) failed: %v", name, err)
+	}
+	return song
+}
+
+func TestParseFileDecodesWindowsTextEncodings(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{
+			name: "utf16-le.txt",
+			data: encodeUTF16ForTest("Title: Grace\r\n\r\n[Verse 1]\r\nAmazing grace", binary.LittleEndian, []byte{0xff, 0xfe}),
+		},
+		{
+			name: "utf16-be.txt",
+			data: encodeUTF16ForTest("Title: Grace\r\n\r\n[Verse 1]\r\nAmazing grace", binary.BigEndian, []byte{0xfe, 0xff}),
+		},
+		{
+			name: "utf16-no-bom.txt",
+			data: encodeUTF16ForTest("Title: Grace\r\n\r\n[Verse 1]\r\nAmazing grace", binary.LittleEndian, nil),
+		},
+		{
+			name: "windows-1252.txt",
+			data: []byte("Title: God\x92s Grace\r\n\r\n[Verse 1]\r\nYou\x92re faithful"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			song := parseFileBytesForTest(t, test.name, test.data)
+			if len(song.Sections) < 2 || parsedBlockText(song.Sections[1].Blocks[0]) == "" {
+				t.Fatalf("decoded song has no lyric text: %#v", song)
+			}
+		})
+	}
+}
+
+func TestParseFileDecodesUTF16AndWindows1252JSON(t *testing.T) {
+	utf16JSON := `{"title":"Grace","stanzas":[{"reference":{"type":"verse","number":1},"lines":["Amazing grace"]}]}`
+	song := parseFileBytesForTest(t, "utf16.json", encodeUTF16ForTest(utf16JSON, binary.LittleEndian, []byte{0xff, 0xfe}))
+	if song.Title != "Grace" {
+		t.Fatalf("UTF-16 JSON title = %q, want Grace", song.Title)
+	}
+
+	cp1252JSON := []byte("{\"title\":\"God\x92s Grace\",\"stanzas\":[{\"reference\":{\"type\":\"verse\",\"number\":1},\"lines\":[\"You\x92re faithful\"]}]}")
+	song = parseFileBytesForTest(t, "windows-1252.json", cp1252JSON)
+	if song.Title != "God’s Grace" {
+		t.Fatalf("Windows-1252 JSON title = %q", song.Title)
+	}
+}
 
 func TestParseSectionLabel(t *testing.T) {
 	tests := []struct {
