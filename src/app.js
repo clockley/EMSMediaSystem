@@ -4299,6 +4299,22 @@ function setPreviewCueVideoLocalAudio(el = previewCueVideo) {
   disableNativeVideoControls(el);
 }
 
+function activePresentationOwnsPreviewAudio() {
+  return Boolean(
+    isQueuePresentationActive() ||
+      isActiveMediaWindow() ||
+      isLocalAppWindowPresentationActive() ||
+      isPlaying,
+  );
+}
+
+function setNetworkPreviewCueAudio(el = previewCueVideo) {
+  setPreviewCueVideoLocalAudio(el);
+  if (!el || !activePresentationOwnsPreviewAudio()) return;
+  el.muted = true;
+  el.defaultMuted = true;
+}
+
 function waitForMediaElementSource(mediaEl, timeoutMs = 750) {
   if (!mediaEl || mediaEl.src) return Promise.resolve();
   return new Promise((resolve) => {
@@ -4416,16 +4432,21 @@ function waitForMediaElementBuffer(
   });
 }
 
-async function primeNetworkPreviewElement(mediaEl, restoreAudioState) {
+async function primeNetworkPreviewElement(mediaEl, restoreAudioState, options = {}) {
   if (!mediaEl) return false;
   if (mediaEl.srcObject) return false;
+  const isCurrent =
+    typeof options.isCurrent === "function" ? options.isCurrent : () => true;
+  if (!isCurrent()) return false;
   const startTime = Number.isFinite(mediaEl.currentTime) ? mediaEl.currentTime : 0;
 
   beginPreviewForwardingSuppression();
   try {
     mediaEl.preload = "auto";
     await waitForMediaElementFrame(mediaEl);
+    if (!isCurrent()) return false;
     await waitForMediaElementBuffer(mediaEl);
+    if (!isCurrent()) return false;
     if (
       Number.isFinite(mediaEl.duration) &&
       mediaEl.duration > 0 &&
@@ -4443,7 +4464,7 @@ async function primeNetworkPreviewElement(mediaEl, restoreAudioState) {
     }
     return false;
   } finally {
-    if (typeof restoreAudioState === "function") {
+    if (isCurrent() && typeof restoreAudioState === "function") {
       restoreAudioState(mediaEl);
     }
     endPreviewForwardingSuppression();
@@ -4497,7 +4518,8 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, l
     /* ignore */
   }
   teardownNetworkPreviewCueStreamingPlayers();
-  setPreviewCueVideoLocalAudio(el);
+  if (itemIsNetworkVideo) setNetworkPreviewCueAudio(el);
+  else setPreviewCueVideoLocalAudio(el);
   el.loop = loopEnabledForQueueItem(item);
   el.preload = "metadata";
   el.removeAttribute("src");
@@ -4508,7 +4530,10 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, l
     networkPreviewCueSource = item?.path || resolvedPath;
     networkPreviewLoadStatusToken = beginNetworkPreviewStatus("Connecting to stream");
     try {
-      const resources = await attachNetworkMediaSourceToElement(el, networkPreviewCueSource);
+      const resources = await attachNetworkMediaSourceToElement(el, networkPreviewCueSource, {
+        isCurrent: () => isCurrentPreviewLoad(token) && previewCueIndex === index,
+      });
+      if (resources.cancelled) return;
       networkPreviewCueHlsInstance = resources.hlsInstance;
       networkPreviewCueDashPlayer = resources.dashPlayer;
       networkPreviewCueDashManifestObjectUrl = resources.dashManifestObjectUrl;
@@ -4527,7 +4552,8 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, l
   }
   el.hidden = false;
   setPreviewStackSurface(PREVIEW_SURFACE_CUE_VIDEO);
-  setPreviewCueVideoLocalAudio(el);
+  if (itemIsNetworkVideo) setNetworkPreviewCueAudio(el);
+  else setPreviewCueVideoLocalAudio(el);
 
   await waitForCueVideoMetadata(el, itemIsNetworkVideo);
   if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
@@ -4542,7 +4568,9 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, l
   }
 
   if (itemIsNetworkVideo) {
-    await primeNetworkPreviewElement(el, setPreviewCueVideoLocalAudio);
+    await primeNetworkPreviewElement(el, setNetworkPreviewCueAudio, {
+      isCurrent: () => isCurrentPreviewLoad(token) && previewCueIndex === index,
+    });
     hideNetworkPreviewStatus(networkPreviewLoadStatusToken);
     if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
       if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
@@ -19643,6 +19671,9 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   hideSongsWorkspace();
   hideSlidesWorkspace();
   const resolvedItemPath = await resolveQueueItemMediaPath(item);
+  if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) {
+    return;
+  }
   activePreviewResolvedMediaFile = resolvedItemPath;
   const cacheBust = queueItemMediaCacheBust(item);
   const itemIsNetworkVideo =
@@ -19692,7 +19723,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
       }
     } else {
       try {
-        await attachNetworkPreviewMirrorSource(item.path || resolvedItemPath);
+        await attachNetworkPreviewMirrorSource(item.path || resolvedItemPath, loadToken);
       } catch (err) {
         console.error("Failed to load network preview mirror:", err);
         handleMediaPlayback(isImgFile, resolvedItemPath, cacheBust);
@@ -20668,31 +20699,47 @@ function teardownNetworkMediaSourceResources(resources = {}) {
   }
 }
 
-async function attachNetworkMediaSourceToElement(targetEl, sourcePath) {
+async function attachNetworkMediaSourceToElement(targetEl, sourcePath, options = {}) {
   const resources = {
     hlsInstance: null,
     dashPlayer: null,
     dashManifestObjectUrl: null,
     liveEdge: false,
+    cancelled: false,
   };
   if (!targetEl || !sourcePath) return resources;
+
+  const isCurrent =
+    typeof options.isCurrent === "function" ? options.isCurrent : () => true;
+  const cancelIfStale = () => {
+    if (isCurrent()) return false;
+    resources.cancelled = true;
+    teardownNetworkMediaSourceResources(resources);
+    resources.hlsInstance = null;
+    resources.dashPlayer = null;
+    resources.dashManifestObjectUrl = null;
+    return true;
+  };
 
   const originalSource = String(sourcePath);
   const directUrl = pathToMediaUrl(originalSource);
   let youtubeResolved = null;
   if (matchYouTubeNetworkUrl(originalSource)) {
     youtubeResolved = await invoke("resolve-youtube-stream", originalSource);
+    if (cancelIfStale()) return resources;
   }
 
   if (youtubeResolved?.type === "hls") {
     resources.liveEdge = true;
     resources.hlsInstance = await createNetworkPreviewHls();
+    if (cancelIfStale()) return resources;
     resources.hlsInstance.loadSource(youtubeResolved.url);
     resources.hlsInstance.attachMedia(targetEl);
   } else if (youtubeResolved?.type === "dash") {
     const { MediaPlayer } = await import(
       "../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
     );
+    if (cancelIfStale()) return resources;
     resources.dashPlayer = MediaPlayer().create();
     resources.dashManifestObjectUrl = URL.createObjectURL(
       new Blob([youtubeResolved.manifest], { type: "application/dash+xml" }),
@@ -20700,20 +20747,24 @@ async function attachNetworkMediaSourceToElement(targetEl, sourcePath) {
     configureNetworkPreviewDashPlayer(resources.dashPlayer);
     resources.dashPlayer.initialize(targetEl, resources.dashManifestObjectUrl, false);
   } else if (youtubeResolved?.type === "progressive") {
+    if (cancelIfStale()) return resources;
     targetEl.src = youtubeResolved.url;
   } else if (isHlsNetworkSource(directUrl)) {
     resources.liveEdge = true;
     resources.hlsInstance = await createNetworkPreviewHls();
+    if (cancelIfStale()) return resources;
     resources.hlsInstance.loadSource(directUrl);
     resources.hlsInstance.attachMedia(targetEl);
   } else if (isDashNetworkSource(directUrl)) {
     const { MediaPlayer } = await import(
       "../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
     );
+    if (cancelIfStale()) return resources;
     resources.dashPlayer = MediaPlayer().create();
     configureNetworkPreviewDashPlayer(resources.dashPlayer);
     resources.dashPlayer.initialize(targetEl, directUrl, false);
   } else {
+    if (cancelIfStale()) return resources;
     targetEl.src = directUrl;
   }
 
@@ -20776,8 +20827,9 @@ function setNetworkPreviewElementCaptureMuted() {
 
 function setNetworkPreviewElementLocalAudio() {
   if (!video) return;
-  video.muted = false;
-  video.defaultMuted = false;
+  const presentationOwnsAudio = activePresentationOwnsPreviewAudio();
+  video.muted = presentationOwnsAudio;
+  video.defaultMuted = presentationOwnsAudio;
   if (!Number.isFinite(video.volume) || video.volume <= 0) {
     video.volume = 1;
   }
@@ -20873,8 +20925,9 @@ function syncNetworkPreviewMirrorCapture() {
   return false;
 }
 
-async function attachNetworkPreviewMirrorSource(sourcePath) {
+async function attachNetworkPreviewMirrorSource(sourcePath, loadToken) {
   if (!video || !sourcePath) return false;
+  if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) return false;
 
   const originalSource = String(sourcePath);
   stopNetworkPreviewRtcCapture();
@@ -20890,7 +20943,14 @@ async function attachNetworkPreviewMirrorSource(sourcePath) {
   } catch {}
 
   try {
-    const resources = await attachNetworkMediaSourceToElement(video, originalSource);
+    const resources = await attachNetworkMediaSourceToElement(video, originalSource, {
+      isCurrent: () =>
+        typeof loadToken !== "number" || isCurrentPreviewLoad(loadToken),
+    });
+    if (resources.cancelled) {
+      hideNetworkPreviewStatus(statusToken);
+      return false;
+    }
     networkPreviewHlsInstance = resources.hlsInstance;
     networkPreviewDashPlayer = resources.dashPlayer;
     networkPreviewDashManifestObjectUrl = resources.dashManifestObjectUrl;
@@ -20905,7 +20965,13 @@ async function attachNetworkPreviewMirrorSource(sourcePath) {
     video.style.display = "";
     video.style.visibility = "";
     setNetworkPreviewElementLocalAudio();
-    await primeNetworkPreviewElement(video, setNetworkPreviewElementLocalAudio);
+    await primeNetworkPreviewElement(video, setNetworkPreviewElementLocalAudio, {
+      isCurrent: () =>
+        typeof loadToken !== "number" || isCurrentPreviewLoad(loadToken),
+    });
+    if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) {
+      return false;
+    }
     hideNetworkPreviewStatus(statusToken);
     setupCustomMediaControls.updateControlsForMetadata?.(video);
     return true;
@@ -21059,6 +21125,12 @@ function syncPreviewAudioCueAudibility() {
 }
 
 function syncPreviewMediaAfterPresentationStateChange() {
+  if (networkPreviewMirrorSource) {
+    setNetworkPreviewElementLocalAudio();
+  }
+  if (isNetworkVideoPreviewCueActive()) {
+    setNetworkPreviewCueAudio();
+  }
   syncPreviewAudioTrackState();
   syncPreviewAudioCueAudibility();
   if (isPptxPreviewVisible()) {
