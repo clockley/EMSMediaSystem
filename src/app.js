@@ -19407,6 +19407,7 @@ async function pauseQueuePresentationAtBoundary(index) {
 
   if (index >= 0 && index < mediaQueue.length) {
     currentQueueIndex = index;
+    setSelectedQueueAnchor(index);
     if (previewCueIndex === index) {
       previewCueIndex = -1;
       pendingCueVolume = null;
@@ -19923,6 +19924,7 @@ async function advanceQueueAfterMediaWindowClosed() {
         return;
       }
       currentQueueIndex = cue.index;
+      setSelectedQueueAnchor(cue.index);
       renderQueue();
       await new Promise((r) => setTimeout(r, 100));
       isPlaying = true;
@@ -19938,6 +19940,7 @@ async function advanceQueueAfterMediaWindowClosed() {
     const nextIndex = currentQueueIndex + 1;
     if (nextIndex < mediaQueue.length && shouldAutoTransitionToIndex(nextIndex)) {
       currentQueueIndex = nextIndex;
+      setSelectedQueueAnchor(nextIndex);
       const item = mediaQueue[currentQueueIndex];
       renderQueue();
       await new Promise((r) => setTimeout(r, 100));
@@ -20110,6 +20113,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     beginLiveMediaWindowEpoch();
     mediaPlaybackEndedPending = false;
     currentQueueIndex = index;
+    setSelectedQueueAnchor(index);
     isQueuePlaying = true;
     bibleShowNowModeActive = false;
     clearSongShowNowPresentation();
@@ -22590,6 +22594,7 @@ async function handleMediaWindowClosed(event, id) {
     isActiveMediaWindowCache = false;
 
     currentQueueIndex = idx;
+    setSelectedQueueAnchor(idx);
     await loadQueueItemIntoControlWindow(mediaQueue[idx], {
       preservePreviewSeek: false,
       startTime: switchStartTime,

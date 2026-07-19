@@ -512,7 +512,12 @@ function waitForMediaStartBuffer(
 }
 
 async function playVideoWithStartupBuffer(errorContext = "Video playback did not start") {
-  await waitForMediaStartBuffer(video);
+  // Local media can begin decoding directly from disk. Waiting for an
+  // arbitrary buffered range only delays its first painted frame, especially
+  // on Windows. Keep the anti-stall runway exclusively for network streams.
+  if (liveStreamMode) {
+    await waitForMediaStartBuffer(video);
+  }
   return video.play().catch((error) => {
     if (typeof errorContext === "string" && errorContext.length > 0) {
       reportProjectionError(errorContext, error);
