@@ -337,6 +337,22 @@ func (s *SongStore) ConvertToDeck(song Song) map[string]interface{} {
 		},
 		"pages": pages,
 	}
+	if len(song.PlayOrder) > 0 {
+		playOrder := make([]map[string]interface{}, 0, len(song.PlayOrder))
+		for _, entry := range song.PlayOrder {
+			if entry.SectionID == "" {
+				continue
+			}
+			playOrder = append(playOrder, map[string]interface{}{
+				"id":        entry.ID,
+				"sectionId": entry.SectionID,
+				"enabled":   entry.Enabled,
+			})
+		}
+		if len(playOrder) > 0 {
+			deck["playOrder"] = playOrder
+		}
+	}
 
 	if song.SongNumber != nil {
 		deck["songNumber"] = *song.SongNumber
