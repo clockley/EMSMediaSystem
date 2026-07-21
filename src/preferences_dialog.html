@@ -283,6 +283,40 @@
           </div>
         </section>
 
+        <section class="preferences-group" aria-labelledby="preferences-presentation-ui-title">
+          <h2 class="preferences-group__title" id="preferences-presentation-ui-title">Presentation UI</h2>
+
+          <div class="preferences-row">
+            <label class="preferences-row__label" for="preferencesBibleUiEnabled">Bible UI</label>
+            <label class="switch">
+              <input type="checkbox" checked id="preferencesBibleUiEnabled">
+              <span class="switch-track"></span><span class="switch-thumb"></span>
+            </label>
+            <p class="preferences-row__hint">Show the Bible workspace and its launcher in the operator window.</p>
+          </div>
+
+          <div class="preferences-row">
+            <label class="preferences-row__label" for="preferencesLowerThirdUiEnabled">Lower Third UI</label>
+            <label class="switch">
+              <input type="checkbox" checked id="preferencesLowerThirdUiEnabled">
+              <span class="switch-track"></span><span class="switch-thumb"></span>
+            </label>
+            <p class="preferences-row__hint">Show lower-third controls and output settings. Disabling this closes an active lower-third output.</p>
+          </div>
+        </section>
+
+        <section class="preferences-group" aria-labelledby="preferences-lower-third-title">
+          <h2 class="preferences-group__title" id="preferences-lower-third-title">Lower Third</h2>
+
+          <div class="preferences-row">
+            <label class="preferences-row__label" for="preferencesLowerThirdChromaKey">Chroma-key color</label>
+            <input type="color" id="preferencesLowerThirdChromaKey" value="#00ff00" aria-describedby="preferencesLowerThirdChromaKeyHint">
+            <p class="preferences-row__hint" id="preferencesLowerThirdChromaKeyHint">
+              Solid background sent to the ATEM lower-third input. Match this color in the ATEM chroma keyer.
+            </p>
+          </div>
+        </section>
+
         <section class="preferences-group" aria-labelledby="preferences-songs-title">
           <h2 class="preferences-group__title" id="preferences-songs-title">Songs Library</h2>
 

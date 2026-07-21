@@ -9,7 +9,21 @@ the Free Software Foundation, either version 3 of the License, or
 
 "use strict";
 
+import {
+  SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+  SCRIPTURE_LOWER_THIRD_DEFAULT_FONT_SIZE,
+  applyLowerThirdBarBackground,
+  lowerThirdBarMediaUrls,
+  lowerThirdThemeFieldsFromStyle,
+  resolveLowerThirdFontFamily,
+  resolveLowerThirdFontSize,
+} from "./lower-third-theme.mjs";
+
 export const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
+export {
+  SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+  SCRIPTURE_LOWER_THIRD_DEFAULT_FONT_SIZE,
+} from "./lower-third-theme.mjs";
 export const SCRIPTURE_BODY_FONT_SIZE = 66;
 export const SCRIPTURE_REFERENCE_FONT_SIZE = 38;
 export const SCRIPTURE_LABEL_FONT_SIZE = 28;
@@ -18,7 +32,7 @@ export const SCRIPTURE_FONT_WEIGHT = 700;
 export const SCRIPTURE_LINE_HEIGHT = 1.32;
 export const SCRIPTURE_LOOK_FULLSCREEN = "fullscreen";
 export const SCRIPTURE_LOOK_LOWER_THIRD = "lower-third";
-export const BIBLE_LOWER_THIRD_FEATURE_ENABLED = false;
+export const BIBLE_LOWER_THIRD_FEATURE_ENABLED = true;
 export const SCRIPTURE_DEFAULT_LOOK = SCRIPTURE_LOOK_FULLSCREEN;
 export const SCRIPTURE_LOWER_THIRD_TEXT_COLOR = "#ffffff";
 export const SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR = "#00ff00";
@@ -131,6 +145,9 @@ export function getBibleDesignerStyle() {
   const backgroundInput = document.getElementById("bibleBackgroundColorInput");
   const lowerThirdColorInput = document.getElementById("bibleLowerThirdTextColorInput");
   const lowerThirdChromaKeyInput = document.getElementById("bibleLowerThirdChromaKeyInput");
+  const lowerThirdFontInput = document.getElementById("bibleLowerThirdFontInput");
+  const lowerThirdFontSizeInput = document.getElementById("bibleLowerThirdFontSizeInput");
+  const lowerThirdBarBackgroundInput = document.getElementById("bibleLowerThirdBarBackgroundColorInput");
   const fontSize = normalizeScriptureFontSize(
     Number.parseInt(sizeInput?.value, 10),
     bibleDesignerState.fontSize,
@@ -152,6 +169,16 @@ export function getBibleDesignerStyle() {
     lowerThirdColor: lowerThirdColorInput?.value || bibleDesignerState.lowerThirdColor,
     lowerThirdChromaKeyColor:
       lowerThirdChromaKeyInput?.value || bibleDesignerState.lowerThirdChromaKeyColor,
+    lowerThirdFontFamily:
+      lowerThirdFontInput?.value || bibleDesignerState.lowerThirdFontFamily || "",
+    lowerThirdFontSize: Number.isFinite(Number.parseInt(lowerThirdFontSizeInput?.value, 10))
+      ? Number.parseInt(lowerThirdFontSizeInput?.value, 10)
+      : bibleDesignerState.lowerThirdFontSize,
+    lowerThirdBarBackgroundColor:
+      lowerThirdBarBackgroundInput?.value ||
+      bibleDesignerState.lowerThirdBarBackgroundColor ||
+      SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+    lowerThirdBarBackgroundPath: bibleDesignerState.lowerThirdBarBackgroundPath || "",
   };
 }
 
@@ -189,6 +216,21 @@ export function bibleStyleSnapshot(entry = {}) {
     entry.lowerThirdChromaKeyColor
   ) {
     style.lowerThirdChromaKeyColor = entry.lowerThirdChromaKeyColor;
+  }
+  if (typeof entry.lowerThirdFontFamily === "string" && entry.lowerThirdFontFamily) {
+    style.lowerThirdFontFamily = entry.lowerThirdFontFamily;
+  }
+  if (Number.isFinite(entry.lowerThirdFontSize)) {
+    style.lowerThirdFontSize = entry.lowerThirdFontSize;
+  }
+  if (
+    typeof entry.lowerThirdBarBackgroundColor === "string" &&
+    entry.lowerThirdBarBackgroundColor
+  ) {
+    style.lowerThirdBarBackgroundColor = entry.lowerThirdBarBackgroundColor;
+  }
+  if (typeof entry.lowerThirdBarBackgroundPath === "string") {
+    style.lowerThirdBarBackgroundPath = entry.lowerThirdBarBackgroundPath;
   }
   return style;
 }
@@ -249,7 +291,7 @@ export function normalizeScriptureMinFontSize(value, preferredFontSize = SCRIPTU
 
 export function scriptureLowerThirdFontSize(fontSize) {
   const base = Number.isFinite(fontSize) ? fontSize : SCRIPTURE_BODY_FONT_SIZE;
-  return Math.max(26, Math.min(72, Math.round(base * 0.68)));
+  return Math.max(26, Math.min(40, Math.round(base * 0.56)));
 }
 
 export function scriptureColorToRgb(value) {
@@ -401,10 +443,12 @@ export function scaledScripturePx(el, value) {
 
 export function applyScriptureRenderVariables(el, message) {
   if (!el) return;
+  const look = normalizeScriptureLook(message.look);
   const bodyFontSize = normalizeScriptureFontSize(
     message.fontSize,
     SCRIPTURE_BODY_FONT_SIZE,
   );
+  const lowerThirdFontSize = resolveLowerThirdFontSize(message, scriptureLowerThirdFontSize);
   const referenceFontSize = Math.max(
     14,
     Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
@@ -413,7 +457,11 @@ export function applyScriptureRenderVariables(el, message) {
   el.style.setProperty("--scripture-font-size", `${scaledScripturePx(el, bodyFontSize)}px`);
   el.style.setProperty(
     "--scripture-lower-third-font-size",
-    `${scaledScripturePx(el, scriptureLowerThirdFontSize(bodyFontSize))}px`,
+    `${scaledScripturePx(el, lowerThirdFontSize)}px`,
+  );
+  el.style.setProperty(
+    "--scripture-lower-third-backdrop",
+    message.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
   );
   el.style.setProperty(
     "--scripture-reference-font-size",
@@ -425,12 +473,17 @@ export function applyScriptureRenderVariables(el, message) {
   );
   el.style.setProperty("--scripture-line-height", `${message.lineHeight || SCRIPTURE_LINE_HEIGHT}`);
   el.style.setProperty("--scripture-font-weight", `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`);
-  el.style.setProperty("--scripture-color", message.color || "#ffffff");
+  el.style.setProperty(
+    "--scripture-color",
+    look === SCRIPTURE_LOOK_LOWER_THIRD
+      ? message.lowerThirdColor || message.color || "#ffffff"
+      : message.color || "#ffffff",
+  );
   const referencePresentation = scriptureReferencePresentationForBackground(
     message.backgroundColor,
     {
       forceLight:
-        normalizeScriptureLook(message.look) === SCRIPTURE_LOOK_LOWER_THIRD ||
+        look === SCRIPTURE_LOOK_LOWER_THIRD ||
         Boolean(message.backgroundImage || message.backgroundVideo || message.backgroundPath),
     },
   );
@@ -442,7 +495,27 @@ export function applyScriptureRenderVariables(el, message) {
     "--scripture-reference-shadow",
     message.referenceTextShadow || referencePresentation.shadow,
   );
-  el.style.fontFamily = message.fontFamily || SCRIPTURE_FONT_FAMILY;
+  el.style.fontFamily =
+    look === SCRIPTURE_LOOK_LOWER_THIRD
+      ? resolveLowerThirdFontFamily(message, SCRIPTURE_FONT_FAMILY)
+      : message.fontFamily || SCRIPTURE_FONT_FAMILY;
+}
+
+export function enrichLowerThirdPresentationMessage(message, pathToMediaUrl) {
+  if (!message || typeof message !== "object") return message;
+  const themeFields = lowerThirdThemeFieldsFromStyle(message, scriptureLowerThirdFontSize);
+  const barMedia =
+    typeof pathToMediaUrl === "function"
+      ? lowerThirdBarMediaUrls(themeFields, pathToMediaUrl)
+      : {
+          lowerThirdBarBackgroundImage: message.lowerThirdBarBackgroundImage || "",
+          lowerThirdBarBackgroundVideo: message.lowerThirdBarBackgroundVideo || "",
+        };
+  return {
+    ...message,
+    ...themeFields,
+    ...barMedia,
+  };
 }
 
 export function scriptureReferenceSizeForBody(bodyFontSize, baseReferenceSize, baseBodySize) {
@@ -771,19 +844,28 @@ export function lowerThirdSegmentFits(text, style, width) {
   const elements = lowerThirdMeasureElements();
   if (!elements?.root || !elements.body) return true;
   const message = {
+    look: SCRIPTURE_LOOK_LOWER_THIRD,
     fontFamily: style.fontFamily || SCRIPTURE_FONT_FAMILY,
+    lowerThirdFontFamily: style.lowerThirdFontFamily || "",
     fontSize: Number.isFinite(style.fontSize) ? style.fontSize : SCRIPTURE_BODY_FONT_SIZE,
+    lowerThirdFontSize: style.lowerThirdFontSize,
     referenceFontSize: SCRIPTURE_REFERENCE_FONT_SIZE,
     fontWeight: SCRIPTURE_FONT_WEIGHT,
     lineHeight: SCRIPTURE_LINE_HEIGHT,
-    color: style.color || "#ffffff",
+    color: style.lowerThirdColor || style.color || "#ffffff",
+    lowerThirdColor: style.lowerThirdColor || style.color || "#ffffff",
   };
   elements.root.style.width = `${Math.max(360, Math.round(width || window.innerWidth || 1280))}px`;
   elements.root.style.height = `${Math.max(220, Math.round((window.innerHeight || 720) * 0.35))}px`;
   applyScriptureRenderVariables(elements.root, message);
   elements.body.textContent = normalizeLowerThirdSegmentText(text) || " ";
+  // The visible renderer clips beyond two lines as a final safety net. The
+  // measuring copy must expose its full content height so overflow becomes a
+  // new cue instead of being mistaken for text that fits.
+  elements.body.style.maxHeight = "none";
+  elements.body.style.overflow = "visible";
   if (elements.reference) elements.reference.textContent = "";
-  const fontSize = scriptureLowerThirdFontSize(message.fontSize);
+  const fontSize = resolveLowerThirdFontSize(message, scriptureLowerThirdFontSize);
   const maxHeight = fontSize * 1.18 * LOWER_THIRD_MAX_LINES + 4;
   return elements.body.scrollHeight <= maxHeight;
 }
@@ -826,10 +908,19 @@ export function resolveBibleLowerThirdState(entry, opts = {}) {
   const sourceText = String(entry.text || "");
   let segments = normalizeLowerThirdSegments(entry.lowerThirdSegments);
   const sourceChanged = entry.lowerThirdSourceText !== sourceText;
+  const measurementWidth =
+    opts.panel?.getBoundingClientRect?.().width ||
+    document.getElementById("biblePreviewPanel")?.getBoundingClientRect?.().width ||
+    window.innerWidth ||
+    1280;
+  const hasOverflowingSegment = segments.some(
+    (segment) => !lowerThirdSegmentFits(segment.text, entry, measurementWidth),
+  );
   const needsRebuild =
     opts.rebuild === true ||
     segments.length === 0 ||
-    sourceChanged;
+    sourceChanged ||
+    hasOverflowingSegment;
   if (needsRebuild) {
     segments = buildMeasuredLowerThirdSegments(sourceText, entry, opts.panel);
     entry.lowerThirdSegments = segments;
@@ -854,6 +945,9 @@ export function applyScriptureRenderToPreview(render, bodyEl, referenceEl, messa
   render.classList.toggle("scripture-render--lower-third", look === SCRIPTURE_LOOK_LOWER_THIRD);
   render.dataset.scriptureLook = look;
   applyScriptureRenderVariables(render, message);
+  if (look === SCRIPTURE_LOOK_LOWER_THIRD) {
+    applyLowerThirdBarBackground(render.querySelector(".scripture-render__box"), message);
+  }
   bodyEl.textContent = message.bodyText || "No verse loaded";
   referenceEl.textContent = message.referenceText || "";
   referenceEl.hidden = !message.referenceText;
@@ -968,20 +1062,24 @@ export function queueBiblePreviewMediaWindowSizeRefresh(delayMs = 0) {
   }, Math.max(0, delayMs));
 }
 
-export function applyBiblePreviewOutputScale(surface, outputSize) {
+export function applyBiblePreviewOutputScale(surface, outputSize, options = {}) {
   if (!surface || !outputSize) return;
   const width = Math.max(1, Math.round(outputSize.width));
   const height = Math.max(1, Math.round(outputSize.height));
   surface.style.setProperty("--bible-preview-output-width", `${width}px`);
   surface.style.setProperty("--bible-preview-output-height", `${height}px`);
   const rect = surface.getBoundingClientRect();
-  const scale =
-    rect.width > 0 && rect.height > 0
-      ? Math.min(rect.width / width, rect.height / height)
-      : 1;
+  const widthFit = options.fit === "width";
+  const scale = rect.width > 0 && rect.height > 0
+    ? widthFit
+      ? rect.width / width
+      : Math.min(rect.width / width, rect.height / height)
+    : 1;
   const safeScale = Math.max(0.01, scale);
   const offsetX = Math.max(0, (rect.width - width * safeScale) / 2);
-  const offsetY = Math.max(0, (rect.height - height * safeScale) / 2);
+  const offsetY = options.align === "bottom"
+    ? rect.height - height * safeScale
+    : Math.max(0, (rect.height - height * safeScale) / 2);
   surface.style.setProperty(
     "--bible-preview-output-scale",
     `${safeScale}`,
@@ -1005,6 +1103,7 @@ export function syncBiblePreviewOutputScale() {
     applyBiblePreviewOutputScale(
       document.getElementById("bibleLowerThirdPreviewShell"),
       selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
+      { fit: "width", align: "bottom" },
     );
   }
   refitBiblePreviewScripture();
@@ -1026,4 +1125,3 @@ export function installBiblePreviewScaleObserver() {
     window.addEventListener("resize", syncBiblePreviewOutputScale);
   }
 }
-

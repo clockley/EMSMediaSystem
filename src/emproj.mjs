@@ -414,6 +414,10 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
       backgroundPath: "",
       lowerThirdColor: "",
       lowerThirdChromaKeyColor: "",
+      lowerThirdFontFamily: "",
+      lowerThirdFontSize: undefined,
+      lowerThirdBarBackgroundColor: "",
+      lowerThirdBarBackgroundPath: "",
     };
   }
   return {
@@ -443,6 +447,22 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
       typeof overrides.lowerThirdChromaKeyColor === "string"
         ? overrides.lowerThirdChromaKeyColor
         : "",
+    lowerThirdFontFamily:
+      typeof overrides.lowerThirdFontFamily === "string"
+        ? overrides.lowerThirdFontFamily
+        : "",
+    lowerThirdFontSize:
+      Number.isFinite(overrides.lowerThirdFontSize)
+        ? overrides.lowerThirdFontSize
+        : undefined,
+    lowerThirdBarBackgroundColor:
+      typeof overrides.lowerThirdBarBackgroundColor === "string"
+        ? overrides.lowerThirdBarBackgroundColor
+        : "",
+    lowerThirdBarBackgroundPath:
+      typeof overrides.lowerThirdBarBackgroundPath === "string"
+        ? overrides.lowerThirdBarBackgroundPath
+        : "",
   };
 }
 
@@ -458,7 +478,11 @@ function projectScriptureTextFromOverrides(overrides = {}) {
     !normalized.backgroundColor &&
     !normalized.backgroundPath &&
     !normalized.lowerThirdColor &&
-    !normalized.lowerThirdChromaKeyColor
+    !normalized.lowerThirdChromaKeyColor &&
+    !normalized.lowerThirdFontFamily &&
+    !Number.isFinite(normalized.lowerThirdFontSize) &&
+    !normalized.lowerThirdBarBackgroundColor &&
+    !normalized.lowerThirdBarBackgroundPath
   ) {
     return undefined;
   }
@@ -496,6 +520,13 @@ function projectScriptureTextFromOverrides(overrides = {}) {
       backgroundPath: normalized.backgroundPath || "",
       lowerThirdTextColor: normalized.lowerThirdColor || undefined,
       lowerThirdChromaKeyColor: normalized.lowerThirdChromaKeyColor || undefined,
+      lowerThirdFontFamily: normalized.lowerThirdFontFamily || undefined,
+      lowerThirdFontSize: Number.isFinite(normalized.lowerThirdFontSize)
+        ? normalized.lowerThirdFontSize
+        : undefined,
+      lowerThirdBarBackgroundColor: normalized.lowerThirdBarBackgroundColor || undefined,
+      lowerThirdBarBackgroundPath: normalized.lowerThirdBarBackgroundPath || "",
+      lowerThirdBarBackgroundAssetId: undefined,
     },
   };
 }
@@ -1292,6 +1323,14 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   const projectScriptureBackgroundAsset = projectScriptureBackgroundAssetId
     ? assetById.get(projectScriptureBackgroundAssetId) || null
     : null;
+  const projectScriptureLowerThirdBarBackgroundAssetId =
+    typeof projectScripturePresentation.lowerThirdBarBackgroundAssetId === "string"
+      ? projectScripturePresentation.lowerThirdBarBackgroundAssetId
+      : "";
+  const projectScriptureLowerThirdBarBackgroundAsset =
+    projectScriptureLowerThirdBarBackgroundAssetId
+      ? assetById.get(projectScriptureLowerThirdBarBackgroundAssetId) || null
+      : null;
   const projectScriptureOverrides = normalizeProjectScriptureOverrides({
     fontFamily:
       typeof projectScripturePresentation.fontFamily === "string"
@@ -1345,6 +1384,33 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
           projectScriptureBackgroundAsset.path
         : typeof projectScripturePresentation.backgroundPath === "string"
           ? projectScripturePresentation.backgroundPath
+          : "",
+    lowerThirdColor:
+      typeof projectScripturePresentation.lowerThirdTextColor === "string"
+        ? projectScripturePresentation.lowerThirdTextColor
+        : "",
+    lowerThirdChromaKeyColor:
+      typeof projectScripturePresentation.lowerThirdChromaKeyColor === "string"
+        ? projectScripturePresentation.lowerThirdChromaKeyColor
+        : "",
+    lowerThirdFontFamily:
+      typeof projectScripturePresentation.lowerThirdFontFamily === "string"
+        ? projectScripturePresentation.lowerThirdFontFamily
+        : "",
+    lowerThirdFontSize:
+      Number.isFinite(projectScripturePresentation.lowerThirdFontSize)
+        ? projectScripturePresentation.lowerThirdFontSize
+        : undefined,
+    lowerThirdBarBackgroundColor:
+      typeof projectScripturePresentation.lowerThirdBarBackgroundColor === "string"
+        ? projectScripturePresentation.lowerThirdBarBackgroundColor
+        : "",
+    lowerThirdBarBackgroundPath:
+      typeof projectScriptureLowerThirdBarBackgroundAsset?.path === "string"
+        ? extractedMediaPaths.get(projectScriptureLowerThirdBarBackgroundAsset.path) ||
+          projectScriptureLowerThirdBarBackgroundAsset.path
+        : typeof projectScripturePresentation.lowerThirdBarBackgroundPath === "string"
+          ? projectScripturePresentation.lowerThirdBarBackgroundPath
           : "",
   });
 
@@ -1496,6 +1562,12 @@ async function saveEmprojSnapshotUnlocked(
           lowerThirdColor: snapshot.projectScriptureText.presentation.lowerThirdTextColor,
           lowerThirdChromaKeyColor:
             snapshot.projectScriptureText.presentation.lowerThirdChromaKeyColor,
+          lowerThirdFontFamily: snapshot.projectScriptureText.presentation.lowerThirdFontFamily,
+          lowerThirdFontSize: snapshot.projectScriptureText.presentation.lowerThirdFontSize,
+          lowerThirdBarBackgroundColor:
+            snapshot.projectScriptureText.presentation.lowerThirdBarBackgroundColor,
+          lowerThirdBarBackgroundPath:
+            snapshot.projectScriptureText.presentation.lowerThirdBarBackgroundPath,
         }
       : {},
   );
@@ -1954,6 +2026,13 @@ async function saveEmprojSnapshotUnlocked(
       originalName: basenameAny(projectScriptureOverrides.backgroundPath || ""),
     },
   );
+  const projectScriptureLowerThirdBarBackgroundAsset = await registerAssetForPath(
+    projectScriptureOverrides.lowerThirdBarBackgroundPath,
+    {
+      originalPath: projectScriptureOverrides.lowerThirdBarBackgroundPath,
+      originalName: basenameAny(projectScriptureOverrides.lowerThirdBarBackgroundPath || ""),
+    },
+  );
 
   const queueJson = {
     id: "queue_main",
@@ -1969,6 +2048,8 @@ async function saveEmprojSnapshotUnlocked(
       }
       if (scriptureText.presentation) {
         scriptureText.presentation.backgroundAssetId = projectScriptureBackgroundAsset?.assetId;
+        scriptureText.presentation.lowerThirdBarBackgroundAssetId =
+          projectScriptureLowerThirdBarBackgroundAsset?.assetId;
       }
       return scriptureText;
     })(),

@@ -1772,7 +1772,73 @@ function normalizeScriptureMinFontSize(value, preferredFontSize = SCRIPTURE_BODY
 
 function scriptureLowerThirdFontSize(fontSize) {
   const base = Number.isFinite(fontSize) ? fontSize : SCRIPTURE_BODY_FONT_SIZE;
-  return Math.max(26, Math.min(72, Math.round(base * 0.68)));
+  return Math.max(26, Math.min(40, Math.round(base * 0.56)));
+}
+
+const SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND = "#101010";
+
+function resolveLowerThirdFontSize(message = {}) {
+  if (Number.isFinite(message.lowerThirdFontSize)) {
+    return Math.max(20, Math.min(80, Math.round(message.lowerThirdFontSize)));
+  }
+  if (Number.isFinite(message.fontSize)) {
+    return scriptureLowerThirdFontSize(message.fontSize);
+  }
+  return 40;
+}
+
+function resolveLowerThirdFontFamily(message = {}) {
+  const value = message.lowerThirdFontFamily || message.fontFamily || SCRIPTURE_FONT_FAMILY;
+  return typeof value === "string" && value.trim() ? value : SCRIPTURE_FONT_FAMILY;
+}
+
+function applyLowerThirdBarBackground(box, message = {}) {
+  if (!box) return;
+  const barColor = message.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND;
+  const barImage = message.lowerThirdBarBackgroundImage || "";
+  const barVideo = message.lowerThirdBarBackgroundVideo || "";
+
+  box.style.backgroundColor = barColor;
+
+  let video = box.querySelector(".scripture-render__bar-video");
+  if (barVideo) {
+    box.style.backgroundImage = "";
+    box.style.backgroundSize = "";
+    box.style.backgroundPosition = "";
+    if (!video) {
+      video = document.createElement("video");
+      video.className = "scripture-render__bar-video";
+      video.autoplay = true;
+      video.loop = true;
+      video.muted = true;
+      video.playsInline = true;
+      box.prepend(video);
+    }
+    if (video.getAttribute("src") !== barVideo) {
+      video.setAttribute("src", barVideo);
+      video.load();
+    }
+    video.hidden = false;
+    void video.play().catch(() => {});
+    return;
+  }
+
+  if (video) {
+    video.pause();
+    video.removeAttribute("src");
+    video.hidden = true;
+  }
+
+  if (barImage) {
+    box.style.backgroundImage = `url('${barImage}')`;
+    box.style.backgroundSize = "cover";
+    box.style.backgroundPosition = "center";
+    return;
+  }
+
+  box.style.backgroundImage = "";
+  box.style.backgroundSize = "";
+  box.style.backgroundPosition = "";
 }
 
 function scriptureColorToRgb(value) {
@@ -1843,10 +1909,12 @@ function scriptureReferencePresentationForBackground(backgroundColor, options = 
 
 function applyScriptureRenderVariables(el, message) {
   if (!el) return;
+  const look = normalizeScriptureLook(message.look);
   const bodyFontSize = normalizeScriptureFontSize(
     message.fontSize,
     SCRIPTURE_BODY_FONT_SIZE,
   );
+  const lowerThirdFontSize = resolveLowerThirdFontSize(message);
   const referenceFontSize = Math.max(
     14,
     Math.round(message.referenceFontSize || SCRIPTURE_REFERENCE_FONT_SIZE),
@@ -1855,18 +1923,27 @@ function applyScriptureRenderVariables(el, message) {
   el.style.setProperty("--scripture-font-size", `${bodyFontSize}px`);
   el.style.setProperty(
     "--scripture-lower-third-font-size",
-    `${scriptureLowerThirdFontSize(bodyFontSize)}px`,
+    `${lowerThirdFontSize}px`,
+  );
+  el.style.setProperty(
+    "--scripture-lower-third-backdrop",
+    message.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
   );
   el.style.setProperty("--scripture-reference-font-size", `${referenceFontSize}px`);
   el.style.setProperty("--scripture-attribution-font-size", `${attributionFontSize}px`);
   el.style.setProperty("--scripture-line-height", `${message.lineHeight || SCRIPTURE_LINE_HEIGHT}`);
   el.style.setProperty("--scripture-font-weight", `${message.fontWeight || SCRIPTURE_FONT_WEIGHT}`);
-  el.style.setProperty("--scripture-color", message.color || "#ffffff");
+  el.style.setProperty(
+    "--scripture-color",
+    look === SCRIPTURE_LOOK_LOWER_THIRD
+      ? message.lowerThirdColor || message.color || "#ffffff"
+      : message.color || "#ffffff",
+  );
   const referencePresentation = scriptureReferencePresentationForBackground(
     message.backgroundColor,
     {
       forceLight:
-        normalizeScriptureLook(message.look) === SCRIPTURE_LOOK_LOWER_THIRD ||
+        look === SCRIPTURE_LOOK_LOWER_THIRD ||
         Boolean(message.backgroundImage || message.backgroundVideo || message.backgroundPath),
     },
   );
@@ -1878,7 +1955,10 @@ function applyScriptureRenderVariables(el, message) {
     "--scripture-reference-shadow",
     message.referenceTextShadow || referencePresentation.shadow,
   );
-  el.style.fontFamily = message.fontFamily || SCRIPTURE_FONT_FAMILY;
+  el.style.fontFamily =
+    look === SCRIPTURE_LOOK_LOWER_THIRD
+      ? resolveLowerThirdFontFamily(message)
+      : message.fontFamily || SCRIPTURE_FONT_FAMILY;
 }
 
 function scriptureReferenceSizeForBody(bodyFontSize, baseReferenceSize, baseBodySize) {
@@ -2297,6 +2377,13 @@ function textPresentationSignature(message, bodyText, referenceText, attribution
     backgroundVideo: message.backgroundVideo || "",
     backgroundPath: message.backgroundPath || "",
     chromaKeyColor: message.chromaKeyColor || "",
+    lowerThirdFontFamily: message.lowerThirdFontFamily || "",
+    lowerThirdFontSize: Number.isFinite(message.lowerThirdFontSize)
+      ? message.lowerThirdFontSize
+      : "",
+    lowerThirdBarBackgroundColor: message.lowerThirdBarBackgroundColor || "",
+    lowerThirdBarBackgroundImage: message.lowerThirdBarBackgroundImage || "",
+    lowerThirdBarBackgroundVideo: message.lowerThirdBarBackgroundVideo || "",
     outputRole: message.outputRole || "",
     vertical: position.vertical || "",
     horizontal: position.horizontal || "",
@@ -2466,6 +2553,8 @@ function applyTextMessage(message) {
     if (normalizeScriptureLook(safeMessage.look) === SCRIPTURE_LOOK_LOWER_THIRD) {
       const backgroundVideo = document.getElementById("textBackgroundVideo");
       if (backgroundVideo) resetTextBackgroundVideo(backgroundVideo);
+      const shell = ensureScriptureTextShell(textContent);
+      applyLowerThirdBarBackground(shell.box, safeMessage);
     } else {
       applyTextBackgroundVideoState(safeMessage, textCanvas);
     }
@@ -2514,6 +2603,9 @@ function applyTextMessage(message) {
   textContent.classList.toggle("scripture-render--lower-third", look === SCRIPTURE_LOOK_LOWER_THIRD);
   textContent.dataset.scriptureLook = look;
   applyScriptureRenderVariables(textContent, safeMessage);
+  if (look === SCRIPTURE_LOOK_LOWER_THIRD) {
+    applyLowerThirdBarBackground(shell.box, safeMessage);
+  }
   if (shell.body) {
     const html = renderSongSectionHTML(safeMessage.blocks);
     if (html) {
