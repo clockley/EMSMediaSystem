@@ -100,18 +100,23 @@ import {
   SCRIPTURE_LOOK_LOWER_THIRD,
   SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
   SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
+  SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+  SCRIPTURE_LOWER_THIRD_DEFAULT_FONT_SIZE,
   SCRIPTURE_MIN_BODY_FONT_SIZE,
   SCRIPTURE_REFERENCE_FONT_SIZE,
   applyScriptureRenderToPreview,
+  applyBiblePreviewOutputScale,
   bibleLowerThirdMeasurePanel,
   bibleStyleSnapshot,
+  buildMeasuredLowerThirdSegments,
   classifyPresentationType,
   clampLowerThirdSegmentIndex,
   configureBibleScriptureRender,
   currentBibleBackgroundVideoSync,
+  enrichLowerThirdPresentationMessage,
   getBibleDesignerStyle,
   installBiblePreviewScaleObserver,
-  isBibleLowerThirdFeatureEnabled,
+  isBibleLowerThirdFeatureEnabled as isBuiltInBibleLowerThirdFeatureEnabled,
   measureBibleEntryAutofit,
   mergedBibleShowNowStyle,
   normalizeBiblePreviewOutputSize,
@@ -128,7 +133,7 @@ import {
   selectedBiblePreviewOutputSize,
   setLastShownBibleStyleOverrides,
   syncBiblePreviewOutputScale,
-  syncLowerThirdFeatureAvailability,
+  syncLowerThirdFeatureAvailability as syncBuiltInLowerThirdFeatureAvailability,
 } from "./app-bible-scripture-render.mjs";
 import {
   configureCountdown,
@@ -357,6 +362,9 @@ let previewTransportLoadToken = null;
 let streamRendererPreviewStream = null;
 let streamRendererPreviewStartPromise = null;
 let streamRendererPreviewQualityMode = null;
+let lowerThirdRendererPreviewStream = null;
+let lowerThirdRendererPreviewStartPromise = null;
+let displayMediaCaptureRequestChain = Promise.resolve();
 let networkPreviewHlsInstance = null;
 let networkPreviewDashPlayer = null;
 let networkPreviewDashManifestObjectUrl = null;
@@ -502,6 +510,36 @@ let bibleShowNowModeActive = false;
 let songShowNowModeActive = false;
 let songShowNowSourceId = null;
 let bibleLowerThirdOutputActive = false;
+let activeLowerThirdContentType = null;
+let bibleLowerThirdLiveCueKey = "";
+const songLowerThirdState = {
+  sectionId: "",
+  sourceText: "",
+  layoutKey: "",
+  segments: [],
+  index: 0,
+  liveKey: "",
+};
+let lowerThirdPreferenceChromaKeyColor = SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR;
+let bibleUiEnabled = true;
+let lowerThirdUiEnabled = true;
+
+function isBibleLowerThirdFeatureEnabled() {
+  return isBuiltInBibleLowerThirdFeatureEnabled() && lowerThirdUiEnabled;
+}
+
+function syncLowerThirdFeatureAvailability() {
+  syncBuiltInLowerThirdFeatureAvailability();
+  document.querySelectorAll("[data-lower-third-feature]").forEach((element) => {
+    element.hidden = !isBibleLowerThirdFeatureEnabled();
+    element.setAttribute("aria-hidden", isBibleLowerThirdFeatureEnabled() ? "false" : "true");
+  });
+  const bibleButton = document.getElementById("openBibleWorkspaceBtn");
+  if (bibleButton) bibleButton.hidden = !bibleUiEnabled;
+  if (!bibleUiEnabled && document.getElementById("bibleWorkspace")?.hidden === false) {
+    hideBibleWorkspace();
+  }
+}
 const bibleDesignerState = {
   version: "KJV",
   attribution: null,
@@ -521,6 +559,10 @@ const bibleDesignerState = {
   backgroundPath: "",
   lowerThirdColor: SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
   lowerThirdChromaKeyColor: SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
+  lowerThirdFontFamily: "",
+  lowerThirdFontSize: SCRIPTURE_LOWER_THIRD_DEFAULT_FONT_SIZE,
+  lowerThirdBarBackgroundColor: SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+  lowerThirdBarBackgroundPath: "",
   look: SCRIPTURE_DEFAULT_LOOK,
   lowerThirdSegments: [],
   lowerThirdSegmentIndex: 0,
@@ -850,8 +892,38 @@ async function loadOutputHoldPreferencesFromSettings() {
   try {
     const prefs = await invoke("get-output-hold-preferences");
     applyOutputHoldPreferences(prefs);
+    applyLowerThirdOutputPreferences(prefs);
   } catch (err) {
     console.error("Failed to load output hold preferences:", err);
+  }
+}
+
+function applyLowerThirdOutputPreferences(prefs = {}) {
+  const lowerThirdWasEnabled = lowerThirdUiEnabled;
+  bibleUiEnabled = prefs?.bibleUiEnabled !== false;
+  lowerThirdUiEnabled = prefs?.lowerThirdUiEnabled !== false;
+  syncLowerThirdFeatureAvailability();
+  if (lowerThirdWasEnabled && !lowerThirdUiEnabled && bibleLowerThirdOutputActive) {
+    void closeBibleLowerThirdOutput();
+  }
+  const color = String(prefs?.lowerThirdChromaKeyColor || "").trim();
+  lowerThirdPreferenceChromaKeyColor = /^#[0-9a-f]{6}$/i.test(color)
+    ? color
+    : SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR;
+  if (!projectScriptureOverrides.lowerThirdChromaKeyColor) {
+    bibleDesignerState.lowerThirdChromaKeyColor = lowerThirdPreferenceChromaKeyColor;
+  }
+  const input = document.getElementById("bibleLowerThirdChromaKeyInput");
+  if (input) input.value = bibleDesignerState.lowerThirdChromaKeyColor;
+  if (document.getElementById("bibleWorkspace")?.hidden === false) {
+    applyBiblePreview(bibleDesignerState, { show: false });
+  }
+  if (bibleLowerThirdOutputActive) {
+    if (activeLowerThirdContentType === "song") {
+      sendBibleLowerThirdTextMessage(buildSongLowerThirdMessage());
+    } else {
+      sendBibleLowerThirdTextToOutput(bibleDesignerState);
+    }
   }
 }
 
@@ -867,6 +939,10 @@ const projectScriptureOverrides = {
   backgroundPath: "",
   lowerThirdColor: "",
   lowerThirdChromaKeyColor: "",
+  lowerThirdFontFamily: "",
+  lowerThirdFontSize: undefined,
+  lowerThirdBarBackgroundColor: "",
+  lowerThirdBarBackgroundPath: "",
 };
 const bibleStyleDirtyState = {
   fontFamily: false,
@@ -879,6 +955,10 @@ const bibleStyleDirtyState = {
   backgroundPath: false,
   lowerThirdColor: false,
   lowerThirdChromaKeyColor: false,
+  lowerThirdFontFamily: false,
+  lowerThirdFontSize: false,
+  lowerThirdBarBackgroundColor: false,
+  lowerThirdBarBackgroundPath: false,
 };
 const bibleVerseSelection = {
   verses: new Set(),
@@ -5546,6 +5626,19 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
       entry.lowerThirdChromaKeyColor ||
       bibleDesignerState.lowerThirdChromaKeyColor ||
       SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
+    lowerThirdFontFamily:
+      entry.lowerThirdFontFamily || bibleDesignerState.lowerThirdFontFamily || "",
+    lowerThirdFontSize: Number.isFinite(entry.lowerThirdFontSize)
+      ? entry.lowerThirdFontSize
+      : bibleDesignerState.lowerThirdFontSize,
+    lowerThirdBarBackgroundColor:
+      entry.lowerThirdBarBackgroundColor ||
+      bibleDesignerState.lowerThirdBarBackgroundColor ||
+      SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+    lowerThirdBarBackgroundPath:
+      entry.lowerThirdBarBackgroundPath ||
+      bibleDesignerState.lowerThirdBarBackgroundPath ||
+      "",
   };
   const look = normalizeScriptureLook(opts.look || entry.look || bibleDesignerState.look);
   const isLowerThird = look === SCRIPTURE_LOOK_LOWER_THIRD;
@@ -5563,7 +5656,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     style.backgroundColor,
     { forceLight: isLowerThird || Boolean(style.backgroundPath) },
   );
-  return {
+  const message = {
     text: `${entry.text || ""}\n\n${entry.reference || ""} ${entry.version || ""}`.trim(),
     reference: entry.reference || "",
     version: entry.version || "KJV",
@@ -5597,6 +5690,10 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     bodyText: isLowerThird ? lowerThird.text : fullBodyText,
     position: { vertical: "center", horizontal: "center" },
   };
+  if (isLowerThird) {
+    return enrichLowerThirdPresentationMessage(message, pathToMediaUrl);
+  }
+  return message;
 }
 
 function nonTextPresentationObjects(objects) {
@@ -5669,6 +5766,73 @@ function sendAudienceTextMessage(type, message, options = {}) {
   }
   updateClearLiveTextButtonState();
   updateOutputHoldButtonStates();
+}
+
+function normalizedCueMatchText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function markAudiencePreviewTextSelection(element, cueText) {
+  if (!element) return;
+  element.querySelectorAll("mark.operator-lower-third-selection").forEach((mark) => {
+    mark.replaceWith(document.createTextNode(mark.textContent || ""));
+  });
+  element.normalize();
+  const source = element.textContent || "";
+  const cue = normalizedCueMatchText(cueText);
+  if (!cue || element.childNodes.length !== 1 || element.firstChild?.nodeType !== Node.TEXT_NODE) return;
+  const normalizedSource = normalizedCueMatchText(source);
+  const normalizedIndex = normalizedSource.toLocaleLowerCase().indexOf(cue.toLocaleLowerCase());
+  if (normalizedIndex < 0) return;
+
+  // Scripture preview text is normalized before rendering, so normalized and
+  // source offsets normally match. Walk the source to tolerate repeated spaces.
+  let sourceStart = 0;
+  let normalizedOffset = 0;
+  while (sourceStart < source.length && normalizedOffset < normalizedIndex) {
+    if (/\s/.test(source[sourceStart])) {
+      while (sourceStart + 1 < source.length && /\s/.test(source[sourceStart + 1])) sourceStart += 1;
+    }
+    sourceStart += 1;
+    normalizedOffset += 1;
+  }
+  let sourceEnd = sourceStart;
+  let cueOffset = 0;
+  while (sourceEnd < source.length && cueOffset < cue.length) {
+    if (/\s/.test(source[sourceEnd])) {
+      while (sourceEnd + 1 < source.length && /\s/.test(source[sourceEnd + 1])) sourceEnd += 1;
+    }
+    sourceEnd += 1;
+    cueOffset += 1;
+  }
+  const before = document.createTextNode(source.slice(0, sourceStart));
+  const mark = document.createElement("mark");
+  mark.className = "operator-lower-third-selection";
+  mark.textContent = source.slice(sourceStart, sourceEnd);
+  const after = document.createTextNode(source.slice(sourceEnd));
+  element.replaceChildren(before, mark, after);
+}
+
+function markSongAudiencePreviewSelection(cueText) {
+  const preview = document.getElementById("songsPreviewSlide");
+  if (!preview) return;
+  const lines = [...preview.querySelectorAll(".song-preview-block:not(.song-preview-block--spacer)")];
+  lines.forEach((line) => line.classList.remove("operator-lower-third-selection"));
+  const cue = normalizedCueMatchText(cueText).toLocaleLowerCase();
+  if (!cue || !lines.length) return;
+  let combined = "";
+  const spans = lines.map((line) => {
+    const text = normalizedCueMatchText(line.textContent).toLocaleLowerCase();
+    const start = combined.length;
+    combined += `${combined ? " " : ""}${text}`;
+    return { line, start: start + (start ? 1 : 0), end: combined.length };
+  });
+  const matchStart = combined.indexOf(cue);
+  if (matchStart < 0) return;
+  const matchEnd = matchStart + cue.length;
+  spans.forEach(({ line, start, end }) => {
+    line.classList.toggle("operator-lower-third-selection", start < matchEnd && end > matchStart);
+  });
 }
 
 function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
@@ -5744,12 +5908,17 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
     audienceReference,
     audienceMessage,
   );
+  markAudiencePreviewTextSelection(audienceText, lowerThirdMessage?.bodyText);
   if (lowerThirdEnabled && lowerThirdMessage) {
     applyScriptureRenderToPreview(
       lowerThirdRender,
       lowerThirdText,
       lowerThirdReference,
       lowerThirdMessage,
+    );
+    lowerThirdRender.classList.toggle(
+      "is-operator-cued",
+      Array.isArray(lowerThirdMessage.lowerThirdSegments) && lowerThirdMessage.lowerThirdSegments.length > 0,
     );
   }
   syncBibleBackgroundLabel(audienceMessage.backgroundPath);
@@ -5758,7 +5927,7 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
 
 function syncBibleLookControls(message) {
   const lookSelect = document.getElementById("bibleLookSelect");
-  const lowerThirdControls = document.getElementById("bibleLowerThirdControls");
+  const lowerThirdControls = document.getElementById("bibleLowerThirdCuePanel");
   const status = document.getElementById("bibleLowerThirdStatus");
   const prevButton = document.getElementById("bibleLowerThirdPrevBtn");
   const nextButton = document.getElementById("bibleLowerThirdNextBtn");
@@ -5787,12 +5956,75 @@ function syncBibleLookControls(message) {
   if (lowerThirdControls) lowerThirdControls.hidden = false;
   if (status) {
     status.textContent =
-      segmentCount > 0 && index >= segmentCount - 1
-        ? `Segment ${index + 1} of ${segmentCount}. Next advances text.`
-        : `Segment ${segmentCount > 0 ? index + 1 : 0} of ${segmentCount}`;
+      `Cue ${segmentCount > 0 ? index + 1 : 0} of ${segmentCount}`;
   }
   if (prevButton) prevButton.disabled = index <= 0;
-  if (nextButton) nextButton.disabled = segmentCount <= 0;
+  if (nextButton) nextButton.disabled = segmentCount <= 0 || index >= segmentCount - 1;
+  renderBibleLowerThirdCueList(controlMessage.lowerThirdSegments, index);
+}
+
+function bibleLowerThirdCueKey(index = bibleDesignerState.lowerThirdSegmentIndex) {
+  return `${bibleDesignerState.lowerThirdSourceText || bibleDesignerState.text || ""}\u0000${index}`;
+}
+
+function renderBibleLowerThirdCueList(rawSegments, selectedIndex) {
+  const list = document.getElementById("bibleLowerThirdCueList");
+  if (!list) return;
+  const segments = normalizeLowerThirdSegments(rawSegments);
+  list.replaceChildren();
+  segments.forEach((segment, index) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "bible-lower-third-cue-row";
+    row.dataset.cueIndex = String(index);
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", index === selectedIndex ? "true" : "false");
+    row.classList.toggle("is-cued", index === selectedIndex);
+    const isLive = bibleLowerThirdOutputActive && bibleLowerThirdLiveCueKey === bibleLowerThirdCueKey(index);
+    row.classList.toggle("is-live", isLive);
+
+    const marker = document.createElement("span");
+    marker.className = "bible-lower-third-cue-row__marker";
+    marker.setAttribute("aria-hidden", "true");
+    const text = document.createElement("span");
+    text.className = "bible-lower-third-cue-row__text";
+    text.textContent = segment.text;
+    const live = document.createElement("span");
+    live.className = "bible-lower-third-cue-row__live";
+    live.textContent = isLive ? "Live" : "";
+    row.append(marker, text, live);
+    list.append(row);
+  });
+  const selectedRow = list.querySelector(".is-cued");
+  selectedRow?.scrollIntoView?.({ block: "nearest" });
+  const showButton = document.getElementById("bibleLowerThirdShowBtn");
+  if (showButton) {
+    showButton.disabled = segments.length === 0;
+    showButton.textContent = bibleLowerThirdOutputActive ? "Update" : "Show";
+  }
+}
+
+function persistBibleLowerThirdCueState() {
+  const targetIndex = currentBibleEditorTargetIndex();
+  if (
+    targetIndex < 0 ||
+    targetIndex >= mediaQueue.length ||
+    !isQueueItemBible(mediaQueue[targetIndex])
+  ) {
+    return false;
+  }
+  mediaQueue[targetIndex] = {
+    ...mediaQueue[targetIndex],
+    bible: {
+      ...(mediaQueue[targetIndex].bible || {}),
+      lowerThirdSegments: normalizeLowerThirdSegments(bibleDesignerState.lowerThirdSegments),
+      lowerThirdSegmentIndex: bibleDesignerState.lowerThirdSegmentIndex,
+      lowerThirdSourceText: bibleDesignerState.lowerThirdSourceText,
+    },
+  };
+  renderQueue();
+  saveMediaFile();
+  return true;
 }
 
 async function commitBibleDesignerRenderState({ rebuildLowerThird = false } = {}) {
@@ -5825,7 +6057,8 @@ async function setBibleLowerThirdSegmentIndex(index) {
     return false;
   }
   bibleDesignerState.lowerThirdSegmentIndex = nextIndex;
-  await commitBibleDesignerRenderState();
+  applyBiblePreview(bibleDesignerState, { show: false });
+  persistBibleLowerThirdCueState();
   return true;
 }
 
@@ -5985,7 +6218,12 @@ async function rebuildBibleLowerThirdSegments() {
     Object.assign(bibleDesignerState, resolvedEntry);
   }
   bibleDesignerState.lowerThirdSegmentIndex = 0;
-  await commitBibleDesignerRenderState({ rebuildLowerThird: true });
+  resolveBibleLowerThirdState(bibleDesignerState, {
+    rebuild: true,
+    panel: bibleLowerThirdMeasurePanel(),
+  });
+  applyBiblePreview(bibleDesignerState, { show: false });
+  persistBibleLowerThirdCueState();
   return true;
 }
 
@@ -6030,6 +6268,7 @@ function showSongsWorkspace() {
   if (!workspace) return;
   hideBibleWorkspace();
   hideSlidesWorkspace();
+  syncLowerThirdFeatureAvailability();
   workspace.hidden = false;
   button?.setAttribute("data-active", "true");
   document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
@@ -6054,6 +6293,7 @@ function showSongsWorkspace() {
     }
   }
   syncSongSlideNavigator();
+  syncSongLowerThirdForSection();
   scheduleSongPreviewRerender();
 }
 
@@ -6914,6 +7154,8 @@ function sendBibleLowerThirdTextMessage(message, options = {}) {
     lastLowerThirdBibleTextMessage = { ...message };
   }
   send("update-lower-third-text", audienceTextMessageForSend("lower-third", message, options));
+  syncConfidenceMonitorCarousel();
+  syncLowerThirdRendererPreviewCapture();
   if (clearToggle && !applyClearState) {
     liveTextClearActive = false;
   }
@@ -6924,6 +7166,32 @@ function sendBibleLowerThirdTextToOutput(entry = bibleDesignerState) {
   if (!isBibleLowerThirdFeatureEnabled()) return;
   const message = buildBibleLowerThirdOutputMessage(entry);
   sendBibleLowerThirdTextMessage(message);
+  activeLowerThirdContentType = "bible";
+  bibleLowerThirdLiveCueKey = bibleLowerThirdCueKey(message.lowerThirdSegmentIndex);
+  syncBibleLookControls(message);
+}
+
+async function showCuedBibleLowerThird() {
+  if (!hasLowerThirdOutputSelected()) {
+    showGnomeToast("Choose a lower-third output display");
+    return false;
+  }
+  await syncBibleStateFromControls();
+  const resolvedEntry = await bibleEntryWithLookupText(bibleDesignerState);
+  if (resolvedEntry && resolvedEntry !== bibleDesignerState) {
+    Object.assign(bibleDesignerState, resolvedEntry);
+  }
+  resolveBibleLowerThirdState(bibleDesignerState, {
+    panel: bibleLowerThirdMeasurePanel(),
+  });
+  const wasActive = bibleLowerThirdOutputActive;
+  if (wasActive) {
+    sendBibleLowerThirdTextToOutput(bibleDesignerState);
+  } else if (!(await ensureBibleLowerThirdOutput(bibleDesignerState))) {
+    return false;
+  }
+  showGnomeToast(wasActive ? "Lower third updated" : "Lower third shown");
+  return true;
 }
 
 async function liveBibleAudienceTextMessageForClear() {
@@ -7108,7 +7376,11 @@ async function clearLiveText() {
 
 async function closeBibleLowerThirdOutput() {
   bibleLowerThirdOutputActive = false;
+  activeLowerThirdContentType = null;
+  bibleLowerThirdLiveCueKey = "";
   lastLowerThirdBibleTextMessage = null;
+  stopLowerThirdRendererPreviewCapture();
+  syncConfidenceMonitorCarousel();
   updateClearLiveTextButtonState();
   try {
     return await invoke("close-lower-third-window-now");
@@ -7116,6 +7388,20 @@ async function closeBibleLowerThirdOutput() {
     console.error("Failed to close lower third output:", err);
     return false;
   }
+}
+
+function mediaSourceSupportsLowerThird(item) {
+  return Boolean(item) && (isQueueItemBible(item) || isQueueItemSong(item));
+}
+
+async function closeLowerThirdForUnsupportedMediaSource(item) {
+  if (!bibleLowerThirdOutputActive || mediaSourceSupportsLowerThird(item)) {
+    return false;
+  }
+  await closeBibleLowerThirdOutput();
+  songLowerThirdState.liveKey = "";
+  renderSongLowerThirdControls();
+  return true;
 }
 
 async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
@@ -7176,6 +7462,10 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
       backgroundPath: "",
       lowerThirdColor: "",
       lowerThirdChromaKeyColor: "",
+      lowerThirdFontFamily: "",
+      lowerThirdFontSize: undefined,
+      lowerThirdBarBackgroundColor: "",
+      lowerThirdBarBackgroundPath: "",
     };
   }
   return {
@@ -7205,6 +7495,22 @@ function normalizeProjectScriptureOverrides(overrides = {}) {
       typeof overrides.lowerThirdChromaKeyColor === "string"
         ? overrides.lowerThirdChromaKeyColor
         : "",
+    lowerThirdFontFamily:
+      typeof overrides.lowerThirdFontFamily === "string"
+        ? overrides.lowerThirdFontFamily
+        : "",
+    lowerThirdFontSize:
+      Number.isFinite(overrides.lowerThirdFontSize)
+        ? overrides.lowerThirdFontSize
+        : undefined,
+    lowerThirdBarBackgroundColor:
+      typeof overrides.lowerThirdBarBackgroundColor === "string"
+        ? overrides.lowerThirdBarBackgroundColor
+        : "",
+    lowerThirdBarBackgroundPath:
+      typeof overrides.lowerThirdBarBackgroundPath === "string"
+        ? overrides.lowerThirdBarBackgroundPath
+        : "",
   };
 }
 
@@ -7220,7 +7526,11 @@ function projectScriptureTextFromOverrides(overrides = projectScriptureOverrides
     !normalized.backgroundColor &&
     !normalized.backgroundPath &&
     !normalized.lowerThirdColor &&
-    !normalized.lowerThirdChromaKeyColor
+    !normalized.lowerThirdChromaKeyColor &&
+    !normalized.lowerThirdFontFamily &&
+    !Number.isFinite(normalized.lowerThirdFontSize) &&
+    !normalized.lowerThirdBarBackgroundColor &&
+    !normalized.lowerThirdBarBackgroundPath
   ) {
     return undefined;
   }
@@ -7258,6 +7568,13 @@ function projectScriptureTextFromOverrides(overrides = projectScriptureOverrides
       backgroundPath: normalized.backgroundPath || "",
       lowerThirdTextColor: normalized.lowerThirdColor || undefined,
       lowerThirdChromaKeyColor: normalized.lowerThirdChromaKeyColor || undefined,
+      lowerThirdFontFamily: normalized.lowerThirdFontFamily || undefined,
+      lowerThirdFontSize: Number.isFinite(normalized.lowerThirdFontSize)
+        ? normalized.lowerThirdFontSize
+        : undefined,
+      lowerThirdBarBackgroundColor: normalized.lowerThirdBarBackgroundColor || undefined,
+      lowerThirdBarBackgroundPath: normalized.lowerThirdBarBackgroundPath || "",
+      lowerThirdBarBackgroundAssetId: undefined,
     },
   };
 }
@@ -7332,12 +7649,38 @@ function overridesFromProjectScriptureText(projectScriptureText = {}) {
       typeof presentation.lowerThirdChromaKeyColor === "string"
         ? presentation.lowerThirdChromaKeyColor
         : "",
+    lowerThirdFontFamily:
+      typeof presentation.lowerThirdFontFamily === "string"
+        ? presentation.lowerThirdFontFamily
+        : "",
+    lowerThirdFontSize:
+      Number.isFinite(presentation.lowerThirdFontSize)
+        ? presentation.lowerThirdFontSize
+        : undefined,
+    lowerThirdBarBackgroundColor:
+      typeof presentation.lowerThirdBarBackgroundColor === "string"
+        ? presentation.lowerThirdBarBackgroundColor
+        : "",
+    lowerThirdBarBackgroundPath:
+      typeof presentation.lowerThirdBarBackgroundPath === "string"
+        ? presentation.lowerThirdBarBackgroundPath
+        : "",
   });
 }
 
 function bibleBackgroundDisplayName(filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) return "Choose Background…";
   return queueBasename(filePath) || "Selected Background";
+}
+
+function bibleLowerThirdBarBackgroundDisplayName(filePath) {
+  if (typeof filePath !== "string" || filePath.length === 0) return "Choose Bar Graphic…";
+  return queueBasename(filePath) || "Selected Bar Graphic";
+}
+
+function syncBibleLowerThirdBarBackgroundLabel(filePath = bibleDesignerState.lowerThirdBarBackgroundPath) {
+  const label = document.getElementById("bibleLowerThirdBarBackgroundLabel");
+  if (label) label.textContent = bibleLowerThirdBarBackgroundDisplayName(filePath);
 }
 
 function parseBibleQueuePath(filePath) {
@@ -7419,7 +7762,17 @@ function resolvedBibleStyleDefaults() {
       projectScriptureOverrides.lowerThirdColor || SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
     lowerThirdChromaKeyColor:
       projectScriptureOverrides.lowerThirdChromaKeyColor ||
-      SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
+      lowerThirdPreferenceChromaKeyColor,
+    lowerThirdFontFamily:
+      projectScriptureOverrides.lowerThirdFontFamily || "",
+    lowerThirdFontSize: Number.isFinite(projectScriptureOverrides.lowerThirdFontSize)
+      ? projectScriptureOverrides.lowerThirdFontSize
+      : SCRIPTURE_LOWER_THIRD_DEFAULT_FONT_SIZE,
+    lowerThirdBarBackgroundColor:
+      projectScriptureOverrides.lowerThirdBarBackgroundColor ||
+      SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+    lowerThirdBarBackgroundPath:
+      projectScriptureOverrides.lowerThirdBarBackgroundPath || "",
     look: SCRIPTURE_DEFAULT_LOOK,
     lowerThirdSegments: [],
     lowerThirdSegmentIndex: 0,
@@ -7940,6 +8293,10 @@ function bibleCurrentStylePayload() {
     backgroundPath: style.backgroundPath,
     lowerThirdColor: style.lowerThirdColor,
     lowerThirdChromaKeyColor: style.lowerThirdChromaKeyColor,
+    lowerThirdFontFamily: style.lowerThirdFontFamily,
+    lowerThirdFontSize: style.lowerThirdFontSize,
+    lowerThirdBarBackgroundColor: style.lowerThirdBarBackgroundColor,
+    lowerThirdBarBackgroundPath: style.lowerThirdBarBackgroundPath,
   };
 }
 
@@ -7966,6 +8323,10 @@ function clearBibleStyleDirtyState() {
   bibleStyleDirtyState.backgroundPath = false;
   bibleStyleDirtyState.lowerThirdColor = false;
   bibleStyleDirtyState.lowerThirdChromaKeyColor = false;
+  bibleStyleDirtyState.lowerThirdFontFamily = false;
+  bibleStyleDirtyState.lowerThirdFontSize = false;
+  bibleStyleDirtyState.lowerThirdBarBackgroundColor = false;
+  bibleStyleDirtyState.lowerThirdBarBackgroundPath = false;
 }
 
 async function applyBibleStyleToCurrentText() {
@@ -8571,6 +8932,9 @@ function syncBibleStyleControlsFromState() {
   const backgroundColorInput = document.getElementById("bibleBackgroundColorInput");
   const lowerThirdColorInput = document.getElementById("bibleLowerThirdTextColorInput");
   const lowerThirdChromaKeyInput = document.getElementById("bibleLowerThirdChromaKeyInput");
+  const lowerThirdFontInput = document.getElementById("bibleLowerThirdFontInput");
+  const lowerThirdFontSizeInput = document.getElementById("bibleLowerThirdFontSizeInput");
+  const lowerThirdBarBackgroundInput = document.getElementById("bibleLowerThirdBarBackgroundColorInput");
   const lookSelect = document.getElementById("bibleLookSelect");
   if (fontInput) {
     const fontValue = bibleDesignerState.fontFamily || SCRIPTURE_FONT_FAMILY;
@@ -8601,6 +8965,32 @@ function syncBibleStyleControlsFromState() {
   if (lowerThirdChromaKeyInput) {
     lowerThirdChromaKeyInput.value = bibleDesignerState.lowerThirdChromaKeyColor;
   }
+  if (lowerThirdFontInput) {
+    const lowerThirdFontValue =
+      bibleDesignerState.lowerThirdFontFamily ||
+      bibleDesignerState.fontFamily ||
+      SCRIPTURE_FONT_FAMILY;
+    if (
+      lowerThirdFontInput instanceof HTMLSelectElement &&
+      !Array.from(lowerThirdFontInput.options).some((option) => option.value === lowerThirdFontValue)
+    ) {
+      const option = document.createElement("option");
+      option.value = lowerThirdFontValue;
+      option.textContent = lowerThirdFontValue.replace(/^['"]|['"]$/g, "");
+      lowerThirdFontInput.appendChild(option);
+    }
+    lowerThirdFontInput.value = lowerThirdFontValue;
+  }
+  if (lowerThirdFontSizeInput) {
+    lowerThirdFontSizeInput.value = Number.isFinite(bibleDesignerState.lowerThirdFontSize)
+      ? bibleDesignerState.lowerThirdFontSize
+      : SCRIPTURE_LOWER_THIRD_DEFAULT_FONT_SIZE;
+  }
+  if (lowerThirdBarBackgroundInput) {
+    lowerThirdBarBackgroundInput.value =
+      bibleDesignerState.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND;
+  }
+  syncBibleLowerThirdBarBackgroundLabel();
   if (lookSelect) lookSelect.value = normalizeScriptureLook(bibleDesignerState.look);
   syncSlideTransitionControls(
     "bibleTransitionEffectInput",
@@ -11628,6 +12018,7 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     currentWorkspaceSongDeck = null;
     syncSongsMoveFolderSelect(null);
     syncSongSlideNavigator();
+    syncSongLowerThirdForSection(null);
     return;
   }
 
@@ -11811,12 +12202,230 @@ function renderSongSectionPreview(section) {
     updateSongArrangementSelection();
     updateSongSlideNavigatorSelection({ scroll: false });
   }
+  syncSongLowerThirdForSection(section);
   } catch (err) {
      try {
        window.electron?.ipcRenderer?.send("log-to-file", `[ERROR] in renderSongSectionPreview: ${err.message}\n${err.stack}`);
      } catch (e) {}
      console.error(err);
   }
+}
+
+function songLowerThirdCueKey(index = songLowerThirdState.index) {
+  return `${currentWorkspaceSong?.id || "song"}\u0000${songLowerThirdState.sectionId}\u0000${index}`;
+}
+
+function syncSongLowerThirdForSection(section = currentSongActiveSection(), { rebuild = false } = {}) {
+  const panel = document.getElementById("songLowerThirdPanel");
+  if (!panel) return;
+  panel.hidden = !currentWorkspaceSong;
+  if (!currentWorkspaceSong || !section) {
+    songLowerThirdState.sectionId = "";
+    songLowerThirdState.sourceText = "";
+    songLowerThirdState.layoutKey = "";
+    songLowerThirdState.segments = [];
+    songLowerThirdState.index = 0;
+    renderSongLowerThirdControls();
+    return;
+  }
+  const sourceText = songSectionLyricsText(section).trim();
+  const outputSize = selectedBiblePreviewOutputSize("lowerThirdDspSelct");
+  const sharedStyle = {
+    fontFamily: bibleDesignerState.fontFamily || SCRIPTURE_FONT_FAMILY,
+    fontSize: bibleDesignerState.fontSize || SCRIPTURE_BODY_FONT_SIZE,
+    fontWeight: SCRIPTURE_FONT_WEIGHT,
+  };
+  const layoutKey = [
+    outputSize.width,
+    outputSize.height,
+    sharedStyle.fontFamily,
+    sharedStyle.fontSize,
+    sharedStyle.fontWeight,
+  ].join("|");
+  const sourceChanged =
+    songLowerThirdState.sectionId !== section.id ||
+    songLowerThirdState.sourceText !== sourceText ||
+    songLowerThirdState.layoutKey !== layoutKey;
+  if (rebuild || sourceChanged || songLowerThirdState.segments.length === 0) {
+    songLowerThirdState.sectionId = section.id;
+    songLowerThirdState.sourceText = sourceText;
+    songLowerThirdState.layoutKey = layoutKey;
+    songLowerThirdState.segments = buildMeasuredLowerThirdSegments(
+      sourceText,
+      sharedStyle,
+      {
+        getBoundingClientRect: () => ({ width: outputSize.width, height: outputSize.height }),
+      },
+    );
+    songLowerThirdState.index = 0;
+  }
+  songLowerThirdState.index = clampLowerThirdSegmentIndex(
+    songLowerThirdState.index,
+    songLowerThirdState.segments,
+  );
+  renderSongLowerThirdControls();
+}
+
+function buildSongLowerThirdMessage() {
+  const presentation = resolvedSongPresentation(currentSongPresentationItem());
+  const base = presentation?.message || {};
+  const text = songLowerThirdState.segments[songLowerThirdState.index]?.text || "";
+  const keyColor =
+    bibleDesignerState.lowerThirdChromaKeyColor || lowerThirdPreferenceChromaKeyColor;
+  const message = {
+    ...base,
+    blocks: [],
+    slideObjects: [],
+    slideTextObjects: [],
+    text,
+    bodyText: text,
+    fullBodyText: songLowerThirdState.sourceText,
+    referenceText: "",
+    attributionText: "",
+    copyrightText: "",
+    textBoxPosition: null,
+    fontFamily: bibleDesignerState.fontFamily || SCRIPTURE_FONT_FAMILY,
+    lowerThirdFontFamily: bibleDesignerState.lowerThirdFontFamily || "",
+    fontSize: bibleDesignerState.fontSize || SCRIPTURE_BODY_FONT_SIZE,
+    lowerThirdFontSize: bibleDesignerState.lowerThirdFontSize,
+    minFontSize: bibleDesignerState.minFontSize || SCRIPTURE_MIN_BODY_FONT_SIZE,
+    fontWeight: SCRIPTURE_FONT_WEIGHT,
+    lineHeight: SCRIPTURE_LINE_HEIGHT,
+    color: bibleDesignerState.lowerThirdColor || SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
+    lowerThirdColor: bibleDesignerState.lowerThirdColor || SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
+    lowerThirdBarBackgroundColor:
+      bibleDesignerState.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+    lowerThirdBarBackgroundPath: bibleDesignerState.lowerThirdBarBackgroundPath || "",
+    look: SCRIPTURE_LOOK_LOWER_THIRD,
+    outputRole: "lower-third",
+    backgroundColor: keyColor,
+    chromaKeyColor: keyColor,
+    backgroundImage: "",
+    backgroundVideo: "",
+    backgroundPath: "",
+    lowerThirdSegments: songLowerThirdState.segments,
+    lowerThirdSegmentIndex: songLowerThirdState.index,
+    lowerThirdSegmentCount: songLowerThirdState.segments.length,
+    position: { vertical: "center", horizontal: "center" },
+  };
+  return enrichLowerThirdPresentationMessage(message, pathToMediaUrl);
+}
+
+function renderSongLowerThirdControls() {
+  const list = document.getElementById("songLowerThirdCueList");
+  if (!list) return;
+  list.replaceChildren();
+  songLowerThirdState.segments.forEach((segment, index) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "bible-lower-third-cue-row";
+    row.dataset.cueIndex = String(index);
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-selected", index === songLowerThirdState.index ? "true" : "false");
+    row.classList.toggle("is-cued", index === songLowerThirdState.index);
+    const isLive = bibleLowerThirdOutputActive && songLowerThirdState.liveKey === songLowerThirdCueKey(index);
+    row.classList.toggle("is-live", isLive);
+    const marker = document.createElement("span");
+    marker.className = "bible-lower-third-cue-row__marker";
+    marker.setAttribute("aria-hidden", "true");
+    const text = document.createElement("span");
+    text.className = "bible-lower-third-cue-row__text";
+    text.textContent = segment.text;
+    const live = document.createElement("span");
+    live.className = "bible-lower-third-cue-row__live";
+    live.textContent = isLive ? "Live" : "";
+    row.append(marker, text, live);
+    list.append(row);
+  });
+  list.querySelector(".is-cued")?.scrollIntoView?.({ block: "nearest" });
+
+  const count = songLowerThirdState.segments.length;
+  const index = songLowerThirdState.index;
+  const status = document.getElementById("songLowerThirdStatus");
+  if (status) status.textContent = `Cue ${count ? index + 1 : 0} of ${count}`;
+  const prev = document.getElementById("songLowerThirdPrevBtn");
+  const next = document.getElementById("songLowerThirdNextBtn");
+  const show = document.getElementById("songLowerThirdShowBtn");
+  if (prev) prev.disabled = count === 0 || index <= 0;
+  if (next) next.disabled = count === 0 || index >= count - 1;
+  if (show) {
+    show.disabled = count === 0;
+    show.textContent = bibleLowerThirdOutputActive ? "Update" : "Show";
+  }
+
+  const shell = document.getElementById("songLowerThirdPreviewShell");
+  const render = document.getElementById("songLowerThirdPreviewRender");
+  const body = document.getElementById("songLowerThirdPreviewText");
+  const reference = document.getElementById("songLowerThirdPreviewReference");
+  const message = buildSongLowerThirdMessage();
+  if (shell) shell.style.backgroundColor = message.chromaKeyColor;
+  applyBiblePreviewOutputScale(
+    shell,
+    selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
+    { fit: "width", align: "bottom" },
+  );
+  applyScriptureRenderToPreview(render, body, reference, message);
+  render?.classList.toggle("is-operator-cued", count > 0);
+  markSongAudiencePreviewSelection(message.bodyText);
+}
+
+function setSongLowerThirdCue(index) {
+  songLowerThirdState.index = clampLowerThirdSegmentIndex(index, songLowerThirdState.segments);
+  renderSongLowerThirdControls();
+}
+
+async function ensureSongLowerThirdOutput() {
+  const displayValue = selectedDisplayValueFromSelect("lowerThirdDspSelct");
+  if (!displayValue) {
+    showGnomeToast("Choose a lower-third output display");
+    return false;
+  }
+  const message = buildSongLowerThirdMessage();
+  const windowOptions = {
+    backgroundColor: message.chromaKeyColor,
+    webPreferences: {
+      v8CacheOptions: "bypassHeatCheckAndEagerCompile",
+      contextIsolation: true,
+      sandbox: true,
+      enableWebSQL: false,
+      webgl: false,
+      skipTaskbar: true,
+      additionalArguments: [
+        "__mediafile-ems=" + encodeURIComponent(songQueuePath(currentWorkspaceSong?.id || "song")),
+        "__isText",
+        "__lowerThirdOutput",
+      ],
+      preload: `${__dirname}/media_preload.min.js`,
+      devTools: true,
+    },
+  };
+  const windowId = await invoke("create-lower-third-window", windowOptions, displayValue);
+  bibleLowerThirdOutputActive = Boolean(windowId);
+  if (!bibleLowerThirdOutputActive) return false;
+  window.setTimeout(() => {
+    const liveMessage = buildSongLowerThirdMessage();
+    sendBibleLowerThirdTextMessage(liveMessage);
+    activeLowerThirdContentType = "song";
+    songLowerThirdState.liveKey = songLowerThirdCueKey();
+    renderSongLowerThirdControls();
+  }, 100);
+  isPlaying = true;
+  isQueuePlaying = false;
+  const item = currentSongPresentationItem();
+  if (item) markSongShowNowPresentation(item);
+  updateDynUI();
+  return true;
+}
+
+async function showCuedSongLowerThird() {
+  if (!songLowerThirdState.segments.length) return false;
+  if (!bibleLowerThirdOutputActive) return ensureSongLowerThirdOutput();
+  sendBibleLowerThirdTextMessage(buildSongLowerThirdMessage());
+  activeLowerThirdContentType = "song";
+  songLowerThirdState.liveKey = songLowerThirdCueKey();
+  renderSongLowerThirdControls();
+  showGnomeToast("Song lower third updated");
+  return true;
 }
 
 async function sendSongTextToOutput(item = null) {
@@ -16588,6 +17197,41 @@ function installBibleMediaControls() {
     navigateSongSection(1);
   });
 
+  document.getElementById("songLowerThirdPrevBtn")?.addEventListener("click", () => {
+    setSongLowerThirdCue(songLowerThirdState.index - 1);
+  });
+  document.getElementById("songLowerThirdNextBtn")?.addEventListener("click", () => {
+    setSongLowerThirdCue(songLowerThirdState.index + 1);
+  });
+  document.getElementById("songLowerThirdAutoSplitBtn")?.addEventListener("click", () => {
+    syncSongLowerThirdForSection(currentSongActiveSection(), { rebuild: true });
+  });
+  document.getElementById("songLowerThirdShowBtn")?.addEventListener("click", () => {
+    void showCuedSongLowerThird().catch((err) => {
+      console.error("Failed to show song lower third:", err);
+      showGnomeToast("Failed to show song lower third");
+    });
+  });
+  const songLowerThirdCueList = document.getElementById("songLowerThirdCueList");
+  songLowerThirdCueList?.addEventListener("click", (event) => {
+    const row = event.target.closest?.("[data-cue-index]");
+    if (row) setSongLowerThirdCue(Number(row.dataset.cueIndex));
+  });
+  songLowerThirdCueList?.addEventListener("keydown", (event) => {
+    let target = songLowerThirdState.index;
+    if (event.key === "ArrowUp" || event.key === "PageUp") target -= 1;
+    else if (event.key === "ArrowDown" || event.key === "PageDown") target += 1;
+    else if (event.key === "Home") target = 0;
+    else if (event.key === "End") target = songLowerThirdState.segments.length - 1;
+    else if (event.key === "Enter") {
+      event.preventDefault();
+      void showCuedSongLowerThird().catch(console.error);
+      return;
+    } else return;
+    event.preventDefault();
+    setSongLowerThirdCue(target);
+  });
+
   document.getElementById("songsShowNowBtn")?.addEventListener("click", () => {
     void showSongTextNow().catch(console.error);
   });
@@ -16973,13 +17617,39 @@ function installBibleMediaControls() {
     void changeBibleLowerThirdSegment(-1).catch(console.error);
   });
   document.getElementById("bibleLowerThirdNextBtn")?.addEventListener("click", () => {
-    void advanceBibleLowerThirdCursor().catch((err) => {
-      console.error("Failed to advance Bible lower-third cursor:", err);
-      showGnomeToast("Failed to advance Bible text");
-    });
+    void changeBibleLowerThirdSegment(1).catch(console.error);
   });
   document.getElementById("bibleLowerThirdAutoSplitBtn")?.addEventListener("click", () => {
     void rebuildBibleLowerThirdSegments().catch(console.error);
+  });
+  document.getElementById("bibleLowerThirdShowBtn")?.addEventListener("click", () => {
+    void showCuedBibleLowerThird().catch((err) => {
+      console.error("Failed to show Bible lower third:", err);
+      showGnomeToast("Failed to show lower third");
+    });
+  });
+  const lowerThirdCueList = document.getElementById("bibleLowerThirdCueList");
+  lowerThirdCueList?.addEventListener("click", (event) => {
+    const row = event.target.closest?.("[data-cue-index]");
+    if (!row) return;
+    void setBibleLowerThirdSegmentIndex(Number(row.dataset.cueIndex)).catch(console.error);
+  });
+  lowerThirdCueList?.addEventListener("keydown", (event) => {
+    const lowerThird = resolveBibleLowerThirdState(bibleDesignerState, {
+      panel: bibleLowerThirdMeasurePanel(),
+    });
+    let target = lowerThird.index;
+    if (event.key === "ArrowUp" || event.key === "PageUp") target -= 1;
+    else if (event.key === "ArrowDown" || event.key === "PageDown") target += 1;
+    else if (event.key === "Home") target = 0;
+    else if (event.key === "End") target = lowerThird.segments.length - 1;
+    else if (event.key === "Enter") {
+      event.preventDefault();
+      void showCuedBibleLowerThird().catch(console.error);
+      return;
+    } else return;
+    event.preventDefault();
+    void setBibleLowerThirdSegmentIndex(target).catch(console.error);
   });
   [
     "bibleFontInput",
@@ -16989,6 +17659,9 @@ function installBibleMediaControls() {
     "bibleTextColorInput",
     "bibleBackgroundColorInput",
     "bibleLowerThirdTextColorInput",
+    "bibleLowerThirdBarBackgroundColorInput",
+    "bibleLowerThirdFontInput",
+    "bibleLowerThirdFontSizeInput",
     "bibleLowerThirdChromaKeyInput",
     "bibleTransitionEffectInput",
     "bibleTransitionDurationInput",
@@ -17003,6 +17676,11 @@ function installBibleMediaControls() {
         if (id === "bibleTextColorInput") bibleStyleDirtyState.color = true;
         if (id === "bibleBackgroundColorInput") bibleStyleDirtyState.backgroundColor = true;
         if (id === "bibleLowerThirdTextColorInput") bibleStyleDirtyState.lowerThirdColor = true;
+        if (id === "bibleLowerThirdBarBackgroundColorInput") {
+          bibleStyleDirtyState.lowerThirdBarBackgroundColor = true;
+        }
+        if (id === "bibleLowerThirdFontInput") bibleStyleDirtyState.lowerThirdFontFamily = true;
+        if (id === "bibleLowerThirdFontSizeInput") bibleStyleDirtyState.lowerThirdFontSize = true;
         if (id === "bibleLowerThirdChromaKeyInput") {
           bibleStyleDirtyState.lowerThirdChromaKeyColor = true;
         }
@@ -17012,7 +17690,9 @@ function installBibleMediaControls() {
           id === "bibleFontInput" ||
           id === "bibleFontSizeInput" ||
           id === "bibleAutosizeModeInput" ||
-          id === "bibleMinFontSizeInput"
+          id === "bibleMinFontSizeInput" ||
+          id === "bibleLowerThirdFontInput" ||
+          id === "bibleLowerThirdFontSizeInput"
         ) {
           delete bibleDesignerState.autosizeGroupFontSize;
           bibleDesignerState.autosizeGroupScope = "";
@@ -17046,6 +17726,20 @@ function installBibleMediaControls() {
       await syncShowNowBiblePresentation();
     })().catch(console.error);
   });
+  document.getElementById("bibleLowerThirdBarBackgroundInput")?.addEventListener("change", (event) => {
+    void (async () => {
+      const file = event.target.files?.[0];
+      bibleDesignerState.lowerThirdBarBackgroundPath = file ? getPathForFile(file) : "";
+      bibleStyleDirtyState.lowerThirdBarBackgroundPath = true;
+      syncBibleLowerThirdBarBackgroundLabel();
+      applyBiblePreview(bibleDesignerState, { show: false });
+      if (await syncBibleDesignerStateToPreviewedQueueItem()) {
+        saveMediaFile();
+      }
+      syncActiveScheduledBiblePresentation();
+      await syncShowNowBiblePresentation();
+    })().catch(console.error);
+  });
   document
     .getElementById("bibleApplyCurrentBtn")
     ?.addEventListener("click", () => void applyBibleStyleToCurrentText().catch(console.error));
@@ -17063,6 +17757,21 @@ function installBibleMediaControls() {
       if (backgroundInput) backgroundInput.value = "";
       syncBibleBackgroundLabel("");
       applyBiblePreview(bibleDesignerState);
+      if (await syncBibleDesignerStateToPreviewedQueueItem()) {
+        saveMediaFile();
+      }
+      syncActiveScheduledBiblePresentation();
+      await syncShowNowBiblePresentation();
+    })().catch(console.error);
+  });
+  document.getElementById("bibleClearLowerThirdBarBackgroundBtn")?.addEventListener("click", () => {
+    void (async () => {
+      bibleDesignerState.lowerThirdBarBackgroundPath = "";
+      bibleStyleDirtyState.lowerThirdBarBackgroundPath = true;
+      const backgroundInput = document.getElementById("bibleLowerThirdBarBackgroundInput");
+      if (backgroundInput) backgroundInput.value = "";
+      syncBibleLowerThirdBarBackgroundLabel("");
+      applyBiblePreview(bibleDesignerState, { show: false });
       if (await syncBibleDesignerStateToPreviewedQueueItem()) {
         saveMediaFile();
       }
@@ -19752,6 +20461,7 @@ async function onQueueItemActivate(index) {
   if (!isActiveMediaWindow() && !isLocalPresentation) {
     const activateIndex = index;
     const item = mediaQueue[activateIndex];
+    await closeLowerThirdForUnsupportedMediaSource(item);
     if (!isQueueItemBible(item)) hideBibleWorkspace();
     if (!isQueueItemSong(item) || isQueueItemDeck(item)) hideSongsWorkspace();
     if (!isQueueItemDeck(item)) hideSlidesWorkspace();
@@ -20293,6 +21003,8 @@ async function playCurrentQueueItem(opts) {
     return;
   }
 
+  await closeLowerThirdForUnsupportedMediaSource(item);
+
   const itemIsNetworkPresentationVideo =
     !isQueueItemAudio(item) &&
     (isNetworkStreamSource(item.path) || Boolean(item.networkSource));
@@ -20616,6 +21328,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     fileEnded = false;
     audioOnlyFile = false;
     playingMediaAudioOnly = false;
+    await closeLowerThirdForUnsupportedMediaSource(nextItem);
     updateDynUI();
     syncPreviewAudioTrackState();
     if (isBibleItem) {
@@ -22970,6 +23683,8 @@ function installIPCHandler() {
   timeRemaining?.onTick?.(handleTimeMessage);
   on("preferences-updated", (_event, prefs) => {
     applyOutputHoldPreferences(prefs);
+    applyLowerThirdOutputPreferences(prefs);
+    renderSongLowerThirdControls();
     scheduleAutosaveProjectState();
   });
   on("songs-database-cleared", () => {
@@ -22987,6 +23702,11 @@ function installIPCHandler() {
   });
   on("lower-third-window-closed", () => {
     bibleLowerThirdOutputActive = false;
+    activeLowerThirdContentType = null;
+    songLowerThirdState.liveKey = "";
+    renderSongLowerThirdControls();
+    stopLowerThirdRendererPreviewCapture();
+    syncConfidenceMonitorCarousel();
   });
   on("media-source-stabilizing", (_event, payload) => {
     markQueueItemMediaUpdate({ ...payload, status: "stabilizing" });
@@ -23909,6 +24629,7 @@ async function populateDisplaySelect(options = {}) {
         syncActiveScheduledBiblePresentation();
       }
       syncBiblePreviewOutputScale();
+      syncSongLowerThirdForSection(currentSongActiveSection(), { rebuild: true });
     };
   }
 
@@ -24202,6 +24923,70 @@ function getConfidenceMonitorElement() {
   return document.getElementById("confidenceMonitorPreview");
 }
 
+function getLowerThirdConfidenceMonitorElement() {
+  return document.getElementById("confidenceLowerThirdPreview");
+}
+
+let confidenceMonitorPage = "audience";
+
+function activeConfidenceMonitorPages() {
+  const pages = [];
+  if (isActiveMediaWindow()) pages.push("audience");
+  if (bibleLowerThirdOutputActive && lastLowerThirdBibleTextMessage) pages.push("lower-third");
+  return pages;
+}
+
+function setConfidenceMonitorPage(page) {
+  const pages = activeConfidenceMonitorPages();
+  confidenceMonitorPage = pages.includes(page) ? page : (pages[0] || "audience");
+  const idle = document.getElementById("confidenceMonitorIdle");
+  const audience = document.getElementById("confidenceAudiencePage");
+  const lowerThird = document.getElementById("confidenceLowerThirdPage");
+  if (idle) idle.hidden = pages.length > 0;
+  if (audience) audience.hidden = !pages.includes("audience") || confidenceMonitorPage !== "audience";
+  if (lowerThird) lowerThird.hidden = !pages.includes("lower-third") || confidenceMonitorPage !== "lower-third";
+  document.querySelectorAll(".confidence-monitor__dot").forEach((dot) => {
+    dot.setAttribute("aria-current", dot.dataset.page === confidenceMonitorPage ? "true" : "false");
+  });
+}
+
+function stepConfidenceMonitorPage(delta) {
+  const pages = activeConfidenceMonitorPages();
+  if (pages.length < 2) return;
+  const current = Math.max(0, pages.indexOf(confidenceMonitorPage));
+  setConfidenceMonitorPage(pages[(current + delta + pages.length) % pages.length]);
+}
+
+function syncConfidenceMonitorCarousel() {
+  const monitor = document.getElementById("confidenceMonitor");
+  if (!monitor) return;
+  const pages = activeConfidenceMonitorPages();
+  const controls = document.getElementById("confidenceMonitorControls");
+  const dots = document.getElementById("confidenceMonitorDots");
+  monitor.hidden = currentMode !== MEDIAPLAYER;
+  if (controls) controls.hidden = pages.length < 2;
+  if (dots) {
+    dots.replaceChildren();
+    pages.forEach((page) => {
+      const dot = document.createElement("button");
+      dot.type = "button";
+      dot.className = "confidence-monitor__dot";
+      dot.dataset.page = page;
+      dot.setAttribute("aria-label", page === "audience" ? "Show audience output" : "Show lower third output");
+      dot.addEventListener("click", () => setConfidenceMonitorPage(page));
+      dots.append(dot);
+    });
+  }
+
+  setConfidenceMonitorPage(confidenceMonitorPage);
+
+  if (monitor.dataset.carouselBound !== "1") {
+    monitor.dataset.carouselBound = "1";
+    document.getElementById("confidenceMonitorPrevious")?.addEventListener("click", () => stepConfidenceMonitorPage(-1));
+    document.getElementById("confidenceMonitorNext")?.addEventListener("click", () => stepConfidenceMonitorPage(1));
+  }
+}
+
 function isNetworkStreamSource(source) {
   if (source === undefined || source === null || isBiblePath(source) || isSongPath(source)) {
     return false;
@@ -24273,6 +25058,15 @@ function rendererCaptureRequestOptions() {
   };
 }
 
+function captureElectronPresentationWindow(target) {
+  const request = displayMediaCaptureRequestChain.then(async () => {
+    await invoke("set-display-media-capture-target", target);
+    return navigator.mediaDevices.getDisplayMedia(rendererCaptureRequestOptions());
+  });
+  displayMediaCaptureRequestChain = request.then(() => undefined, () => undefined);
+  return request;
+}
+
 function syncRendererCaptureQuality(stream, mode = activeRendererCaptureQualityMode()) {
   if (!stream) {
     streamRendererPreviewQualityMode = null;
@@ -24338,6 +25132,7 @@ function setConfidenceMonitorActive(active) {
   } else {
     delete monitor.dataset.rendererPreviewActive;
   }
+  syncConfidenceMonitorCarousel();
 }
 
 function disableCapturedAudioTracks(stream) {
@@ -24438,9 +25233,7 @@ async function startStreamRendererPreviewCapture() {
 
   streamRendererPreviewStartPromise = (async () => {
     const qualityMode = activeRendererCaptureQualityMode();
-    const stream = await navigator.mediaDevices.getDisplayMedia(
-      rendererCaptureRequestOptions(),
-    );
+    const stream = await captureElectronPresentationWindow("media");
     if (!mediaRendererCaptureAllowedForCurrentMode() || !isActiveMediaWindow()) {
       stream.getTracks().forEach((track) => track.stop());
       return;
@@ -24465,6 +25258,61 @@ async function startStreamRendererPreviewCapture() {
   } finally {
     streamRendererPreviewStartPromise = null;
   }
+}
+
+function stopLowerThirdRendererPreviewCapture() {
+  const stream = lowerThirdRendererPreviewStream;
+  lowerThirdRendererPreviewStream = null;
+  lowerThirdRendererPreviewStartPromise = null;
+  if (stream) stream.getTracks().forEach((track) => track.stop());
+  hideRendererCaptureElement(getLowerThirdConfidenceMonitorElement());
+}
+
+async function startLowerThirdRendererPreviewCapture() {
+  if (!bibleLowerThirdOutputActive || currentMode !== MEDIAPLAYER) {
+    stopLowerThirdRendererPreviewCapture();
+    return;
+  }
+  const available = await invoke("media-window-capture-available", "lower-third").catch(() => false);
+  if (!available || !bibleLowerThirdOutputActive) {
+    stopLowerThirdRendererPreviewCapture();
+    return;
+  }
+  if (lowerThirdRendererPreviewStream?.getVideoTracks().some((track) => track.readyState === "live")) {
+    prepareRendererCaptureElement(getLowerThirdConfidenceMonitorElement(), lowerThirdRendererPreviewStream);
+    return;
+  }
+  if (lowerThirdRendererPreviewStartPromise) return lowerThirdRendererPreviewStartPromise;
+  lowerThirdRendererPreviewStartPromise = (async () => {
+    const stream = await captureElectronPresentationWindow("lower-third");
+    if (!bibleLowerThirdOutputActive || currentMode !== MEDIAPLAYER) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    disableCapturedAudioTracks(stream);
+    lowerThirdRendererPreviewStream = stream;
+    const [track] = stream.getVideoTracks();
+    track?.applyConstraints?.(rendererCaptureVideoConstraints(RENDERER_CAPTURE_QUALITY_CONFIDENCE)).catch(() => {});
+    track?.addEventListener("ended", stopLowerThirdRendererPreviewCapture, { once: true });
+    prepareRendererCaptureElement(getLowerThirdConfidenceMonitorElement(), stream);
+    syncConfidenceMonitorCarousel();
+  })();
+  try {
+    await lowerThirdRendererPreviewStartPromise;
+  } catch (error) {
+    console.error("Failed to capture lower-third renderer preview:", error);
+    stopLowerThirdRendererPreviewCapture();
+  } finally {
+    lowerThirdRendererPreviewStartPromise = null;
+  }
+}
+
+function syncLowerThirdRendererPreviewCapture() {
+  if (!bibleLowerThirdOutputActive || currentMode !== MEDIAPLAYER) {
+    stopLowerThirdRendererPreviewCapture();
+    return;
+  }
+  void startLowerThirdRendererPreviewCapture();
 }
 
 function syncStreamRendererPreviewCapture() {
@@ -24529,6 +25377,7 @@ function setSBFormMediaPlayer() {
 
   restoreLivePreviewIntoPanel(mediaPanel);
   syncStreamRendererPreviewCapture();
+  syncLowerThirdRendererPreviewCapture();
 
   ensureMediaCountdownDigitNodes();
   installDisplayChangeHandler();

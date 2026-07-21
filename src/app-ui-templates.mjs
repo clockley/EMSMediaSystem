@@ -120,10 +120,6 @@ export function generateMediaFormHTML() {
         Slides
       </button>
 
-      <div id="confidenceMonitor" class="confidence-monitor" aria-label="Live audience output">
-        <video id="confidenceMonitorPreview" class="confidence-monitor__video" autoplay muted playsinline disablePictureInPicture></video>
-      </div>
-
       <!--
         Settings expander: Output Display and Autoplay. Collapsed by default
         to maximize schedule real estate; open-state is persisted to localStorage
@@ -182,6 +178,32 @@ export function generateMediaFormHTML() {
           </div>
         </div>
       </details>
+
+      <div id="confidenceMonitor" class="confidence-monitor" aria-label="Confidence monitor">
+        <div class="confidence-monitor__viewport">
+          <section id="confidenceMonitorIdle" class="confidence-monitor__page confidence-monitor__idle" aria-label="No active outputs">
+            <svg class="confidence-monitor__idle-icon" width="32" height="32" viewBox="0 0 32 32" aria-hidden="true">
+              <rect x="4.5" y="6.5" width="23" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/>
+              <path d="M11 26h10M16 22.5V26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="m11.5 12.5 9 4.5m0-4.5-9 4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+            <span>No active outputs</span>
+          </section>
+          <section id="confidenceAudiencePage" class="confidence-monitor__page" aria-label="Audience output" hidden>
+            <video id="confidenceMonitorPreview" class="confidence-monitor__video" autoplay muted playsinline disablePictureInPicture></video>
+            <span class="confidence-monitor__label">Audience</span>
+          </section>
+          <section id="confidenceLowerThirdPage" class="confidence-monitor__page" aria-label="Lower third output" hidden>
+            <video id="confidenceLowerThirdPreview" class="confidence-monitor__video" autoplay muted playsinline disablePictureInPicture></video>
+            <span class="confidence-monitor__label">Lower Third</span>
+          </section>
+        </div>
+        <div id="confidenceMonitorControls" class="confidence-monitor__controls" aria-label="Confidence monitor pages" hidden>
+          <button type="button" id="confidenceMonitorPrevious" class="confidence-monitor__arrow" aria-label="Previous output">‹</button>
+          <div id="confidenceMonitorDots" class="confidence-monitor__dots"></div>
+          <button type="button" id="confidenceMonitorNext" class="confidence-monitor__arrow" aria-label="Next output">›</button>
+        </div>
+      </div>
     </form>
 
     <div class="video-wrapper">
@@ -540,6 +562,31 @@ export function generateMediaFormHTML() {
                 <!-- Custom Context Menu for styling shortcuts -->
                 <div id="songEditorContextMenu" class="song-editor-context-menu" style="display: none; position: fixed; z-index: 10000;"></div>
               </div>
+              </div>
+              <section id="songLowerThirdPanel" class="bible-lower-third-cue-panel song-lower-third-panel" aria-labelledby="songLowerThirdHeading" data-lower-third-feature hidden>
+                <div class="bible-lower-third-cue-header">
+                  <div class="bible-lower-third-cue-heading">
+                    <span id="songLowerThirdHeading" class="bible-lower-third-label">Song Lower Third</span>
+                    <span class="bible-lower-third-cue-hint">Select a two-line lyric cue, then show it on the lower-third output</span>
+                  </div>
+                  <button type="button" id="songLowerThirdAutoSplitBtn" class="pill-button secondary">Auto Arrange</button>
+                </div>
+                <section id="songLowerThirdPreviewShell" class="bible-preview-surface bible-preview-surface--lower-third song-lower-third-preview" aria-label="Song lower-third preview">
+                  <div id="songLowerThirdPreviewRender" class="bible-preview-copy scripture-render scripture-render--lower-third">
+                    <div class="scripture-render__box">
+                      <div id="songLowerThirdPreviewText" class="scripture-render__body"></div>
+                      <div id="songLowerThirdPreviewReference" class="scripture-render__reference"></div>
+                    </div>
+                  </div>
+                </section>
+                <div id="songLowerThirdCueList" class="bible-lower-third-cue-list" role="listbox" aria-label="Song lower-third lyric cues" tabindex="0"></div>
+                <div class="bible-lower-third-cue-actions">
+                  <button type="button" id="songLowerThirdPrevBtn" class="pill-button secondary">Previous</button>
+                  <span id="songLowerThirdStatus" class="bible-lower-third-status" aria-live="polite">Cue 0 of 0</span>
+                  <button type="button" id="songLowerThirdNextBtn" class="pill-button secondary">Next</button>
+                  <button type="button" id="songLowerThirdShowBtn" class="pill-button suggested-action">Show</button>
+                </div>
+              </section>
            </section>
          </div>
 
@@ -851,6 +898,22 @@ export function generateMediaFormHTML() {
               </div>
             </section>
           </div>
+          <section id="bibleLowerThirdCuePanel" class="bible-lower-third-cue-panel" aria-labelledby="bibleLowerThirdCueHeading" data-lower-third-feature hidden>
+            <div class="bible-lower-third-cue-header">
+              <div class="bible-lower-third-cue-heading">
+                <span id="bibleLowerThirdCueHeading" class="bible-lower-third-label">Lower Third</span>
+                <span class="bible-lower-third-cue-hint">Select text to cue, then show it on the lower-third output</span>
+              </div>
+              <button type="button" id="bibleLowerThirdAutoSplitBtn" class="pill-button secondary">Auto Arrange</button>
+            </div>
+            <div id="bibleLowerThirdCueList" class="bible-lower-third-cue-list" role="listbox" aria-label="Lower-third text cues" tabindex="0"></div>
+            <div class="bible-lower-third-cue-actions">
+              <button type="button" id="bibleLowerThirdPrevBtn" class="pill-button secondary">Previous</button>
+              <span id="bibleLowerThirdStatus" class="bible-lower-third-status" aria-live="polite">Cue 1 of 1</span>
+              <button type="button" id="bibleLowerThirdNextBtn" class="pill-button secondary">Next</button>
+              <button type="button" id="bibleLowerThirdShowBtn" class="pill-button suggested-action">Show</button>
+            </div>
+          </section>
           <div id="bibleEditorDrawer" class="bible-editor-drawer" hidden>
             <div class="bible-editor-controls">
               <div class="bible-editor-header">
@@ -863,17 +926,6 @@ export function generateMediaFormHTML() {
                     <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                   </svg>
                 </button>
-              </div>
-              <div class="bible-output-controls" data-lower-third-feature hidden>
-                <div id="bibleLowerThirdControls" class="bible-lower-third-controls" aria-label="Lower third cursor controls">
-                  <span class="bible-lower-third-label">Lower Third Cursor</span>
-                  <div class="bible-cursor-stepper" role="group" aria-label="Move lower third cursor">
-                    <button type="button" id="bibleLowerThirdPrevBtn" class="pill-button secondary">Previous</button>
-                    <button type="button" id="bibleLowerThirdNextBtn" class="pill-button secondary">Next</button>
-                  </div>
-                  <span id="bibleLowerThirdStatus" class="bible-lower-third-status">Segment 1 of 1</span>
-                  <button type="button" id="bibleLowerThirdAutoSplitBtn" class="pill-button secondary">Auto Split</button>
-                </div>
               </div>
               <div class="bible-editor-fields">
                 <label class="bible-field bible-field--font">Font
@@ -894,7 +946,28 @@ export function generateMediaFormHTML() {
                 <label class="bible-field">Audience Text <input id="bibleTextColorInput" type="color" value="#ffffff"></label>
                 <label class="bible-field">Audience Backdrop <input id="bibleBackgroundColorInput" type="color" value="#000000"></label>
                 <label class="bible-field" data-lower-third-feature hidden>Lower Text <input id="bibleLowerThirdTextColorInput" type="color" value="#ffffff"></label>
+                <label class="bible-field" data-lower-third-feature hidden>Bar Backdrop <input id="bibleLowerThirdBarBackgroundColorInput" type="color" value="#101010"></label>
+                <label class="bible-field bible-field--font" data-lower-third-feature hidden>Lower Third Font
+                  <select id="bibleLowerThirdFontInput" class="display-select">
+                    <option value="'CMG Sans'">CMG Sans</option>
+                    <option value="'Adwaita'">Adwaita</option>
+                    <option value="'Arial'">Arial</option>
+                    <option value="'Calibri'">Calibri</option>
+                    <option value="'Cambria'">Cambria</option>
+                    <option value="'Georgia'">Georgia</option>
+                    <option value="'Segoe UI'">Segoe UI</option>
+                    <option value="'Tahoma'">Tahoma</option>
+                    <option value="'Times New Roman'">Times New Roman</option>
+                    <option value="'Verdana'">Verdana</option>
+                  </select>
+                </label>
+                <label class="bible-field" data-lower-third-feature hidden>Lower Third Size <input id="bibleLowerThirdFontSizeInput" type="number" min="20" max="80" value="40" class="url-input"></label>
                 <label class="bible-field" data-lower-third-feature data-lower-third-key-color hidden>Key Color <input id="bibleLowerThirdChromaKeyInput" type="color" value="#00ff00"></label>
+                <label class="file-input-label bible-background-picker" data-lower-third-feature hidden>
+                  <input id="bibleLowerThirdBarBackgroundInput" type="file" accept="image/*,video/*" hidden>
+                  <span id="bibleLowerThirdBarBackgroundLabel">Choose Bar Graphic…</span>
+                </label>
+                <button type="button" id="bibleClearLowerThirdBarBackgroundBtn" class="pill-button" data-lower-third-feature hidden>Clear Bar Graphic</button>
                 <label class="bible-field bible-field--transition">Transition
                   <span class="transition-inline-controls">
                     <select id="bibleTransitionEffectInput" class="display-select" aria-label="Bible text slide transition">

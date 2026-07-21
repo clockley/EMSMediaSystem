@@ -30,13 +30,23 @@ let draft = {
   logoPath: "",
   logoFit: "contain",
   logoBackground: "#000000",
+  lowerThirdChromaKeyColor: "#00ff00",
+  bibleUiEnabled: true,
+  lowerThirdUiEnabled: true,
 };
 
 function readFormIntoDraft() {
   const fitSelect = document.getElementById("preferencesLogoFit");
   const backgroundInput = document.getElementById("preferencesLogoBackground");
+  const lowerThirdChromaKeyInput = document.getElementById("preferencesLowerThirdChromaKey");
   draft.logoFit = fitSelect?.value === "cover" ? "cover" : "contain";
   draft.logoBackground = normalizeHexColor(backgroundInput?.value, "#000000");
+  draft.lowerThirdChromaKeyColor = normalizeHexColor(
+    lowerThirdChromaKeyInput?.value,
+    "#00ff00",
+  );
+  draft.bibleUiEnabled = document.getElementById("preferencesBibleUiEnabled")?.checked !== false;
+  draft.lowerThirdUiEnabled = document.getElementById("preferencesLowerThirdUiEnabled")?.checked !== false;
 }
 
 function isVideoLogoPath(filePath = "") {
@@ -90,10 +100,21 @@ function syncLogoPreview() {
 function applyDraftToForm() {
   const fitSelect = document.getElementById("preferencesLogoFit");
   const backgroundInput = document.getElementById("preferencesLogoBackground");
+  const lowerThirdChromaKeyInput = document.getElementById("preferencesLowerThirdChromaKey");
+  const bibleUiInput = document.getElementById("preferencesBibleUiEnabled");
+  const lowerThirdUiInput = document.getElementById("preferencesLowerThirdUiEnabled");
   if (fitSelect) fitSelect.value = draft.logoFit === "cover" ? "cover" : "contain";
   if (backgroundInput) {
     backgroundInput.value = normalizeHexColor(draft.logoBackground, "#000000");
   }
+  if (lowerThirdChromaKeyInput) {
+    lowerThirdChromaKeyInput.value = normalizeHexColor(
+      draft.lowerThirdChromaKeyColor,
+      "#00ff00",
+    );
+  }
+  if (bibleUiInput) bibleUiInput.checked = draft.bibleUiEnabled !== false;
+  if (lowerThirdUiInput) lowerThirdUiInput.checked = draft.lowerThirdUiEnabled !== false;
   syncLogoPreview();
 }
 
@@ -103,6 +124,12 @@ async function loadPreferences() {
     logoPath: typeof prefs?.logoPath === "string" ? prefs.logoPath : "",
     logoFit: prefs?.logoFit === "cover" ? "cover" : "contain",
     logoBackground: normalizeHexColor(prefs?.logoBackground, "#000000"),
+    lowerThirdChromaKeyColor: normalizeHexColor(
+      prefs?.lowerThirdChromaKeyColor,
+      "#00ff00",
+    ),
+    bibleUiEnabled: prefs?.bibleUiEnabled !== false,
+    lowerThirdUiEnabled: prefs?.lowerThirdUiEnabled !== false,
   };
   applyDraftToForm();
 }

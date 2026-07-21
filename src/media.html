@@ -324,7 +324,7 @@
             --scripture-color: #ffffff;
             --scripture-reference-color: rgba(255, 255, 255, 0.78);
             --scripture-reference-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
-            --scripture-lower-third-backdrop: rgba(0, 0, 0, 0.74);
+            --scripture-lower-third-backdrop: #101010;
             font-family: 'CMG Sans';
             color: var(--scripture-color);
         }
@@ -472,25 +472,50 @@
             align-items: flex-end;
             justify-content: center;
             text-align: left;
-            padding: 0 7.5% 7%;
+            padding: 0 4% 8%;
         }
 
         .scripture-render--lower-third .scripture-render__box {
-            width: min(84%, 1460px);
-            padding: clamp(18px, 2.1vw, 34px) clamp(24px, 3vw, 46px);
+            position: relative;
+            overflow: hidden;
+            width: 100%;
+            max-width: 1766px;
+            padding: 11px 36px;
             border-radius: 8px;
             background: var(--scripture-lower-third-backdrop);
-            box-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
+            box-shadow: none;
+        }
+
+        .scripture-render__bar-video {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .scripture-render--lower-third .scripture-render__body,
+        .scripture-render--lower-third .scripture-render__reference,
+        .scripture-render--lower-third .scripture-render__attribution {
+            position: relative;
+            z-index: 1;
         }
 
         .scripture-render--lower-third .scripture-render__body {
             font-size: var(--scripture-lower-third-font-size);
             line-height: 1.18;
+            text-shadow: none;
+            max-height: 2.36em;
+            min-height: 2.36em;
+            overflow: hidden;
         }
 
         .scripture-render--lower-third .scripture-render__reference {
-            font-size: clamp(18px, calc(var(--scripture-lower-third-font-size) * 0.42), 30px);
-            margin-top: 0.48em;
+            font-size: clamp(14px, calc(var(--scripture-lower-third-font-size) * 0.4), 20px);
+            margin-top: 0.4em;
+            text-shadow: none;
         }
 
         .scripture-render--lower-third .scripture-render__attribution {

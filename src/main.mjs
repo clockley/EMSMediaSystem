@@ -88,6 +88,9 @@ const PREFERENCES_DIALOG_CLOSE_CHANNEL = "preferences-dialog-close";
 const OUTPUT_HOLD_LOGO_PATH_KEY = "outputHoldLogoPath";
 const OUTPUT_HOLD_LOGO_FIT_KEY = "outputHoldLogoFit";
 const OUTPUT_HOLD_LOGO_BACKGROUND_KEY = "outputHoldLogoBackground";
+const LOWER_THIRD_CHROMA_KEY_COLOR_KEY = "lowerThirdChromaKeyColor";
+const BIBLE_UI_ENABLED_KEY = "bibleUiEnabled";
+const LOWER_THIRD_UI_ENABLED_KEY = "lowerThirdUiEnabled";
 let allowMainWindowClose = false;
 let quitCleanupStarted = false;
 const TIME_REMAINING_PORT_CHANNEL = "timeRemaining-port";
@@ -407,9 +410,20 @@ function getSetting(_, setting) {
   return readSettings();
 }
 
+async function setSetting(_event, setting, value) {
+  if (typeof setting !== "string" || !setting.trim() || setting === EMBEDDED_AUTOSAVE_STATE_KEY) {
+    throw new Error("Invalid setting key");
+  }
+  await writeSettings({ [setting]: value });
+  return value;
+}
+
 function handleCloseMediaWindow(event, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     mediaWindow.close();
+  }
+  if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
+    lowerThirdWindow.close();
   }
   // Closing the projection window ends any active YouTube live HLS session;
   // clear the flag so the next item (often a VOD) isn't given the iOS UA.
@@ -424,33 +438,53 @@ function isMediaWindowCapturable() {
   );
 }
 
-function handleMediaWindowCaptureAvailable() {
-  return isMediaWindowCapturable();
+function isLowerThirdWindowCapturable() {
+  return Boolean(
+    lowerThirdWindow &&
+      !lowerThirdWindow.isDestroyed() &&
+      !lowerThirdWindow.webContents.isDestroyed(),
+  );
+}
+
+let displayMediaCaptureTarget = "media";
+
+function handleMediaWindowCaptureAvailable(_event, target = "media") {
+  return target === "lower-third" ? isLowerThirdWindowCapturable() : isMediaWindowCapturable();
 }
 
 function handleMediaWindowDisplayMediaRequest(request, callback) {
-  if (!request.videoRequested || !isMediaWindowCapturable()) {
+  const targetWindow = displayMediaCaptureTarget === "lower-third" ? lowerThirdWindow : mediaWindow;
+  displayMediaCaptureTarget = "media";
+  if (!request.videoRequested || !targetWindow || targetWindow.isDestroyed() || targetWindow.webContents.isDestroyed()) {
     callback({});
     return;
   }
 
   // Video-only frame capture keeps the schedule preview in-app; audio stays
   // routed through the normal presentation controls.
-  callback({ video: mediaWindow.webContents.mainFrame });
+  callback({ video: targetWindow.webContents.mainFrame });
+}
+
+function handleSetDisplayMediaCaptureTarget(_event, target) {
+  displayMediaCaptureTarget = target === "lower-third" ? "lower-third" : "media";
+  return true;
 }
 
 async function handleCloseMediaWindowNow() {
   if (!mediaWindow || mediaWindow.isDestroyed()) {
+    await handleCloseLowerThirdWindowNow();
     youtubeLiveSessionActive = false;
     return false;
   }
 
   const windowToClose = mediaWindow;
-  const closed = new Promise((resolve) => {
+  const mediaClosed = new Promise((resolve) => {
     windowToClose.once("closed", () => resolve(true));
   });
   windowToClose.close();
+  const lowerThirdClosed = handleCloseLowerThirdWindowNow();
   youtubeLiveSessionActive = false;
+  const [closed] = await Promise.all([mediaClosed, lowerThirdClosed]);
   return closed;
 }
 
@@ -607,6 +641,9 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       const wasActiveMediaWindow = mediaWindow === createdMediaWindow;
       if (wasActiveMediaWindow) {
         mediaWindow = null;
+        if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
+          lowerThirdWindow.close();
+        }
         stopMediaPlaybackPowerHint();
         if (win && !win.isDestroyed()) {
           win.webContents.send("media-window-closed", closedId);
@@ -2185,6 +2222,12 @@ function getOutputHoldPreferencesFromSettings() {
       settings[OUTPUT_HOLD_LOGO_BACKGROUND_KEY],
       "#000000",
     ),
+    lowerThirdChromaKeyColor: normalizeOutputHoldHexColor(
+      settings[LOWER_THIRD_CHROMA_KEY_COLOR_KEY],
+      "#00ff00",
+    ),
+    bibleUiEnabled: settings[BIBLE_UI_ENABLED_KEY] !== false,
+    lowerThirdUiEnabled: settings[LOWER_THIRD_UI_ENABLED_KEY] !== false,
   };
 }
 
@@ -2399,10 +2442,17 @@ async function handleSaveOutputHoldPreferences(event, prefs) {
   const logoPath = typeof prefs?.logoPath === "string" ? prefs.logoPath.trim() : "";
   const logoFit = prefs?.logoFit === "cover" ? "cover" : "contain";
   const logoBackground = normalizeOutputHoldHexColor(prefs?.logoBackground);
+  const lowerThirdChromaKeyColor = normalizeOutputHoldHexColor(
+    prefs?.lowerThirdChromaKeyColor,
+    "#00ff00",
+  );
   await writeSettings({
     [OUTPUT_HOLD_LOGO_PATH_KEY]: logoPath,
     [OUTPUT_HOLD_LOGO_FIT_KEY]: logoFit,
     [OUTPUT_HOLD_LOGO_BACKGROUND_KEY]: logoBackground,
+    [LOWER_THIRD_CHROMA_KEY_COLOR_KEY]: lowerThirdChromaKeyColor,
+    [BIBLE_UI_ENABLED_KEY]: prefs?.bibleUiEnabled !== false,
+    [LOWER_THIRD_UI_ENABLED_KEY]: prefs?.lowerThirdUiEnabled !== false,
   });
   const saved = getOutputHoldPreferencesFromSettings();
   const prefsWindow = BrowserWindow.fromWebContents(event.sender);
@@ -4331,6 +4381,7 @@ function setIPC() {
   ipcMain.handle("resolve-youtube-stream", handleResolveYouTubeStream);
   ipcMain.on("set-mode", handleSetMode);
   ipcMain.handle("get-setting", getSetting);
+  ipcMain.handle("set-setting", setSetting);
   ipcMain.handle("get-all-displays", handleGetAllDisplays);
   ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
   ipcMain.handle("show-import-song-dialog", handleShowImportSongDialog);
@@ -4394,6 +4445,7 @@ function setIPC() {
     "media-window-capture-available",
     handleMediaWindowCaptureAvailable,
   );
+  ipcMain.handle("set-display-media-capture-target", handleSetDisplayMediaCaptureTarget);
   ipcMain.on("close-media-window", handleCloseMediaWindow);
   ipcMain.handle("close-media-window-now", handleCloseMediaWindowNow);
   ipcMain.on("media-playback-ended", (event, endedMediaFile) => {
