@@ -1,6 +1,7 @@
 package songimport
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -104,12 +105,45 @@ type rawHymnalStanza struct {
 	} `json:"reference"`
 }
 
+// nullableText accepts the two representations commonly found in exported
+// hymnal files. CCLI numbers are identifiers, but some exporters encode them
+// as JSON numbers instead of strings.
+type nullableText struct {
+	Value string
+	Valid bool
+}
+
+func (value *nullableText) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if bytes.Equal(trimmed, []byte("null")) {
+		*value = nullableText{}
+		return nil
+	}
+
+	var text string
+	if err := json.Unmarshal(trimmed, &text); err == nil {
+		value.Value = strings.TrimSpace(text)
+		value.Valid = true
+		return nil
+	}
+
+	var number json.Number
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
+	if err := decoder.Decode(&number); err != nil {
+		return fmt.Errorf("must be a string or number")
+	}
+	value.Value = number.String()
+	value.Valid = true
+	return nil
+}
+
 type rawHymnalSong struct {
 	Number      *int              `json:"number"`
 	Title       string            `json:"title"`
 	Author      *string           `json:"author"`
 	Copyright   *string           `json:"copyright"`
-	CcliNumber  *string           `json:"ccliNumber"`
+	CcliNumber  nullableText      `json:"ccliNumber"`
 	Meter       *string           `json:"meter"`
 	Stanzas     []rawHymnalStanza `json:"stanzas"`
 	StanzaOrder []string          `json:"stanzaOrder"`
@@ -197,8 +231,8 @@ func ParseHymnalJSON(trimmed string, sourceName string) (ParsedSong, error) {
 	}
 
 	var ccliPtr *string
-	if raw.CcliNumber != nil && *raw.CcliNumber != "" {
-		c := *raw.CcliNumber
+	if raw.CcliNumber.Valid && raw.CcliNumber.Value != "" {
+		c := raw.CcliNumber.Value
 		ccliPtr = &c
 	}
 	meter := ""

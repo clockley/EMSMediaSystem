@@ -2317,6 +2317,7 @@ function textPresentationSignature(message, bodyText, referenceText, attribution
       ? message.position
       : DEFAULT_TEXT_PRESENTATION.position;
   return JSON.stringify({
+    themeRevision: message.themeRevision || "",
     text: message.text || "",
     bodyText,
     referenceText,
@@ -2597,6 +2598,20 @@ function applyTextMessage(message) {
       shell.box.style.display = "";
       shell.box.style.flexDirection = "";
       shell.box.style.justifyContent = "";
+    }
+    const themedBackdrop = safeMessage.resolvedTheme?.backdrop;
+    if (look === SCRIPTURE_LOOK_FULLSCREEN && themedBackdrop?.enabled) {
+      shell.box.style.backgroundColor = themedBackdrop.background?.color || "#101010";
+      shell.box.style.opacity = String(themedBackdrop.opacity ?? 1);
+      shell.box.style.borderRadius = `${Number(themedBackdrop.cornerRadius) || 0}px`;
+      shell.box.style.padding = `${Number(themedBackdrop.paddingPx?.y) || 0}px ${Number(themedBackdrop.paddingPx?.x) || 0}px`;
+      shell.box.style.boxSizing = "border-box";
+    } else if (look === SCRIPTURE_LOOK_FULLSCREEN) {
+      shell.box.style.backgroundColor = "";
+      shell.box.style.opacity = "";
+      shell.box.style.borderRadius = "";
+      shell.box.style.padding = "";
+      shell.box.style.boxSizing = "";
     }
   }
   textContent.classList.toggle("scripture-render--fullscreen", look === SCRIPTURE_LOOK_FULLSCREEN);

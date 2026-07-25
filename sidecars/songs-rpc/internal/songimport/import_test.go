@@ -80,6 +80,25 @@ func TestParseFileDecodesUTF16AndWindows1252JSON(t *testing.T) {
 	}
 }
 
+func TestParseHymnalJSONAcceptsNumericCCLINumber(t *testing.T) {
+	source := `{
+		"title": "Numeric CCLI",
+		"ccliNumber": 1234567,
+		"stanzas": [{
+			"reference": {"type": "verse", "number": 1},
+			"lines": ["A lyric line"]
+		}]
+	}`
+
+	song, _, err := ParseContent(source, "numeric-ccli.json")
+	if err != nil {
+		t.Fatalf("ParseContent failed: %v", err)
+	}
+	if song.Metadata.CCLINumber == nil || *song.Metadata.CCLINumber != "1234567" {
+		t.Fatalf("CCLINumber = %#v, want %q", song.Metadata.CCLINumber, "1234567")
+	}
+}
+
 func TestParseSectionLabel(t *testing.T) {
 	tests := []struct {
 		input    string

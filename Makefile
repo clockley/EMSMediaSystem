@@ -28,6 +28,7 @@ EXCLUDES = -path "./node_modules/*" -o -path "./fonts/*" -o -path "./dist/*"
 CSS_SRC = src/main.css
 CSS_MIN_MAP = $(DERIVED_DIR)/main.min.css.map
 HTML_BUILD_SCRIPT = build-scripts/inline-pruned-css.cjs
+IMPORT_REWRITE_SCRIPT = build-scripts/rewrite-minified-imports.cjs
 
 # --- Platform Setup and File Finding ---
 
@@ -430,7 +431,7 @@ endif
 		--output "$@"
 
 # Pattern rule to minify .mjs files
-$(DERIVED_DIR)/%.min.mjs: %.mjs | $(DERIVED_DIR)
+$(DERIVED_DIR)/%.min.mjs: %.mjs $(IMPORT_REWRITE_SCRIPT) | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 else
@@ -443,6 +444,7 @@ endif
 		--compress \
 		--mangle \
 		--output "$@"
+	@$(NODE) $(IMPORT_REWRITE_SCRIPT) "$@"
 
 # Rule: Clean build artifacts
 clean:

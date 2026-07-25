@@ -116,8 +116,13 @@ export class SongsRpcClient {
       }
 
       const child = this.child;
+      let recentStderr = "";
       child.stdout.on("data", (data) => this.handleData(data));
-      child.stderr.on("data", (data) => console.error(`[Songs RPC] ${data}`));
+      child.stderr.on("data", (data) => {
+        const text = data.toString();
+        recentStderr = `${recentStderr}${text}`.slice(-4096);
+        console.error(`[Songs RPC] ${text}`);
+      });
 
       child.on("error", (err) => {
         console.error("Songs RPC Error:", err);
@@ -132,7 +137,14 @@ export class SongsRpcClient {
         console.log(`Songs RPC exited with code ${code}`);
         if (this.child === child) {
           this.child = null;
-          this.rejectAll(new Error("Songs sidecar exited"));
+          const detail = recentStderr.trim();
+          this.rejectAll(
+            new Error(
+              detail
+                ? `Songs service exited with code ${code}: ${detail}`
+                : `Songs service exited with code ${code}`,
+            ),
+          );
         }
       });
 

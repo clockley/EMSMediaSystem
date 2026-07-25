@@ -1000,11 +1000,6 @@ export function syncLowerThirdFeatureAvailability() {
     .querySelector(".bible-editor-fields")
     ?.classList.toggle("bible-editor-fields--audience-only", !enabled);
 
-  if (!enabled) {
-    const lowerThirdDisplaySelect = document.getElementById("lowerThirdDspSelct");
-    if (lowerThirdDisplaySelect) lowerThirdDisplaySelect.value = "";
-    if (getBibleLowerThirdOutputActive()) void closeBibleLowerThirdOutput();
-  }
 }
 
 export function normalizeBiblePreviewOutputSize(value) {

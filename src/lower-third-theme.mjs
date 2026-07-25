@@ -51,6 +51,28 @@ export function lowerThirdBarBackgroundIsVideo(path = "") {
 }
 
 export function lowerThirdThemeFieldsFromStyle(style = {}, derivedFontSize) {
+  const resolved = style.resolvedTheme && typeof style.resolvedTheme === "object"
+    ? style.resolvedTheme
+    : style.themeId && style.typography
+      ? style
+      : null;
+  if (resolved) {
+    const backdrop = resolved.backdrop || {};
+    const backdropBackground = backdrop.background || {};
+    return {
+      lowerThirdFontFamily: resolveLowerThirdFontFamily({
+        lowerThirdFontFamily: resolved.typography?.fontFamily,
+      }),
+      lowerThirdFontSize: normalizeLowerThirdFontSize(resolved.typography?.fontSize),
+      lowerThirdColor: resolved.typography?.color || "#ffffff",
+      lowerThirdBarBackgroundColor:
+        backdropBackground.color || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+      lowerThirdBarBackgroundPath:
+        backdropBackground.assetUrl || backdropBackground.path || "",
+      lowerThirdChromaKeyColor:
+        resolved.key?.chromaColor || resolved.canvas?.background?.color || "#00ff00",
+    };
+  }
   return {
     lowerThirdFontFamily: resolveLowerThirdFontFamily(style),
     lowerThirdFontSize: resolveLowerThirdFontSize(style, derivedFontSize),
