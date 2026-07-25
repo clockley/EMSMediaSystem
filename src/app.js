@@ -166,6 +166,7 @@ import {
   toggleLogoHold,
   updateOutputHoldButtonStates,
 } from "./app-output-hold.mjs";
+import { resolveThemeForTarget } from "./theme-resolver.mjs";
 import {
   DEFAULT_SONG_RENDER,
   arrangementSequenceEntries,
@@ -521,6 +522,10 @@ const songLowerThirdState = {
   liveKey: "",
 };
 let lowerThirdPreferenceChromaKeyColor = SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR;
+// Keep the committed theme available after the Theme Manager window closes.
+// Lower-third cues are rebuilt whenever the operator changes cue, so styling
+// only the message that happened to be live at apply time is not sufficient.
+let appliedPresentationTheme = null;
 let bibleUiEnabled = true;
 let lowerThirdUiEnabled = true;
 
@@ -899,13 +904,9 @@ async function loadOutputHoldPreferencesFromSettings() {
 }
 
 function applyLowerThirdOutputPreferences(prefs = {}) {
-  const lowerThirdWasEnabled = lowerThirdUiEnabled;
   bibleUiEnabled = prefs?.bibleUiEnabled !== false;
   lowerThirdUiEnabled = prefs?.lowerThirdUiEnabled !== false;
   syncLowerThirdFeatureAvailability();
-  if (lowerThirdWasEnabled && !lowerThirdUiEnabled && bibleLowerThirdOutputActive) {
-    void closeBibleLowerThirdOutput();
-  }
   const color = String(prefs?.lowerThirdChromaKeyColor || "").trim();
   lowerThirdPreferenceChromaKeyColor = /^#[0-9a-f]{6}$/i.test(color)
     ? color
@@ -7137,13 +7138,14 @@ function hasLowerThirdOutputSelected() {
 }
 
 function buildBibleLowerThirdOutputMessage(entry = bibleDesignerState) {
-  return {
+  const message = {
     ...buildBibleTextMessage(entry, { look: SCRIPTURE_LOOK_LOWER_THIRD }),
     outputRole: "lower-third",
     backgroundImage: "",
     backgroundVideo: "",
     backgroundPath: "",
   };
+  return themeLowerThirdMessageIfApplied(message, "scripture");
 }
 
 function sendBibleLowerThirdTextMessage(message, options = {}) {
@@ -7395,9 +7397,7 @@ function mediaSourceSupportsLowerThird(item) {
 }
 
 async function closeLowerThirdForUnsupportedMediaSource(item) {
-  if (!bibleLowerThirdOutputActive || mediaSourceSupportsLowerThird(item)) {
-    return false;
-  }
+  if (!bibleLowerThirdOutputActive || mediaSourceSupportsLowerThird(item)) return false;
   await closeBibleLowerThirdOutput();
   songLowerThirdState.liveKey = "";
   renderSongLowerThirdControls();
@@ -7406,12 +7406,10 @@ async function closeLowerThirdForUnsupportedMediaSource(item) {
 
 async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
   if (!isBibleLowerThirdFeatureEnabled()) {
-    await closeBibleLowerThirdOutput();
     return false;
   }
   const displayValue = selectedDisplayValueFromSelect("lowerThirdDspSelct");
   if (!displayValue) {
-    await closeBibleLowerThirdOutput();
     return false;
   }
   const message = buildBibleLowerThirdOutputMessage(entry);
@@ -8425,8 +8423,6 @@ async function syncShowNowBiblePresentation() {
   }
   if (hasLowerThirdOutputSelected()) {
     void ensureBibleLowerThirdOutput(transientEntry.bible);
-  } else if (bibleLowerThirdOutputActive) {
-    void closeBibleLowerThirdOutput();
   }
   return true;
 }
@@ -8470,7 +8466,7 @@ async function showBibleTextNow() {
     currentQueueIndex = -1;
     const lowerThirdStarted = wantsLowerThird
       ? await ensureBibleLowerThirdOutput(transientEntry.bible)
-      : await closeBibleLowerThirdOutput();
+      : false;
     if (wantsAudience && isActiveMediaWindow()) {
       const didSlipstream = await slipstreamBiblePresentation(transientEntry.bible);
       if (didSlipstream) {
@@ -8593,8 +8589,6 @@ async function syncLiveBiblePresentation() {
   }
   if (hasLowerThirdOutputSelected()) {
     await ensureBibleLowerThirdOutput(entry.bible);
-  } else if (bibleLowerThirdOutputActive) {
-    await closeBibleLowerThirdOutput();
   }
   return true;
 }
@@ -12308,7 +12302,10 @@ function buildSongLowerThirdMessage() {
     lowerThirdSegmentCount: songLowerThirdState.segments.length,
     position: { vertical: "center", horizontal: "center" },
   };
-  return enrichLowerThirdPresentationMessage(message, pathToMediaUrl);
+  return themeLowerThirdMessageIfApplied(
+    enrichLowerThirdPresentationMessage(message, pathToMediaUrl),
+    "song",
+  );
 }
 
 function renderSongLowerThirdControls() {
@@ -12642,15 +12639,32 @@ async function importSongFromDialog() {
     } else if (importedCount > 0) {
       showGnomeToast(`Imported ${importedCount} song(s), ${failedCount} failed`);
     } else {
-      showGnomeToast("Import failed");
+      showGnomeToast(
+        failedCount === 1 ? "Song could not be imported" : `${failedCount} songs could not be imported`,
+      );
     }
 
-    for (const failure of result?.failed || []) {
+    const failures = Array.isArray(result?.failed) ? result.failed : [];
+    for (const failure of failures) {
       console.error(`Song import failed for ${failure.path}:`, failure.error);
+    }
+    if (failures.length > 0) {
+      await invoke("show-song-import-results-dialog", {
+        importedCount,
+        failed: failures,
+      });
     }
   } catch (err) {
     console.error("Song import failed:", err);
-    showGnomeToast(`Import failed: ${err.message}`);
+    const message =
+      err instanceof Error && err.message ? err.message : "An unknown import error occurred.";
+    showGnomeToast("Song import could not start");
+    await invoke("show-song-import-results-dialog", {
+      importedCount: 0,
+      failed: [{ path: "Song import", error: message }],
+    }).catch((dialogError) => {
+      console.error("Could not show song import error details:", dialogError);
+    });
   }
 }
 
@@ -20489,7 +20503,6 @@ async function onQueueItemActivate(index) {
 
 async function stopQueuePresentationUserClosed() {
   stopLiveAudioPresentation();
-  void closeBibleLowerThirdOutput();
   activeMediaWindowContentType = null;
   bibleShowNowModeActive = false;
   clearSongShowNowPresentation();
@@ -21005,6 +21018,7 @@ async function playCurrentQueueItem(opts) {
 
   await closeLowerThirdForUnsupportedMediaSource(item);
 
+
   const itemIsNetworkPresentationVideo =
     !isQueueItemAudio(item) &&
     (isNetworkStreamSource(item.path) || Boolean(item.networkSource));
@@ -21021,7 +21035,7 @@ async function playCurrentQueueItem(opts) {
     const entry = await resolvedBibleEntryForItem(item);
     const lowerThirdStarted = hasLowerThirdOutputSelected()
       ? await ensureBibleLowerThirdOutput(entry)
-      : await closeBibleLowerThirdOutput();
+      : false;
     const audienceStarted = hasAudienceOutputSelected()
       ? await createMediaWindow({ textItem: item })
       : false;
@@ -21336,8 +21350,6 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       await sendBibleTextToOutput(entry);
       if (hasLowerThirdOutputSelected()) {
         await ensureBibleLowerThirdOutput(entry);
-      } else {
-        await closeBibleLowerThirdOutput();
       }
     } else if (isSongItem) {
       await sendSongTextToOutput(nextItem);
@@ -23679,6 +23691,126 @@ function handleWindowMax(event, isMaximized) {
     .classList.toggle("maximized", isMaximized);
 }
 
+function liveThemeFields(resolved) {
+  const typography = resolved.typography || {};
+  const background = resolved.canvas?.background || {};
+  const textFrame = resolved.textFrame || {};
+  return {
+    fontFamily: typography.fontFamily,
+    fontSize: typography.fontSize,
+    minFontSize: typography.minFontSize,
+    fontWeight: typography.fontWeight,
+    lineHeight: typography.lineHeight,
+    color: typography.color,
+    backgroundColor: background.color,
+    backgroundPath: background.assetUrl || background.path || "",
+    textBoxPosition: Number.isFinite(textFrame.x)
+      ? {
+          left: `${textFrame.x * 100}%`,
+          top: `${textFrame.y * 100}%`,
+          width: `${textFrame.width * 100}%`,
+          height: `${textFrame.height * 100}%`,
+        }
+      : undefined,
+    transition: {
+      effect: resolved.transition?.type || "none",
+      durationMs: resolved.transition?.durationMs || 0,
+    },
+    themeId: resolved.themeId,
+    themeRevision: resolved.themeRevision,
+    resolvedThemeVersion: resolved.resolvedThemeVersion,
+    resolvedTheme: resolved,
+  };
+}
+
+function themedAudienceMessage(message, resolved) {
+  if (!message) return null;
+  return {
+    ...message,
+    ...liveThemeFields(resolved),
+    referenceText: resolved.reference?.visible === false ? "" : message.referenceText,
+    attributionText: resolved.attribution?.visible === false ? "" : message.attributionText,
+    copyrightText: resolved.copyright?.visible === false ? "" : message.copyrightText,
+  };
+}
+
+function themedLowerThirdMessage(message, resolved) {
+  if (!message) return null;
+  const fields = liveThemeFields(resolved);
+  const backdrop = resolved.backdrop?.background || {};
+  // The Theme Manager exposes the lower-third canvas background as the chroma
+  // color. Prefer it so themes saved before key.chromaColor was synchronized
+  // also render with the color the operator selected.
+  const chroma = resolved.canvas?.background?.color || resolved.key?.chromaColor || "#00ff00";
+  return enrichLowerThirdPresentationMessage({
+    ...message,
+    ...fields,
+    lowerThirdFontFamily: resolved.typography?.fontFamily,
+    lowerThirdFontSize: resolved.typography?.fontSize,
+    lowerThirdColor: resolved.typography?.color,
+    lowerThirdBarBackgroundColor:
+      resolved.backdrop?.enabled === false ? "transparent" : backdrop.color || "#101010",
+    lowerThirdBarBackgroundPath:
+      resolved.backdrop?.enabled === false ? "" : backdrop.assetUrl || backdrop.path || "",
+    lowerThirdChromaKeyColor: chroma,
+    backgroundColor: chroma,
+    chromaKeyColor: chroma,
+  }, pathToMediaUrl);
+}
+
+function themeLowerThirdMessageIfApplied(message, contentKind) {
+  if (!appliedPresentationTheme || !message) return message;
+  const outputSize = selectedBiblePreviewOutputSize("lowerThirdDspSelct");
+  const resolved = resolveThemeForTarget({
+    theme: appliedPresentationTheme,
+    contentKind,
+    outputRole: "lowerThird",
+    outputSize,
+  });
+  return themedLowerThirdMessage(message, resolved);
+}
+
+async function applyThemeToLivePresentation(theme) {
+  appliedPresentationTheme = theme;
+  const size = await currentBibleScheduleOutputSize().catch(() => ({ width: 1920, height: 1080 }));
+  if (hasLiveAudienceTextPresentation("song") && lastAudienceSongTextMessage) {
+    const resolved = resolveThemeForTarget({ theme, contentKind: "song", outputRole: "audience", outputSize: size });
+    const message = themedAudienceMessage(lastAudienceSongTextMessage, resolved);
+    currentSongRenderState = mergeSongRenderState(currentSongRenderState, liveThemeFields(resolved));
+    sendAudienceTextMessage("song", message);
+  }
+  if (hasLiveAudienceTextPresentation("bible") && lastAudienceBibleTextMessage) {
+    const resolved = resolveThemeForTarget({ theme, contentKind: "scripture", outputRole: "audience", outputSize: size });
+    const message = themedAudienceMessage(lastAudienceBibleTextMessage, resolved);
+    Object.assign(bibleDesignerState, liveThemeFields(resolved));
+    sendAudienceTextMessage("bible", message);
+    applyBiblePreview(bibleDesignerState);
+  }
+  if (bibleLowerThirdOutputActive && activeLowerThirdContentType === "bible" && lastLowerThirdBibleTextMessage) {
+    const resolved = resolveThemeForTarget({ theme, contentKind: "scripture", outputRole: "lowerThird", outputSize: size });
+    const message = themedLowerThirdMessage(lastLowerThirdBibleTextMessage, resolved);
+    Object.assign(bibleDesignerState, {
+      lowerThirdFontFamily: resolved.typography?.fontFamily,
+      lowerThirdFontSize: resolved.typography?.fontSize,
+      lowerThirdColor: resolved.typography?.color,
+      lowerThirdChromaKeyColor: resolved.key?.chromaColor,
+      lowerThirdBarBackgroundColor: resolved.backdrop?.background?.color,
+    });
+    sendBibleLowerThirdTextMessage({
+      ...message,
+      transition: { effect: "none", durationMs: 0 },
+    });
+  }
+  if (bibleLowerThirdOutputActive && activeLowerThirdContentType === "song") {
+    sendBibleLowerThirdTextMessage({
+      ...buildSongLowerThirdMessage(),
+      transition: { effect: "none", durationMs: 0 },
+    });
+  }
+  renderSongLowerThirdControls();
+  showGnomeToast(`Applied “${theme.name}” to live outputs`);
+}
+
 function installIPCHandler() {
   timeRemaining?.onTick?.(handleTimeMessage);
   on("preferences-updated", (_event, prefs) => {
@@ -23686,6 +23818,12 @@ function installIPCHandler() {
     applyLowerThirdOutputPreferences(prefs);
     renderSongLowerThirdControls();
     scheduleAutosaveProjectState();
+  });
+  on("theme-applied", (_event, theme) => {
+    void applyThemeToLivePresentation(theme).catch(error => {
+      console.error("Failed to apply theme to live presentation:", error);
+      showGnomeToast("Theme saved, but the live output could not be updated");
+    });
   });
   on("songs-database-cleared", () => {
     void handleSongsDatabaseCleared().catch(console.error);
@@ -23872,7 +24010,7 @@ async function handleMediaWindowClosed(event, id) {
       const entry = await resolvedBibleEntryForItem(mediaQueue[idx]);
       const lowerThirdStarted = hasLowerThirdOutputSelected()
         ? await ensureBibleLowerThirdOutput(entry)
-        : await closeBibleLowerThirdOutput();
+        : false;
       const audienceStarted = hasAudienceOutputSelected()
         ? await createMediaWindow({ textItem: mediaQueue[idx] })
         : false;
@@ -24499,7 +24637,6 @@ async function playMedia(e) {
       userStopPresentationPending = true;
       send("close-media-window", 0);
     }
-    void closeBibleLowerThirdOutput();
     isActiveMediaWindowCache = false;
     if (playingMediaAudioOnly || liveAudio?.paused === false) {
       stopLiveAudioPresentation();
@@ -26443,6 +26580,11 @@ async function loadOpMode(mode) {
       document
         .getElementById("menuRelinkMissingFiles")
         ?.addEventListener("click", () => void relinkMissingFilesDialog());
+      document
+        .getElementById("menuThemeManager")
+        ?.addEventListener("click", () => {
+          void invoke("open-theme-manager-window").catch(console.error);
+        });
       document
         .getElementById("menuPreferences")
         ?.addEventListener("click", () => {

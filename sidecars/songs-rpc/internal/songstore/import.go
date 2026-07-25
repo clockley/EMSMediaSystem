@@ -126,7 +126,7 @@ func (s *SongStore) ImportFiles(options ImportFilesOptions) (ImportFilesResult, 
 		if err != nil {
 			failed = append(failed, ImportFailure{
 				Path:  path,
-				Error: err.Error(),
+				Error: "could not save song to the library: " + err.Error(),
 			})
 			continue
 		}

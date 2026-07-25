@@ -52,6 +52,9 @@ import {
 import { BibleRpcClient } from "./bible_rpc_client.min.mjs";
 import { SongsRpcClient } from "./songs_rpc_client.min.mjs";
 import { SlidesStore } from "./slides_store.min.mjs";
+import { ThemeLibrary } from "./theme-manager.min.mjs";
+import { EMS_SAFE_DEFAULT_THEME } from "./theme-resolver.min.mjs";
+import { exportThemePack, importThemePack } from "./theme-pack.min.mjs";
 import settings from "./settings.min.mjs";
 import {
   loadEmprojSnapshot,
@@ -84,7 +87,9 @@ let preflightDialogWindow = null;
 const PREFLIGHT_DIALOG_IPC_CHANNEL = "preflight-dialog-response";
 let preflightDialogResponseListener = null;
 let preferencesWindow = null;
+let themeManagerWindow = null;
 const PREFERENCES_DIALOG_CLOSE_CHANNEL = "preferences-dialog-close";
+const THEME_MANAGER_CLOSE_CHANNEL = "theme-manager-close";
 const OUTPUT_HOLD_LOGO_PATH_KEY = "outputHoldLogoPath";
 const OUTPUT_HOLD_LOGO_FIT_KEY = "outputHoldLogoFit";
 const OUTPUT_HOLD_LOGO_BACKGROUND_KEY = "outputHoldLogoBackground";
@@ -106,6 +111,12 @@ const songsRpcClient = new SongsRpcClient({
 const slidesStore = new SlidesStore({
   userDataPath: app.getPath("userData"),
 });
+const themeLibrary = new ThemeLibrary(path.join(app.getPath("userData"), "themes"));
+let themeLibraryReady = null;
+function readyThemeLibrary() {
+  themeLibraryReady ||= themeLibrary.init();
+  return themeLibraryReady;
+}
 
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
 
@@ -422,9 +433,6 @@ function handleCloseMediaWindow(event, id) {
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     mediaWindow.close();
   }
-  if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
-    lowerThirdWindow.close();
-  }
   // Closing the projection window ends any active YouTube live HLS session;
   // clear the flag so the next item (often a VOD) isn't given the iOS UA.
   youtubeLiveSessionActive = false;
@@ -472,7 +480,6 @@ function handleSetDisplayMediaCaptureTarget(_event, target) {
 
 async function handleCloseMediaWindowNow() {
   if (!mediaWindow || mediaWindow.isDestroyed()) {
-    await handleCloseLowerThirdWindowNow();
     youtubeLiveSessionActive = false;
     return false;
   }
@@ -482,10 +489,8 @@ async function handleCloseMediaWindowNow() {
     windowToClose.once("closed", () => resolve(true));
   });
   windowToClose.close();
-  const lowerThirdClosed = handleCloseLowerThirdWindowNow();
   youtubeLiveSessionActive = false;
-  const [closed] = await Promise.all([mediaClosed, lowerThirdClosed]);
-  return closed;
+  return mediaClosed;
 }
 
 async function handleCloseLowerThirdWindowNow() {
@@ -641,9 +646,6 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       const wasActiveMediaWindow = mediaWindow === createdMediaWindow;
       if (wasActiveMediaWindow) {
         mediaWindow = null;
-        if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
-          lowerThirdWindow.close();
-        }
         stopMediaPlaybackPowerHint();
         if (win && !win.isDestroyed()) {
           win.webContents.send("media-window-closed", closedId);
@@ -1688,6 +1690,52 @@ function createPreferencesWindow(parentWindow) {
   return preferencesWindow;
 }
 
+function createThemeManagerWindow(parentWindow) {
+  if (themeManagerWindow && !themeManagerWindow.isDestroyed()) {
+    themeManagerWindow.focus();
+    return themeManagerWindow;
+  }
+  themeManagerWindow = new BrowserWindow({
+    parent: parentWindow,
+    modal: true,
+    width: 1120,
+    height: 760,
+    minWidth: 860,
+    minHeight: 620,
+    resizable: true,
+    minimizable: false,
+    maximizable: true,
+    fullscreenable: false,
+    frame: false,
+    transparent: true,
+    acceptFirstMouse: true,
+    show: false,
+    skipTaskbar: true,
+    title: "Theme Manager",
+    backgroundColor: "#00000000",
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+      spellcheck: false,
+      devTools: isDevMode,
+      preload: path.join(import.meta.dirname, "theme_manager_preload.min.mjs"),
+    },
+  });
+  themeManagerWindow.once("closed", () => { themeManagerWindow = null; });
+  ipcMain.once(THEME_MANAGER_CLOSE_CHANNEL, () => {
+    if (themeManagerWindow && !themeManagerWindow.isDestroyed()) themeManagerWindow.close();
+  });
+  themeManagerWindow.loadFile("derived/src/theme_manager.prod.html");
+  themeManagerWindow.once("ready-to-show", () => {
+    if (!themeManagerWindow || themeManagerWindow.isDestroyed()) return;
+    themeManagerWindow.center();
+    themeManagerWindow.show();
+    themeManagerWindow.focus();
+  });
+  return themeManagerWindow;
+}
+
 function createQueueSwitchDialogWindow(parentWindow, message) {
   return new Promise((resolve) => {
     if (queueSwitchDialogWindow && !queueSwitchDialogWindow.isDestroyed()) {
@@ -2507,6 +2555,48 @@ async function handleShowImportSongDialog(event) {
   }
   await rememberMediaFolder(result.filePaths[0]);
   return { canceled: false, filePaths: result.filePaths };
+}
+
+async function handleShowSongImportResultsDialog(event, result = {}) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  const importedCount = Number.isSafeInteger(result?.importedCount)
+    ? Math.max(0, result.importedCount)
+    : 0;
+  const failures = Array.isArray(result?.failed)
+    ? result.failed
+        .slice(0, 100)
+        .map((failure) => ({
+          file:
+            typeof failure?.path === "string" && failure.path
+              ? path.basename(failure.path)
+              : "Unknown file",
+          error:
+            typeof failure?.error === "string" && failure.error.trim()
+              ? failure.error.trim()
+              : "No error details were provided.",
+        }))
+    : [];
+  if (failures.length === 0) return;
+
+  const heading =
+    importedCount > 0
+      ? `${importedCount} imported; ${failures.length} failed`
+      : `${failures.length} song${failures.length === 1 ? "" : "s"} could not be imported`;
+  const detail = failures
+    .map((failure, index) => `${index + 1}. ${failure.file}\n${failure.error}`)
+    .join("\n\n");
+
+  await dialog.showMessageBox(mainWindow, {
+    type: "error",
+    buttons: ["OK"],
+    defaultId: 0,
+    title: "Song Import Problems",
+    message: heading,
+    detail,
+    noLink: true,
+  });
 }
 
 async function handleReadFileAsText(_, filePath) {
@@ -4385,6 +4475,7 @@ function setIPC() {
   ipcMain.handle("get-all-displays", handleGetAllDisplays);
   ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
   ipcMain.handle("show-import-song-dialog", handleShowImportSongDialog);
+  ipcMain.handle("show-song-import-results-dialog", handleShowSongImportResultsDialog);
   ipcMain.handle("get-songs-database-path", () => songsRpcClient.databasePath());
   ipcMain.handle("read-file-as-text", handleReadFileAsText);
   ipcMain.handle("show-open-project-dialog", handleShowOpenProjectDialog);
@@ -4501,6 +4592,14 @@ function setIPC() {
   });
   ipcMain.on("update-lower-third-text", (_event, message) => {
     if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
+      const chromaKeyColor =
+        typeof message?.chromaKeyColor === "string" &&
+        /^#[0-9a-f]{6}$/i.test(message.chromaKeyColor)
+          ? message.chromaKeyColor
+          : null;
+      if (chromaKeyColor) {
+        lowerThirdWindow.setBackgroundColor(chromaKeyColor);
+      }
       lowerThirdWindow.webContents.send("update-text", message);
     }
   });
@@ -4550,6 +4649,56 @@ function setIPC() {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
     if (!mainWindow || mainWindow.isDestroyed()) return;
     createPreferencesWindow(mainWindow);
+  });
+  ipcMain.handle("open-theme-manager-window", (event) => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
+    if (mainWindow && !mainWindow.isDestroyed()) createThemeManagerWindow(mainWindow);
+  });
+  ipcMain.handle("themes:list", async () => {
+    await readyThemeLibrary();
+    const userThemes = await Promise.all((await themeLibrary.list()).map(async item => ({
+      ...item, source: "user", theme: await themeLibrary.get(item.id),
+    })));
+    return [{ id: EMS_SAFE_DEFAULT_THEME.id, name: EMS_SAFE_DEFAULT_THEME.name, description: "Built-in fallback theme", source: "built-in", revision: "built-in", theme: EMS_SAFE_DEFAULT_THEME }, ...userThemes];
+  });
+  ipcMain.handle("themes:save", async (_event, theme) => {
+    await readyThemeLibrary();
+    if (theme?.id === EMS_SAFE_DEFAULT_THEME.id) throw new Error("Built-in themes cannot be modified");
+    const saved = await themeLibrary.save(theme);
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send("theme-applied", saved.theme);
+    }
+    return { ...saved, source: "user" };
+  });
+  ipcMain.handle("themes:duplicate", async (_event, id) => {
+    await readyThemeLibrary();
+    if (id === EMS_SAFE_DEFAULT_THEME.id) {
+      return themeLibrary.save({ ...structuredClone(EMS_SAFE_DEFAULT_THEME), id: `theme_${randomUUID().replace(/-/g, "")}`, name: `${EMS_SAFE_DEFAULT_THEME.name} Copy`, baseThemeId: null });
+    }
+    return themeLibrary.duplicate(id);
+  });
+  ipcMain.handle("themes:delete", async (event, id) => {
+    await readyThemeLibrary();
+    if (id === EMS_SAFE_DEFAULT_THEME.id) throw new Error("Built-in themes cannot be deleted");
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showMessageBox(parent, { type: "warning", buttons: ["Cancel", "Delete"], defaultId: 0, cancelId: 0, title: "Delete Theme?", message: "Delete this theme?", detail: "This cannot be undone. Projects with embedded snapshots will keep their saved appearance." });
+    if (result.response !== 1) return { deleted: false };
+    await themeLibrary.delete(id); return { deleted: true };
+  });
+  ipcMain.handle("themes:import", async event => {
+    await readyThemeLibrary(); const parent = BrowserWindow.fromWebContents(event.sender);
+    const selected = await dialog.showOpenDialog(parent, { title: "Import Theme", properties: ["openFile"], filters: [{ name: "EMS Theme Pack", extensions: ["emtheme"] }] });
+    if (selected.canceled || !selected.filePaths[0]) return { canceled: true };
+    return { canceled: false, ...(await importThemePack(selected.filePaths[0], themeLibrary, { conflict: "copy" })) };
+  });
+  ipcMain.handle("themes:export", async (event, id) => {
+    await readyThemeLibrary(); const parent = BrowserWindow.fromWebContents(event.sender);
+    const theme = id === EMS_SAFE_DEFAULT_THEME.id ? EMS_SAFE_DEFAULT_THEME : await themeLibrary.get(id);
+    const selected = await dialog.showSaveDialog(parent, { title: "Export Theme", defaultPath: `${theme.name.replace(/[^A-Za-z0-9._ -]/g, "_")}.emtheme`, filters: [{ name: "EMS Theme Pack", extensions: ["emtheme"] }] });
+    if (selected.canceled || !selected.filePath) return { canceled: true };
+    const themeDir = id === EMS_SAFE_DEFAULT_THEME.id ? path.join(app.getPath("userData"), "themes", id) : themeLibrary.themeDir(id);
+    await exportThemePack({ theme, themeDir, destination: selected.filePath, app: { name: app.getName(), version: app.getVersion() } });
+    return { canceled: false, filePath: selected.filePath };
   });
   ipcMain.handle("get-output-hold-preferences", handleGetOutputHoldPreferences);
   ipcMain.handle("save-output-hold-preferences", handleSaveOutputHoldPreferences);

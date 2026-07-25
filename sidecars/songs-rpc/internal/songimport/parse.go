@@ -15,21 +15,25 @@ const maxImportBytes = 512 * 1024
 func ParseFile(path string) (ParsedSong, string, error) {
 	bytes, err := os.ReadFile(path)
 	if err != nil {
-		return ParsedSong{}, "", err
+		return ParsedSong{}, "", fmt.Errorf("could not read file: %w", err)
 	}
 	if len(bytes) > maxImportBytes {
-		return ParsedSong{}, "", fmt.Errorf("file is too large to import")
+		return ParsedSong{}, "", fmt.Errorf("file is too large to import (maximum size is %d KB)", maxImportBytes/1024)
 	}
 	decoded, err := decodeSongFile(bytes)
 	if err != nil {
-		return ParsedSong{}, "", err
+		return ParsedSong{}, "", fmt.Errorf("could not decode file text: %w", err)
 	}
 	name := filepath.Base(path)
 	trimmed := strings.TrimSpace(decoded)
 	if trimmed == "" {
 		return ParsedSong{}, "", fmt.Errorf("file is empty")
 	}
-	return ParseContent(trimmed, name)
+	song, originalContent, err := ParseContent(trimmed, name)
+	if err != nil {
+		return ParsedSong{}, originalContent, fmt.Errorf("could not parse song: %w", err)
+	}
+	return song, originalContent, nil
 }
 
 func ParseContent(source, sourceName string) (ParsedSong, string, error) {
