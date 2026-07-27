@@ -535,9 +535,13 @@ function isBibleLowerThirdFeatureEnabled() {
 
 function syncLowerThirdFeatureAvailability() {
   syncBuiltInLowerThirdFeatureAvailability();
+  const lowerThirdEnabled = isBibleLowerThirdFeatureEnabled();
   document.querySelectorAll("[data-lower-third-feature]").forEach((element) => {
-    element.hidden = !isBibleLowerThirdFeatureEnabled();
-    element.setAttribute("aria-hidden", isBibleLowerThirdFeatureEnabled() ? "false" : "true");
+    const unavailable =
+      !lowerThirdEnabled ||
+      (element.id === "songLowerThirdPanel" && !currentWorkspaceSong);
+    element.hidden = unavailable;
+    element.setAttribute("aria-hidden", unavailable ? "true" : "false");
   });
   const bibleButton = document.getElementById("openBibleWorkspaceBtn");
   if (bibleButton) bibleButton.hidden = !bibleUiEnabled;
@@ -12212,8 +12216,10 @@ function songLowerThirdCueKey(index = songLowerThirdState.index) {
 function syncSongLowerThirdForSection(section = currentSongActiveSection(), { rebuild = false } = {}) {
   const panel = document.getElementById("songLowerThirdPanel");
   if (!panel) return;
-  panel.hidden = !currentWorkspaceSong;
-  if (!currentWorkspaceSong || !section) {
+  const lowerThirdEnabled = isBibleLowerThirdFeatureEnabled();
+  panel.hidden = !currentWorkspaceSong || !lowerThirdEnabled;
+  panel.setAttribute("aria-hidden", panel.hidden ? "true" : "false");
+  if (!lowerThirdEnabled || !currentWorkspaceSong || !section) {
     songLowerThirdState.sectionId = "";
     songLowerThirdState.sourceText = "";
     songLowerThirdState.layoutKey = "";
@@ -12372,6 +12378,10 @@ function setSongLowerThirdCue(index) {
 }
 
 async function ensureSongLowerThirdOutput() {
+  if (!isBibleLowerThirdFeatureEnabled()) {
+    showGnomeToast("Lower-third controls are disabled in Preferences");
+    return false;
+  }
   const displayValue = selectedDisplayValueFromSelect("lowerThirdDspSelct");
   if (!displayValue) {
     showGnomeToast("Choose a lower-third output display");
@@ -12415,6 +12425,10 @@ async function ensureSongLowerThirdOutput() {
 }
 
 async function showCuedSongLowerThird() {
+  if (!isBibleLowerThirdFeatureEnabled()) {
+    showGnomeToast("Lower-third controls are disabled in Preferences");
+    return false;
+  }
   if (!songLowerThirdState.segments.length) return false;
   if (!bibleLowerThirdOutputActive) return ensureSongLowerThirdOutput();
   sendBibleLowerThirdTextMessage(buildSongLowerThirdMessage());
