@@ -907,6 +907,20 @@ async function loadOutputHoldPreferencesFromSettings() {
   }
 }
 
+// Restores whatever theme was last applied in Theme Manager so audience and
+// lower-third output stay themed correctly after an app restart, instead of
+// silently reverting to the unthemed default until the operator re-applies.
+async function loadActiveThemeFromSettings() {
+  try {
+    const result = await invoke("themes:getActiveTheme");
+    if (result?.theme) {
+      appliedPresentationTheme = result.theme;
+    }
+  } catch (err) {
+    console.error("Failed to load active theme:", err);
+  }
+}
+
 function applyLowerThirdOutputPreferences(prefs = {}) {
   bibleUiEnabled = prefs?.bibleUiEnabled !== false;
   lowerThirdUiEnabled = prefs?.lowerThirdUiEnabled !== false;
@@ -5762,10 +5776,14 @@ function sendAudienceTextMessage(type, message, options = {}) {
   const remember = options.remember !== false;
   const clearToggle = options.clearToggle !== false;
   const applyClearState = shouldApplyLiveTextClearState(type, options);
+  const audienceContentKind = type === "bible" ? "scripture" : type === "song" ? "song" : null;
+  const themedMessage = audienceContentKind
+    ? themeAudienceMessageIfApplied(message, audienceContentKind)
+    : message;
   if (remember) {
-    rememberAudienceTextMessage(type, message);
+    rememberAudienceTextMessage(type, themedMessage);
   }
-  send("update-text", audienceTextMessageForSend(type, message, options));
+  send("update-text", audienceTextMessageForSend(type, themedMessage, options));
   if (clearToggle && !applyClearState) {
     liveTextClearActive = false;
   }
@@ -23784,6 +23802,24 @@ function themeLowerThirdMessageIfApplied(message, contentKind) {
   return themedLowerThirdMessage(message, resolved);
 }
 
+// Lower-third builders always run their output through
+// themeLowerThirdMessageIfApplied, so a theme applied in Theme Manager keeps
+// styling every subsequent lower third. Audience (fullscreen) sends had no
+// equivalent, so once the live re-push in applyThemeToLivePresentation fired
+// once, the very next bible/song cue would silently revert to the unthemed
+// look. Routing every audience send through this keeps them in sync too.
+function themeAudienceMessageIfApplied(message, contentKind) {
+  if (!appliedPresentationTheme || !message) return message;
+  const outputSize = selectedBiblePreviewOutputSize("dspSelct");
+  const resolved = resolveThemeForTarget({
+    theme: appliedPresentationTheme,
+    contentKind,
+    outputRole: "audience",
+    outputSize,
+  });
+  return themedAudienceMessage(message, resolved);
+}
+
 async function applyThemeToLivePresentation(theme) {
   appliedPresentationTheme = theme;
   const size = await currentBibleScheduleOutputSize().catch(() => ({ width: 1920, height: 1080 }));
@@ -27208,6 +27244,7 @@ async function bootstrapRenderer() {
   attachElectronBridge();
   configureOutputHoldBridge();
   await loadOutputHoldPreferencesFromSettings();
+  await loadActiveThemeFromSettings();
   installIPCHandler();
   installEvents();
   return invoke("get-setting", "operating-mode").then(loadOpMode);
