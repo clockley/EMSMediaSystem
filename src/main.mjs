@@ -96,6 +96,7 @@ const OUTPUT_HOLD_LOGO_BACKGROUND_KEY = "outputHoldLogoBackground";
 const LOWER_THIRD_CHROMA_KEY_COLOR_KEY = "lowerThirdChromaKeyColor";
 const BIBLE_UI_ENABLED_KEY = "bibleUiEnabled";
 const LOWER_THIRD_UI_ENABLED_KEY = "lowerThirdUiEnabled";
+const ACTIVE_THEME_ID_KEY = "activeThemeId";
 let allowMainWindowClose = false;
 let quitCleanupStarted = false;
 const TIME_REMAINING_PORT_CHANNEL = "timeRemaining-port";
@@ -116,6 +117,27 @@ let themeLibraryReady = null;
 function readyThemeLibrary() {
   themeLibraryReady ||= themeLibrary.init();
   return themeLibraryReady;
+}
+
+function getActiveThemeId() {
+  const id = readSettings()[ACTIVE_THEME_ID_KEY];
+  return typeof id === "string" && id ? id : EMS_SAFE_DEFAULT_THEME.id;
+}
+
+async function setActiveThemeId(id) {
+  await writeSettings({ [ACTIVE_THEME_ID_KEY]: id });
+}
+
+async function resolveThemeRecordById(id) {
+  if (id === EMS_SAFE_DEFAULT_THEME.id) return EMS_SAFE_DEFAULT_THEME;
+  await readyThemeLibrary();
+  return themeLibrary.get(id);
+}
+
+async function broadcastThemeApplied(theme) {
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send("theme-applied", theme);
+  }
 }
 
 app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
@@ -4659,16 +4681,32 @@ function setIPC() {
     const userThemes = await Promise.all((await themeLibrary.list()).map(async item => ({
       ...item, source: "user", theme: await themeLibrary.get(item.id),
     })));
-    return [{ id: EMS_SAFE_DEFAULT_THEME.id, name: EMS_SAFE_DEFAULT_THEME.name, description: "Built-in fallback theme", source: "built-in", revision: "built-in", theme: EMS_SAFE_DEFAULT_THEME }, ...userThemes];
+    const themes = [{ id: EMS_SAFE_DEFAULT_THEME.id, name: EMS_SAFE_DEFAULT_THEME.name, description: "Built-in fallback theme", source: "built-in", revision: "built-in", theme: EMS_SAFE_DEFAULT_THEME }, ...userThemes];
+    return { themes, activeThemeId: getActiveThemeId() };
   });
   ipcMain.handle("themes:save", async (_event, theme) => {
     await readyThemeLibrary();
     if (theme?.id === EMS_SAFE_DEFAULT_THEME.id) throw new Error("Built-in themes cannot be modified");
     const saved = await themeLibrary.save(theme);
-    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-      win.webContents.send("theme-applied", saved.theme);
-    }
     return { ...saved, source: "user" };
+  });
+  // Saving a draft only persists edits. Applying is a separate, always-available
+  // action so the operator can re-select the built-in default (or any theme
+  // that has no unsaved changes) as the live theme, not just whatever was most
+  // recently edited.
+  ipcMain.handle("themes:apply", async (_event, id) => {
+    const theme = await resolveThemeRecordById(id);
+    await setActiveThemeId(theme.id);
+    await broadcastThemeApplied(theme);
+    return { theme, activeThemeId: theme.id };
+  });
+  ipcMain.handle("themes:getActiveTheme", async () => {
+    const activeThemeId = getActiveThemeId();
+    try {
+      return { theme: await resolveThemeRecordById(activeThemeId), activeThemeId };
+    } catch {
+      return { theme: EMS_SAFE_DEFAULT_THEME, activeThemeId: EMS_SAFE_DEFAULT_THEME.id };
+    }
   });
   ipcMain.handle("themes:duplicate", async (_event, id) => {
     await readyThemeLibrary();
@@ -4683,7 +4721,12 @@ function setIPC() {
     const parent = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showMessageBox(parent, { type: "warning", buttons: ["Cancel", "Delete"], defaultId: 0, cancelId: 0, title: "Delete Theme?", message: "Delete this theme?", detail: "This cannot be undone. Projects with embedded snapshots will keep their saved appearance." });
     if (result.response !== 1) return { deleted: false };
-    await themeLibrary.delete(id); return { deleted: true };
+    await themeLibrary.delete(id);
+    if (getActiveThemeId() === id) {
+      await setActiveThemeId(EMS_SAFE_DEFAULT_THEME.id);
+      await broadcastThemeApplied(EMS_SAFE_DEFAULT_THEME);
+    }
+    return { deleted: true, activeThemeId: getActiveThemeId() };
   });
   ipcMain.handle("themes:import", async event => {
     await readyThemeLibrary(); const parent = BrowserWindow.fromWebContents(event.sender);
