@@ -107,16 +107,30 @@ async function importSongFiles(paths, options = {}) {
     imported: [],
     failed: [],
     lastSong: null,
-    folders: [],
-    searchResults: [],
+    folders: null,
+    searchResults: null,
   };
 
   for (let offset = 0; offset < selectedPaths.length; offset += SONG_IMPORT_BATCH_SIZE) {
     const batch = selectedPaths.slice(offset, offset + SONG_IMPORT_BATCH_SIZE);
-    const result = await callSongs("songs.importFiles", [{
-      ...requestOptions,
-      paths: batch,
-    }]);
+    let result;
+    try {
+      result = await callSongs("songs.importFiles", [{
+        ...requestOptions,
+        paths: batch,
+      }]);
+    } catch (err) {
+      // A single batch failing (e.g. an RPC timeout on a slow disk) must not
+      // abort the whole import: earlier batches may already be committed, and
+      // later batches would otherwise be skipped without ever being attempted
+      // or reported, making it look like files vanished. Record the whole
+      // batch as failed and keep going so every selected file is accounted for.
+      const message = err instanceof Error && err.message ? err.message : "Import failed";
+      for (const failedPath of batch) {
+        combined.failed.push({ path: failedPath, error: message });
+      }
+      continue;
+    }
 
     if (Array.isArray(result?.imported)) combined.imported.push(...result.imported);
     if (Array.isArray(result?.failed)) combined.failed.push(...result.failed);

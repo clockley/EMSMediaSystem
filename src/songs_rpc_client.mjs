@@ -71,9 +71,9 @@ export class SongsRpcClient {
     return true;
   }
 
-  async call(method, params = []) {
+  async call(method, params = [], { timeoutMs } = {}) {
     await this.ensureStarted();
-    return this.request(method, params);
+    return this.request(method, params, timeoutMs);
   }
 
   async ensureStarted() {
@@ -177,7 +177,7 @@ export class SongsRpcClient {
     }
   }
 
-  request(method, params) {
+  request(method, params, timeoutMs = RPC_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
       const child = this.child;
       if (!child || child.killed || child.stdin.destroyed) {
@@ -189,7 +189,7 @@ export class SongsRpcClient {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Songs RPC timeout for ${method}`));
-      }, RPC_TIMEOUT_MS);
+      }, timeoutMs);
 
       this.pending.set(id, { resolve, reject, timeout });
 
