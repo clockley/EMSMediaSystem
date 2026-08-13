@@ -4476,6 +4476,22 @@ async function handleBibleRPC(_event, method, params = []) {
   }
   return bibleRpcClient.call(method, params);
 }
+// Song files are parsed and written one at a time by the sidecar (see
+// songs-rpc/main.go), so a batch of N files can legitimately take much longer
+// than a single-song RPC call, especially on slower disks/CPUs or when
+// antivirus software is scanning each file read. Scale the deadline with the
+// batch size instead of using the flat default, so slow machines get enough
+// time to finish instead of hitting spurious timeouts partway through.
+const IMPORT_TIMEOUT_BASE_MS = 30000;
+const IMPORT_TIMEOUT_PER_FILE_MS = 6000;
+const IMPORT_TIMEOUT_MAX_MS = 15 * 60 * 1000;
+
+function importFilesTimeoutMs(params) {
+  const fileCount = Array.isArray(params?.[0]?.paths) ? params[0].paths.length : 0;
+  const scaled = IMPORT_TIMEOUT_BASE_MS + fileCount * IMPORT_TIMEOUT_PER_FILE_MS;
+  return Math.min(scaled, IMPORT_TIMEOUT_MAX_MS);
+}
+
 async function handleSongsRPC(_event, method, params = []) {
   if (typeof method !== "string" || !method.startsWith("songs.")) {
     throw new Error("Invalid Songs RPC method");
@@ -4483,7 +4499,8 @@ async function handleSongsRPC(_event, method, params = []) {
   if (!Array.isArray(params)) {
     throw new Error("Invalid Songs RPC params");
   }
-  return songsRpcClient.call(method, params);
+  const timeoutMs = method === "songs.importFiles" ? importFilesTimeoutMs(params) : undefined;
+  return songsRpcClient.call(method, params, { timeoutMs });
 }
 
 function setIPC() {
