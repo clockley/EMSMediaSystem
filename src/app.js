@@ -1939,6 +1939,67 @@ function isQueueItemBible(item) {
   return Boolean(item && (item.type === "bible" || item.path?.startsWith?.(bibleUriPrefix)));
 }
 
+// Book abbreviations (e.g. "1 Thess.") are version-independent, so a single
+// lookup fetched once is reused for every version/queue item. This keeps
+// schedule labels short without truncating them mid-word.
+let bibleBookAbbreviationCache = null;
+let bibleBookAbbreviationCacheLoading = false;
+
+function requestBibleBookAbbreviationCache() {
+  if (bibleBookAbbreviationCache || bibleBookAbbreviationCacheLoading || !bibleAPI) return;
+  bibleBookAbbreviationCacheLoading = true;
+  bibleAPI
+    .getBookMetadata("KJV")
+    .then((metadata) => {
+      const map = new Map();
+      if (!metadata?.error && Array.isArray(metadata?.books)) {
+        for (const book of metadata.books) {
+          const name = String(book?.name || "").trim();
+          const abbreviation = String(book?.abbreviation || "").trim();
+          if (name && abbreviation) map.set(name.toLowerCase(), abbreviation);
+        }
+      }
+      bibleBookAbbreviationCache = map;
+      renderQueue();
+    })
+    .catch(() => {
+      bibleBookAbbreviationCache = new Map();
+    })
+    .finally(() => {
+      bibleBookAbbreviationCacheLoading = false;
+    });
+}
+
+function bibleBookAbbreviationSync(bookName) {
+  const name = String(bookName || "").trim().toLowerCase();
+  if (!name) return "";
+  if (!bibleBookAbbreviationCache) {
+    requestBibleBookAbbreviationCache();
+    return "";
+  }
+  return bibleBookAbbreviationCache.get(name) || "";
+}
+
+// Schedule-list-only display label: swaps the full book name for its
+// abbreviation (falling back to the full reference when no abbreviation is
+// known) so long references like "1 Thessalonians 1:12" fit the sidebar.
+function bibleQueueItemDisplayName(item) {
+  const fallback = item?.name || "";
+  const bible = item?.bible;
+  const book = String(bible?.book || "").trim();
+  const chapter = Number.isFinite(bible?.chapter) ? bible.chapter : null;
+  if (!bible || !book || !chapter) return fallback;
+  const abbreviation = bibleBookAbbreviationSync(book);
+  if (!abbreviation || abbreviation.toLowerCase() === book.toLowerCase()) return fallback;
+  const selectedVerses = bibleSelectedVersesForEntry(bible);
+  const shortReference =
+    selectedVerses.length > 0
+      ? referenceForBibleVerseNumbers(abbreviation, chapter, selectedVerses)
+      : `${abbreviation} ${chapter}`;
+  const version = String(bible.version || "").trim();
+  return version ? `${shortReference} ${version}` : shortReference;
+}
+
 function isQueueItemSong(item) {
   return Boolean(
     item &&
@@ -4849,7 +4910,7 @@ function renderQueue() {
         return `<div class="${classes}" role="listitem" data-queue-index="${index}" draggable="true" ${isSelected ? 'data-selected="true"' : ""} ${isLive ? 'data-live="true"' : ""} ${isCued ? 'data-cued="true"' : ""}>
       <span class="item-icon">${queueTypeIconMarkup(item)}</span>
       <span class="item-text">
-        <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+        <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(isQueueItemBible(item) ? bibleQueueItemDisplayName(item) : item.name)}</span>
         ${secondaryMarkup}
       </span>
       <span class="queue-item-trailing-actions">
