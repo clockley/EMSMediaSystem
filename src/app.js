@@ -199,6 +199,7 @@ import {
   deckPagesToSongSections,
   deckQueuePath,
   deckToTransientSong,
+  DEFAULT_CANVAS,
   findPage,
   getPagePrimaryText,
   isDeckPath,
@@ -12393,6 +12394,24 @@ function buildSongLowerThirdMessage() {
   );
 }
 
+function installSongLowerThirdPreviewScaleObserver() {
+  const shell = document.getElementById("songLowerThirdPreviewShell");
+  if (!shell || shell.dataset.previewScaleObserverBound === "1") return;
+  shell.dataset.previewScaleObserverBound = "1";
+  // The Bible lower-third preview keeps itself scaled via a ResizeObserver
+  // (installBiblePreviewScaleObserver); the Song lower-third preview reuses
+  // the same bible-preview-surface CSS but was missing an equivalent
+  // observer, so its font scale only got recomputed on cue/song changes -
+  // never when the window/panel itself was resized.
+  if (typeof ResizeObserver === "function") {
+    const observer = new ResizeObserver(() => renderSongLowerThirdControls());
+    observer.observe(shell);
+    shell._songLowerThirdPreviewScaleObserver = observer;
+  } else {
+    window.addEventListener("resize", () => renderSongLowerThirdControls());
+  }
+}
+
 function renderSongLowerThirdControls() {
   const list = document.getElementById("songLowerThirdCueList");
   if (!list) return;
@@ -13521,6 +13540,12 @@ function applyDeckPageThumbnailObjectBox(el, object) {
   el.style.opacity = String(clampSlideOpacity(object?.opacity, 1));
 }
 
+function deckFontSizeToThumbCqw(fontSizePx, deckWidth) {
+  const width = Number(deckWidth) > 0 ? Number(deckWidth) : 1920;
+  const cqw = (Math.max(1, Number(fontSizePx) || 1) / width) * 100;
+  return `${Math.max(0.4, cqw).toFixed(3)}cqw`;
+}
+
 function createDeckPageThumbnailObject(object, deck = currentDeck) {
   const kind = object?.kind === "image" || object?.kind === "shape" ? object.kind : "text";
   const el = document.createElement("div");
@@ -13569,8 +13594,14 @@ function createDeckPageThumbnailObject(object, deck = currentDeck) {
   const style = object.style && typeof object.style === "object" ? object.style : {};
   el.style.color = style.color || deck?.theme?.textColor || "#ffffff";
   el.style.fontFamily = songFontFamilyCSS(style.fontFamily || deck?.theme?.fontFamily);
-  const thumbnailFontScale = 1 / 10;
-  el.style.fontSize = `${Math.max(3, (Number(style.fontSize) || Number(deck?.theme?.fontSize) || 72) * thumbnailFontScale)}px`;
+  // Thumbnails render before they're attached to the DOM, so pixel widths
+  // can't be measured here. Express font sizes as container-query width
+  // units instead (relative to the deck's own coordinate system), so text
+  // scales correctly with the actual rendered thumbnail width - whatever
+  // that ends up being - the same way the PPTX renderer's SVGs always
+  // scale cleanly to their container regardless of size.
+  const deckWidth = Number(deck?.canvas?.width) || 1920;
+  el.style.fontSize = deckFontSizeToThumbCqw(Number(style.fontSize) || Number(deck?.theme?.fontSize) || 72, deckWidth);
   el.style.lineHeight = String(style.lineHeight || 1.15);
   el.style.textAlign = style.align || "center";
   el.style.alignItems =
@@ -13596,7 +13627,7 @@ function createDeckPageThumbnailObject(object, deck = currentDeck) {
         if (segmentStyle.color) span.style.color = segmentStyle.color;
         if (segmentStyle.fontFamily) span.style.fontFamily = songFontFamilyCSS(segmentStyle.fontFamily);
         if (segmentStyle.fontSize) {
-          span.style.fontSize = `${Math.max(3, segmentStyle.fontSize * thumbnailFontScale)}px`;
+          span.style.fontSize = deckFontSizeToThumbCqw(segmentStyle.fontSize, deckWidth);
         }
         if (segmentStyle.backgroundColor) span.style.backgroundColor = segmentStyle.backgroundColor;
         if (segmentStyle.fontWeight) span.style.fontWeight = segmentStyle.fontWeight;
@@ -14823,11 +14854,30 @@ function createSlideObjectElement(object, scale) {
   return createSlideTextObjectElement(object, scale);
 }
 
+function layoutSlideCanvasFrame() {
+  const frame = document.getElementById("slidesCanvasFrame");
+  const wrap = document.querySelector(".slides-workspace__canvas-wrap");
+  if (!frame || !wrap) return;
+  const deckWidth = Number(currentDeck?.canvas?.width) || DEFAULT_CANVAS.width;
+  const deckHeight = Number(currentDeck?.canvas?.height) || DEFAULT_CANVAS.height;
+  const { width: cw, height: ch } = getElementContentSize(wrap);
+  if (!cw || !ch) return;
+  const scale = Math.min(cw / deckWidth, ch / deckHeight);
+  if (!Number.isFinite(scale) || scale <= 0) return;
+  frame.style.width = `${deckWidth * scale}px`;
+  frame.style.height = `${deckHeight * scale}px`;
+}
+
 function renderSlideCanvas() {
   const canvas = document.getElementById("slidesCanvas");
   const bgEl = document.getElementById("slidesCanvasBackground");
   const textLayer = document.getElementById("slidesTextLayer");
   if (!canvas || !textLayer || !bgEl) return;
+
+  // Fit the slide frame to both dimensions of the available space (same
+  // "contain" technique the PPTX preview uses) so tall/short windows never
+  // clip the slide vertically the way a pure CSS aspect-ratio box would.
+  layoutSlideCanvasFrame();
 
   const page = currentPage();
   const hasPage = Boolean(page);
@@ -17016,6 +17066,7 @@ function installBibleMediaControls() {
   installSlidesWorkspaceEventGuards();
   syncLowerThirdFeatureAvailability();
   installBiblePreviewScaleObserver();
+  installSongLowerThirdPreviewScaleObserver();
 
   versionSelect.innerHTML = '<option value="KJV">KJV</option>';
   versionSelect.value = bibleDesignerState.version;
@@ -17209,14 +17260,16 @@ function installBibleMediaControls() {
 
   attachSlideCanvasInteractions();
   bindSlideUndoControlTransactions();
-  // Re-flow font sizes when the canvas resizes
+  // Re-flow font sizes when the canvas resizes. Observing the wrap (rather
+  // than the frame itself) avoids feeding back into layoutSlideCanvasFrame's
+  // own writes to the frame's size, and reacts to the actual available space.
   if (typeof ResizeObserver !== "undefined") {
-    const canvasFrame = document.getElementById("slidesCanvasFrame");
-    if (canvasFrame) {
+    const canvasWrap = document.querySelector(".slides-workspace__canvas-wrap");
+    if (canvasWrap) {
       try {
         new ResizeObserver(() => {
           if (isSlidesWorkspaceVisible()) renderSlideCanvas();
-        }).observe(canvasFrame);
+        }).observe(canvasWrap);
       } catch {}
     }
     const songPreviewContainer = document.querySelector(".songs-preview-container");
