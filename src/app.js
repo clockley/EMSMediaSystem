@@ -1097,6 +1097,9 @@ let ignoreNextQueueItemClick = false;
 let ignoreQueueItemClicksUntil = 0;
 let queueItemClickTimer = null;
 let queueDragFromIndex = -1;
+let queueInsertionSelectionExplicit = false;
+const recentlyAddedQueueItems = new Set();
+let recentlyAddedQueueItemsTimer = null;
 let songDragSongId = "";
 const SONG_DRAG_MIME = "application/x-ems-song-id";
 let bibleVerseDragPayload = null;
@@ -4887,6 +4890,7 @@ function renderQueue() {
         const classes = [
           "queue-item",
           isSelected ? " is-selected" : "",
+          recentlyAddedQueueItems.has(item) ? " is-newly-added" : "",
           isLive ? " is-live" : "",
           isCued ? " is-cued" : "",
           item.pendingMediaUpdate?.status === "ready" ? " queue-item--pending-update" : "",
@@ -4984,7 +4988,12 @@ function selectedQueueIndexForDisplay() {
 }
 
 function selectedQueueIndexForInsertion() {
-  return selectedQueueIndexForDisplay();
+  if (!queueInsertionSelectionExplicit) return -1;
+  const selectedIndexes = mediaQueue
+    .map((item, index) => (selectedQueueItems.has(item) ? index : -1))
+    .filter((index) => index >= 0);
+  if (selectedIndexes.length > 0) return Math.max(...selectedIndexes);
+  return queueIndexInRange(selectedQueueAnchorIndex) ? selectedQueueAnchorIndex : -1;
 }
 
 function queueInsertionIndexAfterSelection() {
@@ -4992,8 +5001,14 @@ function queueInsertionIndexAfterSelection() {
   return selectedIndex >= 0 ? Math.min(selectedIndex + 1, mediaQueue.length) : mediaQueue.length;
 }
 
-function setSelectedQueueAnchor(index) {
+function setSelectedQueueAnchor(index, options = {}) {
+  const previousIndex = selectedQueueAnchorIndex;
   selectedQueueAnchorIndex = queueIndexInRange(index) ? index : -1;
+  if (options.explicit === true) {
+    queueInsertionSelectionExplicit = selectedQueueAnchorIndex >= 0;
+  } else if (options.explicit === false || selectedQueueAnchorIndex !== previousIndex) {
+    queueInsertionSelectionExplicit = false;
+  }
   queueSelectionRangeAnchorIndex = selectedQueueAnchorIndex;
   selectedQueueItems.clear();
   if (selectedQueueAnchorIndex >= 0) {
@@ -5003,6 +5018,7 @@ function setSelectedQueueAnchor(index) {
 
 function extendQueueSelectionTo(index) {
   if (!queueIndexInRange(index)) return;
+  queueInsertionSelectionExplicit = true;
   const anchor = queueIndexInRange(queueSelectionRangeAnchorIndex)
     ? queueSelectionRangeAnchorIndex
     : queueIndexInRange(selectedQueueAnchorIndex)
@@ -5014,6 +5030,36 @@ function extendQueueSelectionTo(index) {
   }
   queueSelectionRangeAnchorIndex = anchor;
   selectedQueueAnchorIndex = index;
+}
+
+function revealNewQueueEntries(entries) {
+  const addedEntries = Array.isArray(entries) ? entries.filter(Boolean) : [];
+  if (!addedEntries.length) return;
+  selectedQueueItems.clear();
+  addedEntries.forEach((item) => {
+    selectedQueueItems.add(item);
+    recentlyAddedQueueItems.add(item);
+  });
+  selectedQueueAnchorIndex = mediaQueue.indexOf(addedEntries[addedEntries.length - 1]);
+  queueSelectionRangeAnchorIndex = mediaQueue.indexOf(addedEntries[0]);
+  queueInsertionSelectionExplicit = true;
+
+  if (recentlyAddedQueueItemsTimer !== null) {
+    window.clearTimeout(recentlyAddedQueueItemsTimer);
+  }
+  requestAnimationFrame(() => {
+    const firstIndex = mediaQueue.indexOf(addedEntries[0]);
+    document
+      .querySelector(`.queue-item[data-queue-index="${firstIndex}"]`)
+      ?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  });
+  recentlyAddedQueueItemsTimer = window.setTimeout(() => {
+    addedEntries.forEach((item) => recentlyAddedQueueItems.delete(item));
+    document.querySelectorAll(".queue-item.is-newly-added").forEach((row) => {
+      row.classList.remove("is-newly-added");
+    });
+    recentlyAddedQueueItemsTimer = null;
+  }, 1800);
 }
 
 function updateQueueSelectionVisual() {
@@ -5061,6 +5107,7 @@ function insertQueueEntriesAfterSelection(entries) {
   );
   mediaQueue.splice(insertIndex, 0, ...nextEntries);
   shiftQueueIndexesForInsertion(insertIndex, nextEntries.length);
+  revealNewQueueEntries(nextEntries);
   return insertIndex;
 }
 
@@ -5070,6 +5117,7 @@ function insertQueueEntriesAt(entries, insertIndex) {
   const index = Math.max(0, Math.min(insertIndex, mediaQueue.length));
   mediaQueue.splice(index, 0, ...nextEntries);
   shiftQueueIndexesForInsertion(index, nextEntries.length);
+  revealNewQueueEntries(nextEntries);
   return index;
 }
 
@@ -5340,15 +5388,31 @@ function reorderSelectedMediaQueue(fromIndex, toIndex) {
   saveMediaFile();
 }
 
-function enqueuePathsFromFilePicker(paths) {
+function enqueuePathsFromFilePicker(paths, options = {}) {
   if (currentMode !== MEDIAPLAYER || !paths.length) return;
   invalidateQueueUndoToastAfterMutation();
   const biblePresentationLive =
     isActiveMediaWindow() && activeMediaWindowContentType === "bible";
   const newEntries = paths.map(createQueueEntry);
-  const firstNewIndex = insertQueueEntriesAfterSelection(newEntries);
+  const requestedInsertIndex = Number.isInteger(options.insertIndex)
+    ? Math.max(0, Math.min(options.insertIndex, mediaQueue.length))
+    : null;
+  const insertionAnchorIndex =
+    requestedInsertIndex === null ? selectedQueueIndexForInsertion() : requestedInsertIndex - 1;
+  const insertionAnchorName =
+    insertionAnchorIndex >= 0 ? mediaQueue[insertionAnchorIndex]?.name : "";
+  const firstNewIndex =
+    requestedInsertIndex === null
+      ? insertQueueEntriesAfterSelection(newEntries)
+      : insertQueueEntriesAt(newEntries, requestedInsertIndex);
   if (firstNewIndex < 0) return;
   renderQueue();
+  const addedLabel = `${newEntries.length} media item${newEntries.length === 1 ? "" : "s"}`;
+  showGnomeToast(
+    insertionAnchorName
+      ? `Added ${addedLabel} after ${insertionAnchorName}`
+      : `Added ${addedLabel} to the end of the schedule`,
+  );
   void (async () => {
     await stampBaselineForQueueItems(newEntries);
     if (
@@ -18940,10 +19004,10 @@ function firstDroppedProjectPath(dataTransfer) {
   return null;
 }
 
-function applyDroppedMediaPaths(paths) {
+function applyDroppedMediaPaths(paths, options = {}) {
   if (!paths || paths.length === 0) return;
   if (currentMode === MEDIAPLAYER) {
-    enqueuePathsFromFilePicker(paths);
+    enqueuePathsFromFilePicker(paths, options);
   }
   saveMediaFile();
   invoke("remember-media-folder", paths).catch((err) => {
@@ -19469,7 +19533,7 @@ function installMediaQueueListDelegation() {
     if (!row || !list.contains(row)) return;
     const index = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (!queueIndexInRange(index) || !isQueueItemBible(mediaQueue[index])) return;
-    setSelectedQueueAnchor(index);
+    setSelectedQueueAnchor(index, { explicit: true });
     updateQueueSelectionVisual();
     showScheduleBibleContextMenu(event, index);
   });
@@ -19519,7 +19583,7 @@ function installMediaQueueListDelegation() {
     if (e.shiftKey) {
       extendQueueSelectionTo(idx);
     } else {
-      setSelectedQueueAnchor(idx);
+      setSelectedQueueAnchor(idx, { explicit: true });
     }
     updateQueueSelectionVisual();
     if (e.shiftKey) {
@@ -19560,7 +19624,7 @@ function installMediaQueueListDelegation() {
     if (!row || !list.contains(row)) return;
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
-    setSelectedQueueAnchor(idx);
+    setSelectedQueueAnchor(idx, { explicit: true });
     updateQueueSelectionVisual();
     void releaseOutputHoldsAndGoLiveQueueIndex(idx).catch((err) => console.error(err));
   });
@@ -19576,7 +19640,7 @@ function installMediaQueueListDelegation() {
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
     if (!selectedQueueItems.has(mediaQueue[idx])) {
-      setSelectedQueueAnchor(idx);
+      setSelectedQueueAnchor(idx, { explicit: true });
     }
     updateQueueSelectionVisual();
     queueDragFromIndex = idx;
@@ -19624,6 +19688,10 @@ function installMediaQueueListDelegation() {
     ) {
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
+      list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
+        el.classList.remove("queue-item-drag-over");
+      });
+      updateQueueDropIndicator(list, queueDropInsertIndexFromEvent(list, e));
       return;
     }
     const row = e.target.closest(".queue-item[data-queue-index]");
@@ -19637,7 +19705,10 @@ function installMediaQueueListDelegation() {
   });
 
   list.addEventListener("dragleave", (e) => {
-    if ((songDragSongId || bibleVerseDragPayload) && e.target === list) {
+    if (
+      queueDragFromIndex < 0 &&
+      (!e.relatedTarget || !list.contains(e.relatedTarget))
+    ) {
       hideQueueDropIndicator();
     }
     const row = e.target.closest(".queue-item[data-queue-index]");
@@ -19730,6 +19801,8 @@ function installMediaQueueListDelegation() {
     if (hasOSFiles) {
       e.preventDefault();
       e.stopPropagation();
+      const insertIndex = queueDropInsertIndexFromEvent(list, e);
+      hideQueueDropIndicator();
       list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
         el.classList.remove("queue-item-drag-over");
       });
@@ -19744,7 +19817,7 @@ function installMediaQueueListDelegation() {
         return;
       }
       const paths = await extractAndFilterDroppedMediaPaths(e.dataTransfer);
-      applyDroppedMediaPaths(paths);
+      applyDroppedMediaPaths(paths, { insertIndex });
       return;
     }
     // Neither internal queue drag nor OS file drop.
