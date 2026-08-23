@@ -1016,6 +1016,8 @@ let pptxCurrentSlide = 0;
 let pptxFilePath = null;
 let pptxLayoutRefreshRaf = 0;
 let pptxPreviewRequestToken = 0;
+let pptxSlideNavigationTarget = null;
+let pptxSlideNavigationPromise = null;
 const PPTX_SIDEBAR_STORAGE_KEY = "ems.pptxSidebarWidth";
 const SONG_SIDEBAR_STORAGE_KEY = "ems.songSidebarWidth";
 const DECK_PAGES_WIDTH_STORAGE_KEY = "ems.deckPagesWidth";
@@ -2648,12 +2650,46 @@ function pptxStartSlideForItem(item) {
 }
 
 async function jumpToPptxSlide(index) {
-  await showPptxSlide(index);
-  if (pptxFilePath && rememberPptxSlide(pptxFilePath, pptxCurrentSlide)) {
-    scheduleAutosaveProjectState();
+  const slideIndex = clampPptxSlideIndex(index);
+
+  // A browser double-click dispatches two click events. Avoid rendering the
+  // same slide twice: overlapping renderer calls dispose and recreate the
+  // visible stage, which can expose a blank frame in both preview and output.
+  if (pptxSlideNavigationPromise) {
+    if (pptxSlideNavigationTarget === slideIndex) {
+      await pptxSlideNavigationPromise;
+      return;
+    }
+    await pptxSlideNavigationPromise;
+    return jumpToPptxSlide(slideIndex);
   }
-  if (isActiveMediaWindow() && activeMediaWindowContentType === "pptx") {
-    sendPptxSlideToMediaWindow(pptxCurrentSlide);
+  if (
+    slideIndex === pptxCurrentSlide &&
+    pptxPreviewSlideHandle &&
+    document.querySelector("#pptxMainSlidePane .pptx-preview-stage")
+  ) {
+    updatePptxNavigatorSelection();
+    return;
+  }
+
+  pptxSlideNavigationTarget = slideIndex;
+  const navigation = (async () => {
+    await showPptxSlide(slideIndex);
+    if (pptxFilePath && rememberPptxSlide(pptxFilePath, pptxCurrentSlide)) {
+      scheduleAutosaveProjectState();
+    }
+    if (isActiveMediaWindow() && activeMediaWindowContentType === "pptx") {
+      sendPptxSlideToMediaWindow(pptxCurrentSlide);
+    }
+  })();
+  pptxSlideNavigationPromise = navigation;
+  try {
+    await navigation;
+  } finally {
+    if (pptxSlideNavigationPromise === navigation) {
+      pptxSlideNavigationPromise = null;
+      pptxSlideNavigationTarget = null;
+    }
   }
 }
 
