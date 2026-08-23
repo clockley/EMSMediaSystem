@@ -1712,8 +1712,23 @@ function createPreferencesWindow(parentWindow) {
   return preferencesWindow;
 }
 
-function createThemeManagerWindow(parentWindow) {
+function normalizeThemeManagerContext(context = {}) {
+  return {
+    contentKind: ["song", "scripture", "text"].includes(context?.contentKind)
+      ? context.contentKind
+      : "song",
+    outputRole: ["audience", "lowerThird"].includes(context?.outputRole)
+      ? context.outputRole
+      : "audience",
+  };
+}
+
+function createThemeManagerWindow(parentWindow, requestedContext = {}) {
+  const context = normalizeThemeManagerContext(requestedContext);
   if (themeManagerWindow && !themeManagerWindow.isDestroyed()) {
+    if (!themeManagerWindow.webContents.isDestroyed()) {
+      themeManagerWindow.webContents.send("theme-manager-open-context", context);
+    }
     themeManagerWindow.focus();
     return themeManagerWindow;
   }
@@ -1748,7 +1763,12 @@ function createThemeManagerWindow(parentWindow) {
   ipcMain.once(THEME_MANAGER_CLOSE_CHANNEL, () => {
     if (themeManagerWindow && !themeManagerWindow.isDestroyed()) themeManagerWindow.close();
   });
-  themeManagerWindow.loadFile("derived/src/theme_manager.prod.html");
+  themeManagerWindow.loadFile("derived/src/theme_manager.prod.html", {
+    query: {
+      contentKind: context.contentKind,
+      outputRole: context.outputRole,
+    },
+  });
   themeManagerWindow.once("ready-to-show", () => {
     if (!themeManagerWindow || themeManagerWindow.isDestroyed()) return;
     themeManagerWindow.center();
@@ -4689,9 +4709,11 @@ function setIPC() {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     createPreferencesWindow(mainWindow);
   });
-  ipcMain.handle("open-theme-manager-window", (event) => {
+  ipcMain.handle("open-theme-manager-window", (event, context) => {
     const mainWindow = BrowserWindow.fromWebContents(event.sender);
-    if (mainWindow && !mainWindow.isDestroyed()) createThemeManagerWindow(mainWindow);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      createThemeManagerWindow(mainWindow, context);
+    }
   });
   ipcMain.handle("themes:list", async () => {
     await readyThemeLibrary();
