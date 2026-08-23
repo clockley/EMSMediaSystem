@@ -6003,20 +6003,61 @@ function markSongAudiencePreviewSelection(cueText) {
   if (!preview) return;
   const lines = [...preview.querySelectorAll(".song-preview-block:not(.song-preview-block--spacer)")];
   lines.forEach((line) => line.classList.remove("operator-lower-third-selection"));
+  preview.querySelectorAll("mark.operator-lower-third-selection").forEach((mark) => {
+    mark.replaceWith(...mark.childNodes);
+  });
+  lines.forEach((line) => line.normalize());
   const cue = normalizedCueMatchText(cueText).toLocaleLowerCase();
   if (!cue || !lines.length) return;
+
   let combined = "";
-  const spans = lines.map((line) => {
-    const text = normalizedCueMatchText(line.textContent).toLocaleLowerCase();
-    const start = combined.length;
-    combined += `${combined ? " " : ""}${text}`;
-    return { line, start: start + (start ? 1 : 0), end: combined.length };
+  const characterLocations = [];
+  const appendSpace = () => {
+    if (!combined || combined.endsWith(" ")) return;
+    combined += " ";
+    characterLocations.push(null);
+  };
+  lines.forEach((line, lineIndex) => {
+    if (lineIndex > 0) appendSpace();
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const text = node.textContent || "";
+      for (let offset = 0; offset < text.length; offset += 1) {
+        const character = text[offset];
+        if (/\s/.test(character)) {
+          appendSpace();
+        } else {
+          combined += character.toLocaleLowerCase();
+          characterLocations.push({ node, start: offset, end: offset + 1 });
+        }
+      }
+      node = walker.nextNode();
+    }
   });
   const matchStart = combined.indexOf(cue);
   if (matchStart < 0) return;
   const matchEnd = matchStart + cue.length;
-  spans.forEach(({ line, start, end }) => {
-    line.classList.toggle("operator-lower-third-selection", start < matchEnd && end > matchStart);
+
+  const rangesByNode = new Map();
+  characterLocations.slice(matchStart, matchEnd).forEach((location) => {
+    if (!location) return;
+    const range = rangesByNode.get(location.node) || {
+      start: location.start,
+      end: location.end,
+    };
+    range.start = Math.min(range.start, location.start);
+    range.end = Math.max(range.end, location.end);
+    rangesByNode.set(location.node, range);
+  });
+  [...rangesByNode.entries()].reverse().forEach(([node, offsets]) => {
+    if (!node.isConnected || offsets.end <= offsets.start) return;
+    const range = document.createRange();
+    range.setStart(node, offsets.start);
+    range.setEnd(node, offsets.end);
+    const mark = document.createElement("mark");
+    mark.className = "operator-lower-third-selection";
+    range.surroundContents(mark);
   });
 }
 
