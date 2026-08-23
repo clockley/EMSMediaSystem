@@ -201,6 +201,10 @@ function getHelpWindowBounds() {
   return settings.getSync("windowHelpBounds");
 }
 
+function getPreferencesWindowBounds() {
+  return settings.getSync("windowPreferencesBounds");
+}
+
 let mediaWindow = null;
 let lowerThirdWindow = null;
 let mediaWindowCreatePromise = null;
@@ -248,6 +252,13 @@ function saveWindowBounds(bounds) {
 function saveHelpWindowBounds(bounds) {
   settings.set("windowHelpBounds", bounds).catch((error) => {
     console.error("Error saving window bounds:", error);
+  });
+}
+
+function savePreferencesWindowBounds() {
+  if (!preferencesWindow || preferencesWindow.isDestroyed()) return;
+  settings.set("windowPreferencesBounds", preferencesWindow.getBounds()).catch((error) => {
+    console.error("Error saving preferences window bounds:", error);
   });
 }
 
@@ -1647,13 +1658,27 @@ function createPreferencesWindow(parentWindow) {
     return preferencesWindow;
   }
 
+  const savedBounds = getPreferencesWindowBounds();
+  const defaultWidth = 720;
+  const defaultHeight = 680;
+  const parentBounds = parentWindow.getBounds();
+  const initialBounds = savedBounds &&
+    Number.isFinite(savedBounds.x) && Number.isFinite(savedBounds.y) &&
+    Number.isFinite(savedBounds.width) && Number.isFinite(savedBounds.height)
+    ? savedBounds
+    : {
+        x: Math.round(parentBounds.x + (parentBounds.width - defaultWidth) / 2),
+        y: Math.round(parentBounds.y + (parentBounds.height - defaultHeight) / 2),
+        width: defaultWidth,
+        height: defaultHeight,
+      };
+
   preferencesWindow = new BrowserWindow({
     parent: parentWindow,
     modal: true,
-    width: 560,
-    height: 560,
-    minWidth: 480,
-    minHeight: 480,
+    ...initialBounds,
+    minWidth: 600,
+    minHeight: 520,
     resizable: true,
     minimizable: false,
     maximizable: false,
@@ -1681,6 +1706,9 @@ function createPreferencesWindow(parentWindow) {
     preferencesWindow = null;
   });
 
+  preferencesWindow.on("move", savePreferencesWindowBounds);
+  preferencesWindow.on("resize", savePreferencesWindowBounds);
+
   ipcMain.once(PREFERENCES_DIALOG_CLOSE_CHANNEL, () => {
     if (preferencesWindow && !preferencesWindow.isDestroyed()) {
       preferencesWindow.close();
@@ -1691,12 +1719,6 @@ function createPreferencesWindow(parentWindow) {
 
   preferencesWindow.once("ready-to-show", () => {
     if (!preferencesWindow || preferencesWindow.isDestroyed()) return;
-    const parentBounds = parentWindow.getBounds();
-    const w = 560;
-    const h = 560;
-    const x = parentBounds.x + (parentBounds.width - w) / 2;
-    const y = parentBounds.y + (parentBounds.height - h) / 2;
-    preferencesWindow.setBounds({ x, y, width: w, height: h });
     preferencesWindow.show();
     preferencesWindow.focus();
     if (!preferencesWindow.webContents.isDestroyed()) {
