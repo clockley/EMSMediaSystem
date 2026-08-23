@@ -138,10 +138,9 @@ function closeDialog() {
   ipcRenderer.send(PREFERENCES_DIALOG_CLOSE_CHANNEL);
 }
 
-async function applyPreferences() {
+async function savePreferences() {
   readFormIntoDraft();
   await ipcRenderer.invoke("save-output-hold-preferences", { ...draft });
-  closeDialog();
 }
 
 async function browseLogo() {
@@ -149,11 +148,13 @@ async function browseLogo() {
   if (result?.canceled || !result?.filePath) return;
   draft.logoPath = result.filePath;
   syncLogoPreview();
+  await savePreferences();
 }
 
-function clearLogo() {
+async function clearLogo() {
   draft.logoPath = "";
   syncLogoPreview();
+  await savePreferences();
 }
 
 function setClearSongsStatus(message, variant = "") {
@@ -190,22 +191,33 @@ function wirePreferencesDialog() {
   document.getElementById("preferencesBrowseLogoBtn")?.addEventListener("click", () => {
     void browseLogo().catch(console.error);
   });
-  document.getElementById("preferencesClearLogoBtn")?.addEventListener("click", clearLogo);
+  document.getElementById("preferencesClearLogoBtn")?.addEventListener("click", () => {
+    void clearLogo().catch(console.error);
+  });
   document.getElementById("preferencesClearSongsBtn")?.addEventListener("click", () => {
     void clearSongsDatabase().catch(console.error);
   });
-  document.getElementById("preferencesApplyBtn")?.addEventListener("click", () => {
-    void applyPreferences().catch(console.error);
-  });
-  document.getElementById("preferencesCancelBtn")?.addEventListener("click", closeDialog);
   document.getElementById("preferencesCloseButton")?.addEventListener("click", closeDialog);
   document.getElementById("preferencesLogoFit")?.addEventListener("change", () => {
     readFormIntoDraft();
     syncLogoPreview();
+    void savePreferences().catch(console.error);
   });
   document.getElementById("preferencesLogoBackground")?.addEventListener("input", () => {
     readFormIntoDraft();
     syncLogoPreview();
+  });
+  document.getElementById("preferencesLogoBackground")?.addEventListener("change", () => {
+    void savePreferences().catch(console.error);
+  });
+  document.getElementById("preferencesLowerThirdChromaKey")?.addEventListener("change", () => {
+    void savePreferences().catch(console.error);
+  });
+  document.getElementById("preferencesBibleUiEnabled")?.addEventListener("change", () => {
+    void savePreferences().catch(console.error);
+  });
+  document.getElementById("preferencesLowerThirdUiEnabled")?.addEventListener("change", () => {
+    void savePreferences().catch(console.error);
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
