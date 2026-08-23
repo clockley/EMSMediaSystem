@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; media-src 'self' file:;">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Theme Manager</title>
+  <link rel="stylesheet" href="main.css">
+  <style>
+    html,body{background:transparent;overflow:hidden}.window-container{display:flex;flex-direction:column;-webkit-app-region:no-drag}
+    .tm-shell{margin-top:48px;display:grid;grid-template-columns:280px minmax(0,1fr);min-height:0;flex:1;background:var(--window-bg-color);border-radius:0 0 12px 12px;overflow:hidden}
+    .tm-sidebar{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border-color);background:color-mix(in srgb,var(--window-fg-color) 3%,var(--window-bg-color))}
+    .tm-sidebar__tools{padding:14px;display:flex;flex-direction:column;gap:8px}.tm-search{min-height:38px;padding:0 12px 0 34px;border:1px solid var(--border-color);border-radius:8px;background:var(--input-bg-color);color:var(--window-fg-color);width:100%;box-sizing:border-box}
+    .tm-search-wrap{position:relative}.tm-search-wrap svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);opacity:.55;pointer-events:none}
+    .tm-button{min-height:36px;padding:7px 12px;border:1px solid var(--border-color);border-radius:8px;background:var(--card-bg-color);color:var(--window-fg-color);font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px}.tm-button:hover{background:color-mix(in srgb,var(--window-fg-color) 9%,var(--card-bg-color))}.tm-button:focus-visible,.tm-search:focus-visible,.tm-control:focus-visible{outline:2px solid var(--accent-bg-color);outline-offset:2px}.tm-button--suggested{background:var(--accent-bg-color);border-color:var(--accent-bg-color);color:#fff}.tm-button--destructive{color:var(--destructive-bg-color,#c01c28)}.tm-button:disabled{opacity:.45;cursor:default}
+    .tm-button--flat{background:transparent;border-color:transparent}.tm-button--flat:hover{background:color-mix(in srgb,var(--window-fg-color) 9%,transparent)}
+    .tm-icon-button{min-width:36px;padding:7px;flex:0 0 auto}
+    .tm-new-theme{width:100%}
+    .tm-list{list-style:none;padding:0 8px 12px;margin:0;overflow:auto;flex:1}.tm-section{padding:12px 10px 6px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;opacity:.6}.tm-row{width:100%;display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:10px;align-items:center;text-align:left;padding:9px;border:0;border-radius:9px;background:transparent;color:inherit}.tm-row:hover{background:color-mix(in srgb,var(--window-fg-color) 7%,transparent)}.tm-row[aria-selected="true"]{background:color-mix(in srgb,var(--accent-bg-color) 18%,transparent)}.tm-swatch{position:relative;width:38px;height:38px;border-radius:7px;border:1px solid var(--border-color);flex:0 0 auto}.tm-row__text{min-width:0}.tm-row__name{display:block;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tm-row__meta{display:block;font-size:12px;opacity:.62;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .tm-row__check{flex:0 0 auto;width:18px;height:18px;color:var(--accent-bg-color);visibility:hidden}.tm-row[data-active="true"] .tm-row__check{visibility:visible}
+    .tm-main{min-width:0;min-height:0;display:flex;flex-direction:column}.tm-toolbar{flex:0 0 auto;min-height:58px;padding:10px 16px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border-color)}.tm-toolbar__titles{display:flex;align-items:center;gap:8px;margin-right:auto;min-width:0}.tm-toolbar__title{font-size:18px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tm-dirty{font-size:12px;color:var(--warning-color,#e5a50a);white-space:nowrap}
+    .tm-badge{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:3px 9px;border-radius:99px;background:color-mix(in srgb,var(--accent-bg-color) 22%,transparent);color:var(--accent-bg-color);white-space:nowrap}
+    .tm-menu-wrap{position:relative}
+    .tm-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:40;min-width:200px;display:flex;flex-direction:column;gap:2px;padding:6px;border:1px solid var(--popover-border-color,var(--border-color));border-radius:12px;background:var(--popover-bg-color,var(--card-bg-color));color:var(--window-fg-color);box-shadow:0 12px 28px rgba(0,0,0,.38)}
+    .tm-menu[hidden]{display:none}.tm-menu button{width:100%;min-height:34px;box-sizing:border-box;border:0;border-radius:8px;background:transparent;color:inherit;text-align:left;padding:7px 10px;font:inherit;font-size:13px}
+    .tm-menu button:hover,.tm-menu button:focus-visible{background:color-mix(in srgb,var(--accent-bg-color) 30%,transparent);outline:none}
+    .tm-menu button:disabled{opacity:.45}.tm-menu__separator{height:1px;margin:4px 6px;background:var(--popover-separator-color,var(--border-color))}.tm-menu__item--destructive{color:var(--destructive-bg-color,#c01c28)}
+    .tm-content{display:grid;grid-template-columns:minmax(320px,1.15fr) minmax(300px,.85fr);gap:18px;padding:18px;flex:1;min-height:0;overflow:hidden}.tm-preview-column{min-width:0;min-height:0;overflow-y:auto}.tm-segmented{display:inline-flex;padding:3px;border-radius:9px;background:color-mix(in srgb,var(--window-fg-color) 8%,transparent);margin-bottom:12px}.tm-segmented button{border:0;background:transparent;color:inherit;padding:7px 14px;border-radius:7px}.tm-segmented button[aria-pressed="true"]{background:var(--card-bg-color);box-shadow:0 1px 3px rgba(0,0,0,.16);font-weight:650}
+    .tm-preview{position:relative;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:#000;box-shadow:0 3px 16px rgba(0,0,0,.22);display:flex;align-items:center;justify-content:center}.tm-preview__frame{position:absolute;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden}.tm-preview__backdrop{padding:14px 26px}.tm-preview__reference{display:block;font-size:.4em;opacity:.78;margin-top:.4em}.tm-preview-help{font-size:12px;opacity:.62;line-height:1.45;margin:10px 2px}.tm-status{min-height:20px;font-size:13px;margin-top:8px}.tm-status.is-error{color:var(--destructive-bg-color,#c01c28)}
+    .tm-editor{min-width:0;min-height:0;overflow-y:auto;padding-right:6px}.tm-group{margin:0 0 14px}.tm-group h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;opacity:.65;margin:0 0 7px 10px}.tm-box{border:1px solid var(--border-color);border-radius:11px;background:var(--card-bg-color);overflow:hidden}.tm-field{display:grid;grid-template-columns:minmax(120px,1fr) minmax(120px,160px);gap:12px;align-items:center;padding:11px 14px;border-top:1px solid var(--border-color)}.tm-field:first-child{border-top:0}.tm-field label{font-size:13px;font-weight:600}.tm-control{width:100%;min-height:34px;box-sizing:border-box;border:1px solid var(--border-color);border-radius:7px;background:var(--input-bg-color);color:var(--window-fg-color);padding:5px 8px}.tm-control[type=color]{padding:3px}.tm-empty{display:flex;align-items:center;justify-content:center;height:100%;opacity:.6}
+    .tm-builtin-note{display:flex;align-items:center;gap:8px;margin:0 0 14px;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--accent-bg-color) 12%,transparent);font-size:12.5px;line-height:1.4}
+    @media(max-width:920px){.tm-shell{grid-template-columns:235px minmax(0,1fr)}.tm-content{grid-template-columns:1fr}.tm-preview{max-width:620px}}
+    @media(prefers-reduced-motion:no-preference){.tm-preview,.tm-row{transition:background-color 120ms ease,box-shadow 120ms ease}}
+  </style>
+</head>
+<body><div class="window-container">
+  <header class="headerbar"><div class="headerbar-start"></div><div id="WindowTitle">Theme Manager</div><div class="headerbar-end"><div class="window-controls"><button type="button" class="window-control close" id="tmClose" tabindex="-1" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M5 5l6 6m0-6l-6 6" stroke="currentColor" stroke-width="1.5"/></svg></button></div></div></header>
+  <main class="tm-shell">
+    <aside class="tm-sidebar" aria-label="Theme library">
+      <div class="tm-sidebar__tools">
+        <div class="tm-search-wrap">
+          <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M7 1a6 6 0 104.472 10.03l3.25 3.25a.75.75 0 101.06-1.06l-3.25-3.25A6 6 0 007 1zM2.5 7a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0z" fill="currentColor"/></svg>
+          <input id="tmSearch" class="tm-search" type="search" placeholder="Search themes" aria-label="Search themes">
+        </div>
+        <button id="tmDuplicate" class="tm-button tm-new-theme" type="button" title="Create a new theme based on the selected one"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>New Theme</button>
+      </div>
+      <ul id="tmList" class="tm-list" aria-label="Themes"></ul>
+    </aside>
+    <section class="tm-main">
+      <div class="tm-toolbar">
+        <div class="tm-toolbar__titles">
+          <span id="tmTitle" class="tm-toolbar__title">Theme</span>
+          <span id="tmActiveBadge" class="tm-badge" hidden>Active</span>
+          <span id="tmDirty" class="tm-dirty" hidden>Unsaved changes</span>
+        </div>
+        <button id="tmRevert" class="tm-button" type="button" disabled>Revert</button>
+        <button id="tmApply" class="tm-button tm-button--suggested" type="button" disabled>Apply</button>
+        <div class="tm-menu-wrap">
+          <button id="tmMenuButton" class="tm-button tm-button--flat tm-icon-button" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="More theme options">
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="3" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="13" r="1.4" fill="currentColor"/></svg>
+          </button>
+          <div id="tmMenu" class="tm-menu" role="menu" hidden>
+            <button id="tmImport" type="button" role="menuitem">Import Theme…</button>
+            <button id="tmExport" type="button" role="menuitem">Export Theme…</button>
+            <div class="tm-menu__separator"></div>
+            <button id="tmDelete" type="button" role="menuitem" class="tm-menu__item--destructive">Delete Theme</button>
+          </div>
+        </div>
+      </div>
+      <div id="tmContent" class="tm-content">
+        <section class="tm-preview-column" aria-labelledby="tmPreviewHeading">
+          <h1 id="tmPreviewHeading" class="visually-hidden">Live preview</h1>
+          <div class="tm-segmented" role="group" aria-label="Preview output"><button id="tmAudienceTab" type="button" aria-pressed="true">Audience</button><button id="tmLowerThirdTab" type="button" aria-pressed="false">Lower Third</button></div>
+          <div id="tmPreview" class="tm-preview" role="img" aria-label="Theme preview"><div id="tmPreviewFrame" class="tm-preview__frame"><div id="tmPreviewBackdrop" class="tm-preview__backdrop"><span id="tmPreviewText">Amazing grace<br>How sweet the sound</span><span id="tmPreviewReference" class="tm-preview__reference">Sample Song · Verse 1</span></div></div></div>
+          <p class="tm-preview-help">Apply makes this theme active for the audience screen and lower thirds — current and future cues both update. It never takes new content live or changes what's currently on air.</p>
+          <div id="tmStatus" class="tm-status" role="status" aria-live="polite"></div>
+        </section>
+        <form id="tmEditor" class="tm-editor">
+          <div id="tmBuiltinNote" class="tm-builtin-note" hidden><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" style="flex:0 0 auto"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 3.5a.9.9 0 110 1.8.9.9 0 010-1.8zM7.1 7.4h1.8v5.1H7.1z" fill="currentColor"/></svg><span>This is the built-in default and can't be edited. Use <strong>New Theme</strong> to create an editable copy.</span></div>
+          <section class="tm-group"><h2>Theme</h2><div class="tm-box"><div class="tm-field"><label for="tmName">Name</label><input id="tmName" class="tm-control" required maxlength="160"></div><div class="tm-field"><label for="tmKind">Content sample</label><select id="tmKind" class="tm-control"><option value="song">Song</option><option value="scripture">Scripture</option><option value="text">Text</option></select></div></div></section>
+          <section class="tm-group"><h2>Typography</h2><div class="tm-box"><div class="tm-field"><label for="tmFont">Font family</label><input id="tmFont" class="tm-control"></div><div class="tm-field"><label for="tmFontSize">Font size</label><input id="tmFontSize" class="tm-control" type="number" min="8" max="400"></div><div class="tm-field"><label for="tmTextColor">Text color</label><input id="tmTextColor" class="tm-control" type="color"></div><div class="tm-field"><label for="tmAlign">Alignment</label><select id="tmAlign" class="tm-control"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></div></div></section>
+          <section class="tm-group"><h2>Background and Layout</h2><div class="tm-box"><div class="tm-field"><label for="tmBackground">Background color</label><input id="tmBackground" class="tm-control" type="color"></div><div class="tm-field"><label for="tmSafeMargin">Safe margin</label><input id="tmSafeMargin" class="tm-control" type="number" min="0" max="25" step="1" aria-describedby="tmSafeUnit"><span id="tmSafeUnit" hidden>percent</span></div><div class="tm-field"><label for="tmBackdrop">Backing plate</label><input id="tmBackdrop" type="checkbox"></div><div class="tm-field"><label for="tmBackdropColor">Plate color</label><input id="tmBackdropColor" class="tm-control" type="color"></div></div></section>
+          <section class="tm-group"><h2>Transition</h2><div class="tm-box"><div class="tm-field"><label for="tmTransition">Effect</label><select id="tmTransition" class="tm-control"><option value="none">None</option><option value="fade">Fade</option><option value="slide-left">Slide left</option><option value="slide-right">Slide right</option><option value="zoom">Zoom</option></select></div><div class="tm-field"><label for="tmDuration">Duration (ms)</label><input id="tmDuration" class="tm-control" type="number" min="0" max="5000" step="50"></div></div></section>
+        </form>
+      </div>
+    </section>
+  </main>
+</div><script type="module" src="theme_manager.min.mjs"></script></body></html>

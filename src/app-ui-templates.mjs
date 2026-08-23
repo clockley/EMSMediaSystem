@@ -1001,7 +1001,8 @@ export function generateMediaFormHTML() {
               <div class="bible-editor-actions">
                 <button type="button" id="bibleApplyCurrentBtn" class="pill-button suggested-action">Apply to Selected Text</button>
                 <button type="button" id="bibleApplyStyleScheduleBtn" class="pill-button secondary">Apply to Scheduled Text</button>
-                <button type="button" id="bibleUseStyleDefaultsBtn" class="pill-button secondary">Save as Default Style</button>
+                <button type="button" id="bibleEditThemeBtn" class="pill-button secondary" title="Edit the shared appearance for songs and text">Theme…</button>
+                <button type="button" id="bibleSaveLayoutDefaultsBtn" class="pill-button secondary" title="Save autofit and splitting behavior for new Bible text">Save Text Layout Defaults</button>
                 <button type="button" id="bibleClearBackgroundBtn" class="pill-button secondary">Clear Background</button>
               </div>
             </div>

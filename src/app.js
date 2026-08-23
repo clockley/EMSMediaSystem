@@ -8559,17 +8559,20 @@ async function applyBibleStyleToScheduledText() {
   );
 }
 
-async function useBibleStyleAsDefaults() {
+async function saveBibleTextLayoutDefaults() {
   await syncBibleStateFromControls();
   const style = bibleCurrentStylePayload();
-  Object.assign(projectScriptureOverrides, style);
-  Object.assign(bibleDesignerState, applyBibleStylePayloadToEntry(bibleDesignerState, style));
-  clearBibleStyleDirtyState();
+  Object.assign(projectScriptureOverrides, {
+    autosizeMode: style.autosizeMode,
+    minFontSize: style.minFontSize,
+    autoSplit: style.autoSplit,
+  });
+  bibleStyleDirtyState.autosizeMode = false;
+  bibleStyleDirtyState.minFontSize = false;
+  bibleStyleDirtyState.autoSplit = false;
   applyBiblePreview(bibleDesignerState, { show: false });
   void saveCurrentProjectInStorageMode({ quiet: true });
-  void syncShowNowBiblePresentation().catch(console.error);
-  syncActiveScheduledBiblePresentation();
-  showGnomeToast("Bible style defaults updated");
+  showGnomeToast("Text layout defaults updated");
 }
 
 function bibleEntryWithShowNowStyle(entry) {
@@ -18007,8 +18010,16 @@ function installBibleMediaControls() {
     .getElementById("bibleApplyStyleScheduleBtn")
     ?.addEventListener("click", () => void applyBibleStyleToScheduledText().catch(console.error));
   document
-    .getElementById("bibleUseStyleDefaultsBtn")
-    ?.addEventListener("click", () => void useBibleStyleAsDefaults().catch(console.error));
+    .getElementById("bibleEditThemeBtn")
+    ?.addEventListener("click", () => {
+      void invoke("open-theme-manager-window", {
+        contentKind: "scripture",
+        outputRole: "audience",
+      }).catch(console.error);
+    });
+  document
+    .getElementById("bibleSaveLayoutDefaultsBtn")
+    ?.addEventListener("click", () => void saveBibleTextLayoutDefaults().catch(console.error));
   document.getElementById("bibleClearBackgroundBtn")?.addEventListener("click", () => {
     void (async () => {
       bibleDesignerState.backgroundPath = "";
