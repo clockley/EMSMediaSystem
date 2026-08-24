@@ -821,6 +821,23 @@ export function generateMediaFormHTML() {
               hidden
             ></div>
           </div>
+          <details id="bibleRecentSection" class="bible-recent-section" hidden>
+            <summary class="bible-recent-summary">
+              <span>Recent Scriptures</span>
+              <span id="bibleRecentCount" class="bible-recent-count" aria-label="0 recent Scriptures">0</span>
+              <svg class="bible-recent-chevron" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+                <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M6 4l4 4-4 4"/>
+              </svg>
+            </summary>
+            <div class="bible-recent-popover">
+              <div class="bible-recent-header">
+                <span class="bible-recent-heading">Recently used</span>
+                <button type="button" id="bibleRecentClearBtn" class="bible-recent-clear" title="Clear recent Scriptures" aria-label="Clear recent Scriptures">Clear</button>
+              </div>
+              <div id="bibleRecentList" class="bible-recent-list" aria-label="Recently used Scriptures"></div>
+              <span class="bible-recent-hint">More actions are available from each entry’s context menu</span>
+            </div>
+          </details>
           <div class="bible-navigator-switch" role="tablist" aria-label="Bible navigator mode">
             <button type="button" id="bibleBrowseModeBtn" class="bible-navigator-switch__button is-active" role="tab" aria-selected="true" aria-controls="bibleVerseList">Browse</button>
             <button type="button" id="bibleSearchModeBtn" class="bible-navigator-switch__button" role="tab" aria-selected="false" aria-controls="bibleSearchPanel">Search</button>

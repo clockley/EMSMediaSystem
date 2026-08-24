@@ -2177,9 +2177,28 @@ func serveJSONRPC(input io.Reader, output io.Writer) error {
 }
 
 func main() {
-	dbPath := flag.String("db", os.Getenv("EMS_BIBLE_DB"), "Path to the Bible SQLite database")
+	dbPath := flag.String("db", os.Getenv("EMS_BIBLE_DB"), "Path to an existing Bible SQLite database (test/legacy mode)")
+	bundleDir := flag.String("bundle-dir", os.Getenv("EMS_BIBLE_BUNDLE_DIR"), "Path to bundled Bible JSON sources")
+	userSourcesDir := flag.String("user-sources-dir", os.Getenv("EMS_BIBLE_USER_SOURCES_DIR"), "Path to user-installed Bible JSON sources")
+	userPackagesDir := flag.String("user-packages-dir", os.Getenv("EMS_BIBLE_USER_PACKAGES_DIR"), "Path to downloaded Bible SQLite packages")
+	cacheDir := flag.String("cache-dir", os.Getenv("EMS_BIBLE_CACHE_DIR"), "Path for generated Bible indexes")
+	prepareOnly := flag.Bool("prepare-only", false, "Build or validate the Bible cache, then exit")
 	flag.Parse()
 	log.SetOutput(os.Stderr)
+	if strings.TrimSpace(*dbPath) == "" {
+		var err error
+		if *prepareOnly {
+			*dbPath, err = prepareBibleDatabase(*bundleDir, *userSourcesDir, *cacheDir)
+		} else {
+			*dbPath, err = prepareInstalledBibleDatabase(*bundleDir, *userPackagesDir, *cacheDir)
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if *prepareOnly {
+		return
+	}
 
 	if err := initBibleDatabase(*dbPath); err != nil {
 		log.Fatal(err)

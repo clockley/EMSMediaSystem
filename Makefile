@@ -89,11 +89,11 @@ ATEM_RPC_SOURCE = $(ATEM_RPC_ROOT)/main.mjs
 ATEM_RPC_SHIM = $(ATEM_RPC_ROOT)/freetype2-shim.cjs
 ATEM_RPC_OUT = $(DERIVED_DIR)/bin/atem-rpc.cjs
 BIBLE_PRIVATE_ROOT = private-bibles
-BIBLE_RPC_ASSET_BUILDER = $(BIBLE_RPC_ROOT)/build-bible-assets.mjs
+BIBLE_RPC_ASSET_BUILDER = $(BIBLE_RPC_ROOT)/stage-bible-sources.mjs
+BIBLE_RPC_BUNDLE_FINALIZER = $(BIBLE_RPC_ROOT)/finalize-bible-bundle.mjs
 BIBLE_RPC_IMPORTER = $(BIBLE_RPC_ROOT)/import-bibles.mjs
 BIBLE_PAID_METADATA = $(BIBLE_PRIVATE_ROOT)/bible-imports.json
 BIBLE_PAID_JSONS = $(shell find "$(BIBLE_PRIVATE_ROOT)" -maxdepth 1 -type f -name "*.json" -print 2>/dev/null | sed 's/ /\\ /g')
-BIBLE_SOURCE_DB = $(BIBLE_RPC_ROOT)/bible-sqlite.db
 BUILD_ARTIFACTS_DIR = build-artifacts
 
 # --- Go toolchain + Bible sidecar/database targets ---
@@ -111,15 +111,16 @@ else
 endif
 
 # Go source that produces the sidecar binary (edition independent).
-BIBLE_RPC_GO_SOURCES = $(BIBLE_RPC_ROOT)/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
+BIBLE_RPC_GO_SOURCES = $(BIBLE_RPC_ROOT)/main.go $(BIBLE_RPC_ROOT)/sources.go $(BIBLE_RPC_ROOT)/installed.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
 MEDIA_WATCHER_GO_SOURCES = $(MEDIA_WATCHER_ROOT)/main.go $(MEDIA_WATCHER_ROOT)/go.mod $(MEDIA_WATCHER_ROOT)/go.sum
 SONGS_RPC_GO_SOURCES = $(wildcard $(SONGS_RPC_ROOT)/*.go) $(wildcard $(SONGS_RPC_ROOT)/internal/songstore/*.go) $(wildcard $(SONGS_RPC_ROOT)/internal/songimport/*.go) $(SONGS_RPC_ROOT)/go.mod $(SONGS_RPC_ROOT)/go.sum
 # Go source for the DB optimizer the asset builder runs via `go run`.
 BIBLE_OPTIMIZE_GO_SOURCES = $(BIBLE_RPC_ROOT)/cmd/bible-db-optimize/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
 
 # Final Bible artifacts the app loads at runtime.
-BIBLE_DB_OUT = $(DERIVED_DIR)/bible/bible-sqlite.db
-BIBLE_EDITION_RECORD = $(DERIVED_DIR)/bible/.edition
+BIBLE_DB_OUT = $(DERIVED_DIR)/bible/bundle.manifest.json
+BIBLE_CACHE_OUT = $(DERIVED_DIR)/bible/bible-runtime.sqlite
+BIBLE_EDITION_RECORD = $(DERIVED_DIR)/.bible-edition
 
 # Pick the edition from the requested goal (free/public by default).
 BIBLE_EDITION := public
@@ -128,8 +129,10 @@ ifneq (,$(filter all-paid build-paid dist-all-paid dev-paid bible-paid,$(MAKECMD
 endif
 
 # Prerequisites that, when changed, must rebuild the database for each edition.
-BIBLE_DB_DEPS_public = $(BIBLE_RPC_ASSET_BUILDER) $(BIBLE_SOURCE_DB) $(BIBLE_OPTIMIZE_GO_SOURCES)
-BIBLE_DB_DEPS_paid = $(BIBLE_DB_DEPS_public) $(BIBLE_RPC_IMPORTER) $(BIBLE_PAID_METADATA) $(BIBLE_PAID_JSONS)
+BIBLE_PUBLIC_SOURCES = $(shell find "public-bibles" -maxdepth 1 -type f -name "*.json" -print 2>/dev/null | sed 's/ /\\ /g')
+BIBLE_PRIVATE_SOURCES = $(BIBLE_PAID_JSONS)
+BIBLE_DB_DEPS_public = $(BIBLE_RPC_ASSET_BUILDER) $(BIBLE_RPC_BUNDLE_FINALIZER) $(BIBLE_PUBLIC_SOURCES)
+BIBLE_DB_DEPS_paid = $(BIBLE_DB_DEPS_public) $(BIBLE_PRIVATE_SOURCES)
 BIBLE_DB_DEPS = $(BIBLE_DB_DEPS_$(BIBLE_EDITION))
 
 # Sidecar binaries to produce. Cross-compile the shipped x64 targets and, when
@@ -191,7 +194,7 @@ IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
 DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all copied binary/static resources
 APP_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT)
 APP_DEV_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(DEV_BIBLE_SIDECAR_BINS) $(DEV_MEDIA_WATCHER_BINS) $(DEV_SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT)
-BIBLE_RESOURCES = $(BIBLE_DB_OUT)
+BIBLE_RESOURCES = $(BIBLE_DB_OUT) $(BIBLE_CACHE_OUT)
 
 ifeq ($(NO_COLOR), 1)
   COLOR_GREEN =
@@ -374,9 +377,16 @@ ifeq ($(WINDOWS), 1)
 else
 	@mkdir -p $(dir $@)
 endif
-	@echo "$(COLOR_YELLOW)Building $(BIBLE_EDITION) Bible database -> $@$(COLOR_RESET)"
+	@echo "$(COLOR_YELLOW)Staging $(BIBLE_EDITION) Bible sources -> $@$(COLOR_RESET)"
 	@BIBLE_PRIVATE_ROOT="$(BIBLE_PRIVATE_ROOT)" $(NODE) "$(BIBLE_RPC_ASSET_BUILDER)" $(BIBLE_EDITION) "$(DERIVED_DIR)"
-	@echo "$(COLOR_GREEN)$(TICK) Built $(BIBLE_EDITION) Bible database$(COLOR_RESET)"
+	@echo "$(COLOR_GREEN)$(TICK) Staged $(BIBLE_EDITION) Bible sources$(COLOR_RESET)"
+
+$(BIBLE_CACHE_OUT): $(BIBLE_DB_OUT) $(DEV_BIBLE_SIDECAR_BINS)
+	@echo "$(COLOR_YELLOW)Prebuilding $(BIBLE_EDITION) Bible search cache -> $@$(COLOR_RESET)"
+	@BIBLE_PRIVATE_ROOT="$(BIBLE_PRIVATE_ROOT)" $(NODE) "$(BIBLE_RPC_ASSET_BUILDER)" $(BIBLE_EDITION) "$(DERIVED_DIR)"
+	@"$(firstword $(DEV_BIBLE_SIDECAR_BINS))" --bundle-dir "$(DERIVED_DIR)/bible" --user-sources-dir "$(DERIVED_DIR)/bible/no-user-sources" --cache-dir "$(DERIVED_DIR)/bible" --prepare-only
+	@$(NODE) "$(BIBLE_RPC_BUNDLE_FINALIZER)" "$(DERIVED_DIR)/bible"
+	@echo "$(COLOR_GREEN)$(TICK) Prebuilt $(BIBLE_EDITION) Bible search cache$(COLOR_RESET)"
 
 # Rule: Check dependencies
 check-deps:

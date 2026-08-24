@@ -63,8 +63,12 @@ export class BibleRpcClient {
     return path.join(this.resourcesRoot(), "bin", platformBinaryName());
   }
 
-  databasePath() {
-    return path.join(this.resourcesRoot(), "bible", "bible-sqlite.db");
+  bundleDirectory() {
+    return path.join(this.resourcesRoot(), "bible");
+  }
+
+  userBibleDirectory() {
+    return path.join(this.app.getPath("userData"), "bibles");
   }
 
   async ready() {
@@ -90,15 +94,22 @@ export class BibleRpcClient {
 
   async start() {
     const binaryPath = this.binaryPath();
-    const databasePath = this.databasePath();
+    const bundleDirectory = this.bundleDirectory();
     if (!existsSync(binaryPath)) {
       throw new Error(`Bible sidecar not found: ${binaryPath}`);
     }
-    if (!existsSync(databasePath)) {
-      throw new Error(`Bible database not found: ${databasePath}`);
+    if (!existsSync(path.join(bundleDirectory, "bundle.manifest.json"))) {
+      throw new Error(`Bible bundle not found: ${bundleDirectory}`);
     }
-
-    const child = spawn(binaryPath, ["--db", databasePath], {
+    const userBibleDirectory = this.userBibleDirectory();
+    const child = spawn(binaryPath, [
+      "--bundle-dir",
+      bundleDirectory,
+      "--user-packages-dir",
+      path.join(userBibleDirectory, "packages"),
+      "--cache-dir",
+      path.join(userBibleDirectory, "cache"),
+    ], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
