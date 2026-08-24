@@ -33,6 +33,7 @@ let draft = {
   lowerThirdChromaKeyColor: "#00ff00",
   bibleUiEnabled: true,
   lowerThirdUiEnabled: true,
+  switcherConnections: [],
 };
 
 function readFormIntoDraft() {
@@ -115,6 +116,7 @@ function applyDraftToForm() {
   }
   if (bibleUiInput) bibleUiInput.checked = draft.bibleUiEnabled !== false;
   if (lowerThirdUiInput) lowerThirdUiInput.checked = draft.lowerThirdUiEnabled !== false;
+  renderSwitcherConnections();
   syncLogoPreview();
 }
 
@@ -130,17 +132,151 @@ async function loadPreferences() {
     ),
     bibleUiEnabled: prefs?.bibleUiEnabled !== false,
     lowerThirdUiEnabled: prefs?.lowerThirdUiEnabled !== false,
+    switcherConnections: Array.isArray(prefs?.switcherConnections)
+      ? prefs.switcherConnections.map((connection) => ({ ...connection }))
+      : [],
   };
   applyDraftToForm();
 }
 
-function closeDialog() {
+async function closeDialog() {
+  const rows = [...document.querySelectorAll(".switcher-connection-row")];
+  for (const row of rows) await updateSwitcherConnection(row);
   ipcRenderer.send(PREFERENCES_DIALOG_CLOSE_CHANNEL);
 }
 
 async function savePreferences() {
   readFormIntoDraft();
   await ipcRenderer.invoke("save-output-hold-preferences", { ...draft });
+}
+
+function createTextInput({ value, placeholder, label, field }) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = value || "";
+  input.placeholder = placeholder;
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.setAttribute("aria-label", label);
+  input.dataset.field = field;
+  return input;
+}
+
+function renderSwitcherConnections() {
+  const container = document.getElementById("preferencesSwitcherConnections");
+  if (!container) return;
+  container.replaceChildren();
+  if (draft.switcherConnections.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "switcher-connections-empty";
+    empty.textContent = "No switchers configured";
+    container.appendChild(empty);
+    return;
+  }
+
+  for (const connection of draft.switcherConnections) {
+    const row = document.createElement("div");
+    row.className = "switcher-connection-row";
+    row.dataset.connectionId = connection.id;
+
+    const fields = document.createElement("div");
+    fields.className = "switcher-connection-fields";
+    fields.append(
+      createTextInput({ value: connection.name, placeholder: "Switcher name", label: "Switcher name", field: "name" }),
+      createTextInput({ value: connection.host, placeholder: "192.168.1.240", label: `${connection.name} IP address`, field: "host" }),
+    );
+
+    const actions = document.createElement("div");
+    actions.className = "switcher-connection-actions";
+    const enabled = document.createElement("label");
+    enabled.className = "switch";
+    enabled.title = "Enable this switcher";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = connection.enabled !== false;
+    checkbox.dataset.field = "enabled";
+    const track = document.createElement("span");
+    track.className = "switch-track";
+    const thumb = document.createElement("span");
+    thumb.className = "switch-thumb";
+    enabled.append(checkbox, track, thumb);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "pill-button";
+    remove.dataset.action = "remove";
+    remove.textContent = "Remove";
+    actions.append(enabled, remove);
+
+    const status = document.createElement("p");
+    status.className = "preferences-inline-status";
+    status.dataset.role = "status";
+    status.setAttribute("role", "status");
+    status.hidden = true;
+    row.append(fields, actions, status);
+    container.appendChild(row);
+  }
+}
+
+function setSwitcherStatus(row, message, variant = "") {
+  const status = row?.querySelector('[data-role="status"]');
+  if (!status) return;
+  status.textContent = message;
+  status.hidden = !message;
+  status.classList.toggle("is-error", variant === "error");
+  status.classList.toggle("is-success", variant === "success");
+}
+
+async function updateSwitcherConnection(row) {
+  const id = row?.dataset.connectionId;
+  const current = draft.switcherConnections.find((connection) => connection.id === id);
+  if (!id || !current) return;
+  const name = row.querySelector('[data-field="name"]')?.value || "";
+  const host = row.querySelector('[data-field="host"]')?.value || "";
+  const enabled = row.querySelector('[data-field="enabled"]')?.checked !== false;
+  try {
+    const saved = await ipcRenderer.invoke("switcher-connections:update", id, { name, host, enabled });
+    Object.assign(current, saved);
+    setSwitcherStatus(row, host.trim() ? "Saved" : "Add an IP address to use this switcher", host.trim() ? "success" : "");
+  } catch (error) {
+    setSwitcherStatus(row, error?.message || "Could not save switcher", "error");
+  }
+}
+
+async function addSwitcherConnection() {
+  const button = document.getElementById("preferencesAddAtemBtn");
+  const status = document.getElementById("preferencesSwitcherConnectionsStatus");
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
+  if (status) {
+    status.textContent = "";
+    status.hidden = true;
+    status.classList.remove("is-error");
+  }
+  try {
+    const connection = await ipcRenderer.invoke("switcher-connections:add", {});
+    if (!connection?.id) throw new Error("The switcher registry returned an invalid entry");
+    draft.switcherConnections.push(connection);
+    renderSwitcherConnections();
+    const row = document.querySelector(`[data-connection-id="${connection.id}"]`);
+    row?.querySelector('[data-field="name"]')?.focus();
+  } catch (error) {
+    console.error("Could not add ATEM switcher:", error);
+    if (status) {
+      status.textContent = error?.message || "Could not add the ATEM switcher";
+      status.hidden = false;
+      status.classList.add("is-error");
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function removeSwitcherConnection(row) {
+  const id = row?.dataset.connectionId;
+  if (!id) return;
+  await ipcRenderer.invoke("switcher-connections:remove", id);
+  draft.switcherConnections = draft.switcherConnections.filter((connection) => connection.id !== id);
+  renderSwitcherConnections();
 }
 
 async function browseLogo() {
@@ -197,7 +333,9 @@ function wirePreferencesDialog() {
   document.getElementById("preferencesClearSongsBtn")?.addEventListener("click", () => {
     void clearSongsDatabase().catch(console.error);
   });
-  document.getElementById("preferencesCloseButton")?.addEventListener("click", closeDialog);
+  document.getElementById("preferencesCloseButton")?.addEventListener("click", () => {
+    void closeDialog().catch(console.error);
+  });
   document.getElementById("preferencesLogoFit")?.addEventListener("change", () => {
     readFormIntoDraft();
     syncLogoPreview();
@@ -219,10 +357,27 @@ function wirePreferencesDialog() {
   document.getElementById("preferencesLowerThirdUiEnabled")?.addEventListener("change", () => {
     void savePreferences().catch(console.error);
   });
+  document.getElementById("preferencesAddAtemBtn")?.addEventListener("click", () => {
+    void addSwitcherConnection();
+  });
+  document.getElementById("preferencesSwitcherConnections")?.addEventListener("change", (event) => {
+    const row = event.target?.closest?.(".switcher-connection-row");
+    void updateSwitcherConnection(row).catch(console.error);
+  });
+  document.getElementById("preferencesSwitcherConnections")?.addEventListener("input", (event) => {
+    const row = event.target?.closest?.(".switcher-connection-row");
+    setSwitcherStatus(row, "");
+  });
+  document.getElementById("preferencesSwitcherConnections")?.addEventListener("click", (event) => {
+    const button = event.target?.closest?.('[data-action="remove"]');
+    if (!button) return;
+    const row = button.closest(".switcher-connection-row");
+    void removeSwitcherConnection(row).catch(console.error);
+  });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
-      closeDialog();
+      void closeDialog().catch(console.error);
     }
   });
 }
