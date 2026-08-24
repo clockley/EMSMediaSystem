@@ -41,6 +41,7 @@ import {
   writeFile,
 } from "fs/promises";
 import { randomUUID } from "crypto";
+import { isIP } from "net";
 import path from "path";
 import { fileURLToPath } from "url";
 import {
@@ -51,6 +52,7 @@ import {
 } from "./media-file-hash.min.mjs";
 import { BibleRpcClient } from "./bible_rpc_client.min.mjs";
 import { SongsRpcClient } from "./songs_rpc_client.min.mjs";
+import { AtemService } from "./atem_service.min.mjs";
 import { SlidesStore } from "./slides_store.min.mjs";
 import { ThemeLibrary } from "./theme-manager.min.mjs";
 import { EMS_SAFE_DEFAULT_THEME } from "./theme-resolver.min.mjs";
@@ -96,6 +98,7 @@ const OUTPUT_HOLD_LOGO_BACKGROUND_KEY = "outputHoldLogoBackground";
 const LOWER_THIRD_CHROMA_KEY_COLOR_KEY = "lowerThirdChromaKeyColor";
 const BIBLE_UI_ENABLED_KEY = "bibleUiEnabled";
 const LOWER_THIRD_UI_ENABLED_KEY = "lowerThirdUiEnabled";
+const SWITCHER_CONNECTIONS_KEY = "switcherConnections";
 const ACTIVE_THEME_ID_KEY = "activeThemeId";
 let allowMainWindowClose = false;
 let quitCleanupStarted = false;
@@ -106,6 +109,11 @@ const bibleRpcClient = new BibleRpcClient({
   devRoot: path.dirname(import.meta.dirname),
 });
 const songsRpcClient = new SongsRpcClient({
+  app,
+  devRoot: path.dirname(import.meta.dirname),
+});
+// Internal capability for action plugins. Intentionally not exposed through renderer IPC.
+const atemService = new AtemService({
   app,
   devRoot: path.dirname(import.meta.dirname),
 });
@@ -2546,8 +2554,14 @@ async function handleShowLogoFileDialog(event) {
   return { canceled: false, filePath: result.filePaths[0] };
 }
 
-function handleGetOutputHoldPreferences() {
-  return getOutputHoldPreferencesFromSettings();
+async function handleGetOutputHoldPreferences() {
+  const switcherConnections = await ensureSwitcherConnectionRegistry();
+  return {
+    ...getOutputHoldPreferencesFromSettings(),
+    switcherConnections: switcherConnections.filter(
+      (connection) => connection.type === "blackmagic-atem",
+    ),
+  };
 }
 
 async function handleSaveOutputHoldPreferences(event, prefs) {
@@ -2573,6 +2587,106 @@ async function handleSaveOutputHoldPreferences(event, prefs) {
     parentWindow.webContents.send("preferences-updated", saved);
   }
   return saved;
+}
+
+function normalizeSwitcherConnection(connection) {
+  if (!connection || typeof connection !== "object") return null;
+  const id = typeof connection.id === "string" ? connection.id.trim() : "";
+  const type = typeof connection.type === "string" ? connection.type.trim() : "";
+  if (!id || !type) return null;
+  const host = typeof connection.host === "string" ? connection.host.trim() : "";
+  if (type === "blackmagic-atem" && host && isIP(host) === 0) return null;
+  const name = typeof connection.name === "string" ? connection.name.trim() : "";
+  return {
+    id,
+    type,
+    name: name || (type === "blackmagic-atem" ? "ATEM Switcher" : "Switcher"),
+    host,
+    enabled: connection.enabled !== false,
+    ...(connection.config && typeof connection.config === "object" && !Array.isArray(connection.config)
+      ? { config: { ...connection.config } }
+      : {}),
+  };
+}
+
+async function ensureSwitcherConnectionRegistry() {
+  const currentSettings = readSettings();
+  if (Array.isArray(currentSettings[SWITCHER_CONNECTIONS_KEY])) {
+    return currentSettings[SWITCHER_CONNECTIONS_KEY]
+      .map(normalizeSwitcherConnection)
+      .filter(Boolean);
+  }
+
+  const connections = [];
+  await writeSettings({ [SWITCHER_CONNECTIONS_KEY]: connections });
+  return connections;
+}
+
+async function saveSwitcherConnections(connections) {
+  await writeSettings({ [SWITCHER_CONNECTIONS_KEY]: connections });
+  return connections;
+}
+
+let switcherRegistryMutation = Promise.resolve();
+function mutateSwitcherRegistry(operation) {
+  const result = switcherRegistryMutation.then(operation, operation);
+  switcherRegistryMutation = result.catch(() => {});
+  return result;
+}
+
+function handleAddSwitcherConnection(_event, input = {}) {
+  return mutateSwitcherRegistry(async () => {
+    const connections = await ensureSwitcherConnectionRegistry();
+    const atemCount = connections.filter(
+      (connection) => connection.type === "blackmagic-atem",
+    ).length;
+    const connection = {
+      id: randomUUID(),
+      type: "blackmagic-atem",
+      name: typeof input?.name === "string" && input.name.trim()
+        ? input.name.trim()
+        : `ATEM ${atemCount + 1}`,
+      host: "",
+      enabled: true,
+    };
+    connections.push(connection);
+    await saveSwitcherConnections(connections);
+    return connection;
+  });
+}
+
+function handleUpdateSwitcherConnection(_event, id, patch = {}) {
+  return mutateSwitcherRegistry(async () => {
+    const connections = await ensureSwitcherConnectionRegistry();
+    const index = connections.findIndex((connection) => connection.id === id);
+    if (index < 0) throw new Error("Switcher connection not found");
+    if (connections[index].type !== "blackmagic-atem") {
+      throw new Error("This switcher type cannot be edited here");
+    }
+    const candidate = {
+      ...connections[index],
+      ...(typeof patch.name === "string" ? { name: patch.name } : {}),
+      ...(typeof patch.host === "string" ? { host: patch.host } : {}),
+      ...(typeof patch.enabled === "boolean" ? { enabled: patch.enabled } : {}),
+    };
+    const normalized = normalizeSwitcherConnection(candidate);
+    if (!normalized) {
+      throw new Error("Enter a valid IPv4 or IPv6 address");
+    }
+    connections[index] = normalized;
+    await saveSwitcherConnections(connections);
+    return normalized;
+  });
+}
+
+function handleRemoveSwitcherConnection(_event, id) {
+  return mutateSwitcherRegistry(async () => {
+    const connections = await ensureSwitcherConnectionRegistry();
+    const remaining = connections.filter((connection) => connection.id !== id);
+    if (remaining.length === connections.length) throw new Error("Switcher connection not found");
+    await saveSwitcherConnections(remaining);
+    return { removed: true, id };
+  });
 }
 
 async function handleClearSongsDatabase(event) {
@@ -4806,6 +4920,9 @@ function setIPC() {
   });
   ipcMain.handle("get-output-hold-preferences", handleGetOutputHoldPreferences);
   ipcMain.handle("save-output-hold-preferences", handleSaveOutputHoldPreferences);
+  ipcMain.handle("switcher-connections:add", handleAddSwitcherConnection);
+  ipcMain.handle("switcher-connections:update", handleUpdateSwitcherConnection);
+  ipcMain.handle("switcher-connections:remove", handleRemoveSwitcherConnection);
   ipcMain.handle("clear-songs-database", handleClearSongsDatabase);
   ipcMain.handle("show-logo-file-dialog", handleShowLogoFileDialog);
   ipcMain.handle("show_queue_switch_dialog", async (event, opts) => {
@@ -4868,6 +4985,7 @@ app.on("before-quit", (event) => {
   quitCleanupStarted = true;
   event.preventDefault();
   bibleRpcClient.stop();
+  atemService.stop();
   mediaWatcher.closeAll();
   const cleanupTasks = [cleanupMediaStagingDir()];
   if (activeProjectSnapshot) {

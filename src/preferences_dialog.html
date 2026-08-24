@@ -163,7 +163,9 @@
     }
 
     .preferences-row select,
-    .preferences-row input[type="color"] {
+    .preferences-row input[type="color"],
+    .preferences-row input[type="text"],
+    .switcher-connection-fields input[type="text"] {
       width: 210px;
       min-height: 36px;
       padding: 6px 10px;
@@ -177,6 +179,87 @@
     .preferences-row input[type="color"] {
       padding: 4px;
       cursor: default;
+    }
+
+    .preferences-row input[type="text"] {
+      cursor: text;
+    }
+
+    .switcher-connection-fields input[type="text"] { cursor: text; }
+
+    .preferences-inline-status {
+      grid-column: 1 / -1;
+      margin: 0;
+      font-size: 12px;
+      color: color-mix(in srgb, var(--window-fg-color) 62%, transparent);
+      text-align: right;
+    }
+
+    .preferences-inline-status.is-error { color: var(--destructive-bg-color, #c01c28); }
+    .preferences-inline-status.is-success { color: var(--success-color, #2ec27e); }
+
+    .switcher-connections-empty {
+      padding: 18px 16px;
+      color: color-mix(in srgb, var(--window-fg-color) 62%, transparent);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .switcher-connection-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px 16px;
+      padding: 14px 16px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .switcher-connection-row:first-child { border-top: 0; }
+
+    .switcher-connection-fields {
+      display: grid;
+      grid-template-columns: minmax(140px, 1fr) minmax(170px, 1fr);
+      gap: 8px;
+    }
+
+    .switcher-connection-fields input[type="text"] {
+      width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+    }
+
+    .switcher-connection-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .switcher-connections-footer {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .switcher-connections-footer .preferences-inline-status {
+      flex: 1;
+      text-align: left;
+    }
+
+    .switcher-add-button {
+      gap: 6px;
+      min-height: 32px;
+      border-radius: var(--adw-radius-sm, 6px) !important;
+      font-weight: 600;
+    }
+
+    .switcher-add-button svg {
+      width: 16px;
+      height: 16px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
     }
 
   </style>
@@ -279,6 +362,21 @@
               Solid background sent to the ATEM lower-third input. Match this color in the ATEM chroma keyer.
             </p>
           </div>
+          </div>
+        </section>
+
+        <section class="preferences-group" aria-labelledby="preferences-integrations-title">
+          <h2 class="preferences-group__title" id="preferences-integrations-title">Integrations</h2>
+          <p class="preferences-group__description">Configure switchers that internal actions can control.</p>
+          <div class="preferences-list">
+            <div id="preferencesSwitcherConnections"></div>
+            <div class="switcher-connections-footer">
+              <p class="preferences-inline-status" id="preferencesSwitcherConnectionsStatus" role="status" aria-live="polite" hidden></p>
+              <button type="button" class="pill-button suggested-action switcher-add-button" id="preferencesAddAtemBtn">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+                <span>Add ATEM Switcher</span>
+              </button>
+            </div>
           </div>
         </section>
 

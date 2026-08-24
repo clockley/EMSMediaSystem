@@ -84,6 +84,10 @@ APP_BUNDLE_OUT = $(DERIVED_DIR)/src/app.min.js
 BIBLE_RPC_ROOT = sidecars/bible-rpc
 MEDIA_WATCHER_ROOT = sidecars/media-watcher
 SONGS_RPC_ROOT = sidecars/songs-rpc
+ATEM_RPC_ROOT = sidecars/atem-rpc
+ATEM_RPC_SOURCE = $(ATEM_RPC_ROOT)/main.mjs
+ATEM_RPC_SHIM = $(ATEM_RPC_ROOT)/freetype2-shim.cjs
+ATEM_RPC_OUT = $(DERIVED_DIR)/bin/atem-rpc.cjs
 BIBLE_PRIVATE_ROOT = private-bibles
 BIBLE_RPC_ASSET_BUILDER = $(BIBLE_RPC_ROOT)/build-bible-assets.mjs
 BIBLE_RPC_IMPORTER = $(BIBLE_RPC_ROOT)/import-bibles.mjs
@@ -185,8 +189,8 @@ endif
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
 IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
 DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all copied binary/static resources
-APP_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(SONGS_SIDECAR_BINS)
-APP_DEV_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(DEV_BIBLE_SIDECAR_BINS) $(DEV_MEDIA_WATCHER_BINS) $(DEV_SONGS_SIDECAR_BINS)
+APP_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT)
+APP_DEV_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(DEV_BIBLE_SIDECAR_BINS) $(DEV_MEDIA_WATCHER_BINS) $(DEV_SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT)
 BIBLE_RESOURCES = $(BIBLE_DB_OUT)
 
 ifeq ($(NO_COLOR), 1)
@@ -326,6 +330,18 @@ else
 	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) "$(GO)" build -C "$(SONGS_RPC_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
 	@[ "$(GOOS_T)" = "windows" ] || chmod 755 "$@"
 endif
+	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
+
+# Bundle the ATEM JSON-RPC service and all npm dependencies into one portable
+# Node script. Electron launches it with ELECTRON_RUN_AS_NODE in production.
+$(ATEM_RPC_OUT): $(ATEM_RPC_SOURCE) $(ATEM_RPC_SHIM) package.json yarn.lock | $(DERIVED_DIR)
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+else
+	@mkdir -p $(dir $@)
+endif
+	@echo "$(COLOR_YELLOW)Bundling ATEM RPC sidecar -> $@$(COLOR_RESET)"
+	@$(ESBUILD) "$(ATEM_RPC_SOURCE)" --bundle --platform=node --format=cjs --target=node20 --alias:@julusian/freetype2=./$(ATEM_RPC_SHIM) --outfile="$@"
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
 
 .PHONY: test-songs-import
