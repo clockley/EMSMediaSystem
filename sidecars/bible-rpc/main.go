@@ -1256,6 +1256,9 @@ func getBookMetadataResult(version string) BookMetadataResponse {
 
 	books := make([]BookMetadata, 0, len(cachedBookOrder))
 	for _, cached := range cachedBookOrder {
+		if _, available := verseCountsByBook[cached.ID]; !available {
+			continue
+		}
 		book := cached
 		book.VerseCounts = verseCountsByBook[book.ID]
 		book.Chapters = len(book.VerseCounts)

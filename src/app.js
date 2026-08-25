@@ -1187,6 +1187,38 @@ async function bibleReferenceAllBooks() {
   return [];
 }
 
+async function firstBibleReferenceForVersion(version) {
+  try {
+    const metadata = await bibleAPI.getBookMetadata(version || DEFAULT_BIBLE_VERSION);
+    if (metadata?.error) return null;
+    const firstBook = (Array.isArray(metadata?.books) ? metadata.books : []).find(
+      (book) => String(book?.name || "").trim() && Number(book?.verseCounts?.[0]) > 0,
+    );
+    const book = String(firstBook?.name || "").trim();
+    if (!book) return null;
+    return {
+      reference: `${book} 1:1`,
+      book,
+      chapter: 1,
+      verse: 1,
+      verseEnd: 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function selectFirstBibleReferenceForVersion(version) {
+  const firstReference = await firstBibleReferenceForVersion(version);
+  if (!firstReference) return false;
+  Object.assign(bibleDesignerState, firstReference, { text: "" });
+  bibleVerseSelection.verses.clear();
+  bibleVerseSelection.anchor = 0;
+  const referenceInput = document.getElementById("bibleReferenceInput");
+  if (referenceInput) referenceInput.value = firstReference.reference;
+  return true;
+}
+
 function positionBibleReferenceSuggestionsOverlay() {
   const suggestionsEl = document.getElementById("bibleReferenceSuggestions");
   const referenceInput = document.getElementById("bibleReferenceInput");
@@ -6607,6 +6639,15 @@ function loadRecentScriptures() {
       .map((item) => ({
         reference: normalizeScriptureReference(item?.reference || ""),
         version: bibleVersionValue(item?.version || "KJV"),
+        text: typeof item?.text === "string" ? item.text : "",
+        book: typeof item?.book === "string" ? item.book : "",
+        chapter: Number.isFinite(item?.chapter) ? item.chapter : 0,
+        verse: Number.isFinite(item?.verse) ? item.verse : 0,
+        verseEnd: Number.isFinite(item?.verseEnd) ? item.verseEnd : 0,
+        selectedVerses: Array.isArray(item?.selectedVerses)
+          ? item.selectedVerses.filter((verse) => Number.isFinite(verse) && verse > 0)
+          : [],
+        attribution: item?.attribution || null,
       }))
       .filter((item) => {
         const key = `${item.version}\u0000${item.reference.toLowerCase()}`;
@@ -6676,8 +6717,26 @@ function rememberRecentScripture(entry) {
   );
   if (!reference) return;
   const key = `${version}\u0000${reference.toLowerCase()}`;
+  const stateMatchesEntry =
+    bibleVersionValue(bibleDesignerState.version) === version &&
+    normalizeScriptureReference(bibleDesignerState.reference).toLowerCase() ===
+      reference.toLowerCase();
+  const source = stateMatchesEntry ? { ...bibleDesignerState, ...entry } : entry || {};
+  const snapshot = {
+    reference,
+    version,
+    text: typeof source.text === "string" ? source.text : "",
+    book: typeof source.book === "string" ? source.book : "",
+    chapter: Number.isFinite(source.chapter) ? source.chapter : 0,
+    verse: Number.isFinite(source.verse) ? source.verse : 0,
+    verseEnd: Number.isFinite(source.verseEnd) ? source.verseEnd : 0,
+    selectedVerses: Array.isArray(source.selectedVerses)
+      ? source.selectedVerses.filter((verse) => Number.isFinite(verse) && verse > 0)
+      : [],
+    attribution: source.attribution || bibleAttributionForVersion(version),
+  };
   bibleRecentScriptures = [
-    { reference, version },
+    snapshot,
     ...bibleRecentScriptures.filter(
       (item) => `${item.version}\u0000${item.reference.toLowerCase()}` !== key,
     ),
@@ -6695,11 +6754,28 @@ async function openRecentScripture(item) {
     showGnomeToast(`${item.version} is not installed`);
     return false;
   }
-  setBibleDesignerVersion(item.version);
+  setBibleDesignerVersion(item.version, { syncControls: true });
   const referenceInput = document.getElementById("bibleReferenceInput");
   if (referenceInput) referenceInput.value = item.reference;
   const opened = await jumpBibleReferenceToBrowser();
-  if (opened) rememberRecentScripture(item);
+  if (opened && typeof item.text === "string" && item.text) {
+    Object.assign(bibleDesignerState, {
+      version: item.version,
+      attribution: item.attribution || bibleAttributionForVersion(item.version),
+      reference: item.reference,
+      text: item.text,
+      book: item.book || bibleDesignerState.book,
+      chapter: item.chapter || bibleDesignerState.chapter,
+      verse: item.verse || bibleDesignerState.verse,
+      verseEnd: item.verseEnd || 0,
+      selectedVerses: Array.isArray(item.selectedVerses) ? [...item.selectedVerses] : [],
+    });
+    setBibleVerseSelectionFromEntry(bibleDesignerState);
+    syncBibleSelectorsFromState();
+    applyBiblePreview(bibleDesignerState, { show: false });
+    syncBibleVerseListSelection();
+  }
+  if (opened) rememberRecentScripture({ ...item, ...bibleDesignerState });
   return opened;
 }
 
@@ -17394,15 +17470,7 @@ async function openBibleWorkspaceFromButton() {
     clearPreviewCue();
   }
 
-  Object.assign(bibleDesignerState, {
-    ...bibleDesignerState,
-    reference: "Genesis 1:1",
-    text: "",
-    book: "Genesis",
-    chapter: 1,
-    verse: 1,
-    verseEnd: 0,
-  });
+  await selectFirstBibleReferenceForVersion(bibleDesignerState.version);
 
   syncBibleSelectorsFromState();
   await jumpBibleReferenceToBrowser();
@@ -18006,16 +18074,17 @@ function installBibleMediaControls() {
     document.getElementById(id)?.addEventListener("contextmenu", showBibleTextContextMenu);
   });
   versionSelect.addEventListener("change", () => {
-    setBibleDesignerVersion(versionSelect.value, { syncControls: false });
-    syncBibleVersionAttributionDisplay();
-    bibleVerseSelection.verses.clear();
-    bibleVerseSelection.anchor = 0;
-    void refreshBibleBrowser().catch(console.error);
-    if (bibleSearchState.active && bibleSearchState.scope === "current") {
-      scheduleBibleSearch(0);
-    }
-    void refreshBibleLookupPreview().catch(console.error);
-    void syncShowNowBiblePresentation().catch(console.error);
+    void (async () => {
+      setBibleDesignerVersion(versionSelect.value, { syncControls: false });
+      syncBibleVersionAttributionDisplay();
+      await selectFirstBibleReferenceForVersion(bibleDesignerState.version);
+      await refreshBibleBrowser();
+      if (bibleSearchState.active && bibleSearchState.scope === "current") {
+        scheduleBibleSearch(0);
+      }
+      await refreshBibleLookupPreview();
+      await syncShowNowBiblePresentation();
+    })().catch(console.error);
   });
   document.getElementById("bibleBrowseModeBtn")?.addEventListener("click", () => {
     setBibleNavigatorMode("browse", { runSearch: false });

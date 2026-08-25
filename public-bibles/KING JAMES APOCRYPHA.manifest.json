@@ -1,0 +1,14 @@
+{
+  "format": "ems.bible-manifest.v1",
+  "id": "public:kjva",
+  "abbreviation": "KJVA",
+  "name": "King James Apocrypha",
+  "language": "en",
+  "revision": "1",
+  "contentFile": "KING JAMES APOCRYPHA.json",
+  "publicDomain": true,
+  "publisher": "",
+  "copyright": "Public Domain",
+  "copyrightInfo": "King James Version Apocrypha. Public Domain.",
+  "infoUrl": ""
+}

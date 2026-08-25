@@ -50,6 +50,20 @@ var canonicalBooks = []string{
 	"1 Peter", "2 Peter", "1 John", "2 John", "3 John", "Jude", "Revelation",
 }
 
+var apocryphaBooks = []string{
+	"1 Esdras", "2 Esdras", "Tobit", "Judith", "Esther (Greek)", "Wisdom of Solomon",
+	"Ecclesiasticus (Sira)", "Baruch", "Epistle of Jeremiah", "Prayer of Azariah", "Susanna",
+	"Bel and the Dragon", "Prayer of Manasseh", "1 Maccabees", "2 Maccabees",
+	"Additional Psalm", "Laodiceans",
+}
+
+func knownBibleBooks() []string {
+	books := make([]string, 0, len(canonicalBooks)+len(apocryphaBooks))
+	books = append(books, canonicalBooks...)
+	books = append(books, apocryphaBooks...)
+	return books
+}
+
 func readJSONFile(path string, destination interface{}) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -231,18 +245,26 @@ func buildBibleCache(path string, sources []sourceManifest) error {
 			return fail(err)
 		}
 	}
-	bookIDs := make(map[string]int, len(canonicalBooks))
-	for index, name := range canonicalBooks {
+	knownBooks := knownBibleBooks()
+	bookIDs := make(map[string]int, len(knownBooks))
+	for index, name := range knownBooks {
 		id := index + 1
 		bookIDs[name] = id
-		testament := "NT"
+		testament := "OT"
+		category := "Apocrypha"
+		if id >= 40 && id <= 66 {
+			testament = "NT"
+			category = ""
+		} else if id <= 39 {
+			category = ""
+		}
 		if id <= 39 {
 			testament = "OT"
 		}
 		if _, err := tx.Exec(`INSERT INTO key_english(b,n,t,g) VALUES(?,?,?,0)`, id, name, testament); err != nil {
 			return fail(err)
 		}
-		if _, err := tx.Exec(`INSERT INTO book_info("order",title_short,title_full,abbreviation,category,otnt,chapters) VALUES(?,?,?,?,?,?,0)`, id, name, name, name, "", testament); err != nil {
+		if _, err := tx.Exec(`INSERT INTO book_info("order",title_short,title_full,abbreviation,category,otnt,chapters) VALUES(?,?,?,?,?,?,0)`, id, name, name, name, category, testament); err != nil {
 			return fail(err)
 		}
 	}
@@ -265,10 +287,15 @@ func buildBibleCache(path string, sources []sourceManifest) error {
 		if err := readJSONFile(source.contentPath, &bible); err != nil {
 			return fail(err)
 		}
-		for _, bookName := range canonicalBooks {
+		for bookName := range bible {
+			if _, ok := bookIDs[bookName]; !ok {
+				return fail(fmt.Errorf("%s contains unsupported book %s", source.contentPath, bookName))
+			}
+		}
+		for _, bookName := range knownBooks {
 			chapters, ok := bible[bookName]
 			if !ok {
-				return fail(fmt.Errorf("%s is missing book %s", source.contentPath, bookName))
+				continue
 			}
 			chapterNumbers, err := numericKeys(chapters)
 			if err != nil {
