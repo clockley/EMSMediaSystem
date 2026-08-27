@@ -313,6 +313,9 @@ function normalizePage(page) {
   if (!page || typeof page !== "object") return null;
   return {
     id: page.id || shortId("page"),
+    ...(typeof page.kind === "string" && page.kind.trim()
+      ? { kind: page.kind.trim().toLowerCase() }
+      : {}),
     label: typeof page.label === "string" ? page.label : "",
     durationMs: Number.isFinite(page.durationMs) ? page.durationMs : 0,
     autoAdvance: page.autoAdvance === true,
@@ -386,6 +389,9 @@ export function normalizeSlideDeck(deck) {
     ...(deck.type === SONG_DECK_DOCUMENT_TYPE ? { type: SONG_DECK_DOCUMENT_TYPE } : {}),
     ...(Number.isFinite(deck.songNumber) && deck.songNumber > 0 ? { songNumber: deck.songNumber } : {}),
     ...(deck.metadata && typeof deck.metadata === "object" ? { metadata: structuredClone(deck.metadata) } : {}),
+    ...(deck.canonicalSong && typeof deck.canonicalSong === "object"
+      ? { canonicalSong: structuredClone(deck.canonicalSong) }
+      : {}),
     createdAt: deck.createdAt || now,
     updatedAt: deck.updatedAt || now,
     canvas: {
@@ -611,7 +617,7 @@ export function deckPagesToSongSections(deck) {
     const txt = combineTextObjects(textObjects);
     return {
       id: page.id,
-      kind: "verse",
+      kind: typeof page.kind === "string" && page.kind.trim() ? page.kind.toLowerCase() : "verse",
       label: page.label || `Page ${idx + 1}`,
       blocks: txt,
       slideObjects,
@@ -895,6 +901,7 @@ export function songAstToDeck(song, { documentType = SONG_DECK_DOCUMENT_TYPE } =
     ...(documentType === SONG_DECK_DOCUMENT_TYPE ? { type: SONG_DECK_DOCUMENT_TYPE } : {}),
     ...(Number.isFinite(ast.songNumber) && ast.songNumber > 0 ? { songNumber: ast.songNumber } : {}),
     metadata: structuredClone(ast.metadata || {}),
+    canonicalSong: structuredClone(ast),
     playOrder: structuredClone(ast.playOrder || []),
     canvas: DEFAULT_CANVAS,
     theme,

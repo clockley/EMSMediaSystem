@@ -2,6 +2,7 @@ package songstore
 
 import (
 	"emsmediasystem/songs-rpc/internal/songimport"
+	"encoding/json"
 )
 
 type ImportFilesOptions struct {
@@ -61,6 +62,27 @@ func (s *SongStore) ImportFiles(options ImportFilesOptions) (ImportFilesResult, 
 			continue
 		}
 
+		var canonicalImport map[string]interface{}
+		if json.Unmarshal([]byte(originalContent), &canonicalImport) == nil &&
+			documentString(canonicalImport, "schema") == canonicalSongSchemaVersion {
+			if options.DefaultFolderID != nil {
+				canonicalImport["folderId"] = *options.DefaultFolderID
+			}
+			if err := s.SaveSongDocument(canonicalImport, originalContent); err != nil {
+				failed = append(failed, ImportFailure{
+					Path:  path,
+					Error: "could not save song to the library: " + err.Error(),
+				})
+				continue
+			}
+			songID := documentString(canonicalImport, "id")
+			imported = append(imported, songID)
+			if saved, err := s.GetSong(songID); err == nil {
+				lastSong = saved
+			}
+			continue
+		}
+
 		song := Song{
 			Schema:     "ems.song.v1",
 			ID:         parsed.ID,
@@ -73,6 +95,9 @@ func (s *SongStore) ImportFiles(options ImportFilesOptions) (ImportFilesResult, 
 				CCLINumber: "",
 				OneLicense: "",
 				Meter:      parsed.Metadata.Meter,
+				Hymnal:     parsed.Metadata.Hymnal,
+				Tags:       parsed.Metadata.Tags,
+				Extra:      parsed.Metadata.Extra,
 			},
 			Sections:     []SongSection{},
 			Arrangements: []Arrangement{},
@@ -90,6 +115,7 @@ func (s *SongStore) ImportFiles(options ImportFilesOptions) (ImportFilesResult, 
 			song.Sections = append(song.Sections, SongSection{
 				ID:     sec.ID,
 				Kind:   sec.Kind,
+				Number: sec.Number,
 				Label:  sec.Label,
 				Blocks: blocks,
 			})

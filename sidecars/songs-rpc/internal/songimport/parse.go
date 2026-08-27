@@ -2,6 +2,7 @@ package songimport
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,12 +45,28 @@ func ParseContent(source, sourceName string) (ParsedSong, string, error) {
 
 	switch DetectFormat(trimmed, sourceName) {
 	case FormatJSON:
+		var root map[string]json.RawMessage
+		isCanonical := false
+		if json.Unmarshal([]byte(trimmed), &root) == nil {
+			var schema string
+			if rawSchema, ok := root["schema"]; ok && json.Unmarshal(rawSchema, &schema) == nil {
+				isCanonical = schema == "ems.song.v1"
+			}
+		}
 		song, err := ParseHymnalJSON(trimmed, sourceName)
 		if err != nil {
 			return ParsedSong{}, trimmed, err
 		}
-		if err := validateParsedSong(song); err != nil {
-			return ParsedSong{}, trimmed, err
+		if !isCanonical {
+			if err := validateParsedSong(song); err != nil {
+				return ParsedSong{}, trimmed, err
+			}
+		}
+		if isCanonical && len(song.Sections) == 0 {
+			return ParsedSong{}, trimmed, fmt.Errorf("canonical song has no sections")
+		}
+		if song.Schema != "ems.song.v1" {
+			return ParsedSong{}, trimmed, fmt.Errorf("unsupported song schema %q", song.Schema)
 		}
 		return song, trimmed, nil
 	case FormatTXT:

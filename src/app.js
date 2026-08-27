@@ -175,6 +175,7 @@ import {
   normalizeToSongAST,
   parseSongQueuePath,
   queueEntryFromSong,
+  reconcileSongPlayOrder,
   resolvedSongPresentation,
   songDefaultRenderFromRender,
   songSectionBlockTexts,
@@ -13878,6 +13879,9 @@ function addDeckPage() {
   recordSlideUndoCheckpoint("Add page");
   const page = createBlankPage({ label: `Page ${currentDeck.pages.length + 1}` });
   currentDeck.pages.push(page);
+  if (currentDeckIsSongDocument()) {
+    currentDeck.playOrder = reconcileSongPlayOrder(currentDeck.playOrder, currentDeck.pages);
+  }
   currentDeckPageId = page.id;
   activeSlideTextObjectId = null;
   setDeckDirty(true);
@@ -13896,6 +13900,9 @@ function duplicateDeckPage() {
   }
   const idx = currentDeck.pages.findIndex((p) => p.id === page.id);
   currentDeck.pages.splice(idx + 1, 0, copy);
+  if (currentDeckIsSongDocument()) {
+    currentDeck.playOrder = reconcileSongPlayOrder(currentDeck.playOrder, currentDeck.pages);
+  }
   currentDeckPageId = copy.id;
   activeSlideTextObjectId = null;
   setDeckDirty(true);
@@ -13912,6 +13919,9 @@ function deleteDeckPage() {
   if (idx < 0) return;
   recordSlideUndoCheckpoint("Delete page");
   currentDeck.pages.splice(idx, 1);
+  if (currentDeckIsSongDocument()) {
+    currentDeck.playOrder = reconcileSongPlayOrder(currentDeck.playOrder, currentDeck.pages);
+  }
   currentDeckPageId = currentDeck.pages[Math.min(idx, currentDeck.pages.length - 1)].id;
   activeSlideTextObjectId = null;
   setDeckDirty(true);
@@ -13923,6 +13933,7 @@ function deleteDeckPage() {
 function renderSlideEditorState() {
   const hasDeck = Boolean(currentDeck);
   const page = currentPage();
+  const isSong = currentDeckIsSongDocument();
 
   syncSlidesWorkspaceTitle();
 
@@ -13937,6 +13948,31 @@ function renderSlideEditorState() {
   if (textColor) textColor.value = currentDeck?.theme?.textColor || DEFAULT_DECK_THEME.textColor;
   const bgColor = document.getElementById("slidesDeckBgColor");
   if (bgColor) bgColor.value = currentDeck?.theme?.backgroundColor || DEFAULT_DECK_THEME.backgroundColor;
+
+  const songMetadataGroup = document.getElementById("slidesSongMetadataGroup");
+  if (songMetadataGroup) songMetadataGroup.hidden = !isSong;
+  const songMetadata = currentDeck?.metadata || {};
+  const songHymnal = songMetadata.hymnal || {};
+  const songFieldValues = {
+    slidesSongNumber:
+      Number.isFinite(currentDeck?.songNumber) && currentDeck.songNumber > 0
+        ? String(currentDeck.songNumber)
+        : "",
+    slidesSongAuthors: Array.isArray(songMetadata.authors) ? songMetadata.authors.join(", ") : "",
+    slidesSongCopyright: songMetadata.copyright || "",
+    slidesSongCcli: songMetadata.ccliNumber || songMetadata.ccli_number || "",
+    slidesSongLicense: songMetadata.oneLicense || songMetadata.one_license || "",
+    slidesSongHymnalName: songHymnal.name || "",
+    slidesSongHymnalNumber: songHymnal.number || "",
+    slidesSongMeter: songMetadata.meter || songHymnal.meter || "",
+  };
+  for (const [id, value] of Object.entries(songFieldValues)) {
+    const field = document.getElementById(id);
+    if (field) {
+      field.value = isSong ? value : "";
+      field.disabled = !isSong;
+    }
+  }
 
   const pageLabel = document.getElementById("slidesPageLabelInput");
   if (pageLabel) pageLabel.value = page?.label || "";
@@ -16407,6 +16443,14 @@ function bindSlideUndoControlTransactions() {
     ["slidesDeckFontSize", "Change deck font size"],
     ["slidesDeckTextColor", "Change deck text color"],
     ["slidesDeckBgColor", "Change deck background"],
+    ["slidesSongNumber", "Edit song number"],
+    ["slidesSongAuthors", "Edit song authors"],
+    ["slidesSongCopyright", "Edit song copyright"],
+    ["slidesSongCcli", "Edit song CCLI number"],
+    ["slidesSongLicense", "Edit song license"],
+    ["slidesSongHymnalName", "Edit song hymnal"],
+    ["slidesSongHymnalNumber", "Edit song hymnal number"],
+    ["slidesSongMeter", "Edit song meter"],
     ["slidesPageLabelInput", "Edit page label"],
     ["slidesPageBackgroundColor", "Change page background"],
     ["slidesPageNotes", "Edit page notes"],
@@ -16891,11 +16935,7 @@ async function saveSongEditor() {
       meter: currentWorkspaceSong?.metadata?.meter || currentWorkspaceSong?.metadata?.hymnal?.meter || "",
     },
     sections,
-    playOrder: sections.map((s) => ({
-      id: `seq_${s.id}`,
-      sectionId: s.id,
-      enabled: true,
-    })),
+    playOrder: reconcileSongPlayOrder(currentWorkspaceSong?.playOrder, sections),
     defaultRender: {
       ...songDefaultRenderFromRender(currentSongRenderState),
     },
@@ -16957,11 +16997,7 @@ async function saveSongToSchedule() {
       meter: currentWorkspaceSong?.metadata?.meter || currentWorkspaceSong?.metadata?.hymnal?.meter || "",
     },
     sections,
-    playOrder: sections.map((s) => ({
-      id: `seq_${s.id}`,
-      sectionId: s.id,
-      enabled: true,
-    })),
+    playOrder: reconcileSongPlayOrder(currentWorkspaceSong?.playOrder, sections),
     defaultRender: {
       ...songDefaultRenderFromRender(currentSongRenderState),
     },
@@ -17615,6 +17651,19 @@ function installBibleMediaControls() {
     }
   });
 
+  const updateSongMetadata = (label, update) => {
+    if (!currentDeck || !currentDeckIsSongDocument()) return;
+    recordSlideUndoForMutation(label);
+    const metadata = {
+      ...(currentDeck.metadata && typeof currentDeck.metadata === "object"
+        ? currentDeck.metadata
+        : {}),
+    };
+    update(metadata);
+    currentDeck.metadata = metadata;
+    setDeckDirty(true);
+  };
+
   // Deck properties
   document.getElementById("slidesDeckTitleInput")?.addEventListener("input", (e) => {
     if (!currentDeck) return;
@@ -17666,6 +17715,65 @@ function installBibleMediaControls() {
     setDeckDirty(true);
     renderSlideCanvas();
     renderDeckPageStrip();
+  });
+  document.getElementById("slidesSongNumber")?.addEventListener("input", (e) => {
+    if (!currentDeck || !currentDeckIsSongDocument()) return;
+    const value = Number.parseInt(e.target.value, 10);
+    recordSlideUndoForMutation("Edit song number");
+    if (Number.isFinite(value) && value > 0) {
+      currentDeck.songNumber = value;
+    } else {
+      delete currentDeck.songNumber;
+    }
+    setDeckDirty(true);
+  });
+  document.getElementById("slidesSongAuthors")?.addEventListener("input", (e) => {
+    updateSongMetadata("Edit song authors", (metadata) => {
+      metadata.authors = String(e.target.value || "")
+        .split(/[,;\n]/)
+        .map((author) => author.trim())
+        .filter(Boolean);
+    });
+  });
+  document.getElementById("slidesSongCopyright")?.addEventListener("input", (e) => {
+    updateSongMetadata("Edit song copyright", (metadata) => {
+      metadata.copyright = e.target.value.trim();
+    });
+  });
+  document.getElementById("slidesSongCcli")?.addEventListener("input", (e) => {
+    updateSongMetadata("Edit song CCLI number", (metadata) => {
+      metadata.ccliNumber = e.target.value.trim() || null;
+      delete metadata.ccli_number;
+    });
+  });
+  document.getElementById("slidesSongLicense")?.addEventListener("input", (e) => {
+    updateSongMetadata("Edit song license", (metadata) => {
+      metadata.oneLicense = e.target.value.trim() || null;
+      delete metadata.one_license;
+    });
+  });
+  for (const [id, label, key] of [
+    ["slidesSongHymnalName", "Edit song hymnal", "name"],
+    ["slidesSongHymnalNumber", "Edit song hymnal number", "number"],
+  ]) {
+    document.getElementById(id)?.addEventListener("input", (e) => {
+      updateSongMetadata(label, (metadata) => {
+        metadata.hymnal = {
+          ...(metadata.hymnal && typeof metadata.hymnal === "object" ? metadata.hymnal : {}),
+          [key]: e.target.value.trim() || null,
+        };
+      });
+    });
+  }
+  document.getElementById("slidesSongMeter")?.addEventListener("input", (e) => {
+    updateSongMetadata("Edit song meter", (metadata) => {
+      const meter = e.target.value.trim();
+      metadata.meter = meter;
+      metadata.hymnal = {
+        ...(metadata.hymnal && typeof metadata.hymnal === "object" ? metadata.hymnal : {}),
+        meter,
+      };
+    });
   });
 
   // Page properties

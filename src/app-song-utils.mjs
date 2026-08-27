@@ -69,6 +69,7 @@ export function songSectionBlockTexts(section) {
 export function normalizeToSongAST(song) {
   if (!song || typeof song !== "object") return null;
 
+  const sourceSong = structuredClone(song);
   const id = song.id || "";
   const title = song.title || "Untitled Song";
   const songNumber = Number.isFinite(song.songNumber) && song.songNumber > 0 ? song.songNumber : undefined;
@@ -99,12 +100,19 @@ export function normalizeToSongAST(song) {
         const isSpacer =
           block.type === "spacer" ||
           (explicitSegments ? explicitSegments.length === 0 : fallbackText.trim() === "");
+        const blockType = ["lyricLine", "spacer", "comment", "speaker"].includes(block.type)
+          ? block.type
+          : isSpacer
+            ? "spacer"
+            : "lyricLine";
         return {
-          type: isSpacer ? "spacer" : "lyricLine",
+          ...structuredClone(block),
+          type: blockType,
           id: block.id || `block_${Math.random().toString(36).substring(2, 9)}`,
           primary: {
+            ...(block.primary && typeof block.primary === "object" ? structuredClone(block.primary) : {}),
             lang: block.primary?.lang || "en",
-            segments: isSpacer
+            segments: blockType === "spacer"
               ? []
               : explicitSegments || [{ type: "text", text: fallbackText }]
           },
@@ -115,8 +123,10 @@ export function normalizeToSongAST(song) {
     }
 
     return {
+      ...structuredClone(sec),
       id: sec.id || `sec_${Math.random().toString(36).substring(2, 9)}`,
       kind,
+      ...(Number.isFinite(sec.number) && sec.number > 0 ? { number: sec.number } : {}),
       label,
       blocks,
       ...(Array.isArray(sec.slideObjects)
@@ -170,12 +180,16 @@ export function normalizeToSongAST(song) {
   const defaultRender = song.defaultRender || undefined;
 
   return {
+    ...sourceSong,
     schema: "ems.song.v1",
     id,
     title,
     songNumber,
     folderId,
     metadata: {
+      ...(song.metadata && typeof song.metadata === "object"
+        ? structuredClone(song.metadata)
+        : {}),
       authors,
       copyright,
       ccliNumber,
@@ -188,6 +202,7 @@ export function normalizeToSongAST(song) {
     ],
     sections,
     playOrder,
+    arrangements: Array.isArray(song.arrangements) ? structuredClone(song.arrangements) : [],
     presentation: song.presentation || {
       defaultChunking: {
         mode: "blocksPerSlide",
@@ -227,6 +242,7 @@ export function songAstToSearchText(song) {
       if (author) parts.push(String(author));
     }
   }
+  if (metadata.copyright) parts.push(String(metadata.copyright));
   if (metadata.ccliNumber) parts.push(`CCLI ${metadata.ccliNumber}`);
   if (metadata.oneLicense) parts.push(`OneLicense ${metadata.oneLicense}`);
   if (metadata.meter) parts.push(String(metadata.meter));
@@ -236,6 +252,7 @@ export function songAstToSearchText(song) {
     if (hymnal.name) parts.push(String(hymnal.name));
     if (hymnal.number) parts.push(String(hymnal.number));
     if (hymnal.meter && hymnal.meter !== metadata.meter) parts.push(String(hymnal.meter));
+    if (hymnal.display) parts.push(String(hymnal.display));
   }
 
   if (Array.isArray(metadata.tags)) {
@@ -314,6 +331,39 @@ export function arrangementSequenceEntries(song, arrangementId = "arr_default") 
       return null;
     })
     .filter(Boolean);
+}
+
+export function reconcileSongPlayOrder(playOrder, sections) {
+  const sectionIds = (Array.isArray(sections) ? sections : [])
+    .map((section) => section?.id)
+    .filter(Boolean);
+  const validIds = new Set(sectionIds);
+  const represented = new Set();
+  const reconciled = [];
+  for (const [index, entry] of (Array.isArray(playOrder) ? playOrder : []).entries()) {
+    const sectionId =
+      typeof entry === "string"
+        ? entry
+        : typeof entry?.sectionId === "string"
+          ? entry.sectionId
+          : "";
+    if (!validIds.has(sectionId)) continue;
+    represented.add(sectionId);
+    reconciled.push({
+      id: typeof entry?.id === "string" && entry.id ? entry.id : `play_${index}`,
+      sectionId,
+      enabled: entry?.enabled !== false,
+    });
+  }
+  for (const sectionId of sectionIds) {
+    if (represented.has(sectionId)) continue;
+    reconciled.push({
+      id: `play_${sectionId}`,
+      sectionId,
+      enabled: true,
+    });
+  }
+  return reconciled;
 }
 
 export function enabledSongSections(song, sequenceEntries = null) {

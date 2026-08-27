@@ -19,11 +19,14 @@ type SongStore struct {
 }
 
 type SongMetadata struct {
-	Authors    []string `json:"authors"`
-	Copyright  string   `json:"copyright"`
-	CCLINumber string   `json:"ccliNumber"`
-	OneLicense string   `json:"oneLicense"`
-	Meter      string   `json:"meter,omitempty"`
+	Authors    []string       `json:"authors"`
+	Copyright  string         `json:"copyright"`
+	CCLINumber string         `json:"ccliNumber"`
+	OneLicense string         `json:"oneLicense"`
+	Meter      string         `json:"meter,omitempty"`
+	Hymnal     map[string]any `json:"hymnal,omitempty"`
+	Tags       []string       `json:"tags,omitempty"`
+	Extra      map[string]any `json:"extra,omitempty"`
 }
 
 type Song struct {
@@ -42,6 +45,7 @@ type Song struct {
 type SongSection struct {
 	ID     string      `json:"id"`
 	Kind   string      `json:"kind"`
+	Number *int        `json:"number,omitempty"`
 	Label  string      `json:"label"`
 	Blocks []SongBlock `json:"blocks"`
 }
@@ -103,6 +107,8 @@ type SearchOptions struct {
 
 const searchQueryResultLimit = 1000
 const slideDeckSchemaVersion = "ems.slideDeck.v1"
+const canonicalSongSchemaVersion = "ems.song.v1"
+const derivedDeckCacheVersion = "ems.song.deck-cache.v1"
 
 func sqlLimitClause(limit int) string {
 	if limit <= 0 {
@@ -154,8 +160,14 @@ func (s *SongStore) createSchema() error {
 		copyright TEXT,
 		meter TEXT,
 		folder_id TEXT,
+		song_number INTEGER,
 		original_import_json TEXT,
 		song_json TEXT,
+		ast_json TEXT,
+		schema_version TEXT,
+		canonical_json TEXT,
+		derived_deck_json TEXT,
+		derived_deck_version TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -186,6 +198,9 @@ func (s *SongStore) migrateSchema() error {
 	hasASTJSON := false
 	hasSchemaVersion := false
 	hasMeter := false
+	hasCanonicalJSON := false
+	hasDerivedDeckJSON := false
+	hasDerivedDeckVersion := false
 	for rows.Next() {
 		var cid int
 		var name, ctype string
@@ -209,6 +224,15 @@ func (s *SongStore) migrateSchema() error {
 		}
 		if name == "meter" {
 			hasMeter = true
+		}
+		if name == "canonical_json" {
+			hasCanonicalJSON = true
+		}
+		if name == "derived_deck_json" {
+			hasDerivedDeckJSON = true
+		}
+		if name == "derived_deck_version" {
+			hasDerivedDeckVersion = true
 		}
 	}
 	rows.Close()
@@ -238,17 +262,42 @@ func (s *SongStore) migrateSchema() error {
 			return fmt.Errorf("failed to add meter column: %w", err)
 		}
 	}
+	if !hasCanonicalJSON {
+		if _, err := s.db.Exec(`ALTER TABLE songs ADD COLUMN canonical_json TEXT`); err != nil {
+			return fmt.Errorf("failed to add canonical_json column: %w", err)
+		}
+	}
+	if !hasDerivedDeckJSON {
+		if _, err := s.db.Exec(`ALTER TABLE songs ADD COLUMN derived_deck_json TEXT`); err != nil {
+			return fmt.Errorf("failed to add derived_deck_json column: %w", err)
+		}
+	}
+	if !hasDerivedDeckVersion {
+		if _, err := s.db.Exec(`ALTER TABLE songs ADD COLUMN derived_deck_version TEXT`); err != nil {
+			return fmt.Errorf("failed to add derived_deck_version column: %w", err)
+		}
+	}
 	if err := s.backfillSongNumbersFromJSON(); err != nil {
 		return err
 	}
 	if err := s.backfillSongMetersFromJSON(); err != nil {
 		return err
 	}
-	return s.backfillASTJSONFromJSON()
+	if err := s.migrateCanonicalSongs(); err != nil {
+		return err
+	}
+	if err := s.rebuildDerivedDeckCaches(); err != nil {
+		return err
+	}
+	return s.rebuildSearchIndex()
 }
 
 func (s *SongStore) ConvertToAST(song Song) map[string]interface{} {
-	return s.ConvertToDeck(song)
+	payload, _ := json.Marshal(song)
+	var document map[string]interface{}
+	_ = json.Unmarshal(payload, &document)
+	document["schema"] = canonicalSongSchemaVersion
+	return document
 }
 
 func (s *SongStore) ConvertToDeck(song Song) map[string]interface{} {
@@ -257,20 +306,29 @@ func (s *SongStore) ConvertToDeck(song Song) map[string]interface{} {
 		authors = []string{}
 	}
 
+	hymnal := map[string]interface{}{
+		"name":   "",
+		"number": "",
+		"meter":  normalizedSongMeter(song.Metadata.Meter),
+	}
+	for key, value := range song.Metadata.Hymnal {
+		hymnal[key] = value
+	}
 	metadata := map[string]interface{}{
 		"authors":    authors,
 		"copyright":  song.Metadata.Copyright,
 		"ccliNumber": song.Metadata.CCLINumber,
 		"oneLicense": song.Metadata.OneLicense,
 		"meter":      normalizedSongMeter(song.Metadata.Meter),
-		"hymnal": map[string]interface{}{
-			"name":   "",
-			"number": "",
-			"meter":  normalizedSongMeter(song.Metadata.Meter),
-		},
+		"hymnal":     hymnal,
+		"tags":       song.Metadata.Tags,
+		"extra":      song.Metadata.Extra,
 	}
 	if song.SongNumber != nil {
-		metadata["hymnal"].(map[string]interface{})["number"] = fmt.Sprintf("%d", *song.SongNumber)
+		numberText, hasNumber := hymnal["number"].(string)
+		if !hasNumber || strings.TrimSpace(numberText) == "" {
+			hymnal["number"] = fmt.Sprintf("%d", *song.SongNumber)
+		}
 	}
 
 	pages := []map[string]interface{}{}
@@ -483,7 +541,217 @@ func (s *SongStore) backfillASTJSONFromJSON() error {
 			continue
 		}
 
-		if _, err := s.db.Exec(`UPDATE songs SET ast_json = ?, schema_version = ? WHERE id = ?`, string(astJSON), slideDeckSchemaVersion, item.id); err != nil {
+		if _, err := s.db.Exec(`UPDATE songs SET ast_json = ?, schema_version = ? WHERE id = ?`, string(astJSON), canonicalSongSchemaVersion, item.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func decodeSongDocument(raw sql.NullString) map[string]interface{} {
+	if !raw.Valid || strings.TrimSpace(raw.String) == "" {
+		return nil
+	}
+	var document map[string]interface{}
+	if json.Unmarshal([]byte(raw.String), &document) != nil {
+		return nil
+	}
+	return document
+}
+
+func (s *SongStore) migrateCanonicalSongs() error {
+	rows, err := s.db.Query(`
+		SELECT id, canonical_json, ast_json, song_json, folder_id, song_number, meter
+		FROM songs
+		WHERE canonical_json IS NULL OR canonical_json = ''
+	`)
+	if err != nil {
+		return err
+	}
+	type migrationItem struct {
+		id            string
+		canonicalJSON sql.NullString
+		astJSON       sql.NullString
+		songJSON      sql.NullString
+		folderID      sql.NullString
+		songNumber    sql.NullInt64
+		meter         sql.NullString
+	}
+	var items []migrationItem
+	for rows.Next() {
+		var item migrationItem
+		if err := rows.Scan(
+			&item.id,
+			&item.canonicalJSON,
+			&item.astJSON,
+			&item.songJSON,
+			&item.folderID,
+			&item.songNumber,
+			&item.meter,
+		); err != nil {
+			rows.Close()
+			return err
+		}
+		items = append(items, item)
+	}
+	rows.Close()
+
+	for _, item := range items {
+		var canonical map[string]interface{}
+		var derived map[string]interface{}
+		candidates := []sql.NullString{item.canonicalJSON, item.songJSON, item.astJSON}
+		for _, candidate := range candidates {
+			document := decodeSongDocument(candidate)
+			if document == nil {
+				continue
+			}
+			schema := documentString(document, "schema")
+			if schema != canonicalSongSchemaVersion &&
+				!(schema == "" && genericSlice(document["sections"]) != nil) {
+				continue
+			}
+			converted, conversionErr := canonicalSongFromDocument(document)
+			if conversionErr != nil {
+				continue
+			}
+			canonical = converted
+			break
+		}
+		for _, candidate := range []sql.NullString{item.astJSON, item.songJSON} {
+			document := decodeSongDocument(candidate)
+			if document == nil {
+				continue
+			}
+			schema := documentString(document, "schema")
+			if schema == slideDeckSchemaVersion ||
+				(schema == "" && genericSlice(document["pages"]) != nil) {
+				derived = document
+				if canonical == nil {
+					canonical, _ = canonicalSongFromDocument(document)
+				}
+				break
+			}
+		}
+		if canonical == nil {
+			continue
+		}
+		canonical["id"] = item.id
+		if folderID := scanNullableString(item.folderID); folderID != nil {
+			canonical["folderId"] = *folderID
+		}
+		if songNumber := scanNullableInt(item.songNumber); songNumber != nil {
+			canonical["songNumber"] = *songNumber
+		}
+		if meter := scanNullableText(item.meter); meter != "" {
+			setASTMetadataString(canonical, "meter", meter)
+		}
+		if derived == nil {
+			var err error
+			derived, err = canonicalToDerivedDeck(canonical)
+			if err != nil {
+				return err
+			}
+		}
+		canonicalJSON, err := json.Marshal(canonical)
+		if err != nil {
+			continue
+		}
+		derivedJSON, err := json.Marshal(derived)
+		if err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`
+			UPDATE songs
+			SET canonical_json = ?, derived_deck_json = ?, derived_deck_version = ?, schema_version = ?
+			WHERE id = ? AND (canonical_json IS NULL OR canonical_json = '')
+		`, string(canonicalJSON), string(derivedJSON), derivedDeckCacheVersion, canonicalSongSchemaVersion, item.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SongStore) rebuildSearchIndex() error {
+	rows, err := s.db.Query(`SELECT canonical_json FROM songs WHERE canonical_json IS NOT NULL AND canonical_json != ''`)
+	if err != nil {
+		return err
+	}
+	var documents []map[string]interface{}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			rows.Close()
+			return err
+		}
+		var document map[string]interface{}
+		if json.Unmarshal([]byte(raw), &document) == nil {
+			documents = append(documents, document)
+		}
+	}
+	rows.Close()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM song_fts`); err != nil {
+		return err
+	}
+	for _, document := range documents {
+		if err := insertSearchDocument(tx, document); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *SongStore) rebuildDerivedDeckCaches() error {
+	rows, err := s.db.Query(`
+		SELECT id, canonical_json
+		FROM songs
+		WHERE canonical_json IS NOT NULL
+			AND canonical_json != ''
+			AND (
+				derived_deck_json IS NULL
+				OR derived_deck_json = ''
+				OR derived_deck_version IS NULL
+				OR derived_deck_version != ?
+			)
+	`, derivedDeckCacheVersion)
+	if err != nil {
+		return err
+	}
+	type cacheItem struct {
+		id       string
+		document map[string]interface{}
+	}
+	var items []cacheItem
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			rows.Close()
+			return err
+		}
+		var document map[string]interface{}
+		if json.Unmarshal([]byte(raw), &document) == nil {
+			items = append(items, cacheItem{id: id, document: document})
+		}
+	}
+	rows.Close()
+	for _, item := range items {
+		derived, err := canonicalToDerivedDeck(item.document)
+		if err != nil {
+			return err
+		}
+		derivedJSON, err := json.Marshal(derived)
+		if err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`
+			UPDATE songs
+			SET derived_deck_json = ?, derived_deck_version = ?
+			WHERE id = ?
+		`, string(derivedJSON), derivedDeckCacheVersion, item.id); err != nil {
 			return err
 		}
 	}
@@ -814,6 +1082,307 @@ func normalizeSongDocument(raw map[string]interface{}) (map[string]interface{}, 
 	return (&SongStore{}).ConvertToDeck(song), nil
 }
 
+func cloneDocument(document map[string]interface{}) map[string]interface{} {
+	return normalizedDocumentMap(document)
+}
+
+func genericSlice(value interface{}) []interface{} {
+	switch items := value.(type) {
+	case []interface{}:
+		return items
+	case []map[string]interface{}:
+		result := make([]interface{}, 0, len(items))
+		for _, item := range items {
+			result = append(result, item)
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func normalizeCanonicalSongDocument(raw map[string]interface{}) (map[string]interface{}, error) {
+	document := cloneDocument(raw)
+	if documentString(document, "schema") != canonicalSongSchemaVersion {
+		return nil, fmt.Errorf("song schema must be %s", canonicalSongSchemaVersion)
+	}
+	if documentString(document, "id") == "" {
+		return nil, fmt.Errorf("song id is required")
+	}
+	if documentString(document, "title") == "" {
+		document["title"] = "Untitled Song"
+	}
+	sections := genericSlice(document["sections"])
+	if sections == nil {
+		return nil, fmt.Errorf("song sections are required")
+	}
+	for sectionIndex, sectionValue := range sections {
+		section, ok := sectionValue.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("song section %d must be an object", sectionIndex+1)
+		}
+		if documentString(section, "id") == "" {
+			return nil, fmt.Errorf("song section %d id is required", sectionIndex+1)
+		}
+		if documentString(section, "kind") == "" {
+			section["kind"] = "verse"
+		} else {
+			section["kind"] = strings.ToLower(documentString(section, "kind"))
+		}
+		blocks := genericSlice(section["blocks"])
+		if blocks == nil {
+			return nil, fmt.Errorf("song section %q blocks are required", documentString(section, "id"))
+		}
+		for blockIndex, blockValue := range blocks {
+			block, ok := blockValue.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("song section %q block %d must be an object", documentString(section, "id"), blockIndex+1)
+			}
+			blockType := documentString(block, "type")
+			switch blockType {
+			case "lyricLine", "spacer", "comment", "speaker":
+			default:
+				return nil, fmt.Errorf("song block %d has invalid type %q", blockIndex+1, blockType)
+			}
+			if documentString(block, "id") == "" {
+				return nil, fmt.Errorf("song section %q block %d id is required", documentString(section, "id"), blockIndex+1)
+			}
+			primary, ok := block["primary"].(map[string]interface{})
+			if !ok || documentString(primary, "lang") == "" || genericSlice(primary["segments"]) == nil {
+				return nil, fmt.Errorf("song block %q primary language and segments are required", documentString(block, "id"))
+			}
+			for segmentIndex, segmentValue := range genericSlice(primary["segments"]) {
+				segment, ok := segmentValue.(map[string]interface{})
+				if !ok || documentString(segment, "type") != "text" {
+					return nil, fmt.Errorf("song block %q segment %d must be text", documentString(block, "id"), segmentIndex+1)
+				}
+				if _, ok := segment["text"].(string); !ok {
+					return nil, fmt.Errorf("song block %q segment %d text is required", documentString(block, "id"), segmentIndex+1)
+				}
+			}
+		}
+		section["blocks"] = blocks
+	}
+	document["sections"] = sections
+	metadataFromDocument(document)
+	if rawPlayOrder, present := document["playOrder"]; present {
+		entries := genericSlice(rawPlayOrder)
+		if entries == nil {
+			return nil, fmt.Errorf("song playOrder must be an array")
+		}
+		normalized := make([]interface{}, 0, len(entries))
+		for index, entryValue := range entries {
+			if sectionID, ok := entryValue.(string); ok {
+				if strings.TrimSpace(sectionID) == "" {
+					return nil, fmt.Errorf("song playOrder entry %d sectionId is required", index+1)
+				}
+				normalized = append(normalized, map[string]interface{}{"sectionId": strings.TrimSpace(sectionID)})
+				continue
+			}
+			entry, ok := entryValue.(map[string]interface{})
+			if !ok || documentString(entry, "sectionId") == "" {
+				return nil, fmt.Errorf("song playOrder entry %d sectionId is required", index+1)
+			}
+			normalized = append(normalized, entry)
+		}
+		document["playOrder"] = normalized
+	} else {
+		playOrder := make([]interface{}, 0, len(sections))
+		for _, value := range sections {
+			section, ok := value.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if id := documentString(section, "id"); id != "" {
+				playOrder = append(playOrder, map[string]interface{}{
+					"sectionId": id,
+					"enabled":   true,
+				})
+			}
+		}
+		document["playOrder"] = playOrder
+	}
+	return document, nil
+}
+
+func deckBlocks(page map[string]interface{}) []interface{} {
+	var blocks []interface{}
+	for _, objectValue := range genericSlice(page["objects"]) {
+		object, ok := objectValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if kind := documentString(object, "kind"); kind != "" && kind != "text" {
+			continue
+		}
+		blocks = append(blocks, genericSlice(object["blocks"])...)
+	}
+	if blocks == nil {
+		return []interface{}{}
+	}
+	return blocks
+}
+
+func deckToCanonicalSongDocument(raw map[string]interface{}) (map[string]interface{}, error) {
+	deck := cloneDocument(raw)
+	if documentString(deck, "id") == "" {
+		return nil, fmt.Errorf("song id is required")
+	}
+	document := map[string]interface{}{}
+	if source, ok := deck["canonicalSong"].(map[string]interface{}); ok &&
+		documentString(source, "schema") == canonicalSongSchemaVersion {
+		document = cloneDocument(source)
+	}
+	existingSections := map[string]map[string]interface{}{}
+	for _, sectionValue := range genericSlice(document["sections"]) {
+		if section, ok := sectionValue.(map[string]interface{}); ok {
+			if id := documentString(section, "id"); id != "" {
+				existingSections[id] = section
+			}
+		}
+	}
+	pages := genericSlice(deck["pages"])
+	sections := make([]interface{}, 0, len(pages))
+	for index, pageValue := range pages {
+		page, ok := pageValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id := documentString(page, "id")
+		if id == "" {
+			id = fmt.Sprintf("section_%d", index+1)
+		}
+		kind := documentString(page, "kind")
+		if kind == "" {
+			kind = "verse"
+		}
+		label := documentString(page, "label")
+		if label == "" {
+			label = fmt.Sprintf("Section %d", index+1)
+		}
+		section := map[string]interface{}{}
+		if existing, ok := existingSections[id]; ok {
+			section = cloneDocument(existing)
+		}
+		section["id"] = id
+		section["kind"] = strings.ToLower(kind)
+		section["label"] = label
+		section["blocks"] = deckBlocks(page)
+		section["slideObjects"] = cloneDocument(map[string]interface{}{"value": genericSlice(page["objects"])})["value"]
+		if background, ok := page["background"].(map[string]interface{}); ok {
+			section["slideBackground"] = cloneDocument(background)
+		}
+		if notes := documentString(page, "notes"); notes != "" {
+			section["notes"] = notes
+		}
+		sections = append(sections, section)
+	}
+	metadata := map[string]interface{}{}
+	if sourceMetadata, ok := deck["metadata"].(map[string]interface{}); ok {
+		metadata = cloneDocument(sourceMetadata)
+	}
+	if _, ok := metadata["authors"]; !ok {
+		metadata["authors"] = []interface{}{}
+	}
+	if _, ok := metadata["copyright"]; !ok {
+		metadata["copyright"] = ""
+	}
+	document["schema"] = canonicalSongSchemaVersion
+	document["id"] = documentString(deck, "id")
+	document["title"] = documentString(deck, "title")
+	document["metadata"] = metadata
+	document["sections"] = sections
+	for _, key := range []string{"songNumber", "folderId", "playOrder", "arrangements", "languages", "presentation"} {
+		if value, ok := deck[key]; ok {
+			document[key] = value
+		}
+	}
+	theme, _ := deck["theme"].(map[string]interface{})
+	if theme != nil {
+		defaultRender := map[string]interface{}{}
+		if existing, ok := document["defaultRender"].(map[string]interface{}); ok {
+			defaultRender = cloneDocument(existing)
+		}
+		for key, value := range map[string]interface{}{
+			"fontFamily":      theme["fontFamily"],
+			"fontSize":        theme["fontSize"],
+			"minFontSize":     theme["minFontSize"],
+			"autosizeMode":    theme["autosizeMode"],
+			"textColor":       theme["textColor"],
+			"backgroundColor": theme["backgroundColor"],
+			"backgroundPath":  theme["backgroundPath"],
+		} {
+			if value != nil {
+				defaultRender[key] = value
+			}
+		}
+		document["defaultRender"] = defaultRender
+	}
+	return normalizeCanonicalSongDocument(document)
+}
+
+func canonicalSongFromDocument(raw map[string]interface{}) (map[string]interface{}, error) {
+	switch documentString(raw, "schema") {
+	case canonicalSongSchemaVersion:
+		return normalizeCanonicalSongDocument(raw)
+	case slideDeckSchemaVersion:
+		return deckToCanonicalSongDocument(raw)
+	default:
+		if genericSlice(raw["sections"]) != nil {
+			canonical := cloneDocument(raw)
+			canonical["schema"] = canonicalSongSchemaVersion
+			return normalizeCanonicalSongDocument(canonical)
+		}
+		if genericSlice(raw["pages"]) != nil {
+			deck := cloneDocument(raw)
+			deck["schema"] = slideDeckSchemaVersion
+			return deckToCanonicalSongDocument(deck)
+		}
+		return nil, fmt.Errorf("unsupported song schema %q", documentString(raw, "schema"))
+	}
+}
+
+func canonicalToDerivedDeck(document map[string]interface{}) (map[string]interface{}, error) {
+	typedDocument := cloneDocument(document)
+	// ConvertToDeck only needs canonical playOrder. Ignoring arrangements here
+	// avoids narrowing valid object-form arrangement entries to []string.
+	delete(typedDocument, "arrangements")
+	payload, err := json.Marshal(typedDocument)
+	if err != nil {
+		return nil, err
+	}
+	var song Song
+	if err := json.Unmarshal(payload, &song); err != nil {
+		return nil, fmt.Errorf("could not generate derived song deck: %w", err)
+	}
+	deck := (&SongStore{}).ConvertToDeck(song)
+	if metadata, ok := document["metadata"].(map[string]interface{}); ok {
+		deck["metadata"] = cloneDocument(metadata)
+	}
+	sections := genericSlice(document["sections"])
+	pages := deck["pages"].([]map[string]interface{})
+	for index, sectionValue := range sections {
+		if index >= len(pages) {
+			break
+		}
+		section, ok := sectionValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if objects := genericSlice(section["slideObjects"]); objects != nil {
+			pages[index]["objects"] = objects
+		}
+		if background, ok := section["slideBackground"].(map[string]interface{}); ok {
+			pages[index]["background"] = cloneDocument(background)
+		}
+		if notes := documentString(section, "notes"); notes != "" {
+			pages[index]["notes"] = notes
+		}
+	}
+	deck["pages"] = pages
+	return deck, nil
+}
+
 func songSectionKind(section SongSection) string {
 	kind := strings.TrimSpace(section.Kind)
 	if kind == "" {
@@ -942,8 +1511,55 @@ func documentLyricsText(document map[string]interface{}) string {
 	return builder.String()
 }
 
+func appendSearchValues(builder *strings.Builder, value interface{}) {
+	switch current := value.(type) {
+	case string:
+		if text := strings.TrimSpace(current); text != "" {
+			builder.WriteString(text)
+			builder.WriteString("\n")
+		}
+	case []interface{}:
+		for _, item := range current {
+			appendSearchValues(builder, item)
+		}
+	case map[string]interface{}:
+		for _, item := range current {
+			appendSearchValues(builder, item)
+		}
+	}
+}
+
+func canonicalSearchText(document map[string]interface{}) string {
+	var builder strings.Builder
+	builder.WriteString(documentString(document, "title"))
+	builder.WriteString("\n")
+	if songNumber := intFromAny(document["songNumber"]); songNumber != nil {
+		builder.WriteString(fmt.Sprintf("#%d\n%d\n", *songNumber, *songNumber))
+	}
+	appendSearchValues(&builder, metadataFromDocument(document))
+	for _, sectionValue := range genericSlice(document["sections"]) {
+		section, ok := sectionValue.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		builder.WriteString(documentString(section, "label"))
+		builder.WriteString("\n")
+		appendSearchValues(&builder, section["blocks"])
+	}
+	return strings.Join(strings.Fields(builder.String()), " ")
+}
+
+func insertSearchDocument(tx *sql.Tx, document map[string]interface{}) error {
+	authors := documentAuthors(document)
+	_, err := tx.Exec(`
+		INSERT INTO song_fts (song_id, title, author, lyrics)
+		VALUES (?, ?, ?, ?)
+	`, documentString(document, "id"), documentString(document, "title"), strings.Join(authors, ", "), canonicalSearchText(document))
+	return err
+}
+
 func (s *SongStore) SaveSong(song Song, originalImportJSON string) error {
-	return s.SaveSongDocument(s.ConvertToDeck(song), originalImportJSON)
+	return s.SaveSongDocument(s.ConvertToAST(song), originalImportJSON)
 }
 
 func (s *SongStore) SaveSongDocument(raw map[string]interface{}, originalImportJSON string) error {
@@ -953,7 +1569,7 @@ func (s *SongStore) SaveSongDocument(raw map[string]interface{}, originalImportJ
 	}
 	defer tx.Rollback()
 
-	document, err := normalizeSongDocument(raw)
+	document, err := canonicalSongFromDocument(raw)
 	if err != nil {
 		return err
 	}
@@ -964,16 +1580,21 @@ func (s *SongStore) SaveSongDocument(raw map[string]interface{}, originalImportJ
 }
 
 func (s *SongStore) saveSongDocumentTx(tx *sql.Tx, document map[string]interface{}, originalImportJSON string) error {
-	documentJSON, err := json.Marshal(document)
+	canonicalJSON, err := json.Marshal(document)
+	if err != nil {
+		return err
+	}
+	derived, err := canonicalToDerivedDeck(document)
+	if err != nil {
+		return err
+	}
+	derivedJSON, err := json.Marshal(derived)
 	if err != nil {
 		return err
 	}
 
-	authorStr := ""
 	authors := documentAuthors(document)
-	if len(authors) > 0 {
-		authorStr = authors[0]
-	}
+	authorStr := strings.Join(authors, ", ")
 	id := documentString(document, "id")
 	title := documentString(document, "title")
 	ccliNumber := metadataString(document, "ccliNumber")
@@ -983,8 +1604,8 @@ func (s *SongStore) saveSongDocumentTx(tx *sql.Tx, document map[string]interface
 	songNumber := intFromAny(document["songNumber"])
 
 	_, err = tx.Exec(`
-		INSERT INTO songs (id, title, normalized_title, author, ccli_number, copyright, meter, folder_id, song_number, original_import_json, song_json, ast_json, schema_version, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO songs (id, title, normalized_title, author, ccli_number, copyright, meter, folder_id, song_number, original_import_json, song_json, ast_json, schema_version, canonical_json, derived_deck_json, derived_deck_version, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
 			title=excluded.title,
 			normalized_title=excluded.normalized_title,
@@ -994,39 +1615,37 @@ func (s *SongStore) saveSongDocumentTx(tx *sql.Tx, document map[string]interface
 			meter=excluded.meter,
 			folder_id=excluded.folder_id,
 			song_number=excluded.song_number,
-			original_import_json=excluded.original_import_json,
+			original_import_json=CASE
+				WHEN excluded.original_import_json != '' THEN excluded.original_import_json
+				ELSE songs.original_import_json
+			END,
 			song_json=excluded.song_json,
 			ast_json=excluded.ast_json,
 			schema_version=excluded.schema_version,
+			canonical_json=excluded.canonical_json,
+			derived_deck_json=excluded.derived_deck_json,
+			derived_deck_version=excluded.derived_deck_version,
 			updated_at=CURRENT_TIMESTAMP
-	`, id, title, title, authorStr, ccliNumber, copyright, songMeterArg(meter), nullableString(folderID), songNumberArg(songNumber), originalImportJSON, string(documentJSON), string(documentJSON), slideDeckSchemaVersion)
+	`, id, title, title, authorStr, ccliNumber, copyright, songMeterArg(meter), nullableString(folderID), songNumberArg(songNumber), originalImportJSON, string(canonicalJSON), string(canonicalJSON), canonicalSongSchemaVersion, string(canonicalJSON), string(derivedJSON), derivedDeckCacheVersion)
 
 	if err != nil {
 		return err
 	}
 
-	tx.Exec("DELETE FROM song_fts WHERE song_id = ?", id)
-
-	allLyrics := documentLyricsText(document)
-	if meter != "" {
-		allLyrics += meter + "\n"
+	if _, err := tx.Exec("DELETE FROM song_fts WHERE song_id = ?", id); err != nil {
+		return err
 	}
-
-	tx.Exec(`
-		INSERT INTO song_fts (song_id, title, author, lyrics)
-		VALUES (?, ?, ?, ?)
-	`, id, title, authorStr, allLyrics)
-
-	return nil
+	return insertSearchDocument(tx, document)
 }
 
 func (s *SongStore) GetSong(id string) (interface{}, error) {
+	var canonicalJSON sql.NullString
 	var astJSON sql.NullString
 	var songJSON sql.NullString
 	var folderID sql.NullString
 	var songNumber sql.NullInt64
 	var meter sql.NullString
-	err := s.db.QueryRow("SELECT ast_json, song_json, folder_id, song_number, meter FROM songs WHERE id = ?", id).Scan(&astJSON, &songJSON, &folderID, &songNumber, &meter)
+	err := s.db.QueryRow("SELECT canonical_json, ast_json, song_json, folder_id, song_number, meter FROM songs WHERE id = ?", id).Scan(&canonicalJSON, &astJSON, &songJSON, &folderID, &songNumber, &meter)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("song not found")
@@ -1034,33 +1653,29 @@ func (s *SongStore) GetSong(id string) (interface{}, error) {
 		return nil, err
 	}
 
-	if astJSON.Valid && astJSON.String != "" {
+	for _, candidate := range []sql.NullString{canonicalJSON, astJSON, songJSON} {
+		if !candidate.Valid || strings.TrimSpace(candidate.String) == "" {
+			continue
+		}
 		var document map[string]interface{}
-		if err := json.Unmarshal([]byte(astJSON.String), &document); err == nil {
-			document["folderId"] = scanNullableString(folderID)
-			if dbNumber := scanNullableInt(songNumber); dbNumber != nil {
-				document["songNumber"] = *dbNumber
+		if err := json.Unmarshal([]byte(candidate.String), &document); err == nil {
+			canonical, conversionErr := canonicalSongFromDocument(document)
+			if conversionErr != nil {
+				continue
 			}
-			setASTMetadataString(document, "meter", scanNullableText(meter))
-			return document, nil
+			if dbFolder := scanNullableString(folderID); dbFolder != nil {
+				canonical["folderId"] = *dbFolder
+			} else {
+				canonical["folderId"] = nil
+			}
+			if dbNumber := scanNullableInt(songNumber); dbNumber != nil {
+				canonical["songNumber"] = *dbNumber
+			}
+			setASTMetadataString(canonical, "meter", scanNullableText(meter))
+			return canonical, nil
 		}
 	}
-
-	// Fallback to song_json and convert to the deck document.
-	var song Song
-	if err := json.Unmarshal([]byte(songJSON.String), &song); err != nil {
-		return nil, err
-	}
-	song.FolderID = scanNullableString(folderID)
-	if dbNumber := scanNullableInt(songNumber); dbNumber != nil {
-		song.SongNumber = dbNumber
-	}
-	if song.Metadata.Meter == "" {
-		song.Metadata.Meter = scanNullableText(meter)
-	}
-
-	document := s.ConvertToDeck(song)
-	return document, nil
+	return nil, fmt.Errorf("song data is invalid")
 }
 
 func (s *SongStore) DeleteSong(id string) error {

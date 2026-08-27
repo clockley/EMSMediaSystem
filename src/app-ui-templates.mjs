@@ -699,6 +699,43 @@ export function generateMediaFormHTML() {
                 </div>
               </div>
               <aside class="slides-workspace__properties" aria-label="Slide templates and page properties">
+                <div id="slidesSongMetadataGroup" class="boxed-list-group" hidden>
+                  <div class="boxed-list-title">Song Info</div>
+                  <div class="boxed-list">
+                    <div class="boxed-list-row">
+                      <label for="slidesSongNumber">Number</label>
+                      <input type="number" id="slidesSongNumber" min="1" placeholder="#" aria-label="Song number">
+                    </div>
+                    <div class="boxed-list-row">
+                      <label for="slidesSongAuthors">Authors</label>
+                      <input type="text" id="slidesSongAuthors" placeholder="Comma-separated names" aria-label="Song authors">
+                    </div>
+                    <div class="boxed-list-row">
+                      <label for="slidesSongCopyright">Copyright</label>
+                      <input type="text" id="slidesSongCopyright" placeholder="Copyright or Public Domain">
+                    </div>
+                    <div class="boxed-list-row">
+                      <label for="slidesSongCcli">CCLI</label>
+                      <input type="text" id="slidesSongCcli" placeholder="CCLI number">
+                    </div>
+                    <div class="boxed-list-row">
+                      <label for="slidesSongLicense">License</label>
+                      <input type="text" id="slidesSongLicense" placeholder="OneLicense number">
+                    </div>
+                    <div class="boxed-list-row">
+                      <label for="slidesSongHymnalName">Hymnal</label>
+                      <input type="text" id="slidesSongHymnalName" placeholder="Hymnal name">
+                    </div>
+                    <div class="boxed-list-row">
+                      <label for="slidesSongHymnalNumber">Hymnal #</label>
+                      <input type="text" id="slidesSongHymnalNumber" placeholder="Hymnal number">
+                    </div>
+                    <div class="boxed-list-row">
+                      <label for="slidesSongMeter">Meter</label>
+                      <input type="text" id="slidesSongMeter" placeholder="e.g. 8.6.8.6">
+                    </div>
+                  </div>
+                </div>
                 <div class="boxed-list-group">
                   <div class="boxed-list-title">Templates</div>
                   <div id="slidesTemplateList" class="slides-template-grid" role="listbox" aria-label="Slide templates"></div>
