@@ -4116,6 +4116,21 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--window-fg-color) 14%, transparent);
 }
 
+.song-slide-thumbnail-button__resolved-text {
+    width: 100%;
+    height: 100%;
+    padding: 8%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    overflow: hidden;
+    white-space: pre-line;
+    text-align: center;
+    font-size: clamp(5px, 0.72vw, 11px);
+    line-height: 1.18;
+}
+
 /* ── Icon buttons (GNOME HIG circular) ────────────────────── */
 
 .songs-icon-btn {
@@ -6875,6 +6890,47 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     display: none;
 }
 
+.bible-slide-navigator {
+    display: grid;
+    gap: 8px;
+    margin: 0 12px 12px;
+}
+
+.bible-slide-navigator[hidden] {
+    display: none;
+}
+
+.bible-slide-thumbnail-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 8px;
+}
+
+.bible-slide-thumbnail {
+    min-height: 74px;
+    padding: 8px;
+    border: 1px solid color-mix(in srgb, var(--window-fg-color) 18%, transparent);
+    border-radius: 8px;
+    background: #000000;
+    color: #ffffff;
+    white-space: pre-line;
+    overflow: hidden;
+    font-size: 10px;
+    line-height: 1.18;
+}
+
+.bible-slide-thumbnail.is-active {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 1px;
+}
+
+.bible-slide-navigator__actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
 .bible-lower-third-cue-header,
 .bible-lower-third-cue-actions {
     display: flex;
@@ -6931,7 +6987,8 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 }
 
 .bible-lower-third-cue-row.is-cued {
-    background: color-mix(in srgb, var(--accent-bg-color) 18%, transparent);
+    background: color-mix(in srgb, #8b5cf6 24%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #8b5cf6 62%, transparent);
 }
 
 .bible-lower-third-cue-row__marker {
@@ -6941,7 +6998,7 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 }
 
 .bible-lower-third-cue-row.is-cued .bible-lower-third-cue-row__marker {
-    background: var(--accent-bg-color);
+    background: #8b5cf6;
 }
 
 .bible-lower-third-cue-row.is-live .bible-lower-third-cue-row__marker {

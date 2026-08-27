@@ -17,8 +17,8 @@ import {
   baselineFileHashFields,
   hashMediaFile,
   storedFileHashFromRecord,
-} from "./media-file-hash.min.mjs";
-import { normalizeToSongAST } from "./app-song-utils.min.mjs";
+} from "./media-file-hash.mjs";
+import { normalizeToSongAST } from "./app-song-utils.mjs";
 import yauzl from "yauzl";
 import yazl from "yazl";
 
@@ -297,6 +297,14 @@ function bibleProjectReferenceOnly(scripture = {}, opts = {}) {
     lowerThirdSegmentIndex: Number.isFinite(source.lowerThirdSegmentIndex)
       ? Math.max(0, Math.trunc(source.lowerThirdSegmentIndex))
       : 0,
+    currentSlideId:
+      typeof source.currentSlideId === "string" && source.currentSlideId
+        ? source.currentSlideId
+        : undefined,
+    currentLowerThirdSlideId:
+      typeof source.currentLowerThirdSlideId === "string" && source.currentLowerThirdSlideId
+        ? source.currentLowerThirdSlideId
+        : undefined,
   };
   if (selectedVerses.length > 0) result.selectedVerses = selectedVerses;
   if (typeof opts.backgroundAssetId === "string" && opts.backgroundAssetId) {
@@ -979,6 +987,7 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
     transition: projectSlideTransitionOverride(item?.transition),
     bible: scriptureReference,
+    currentSlideId: scriptureReference.currentSlideId,
   };
 }
 
@@ -1039,6 +1048,18 @@ function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths
     source: item?.source,
     songSnapshot: deckSnapshot ? undefined : snapshot,
     sequence: item?.sequence,
+    currentSlideId:
+      typeof item?.currentSlideId === "string"
+        ? item.currentSlideId
+        : typeof item?.render?.currentSlideId === "string"
+          ? item.render.currentSlideId
+          : undefined,
+    currentSequenceEntryId:
+      typeof item?.currentSequenceEntryId === "string"
+        ? item.currentSequenceEntryId
+        : typeof item?.sequence?.currentSequenceEntryId === "string"
+          ? item.sequence.currentSequenceEntryId
+          : undefined,
     render: {
       ...(item?.render && typeof item.render === "object" ? item.render : {}),
       backgroundPath,
@@ -1665,7 +1686,13 @@ async function saveEmprojSnapshotUnlocked(
       (typeof item.path === "string" && item.path.startsWith(BIBLE_URI_PREFIX))
     ) {
       itemCounter += 1;
-      const scripture = bibleProjectReferenceOnly(item.bible || {}, {
+      const scripture = bibleProjectReferenceOnly({
+        ...(item.bible || {}),
+        currentSlideId:
+          item.currentSlideId || item.bible?.currentSlideId || undefined,
+        currentLowerThirdSlideId:
+          item.bible?.currentLowerThirdSlideId || undefined,
+      }, {
         pathEntry: parseBibleArchivePath(item.path),
       });
       const backgroundAsset = await registerAssetForPath(scripture.backgroundPath, {
@@ -1686,6 +1713,7 @@ async function saveEmprojSnapshotUnlocked(
           path: scripturePath,
         },
         scripture: projectScripture,
+        currentSlideId: scripture.currentSlideId,
         transition: projectSlideTransitionOverride(item.transition),
         playback: {
           startTime: 0,
@@ -1750,6 +1778,18 @@ async function saveEmprojSnapshotUnlocked(
         songSnapshot: deckSnapshot ? undefined : snapshot,
         deckSnapshot: deckSnapshot || undefined,
         sequence: item.sequence,
+        currentSlideId:
+          typeof item.currentSlideId === "string"
+            ? item.currentSlideId
+            : typeof render.currentSlideId === "string"
+              ? render.currentSlideId
+              : undefined,
+        currentSequenceEntryId:
+          typeof item.currentSequenceEntryId === "string"
+            ? item.currentSequenceEntryId
+            : typeof item.sequence?.currentSequenceEntryId === "string"
+              ? item.sequence.currentSequenceEntryId
+              : undefined,
         render,
         transition: projectSlideTransitionOverride(item.transition),
         playback: {

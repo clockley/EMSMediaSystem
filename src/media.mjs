@@ -16,6 +16,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 import { getPptxPdfjsConfig } from "./app-pptx-utils.min.mjs";
+import {
+  boxFitsMeasurement,
+  findLargestFittingFontSize,
+} from "./text-measure.mjs";
 
 const {
   ipcRenderer,
@@ -1992,9 +1996,9 @@ function setFullscreenScriptureRenderFontSize(
 function scriptureRenderBoxFits(render, box, maxHeight) {
   const boxBounds = box.getBoundingClientRect();
   const availableWidth = Math.max(1, box.clientWidth || boxBounds.width || render.clientWidth);
-  return (
-    box.scrollHeight <= Math.ceil(maxHeight) + 1 &&
-    box.scrollWidth <= Math.ceil(availableWidth) + 1
+  return boxFitsMeasurement(
+    { width: box.scrollWidth, height: box.scrollHeight },
+    { width: availableWidth, height: maxHeight },
   );
 }
 
@@ -2006,25 +2010,18 @@ function findLargestFittingScriptureFontSize(
   maxBodySize,
   applyCandidate,
 ) {
-  const highLimit = Math.max(minBodySize, Math.round(maxBodySize));
-  applyCandidate(highLimit);
-  if (scriptureRenderBoxFits(render, box, maxHeight)) return highLimit;
-
-  let low = minBodySize;
-  let high = highLimit;
-  let best = minBodySize;
-  while (low <= high) {
-    const candidate = Math.floor((low + high) / 2);
-    applyCandidate(candidate);
-    if (scriptureRenderBoxFits(render, box, maxHeight)) {
-      best = candidate;
-      low = candidate + 1;
-    } else {
-      high = candidate - 1;
-    }
-  }
-  applyCandidate(best);
-  return best;
+  const result = findLargestFittingFontSize({
+    minFontSize: minBodySize,
+    maxFontSize: maxBodySize,
+    bounds: { width: Number.POSITIVE_INFINITY, height: maxHeight },
+    measureAt: (candidate) => {
+      applyCandidate(candidate);
+      return { candidate };
+    },
+    fits: () => scriptureRenderBoxFits(render, box, maxHeight),
+  });
+  applyCandidate(result.fontSize);
+  return result.fontSize;
 }
 
 function fitFullscreenScriptureRender(render, message) {
@@ -2059,6 +2056,12 @@ function fitFullscreenScriptureRender(render, message) {
       baseReferenceSize,
       baseBodySize,
     );
+
+  if (message?.resolvedLayout?.measurementMode === "dom") {
+    const resolvedSize = Number(message.resolvedLayout.resolvedFontSize);
+    applyCandidate(Number.isFinite(resolvedSize) ? resolvedSize : baseBodySize);
+    return message.resolvedLayout;
+  }
 
   if (autosizeMode === SCRIPTURE_AUTOSIZE_NONE) {
     applyCandidate(baseBodySize);

@@ -1,0 +1,60 @@
+{
+  "schema": "ems.song.v1",
+  "id": "song_praise_lord_test",
+  "title": "Praise to the Lord",
+  "songNumber": 1,
+  "metadata": {
+    "authors": ["Joachim Neander"],
+    "copyright": "Public Domain",
+    "ccliNumber": null,
+    "oneLicense": null,
+    "meter": "14.14.4.7.8",
+    "hymnal": {
+      "name": "Hymnal Companion",
+      "number": "1",
+      "meter": "14.14.4.7.8"
+    },
+    "tags": [],
+    "extra": {}
+  },
+  "languages": [
+    { "id": "en", "name": "English", "default": true }
+  ],
+  "sections": [
+    {
+      "id": "sec_v1",
+      "kind": "verse",
+      "label": "Verse 1",
+      "blocks": [
+        {
+          "type": "lyricLine",
+          "id": "b1",
+          "primary": {
+            "lang": "en",
+            "segments": [{ "type": "text", "text": "Praise to the Lord," }]
+          },
+          "translations": [],
+          "annotations": []
+        },
+        {
+          "type": "lyricLine",
+          "id": "b2",
+          "primary": {
+            "lang": "en",
+            "segments": [
+              { "type": "text", "text": "the Almighty, the King of creation!" }
+            ]
+          },
+          "translations": [],
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "playOrder": [
+    { "sectionId": "sec_v1" }
+  ],
+  "presentation": {
+    "defaultChunking": { "mode": "blocksPerSlide", "maxBlocks": 4 }
+  }
+}

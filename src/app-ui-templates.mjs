@@ -542,7 +542,7 @@ export function generateMediaFormHTML() {
                         <div id="snapGuideH" class="snap-guide-line snap-guide-line--h" style="display: none;"></div>
                         <div id="songEditorTextBox" class="draggable-text-box" style="position: absolute; left: 10%; top: 10%; width: 80%; height: 80%; cursor: default;">
                           <div id="songEditorDragHandle" class="draggable-text-box__handle"></div>
-                          <div id="songEditorSlideTextarea" class="song-editor-slide-textarea" contenteditable="true" data-placeholder="Enter lyrics for this section..."></div>
+                          <div id="songEditorSlideTextarea" class="song-editor-slide-textarea" contenteditable="true" data-placeholder="Enter lyrics; use --- on its own line for a slide break"></div>
                           <div id="songEditorResizeHandle" class="draggable-text-box__resize-handle" aria-hidden="true"></div>
                         </div>
                       </div>
@@ -952,6 +952,14 @@ export function generateMediaFormHTML() {
               </div>
             </section>
           </div>
+          <section id="bibleSlideNavigator" class="bible-slide-navigator" aria-label="Resolved Scripture slides" hidden>
+            <div id="bibleSlideThumbnailList" class="bible-slide-thumbnail-list" role="listbox"></div>
+            <div class="bible-slide-navigator__actions">
+              <button type="button" id="biblePrevSlideBtn" class="pill-button secondary">Previous</button>
+              <span id="bibleSlideStatus" class="bible-lower-third-status" aria-live="polite"></span>
+              <button type="button" id="bibleNextSlideBtn" class="pill-button secondary">Next</button>
+            </div>
+          </section>
           <section id="bibleLowerThirdCuePanel" class="bible-lower-third-cue-panel" aria-labelledby="bibleLowerThirdCueHeading" data-lower-third-feature hidden>
             <div class="bible-lower-third-cue-header">
               <div class="bible-lower-third-cue-heading">

@@ -87,6 +87,8 @@ import {
   queueTypeIconMarkup,
 } from "./app-ui-templates.mjs";
 import {
+  SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE,
+  SCRIPTURE_AUTOSIZE_FIT,
   SCRIPTURE_AUTOSIZE_NORMALIZE,
   SCRIPTURE_BODY_FONT_SIZE,
   SCRIPTURE_DEFAULT_AUTOSIZE_MODE,
@@ -134,7 +136,9 @@ import {
   setLastShownBibleStyleOverrides,
   syncBiblePreviewOutputScale,
   syncLowerThirdFeatureAvailability as syncBuiltInLowerThirdFeatureAvailability,
+  waitForScriptureFonts,
 } from "./app-bible-scripture-render.mjs";
+import { waitForTextFonts } from "./text-measure.mjs";
 import {
   configureCountdown,
   handleTimeMessage,
@@ -167,6 +171,9 @@ import {
   updateOutputHoldButtonStates,
 } from "./app-output-hold.mjs";
 import { resolveThemeForTarget } from "./theme-resolver.mjs";
+import {
+  renderScriptureForTarget,
+} from "./theme-render-message.mjs";
 import {
   DEFAULT_SONG_RENDER,
   arrangementSequenceEntries,
@@ -580,6 +587,7 @@ const bibleDesignerState = {
   look: SCRIPTURE_DEFAULT_LOOK,
   lowerThirdSegments: [],
   lowerThirdSegmentIndex: 0,
+  currentLowerThirdSlideId: null,
   lowerThirdSourceText: "",
   transition: DEFAULT_ITEM_SLIDE_TRANSITION,
 };
@@ -946,7 +954,7 @@ function applyLowerThirdOutputPreferences(prefs = {}) {
     if (activeLowerThirdContentType === "song") {
       sendBibleLowerThirdTextMessage(buildSongLowerThirdMessage());
     } else {
-      sendBibleLowerThirdTextToOutput(bibleDesignerState);
+      void sendBibleLowerThirdTextToOutput(bibleDesignerState);
     }
   }
 }
@@ -5950,9 +5958,144 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     position: { vertical: "center", horizontal: "center" },
   };
   if (isLowerThird) {
-    return enrichLowerThirdPresentationMessage(message, pathToMediaUrl);
+    const outputSize =
+      opts.outputSize || selectedBiblePreviewOutputSize("lowerThirdDspSelct");
+    const resolvedTheme = appliedPresentationTheme
+      ? resolveThemeForTarget({
+          theme: appliedPresentationTheme,
+          contentKind: "scripture",
+          outputRole: "lowerThird",
+          outputSize,
+        })
+      : null;
+    const lowerThirdTypography = {
+      fontFamily: style.lowerThirdFontFamily || style.fontFamily,
+      fontSize: style.lowerThirdFontSize || SCRIPTURE_LOWER_THIRD_DEFAULT_FONT_SIZE,
+      minFontSize: SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE,
+      fontWeight: SCRIPTURE_FONT_WEIGHT,
+      lineHeight: 1.18,
+      autosizeMode: SCRIPTURE_AUTOSIZE_FIT,
+      maxLines: 2,
+    };
+    let resolved = renderScriptureForTarget(
+      { ...entry, text: fullBodyText, ...style },
+      {
+        outputRole: "lowerThird",
+        outputSize,
+        activeSlideId: opts.activeSlideId || entry.currentLowerThirdSlideId,
+        style: lowerThirdTypography,
+        typography: {
+          ...(resolvedTheme?.typography || lowerThirdTypography),
+          maxLines: 2,
+        },
+        forceAutoSplit: true,
+      },
+      resolvedTheme,
+    );
+    if (
+      !opts.activeSlideId &&
+      !entry.currentLowerThirdSlideId &&
+      Number.isFinite(entry.lowerThirdSegmentIndex) &&
+      entry.lowerThirdSegmentIndex > 0
+    ) {
+      const legacySlide = resolved.presentation.slides[
+        Math.min(
+          Math.trunc(entry.lowerThirdSegmentIndex),
+          resolved.presentation.slides.length - 1,
+        )
+      ];
+      if (legacySlide) {
+        resolved = renderScriptureForTarget(
+          { ...entry, text: fullBodyText, ...style },
+          {
+            outputRole: "lowerThird",
+            outputSize,
+            activeSlideId: legacySlide.slideId,
+            style: lowerThirdTypography,
+            typography: {
+              ...(resolvedTheme?.typography || lowerThirdTypography),
+              maxLines: 2,
+            },
+            forceAutoSplit: true,
+          },
+          resolvedTheme,
+        );
+      }
+    }
+    const resolvedSegments = resolved.presentation.slides.map((unit) => ({
+      text: unit.bodyText,
+      slideId: unit.slideId,
+    }));
+    const resolvedSegmentIndex = Math.max(
+      0,
+      resolved.presentation.slides.findIndex(
+        (unit) => unit.slideId === resolved.activeUnit?.slideId,
+      ),
+    );
+    return {
+      ...enrichLowerThirdPresentationMessage(message, pathToMediaUrl),
+      ...resolved.message,
+      bodyText: resolved.activeUnit?.bodyText || "",
+      text: resolved.activeUnit?.bodyText || "",
+      lowerThirdSegments: resolvedSegments,
+      lowerThirdSegmentIndex: resolvedSegmentIndex,
+      lowerThirdSegmentCount: resolvedSegments.length,
+      color: message.color,
+      backgroundColor: message.backgroundColor,
+      chromaKeyColor: message.chromaKeyColor,
+      backgroundPath: "",
+      backgroundImage: "",
+      backgroundVideo: "",
+      resolvedPresentation: resolved.presentation,
+      resolvedUnit: resolved.activeUnit,
+      slideId: resolved.activeUnit?.slideId || null,
+      layoutKey: resolved.presentation.layoutKey,
+      resolvedLayout: resolved.activeUnit?.layout || null,
+    };
   }
-  return message;
+  const outputSize = opts.outputSize || selectedBiblePreviewOutputSize("dspSelct");
+  const resolvedTheme = appliedPresentationTheme
+    ? resolveThemeForTarget({
+        theme: appliedPresentationTheme,
+        contentKind: "scripture",
+        outputRole: "audience",
+        outputSize,
+      })
+    : null;
+  const resolved = renderScriptureForTarget(
+    {
+      ...entry,
+      text: fullBodyText,
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      minFontSize: style.minFontSize,
+      autosizeMode: style.autosizeMode,
+      autoSplit: style.autoSplit,
+      lineHeight: SCRIPTURE_LINE_HEIGHT,
+      fontWeight: SCRIPTURE_FONT_WEIGHT,
+    },
+    {
+      outputRole: "audience",
+      outputSize,
+      activeSlideId: opts.activeSlideId || entry.currentSlideId,
+      style,
+    },
+    resolvedTheme,
+  );
+  return {
+    ...message,
+    ...resolved.message,
+    color: message.color,
+    backgroundColor: message.backgroundColor,
+    backgroundPath: message.backgroundPath,
+    backgroundImage: message.backgroundImage,
+    backgroundVideo: message.backgroundVideo,
+    backgroundVideoSync: message.backgroundVideoSync,
+    referenceColor: message.referenceColor,
+    referenceTextShadow: message.referenceTextShadow,
+    referenceFontSize: message.referenceFontSize,
+    transition: entry.transition || message.transition,
+  };
 }
 
 function nonTextPresentationObjects(objects) {
@@ -6139,6 +6282,75 @@ function markSongAudiencePreviewSelection(cueText) {
   });
 }
 
+function selectScriptureResolvedSlide(entry, presentation, slideId) {
+  const unit = presentation?.slides?.find((slide) => slide.slideId === slideId);
+  if (!unit || !entry) return false;
+  entry.currentSlideId = unit.slideId;
+  if (entry === bibleDesignerState) bibleDesignerState.currentSlideId = unit.slideId;
+  for (const index of [previewCueIndex, currentQueueIndex]) {
+    const item = Number.isInteger(index) ? mediaQueue[index] : null;
+    if (!item || !bibleEntryMatchesQueueItemShallow(entry, item)) continue;
+    item.currentSlideId = unit.slideId;
+    if (item.bible && typeof item.bible === "object") {
+      item.bible.currentSlideId = unit.slideId;
+    }
+  }
+  applyBiblePreview(entry);
+  saveMediaFile();
+  void syncActiveScheduledBiblePresentation().catch(console.error);
+  return true;
+}
+
+function renderBibleSlideNavigator(entry, presentation) {
+  const navigator = document.getElementById("bibleSlideNavigator");
+  const list = document.getElementById("bibleSlideThumbnailList");
+  const status = document.getElementById("bibleSlideStatus");
+  const previous = document.getElementById("biblePrevSlideBtn");
+  const next = document.getElementById("bibleNextSlideBtn");
+  if (!navigator || !list || !status || !previous || !next) return;
+  const slides = presentation?.slides || [];
+  navigator.hidden = slides.length <= 1;
+  list.replaceChildren();
+  if (slides.length <= 1) {
+    status.textContent = "";
+    previous.disabled = true;
+    next.disabled = true;
+    return;
+  }
+  const foundIndex = slides.findIndex(
+    (slide) => slide.slideId === presentation.navigation?.activeSlideId,
+  );
+  const activeIndex = foundIndex >= 0 ? foundIndex : 0;
+  slides.forEach((unit, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "bible-slide-thumbnail";
+    button.dataset.slideId = unit.slideId;
+    button.dataset.layoutKey = presentation.layoutKey;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", index === activeIndex ? "true" : "false");
+    button.classList.toggle("is-active", index === activeIndex);
+    button.textContent = unit.bodyText || "";
+    button.dir = "auto";
+    button.addEventListener("click", () => {
+      selectScriptureResolvedSlide(entry, presentation, unit.slideId);
+    });
+    list.appendChild(button);
+  });
+  const nextLabel = slides[activeIndex + 1]?.referenceText;
+  status.textContent = `Slide ${activeIndex + 1} of ${slides.length}${nextLabel ? ` · Next: ${nextLabel}` : ""}`;
+  previous.disabled = activeIndex <= 0;
+  next.disabled = activeIndex >= slides.length - 1;
+  previous.onclick = () => {
+    const unit = slides[activeIndex - 1];
+    if (unit) selectScriptureResolvedSlide(entry, presentation, unit.slideId);
+  };
+  next.onclick = () => {
+    const unit = slides[activeIndex + 1];
+    if (unit) selectScriptureResolvedSlide(entry, presentation, unit.slideId);
+  };
+}
+
 function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
   if (opts.show !== false) showBibleWorkspace();
   const lowerThirdEnabled = isBibleLowerThirdFeatureEnabled();
@@ -6164,6 +6376,40 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
   }
   syncLowerThirdFeatureAvailability();
   const previewEntry = entry === bibleDesignerState ? bibleDesignerState : entry;
+  if (!opts.fontsReadyRetry) {
+    const themeFonts = [];
+    if (appliedPresentationTheme) {
+      const audienceTheme = resolveThemeForTarget({
+        theme: appliedPresentationTheme,
+        contentKind: "scripture",
+        outputRole: "audience",
+        outputSize: selectedBiblePreviewOutputSize("dspSelct"),
+      });
+      const lowerThirdTheme = lowerThirdEnabled
+        ? resolveThemeForTarget({
+            theme: appliedPresentationTheme,
+            contentKind: "scripture",
+            outputRole: "lowerThird",
+            outputSize: selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
+          })
+        : null;
+      themeFonts.push(
+        audienceTheme.typography?.fontFamily,
+        lowerThirdTheme?.typography?.fontFamily,
+      );
+    }
+    void Promise.all([
+      waitForScriptureFonts(previewEntry),
+      waitForTextFonts(themeFonts.filter(Boolean), {
+        documentRef: globalThis.document,
+        sample: cleanBibleVerseTextForDisplay(previewEntry.text) || "EMS",
+        fontSize: previewEntry.fontSize || SCRIPTURE_BODY_FONT_SIZE,
+      }),
+    ]).then(() => {
+      applyBiblePreview(previewEntry, { ...opts, fontsReadyRetry: true });
+    });
+    return;
+  }
   const audienceMessage = buildBibleTextMessage(previewEntry, {
     look: SCRIPTURE_LOOK_FULLSCREEN,
   });
@@ -6172,6 +6418,7 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
         look: SCRIPTURE_LOOK_LOWER_THIRD,
       })
     : null;
+  renderBibleSlideNavigator(previewEntry, audienceMessage.resolvedPresentation);
   panel.hidden = false;
   audienceShell.style.backgroundColor = audienceMessage.backgroundColor;
   const lowerThirdShell = document.getElementById("bibleLowerThirdPreviewShell");
@@ -6319,11 +6566,14 @@ function persistBibleLowerThirdCueState() {
   }
   mediaQueue[targetIndex] = {
     ...mediaQueue[targetIndex],
+    currentSlideId: bibleDesignerState.currentSlideId || null,
     bible: {
       ...(mediaQueue[targetIndex].bible || {}),
       lowerThirdSegments: normalizeLowerThirdSegments(bibleDesignerState.lowerThirdSegments),
       lowerThirdSegmentIndex: bibleDesignerState.lowerThirdSegmentIndex,
       lowerThirdSourceText: bibleDesignerState.lowerThirdSourceText,
+      currentSlideId: bibleDesignerState.currentSlideId || null,
+      currentLowerThirdSlideId: bibleDesignerState.currentLowerThirdSlideId || null,
     },
   };
   renderQueue();
@@ -6355,21 +6605,41 @@ async function setBibleLowerThirdSegmentIndex(index) {
   const lowerThird = resolveBibleLowerThirdState(bibleDesignerState, {
     panel: bibleLowerThirdMeasurePanel(),
   });
-  const nextIndex = clampLowerThirdSegmentIndex(index, lowerThird.segments);
-  if (nextIndex === bibleDesignerState.lowerThirdSegmentIndex) {
-    syncBibleLookControls(buildBibleTextMessage(bibleDesignerState));
+  const resolvedMessage = buildBibleTextMessage(bibleDesignerState, {
+    look: SCRIPTURE_LOOK_LOWER_THIRD,
+  });
+  const resolvedSlides = resolvedMessage.resolvedPresentation?.slides || [];
+  const nextIndex = clampLowerThirdSegmentIndex(
+    index,
+    resolvedSlides.length > 0 ? resolvedSlides : lowerThird.segments,
+  );
+  const nextSlideId = resolvedSlides[nextIndex]?.slideId || null;
+  if (
+    nextIndex === bibleDesignerState.lowerThirdSegmentIndex &&
+    (!nextSlideId || nextSlideId === bibleDesignerState.currentLowerThirdSlideId)
+  ) {
+    syncBibleLookControls(resolvedMessage);
     return false;
   }
   bibleDesignerState.lowerThirdSegmentIndex = nextIndex;
+  if (nextSlideId) bibleDesignerState.currentLowerThirdSlideId = nextSlideId;
   applyBiblePreview(bibleDesignerState, { show: false });
   persistBibleLowerThirdCueState();
   return true;
 }
 
 async function changeBibleLowerThirdSegment(delta) {
-  const current = Number.isFinite(bibleDesignerState.lowerThirdSegmentIndex)
-    ? bibleDesignerState.lowerThirdSegmentIndex
-    : 0;
+  const resolved = buildBibleTextMessage(bibleDesignerState, {
+    look: SCRIPTURE_LOOK_LOWER_THIRD,
+  });
+  const resolvedIndex = resolved.resolvedPresentation?.slides?.findIndex(
+    (slide) => slide.slideId === bibleDesignerState.currentLowerThirdSlideId,
+  );
+  const current = Number.isFinite(resolvedIndex) && resolvedIndex >= 0
+    ? resolvedIndex
+    : Number.isFinite(bibleDesignerState.lowerThirdSegmentIndex)
+      ? bibleDesignerState.lowerThirdSegmentIndex
+      : 0;
   return setBibleLowerThirdSegmentIndex(current + delta);
 }
 
@@ -6496,16 +6766,21 @@ async function advanceBibleLowerThirdCursor() {
   if (resolvedEntry && resolvedEntry !== bibleDesignerState) {
     Object.assign(bibleDesignerState, resolvedEntry);
   }
-  const lowerThird = resolveBibleLowerThirdState(bibleDesignerState, {
-    panel: bibleLowerThirdMeasurePanel(),
+  const lowerThirdMessage = buildBibleTextMessage(bibleDesignerState, {
+    look: SCRIPTURE_LOOK_LOWER_THIRD,
   });
-  if (!lowerThird.segments.length) {
-    syncBibleLookControls(buildBibleTextMessage(bibleDesignerState, {
-      look: SCRIPTURE_LOOK_LOWER_THIRD,
-    }));
+  const slides = lowerThirdMessage.resolvedPresentation?.slides || [];
+  if (!slides.length) {
+    syncBibleLookControls(lowerThirdMessage);
     return false;
   }
-  if (lowerThird.index < lowerThird.segments.length - 1) {
+  const activeIndex = Math.max(
+    0,
+    slides.findIndex(
+      (slide) => slide.slideId === bibleDesignerState.currentLowerThirdSlideId,
+    ),
+  );
+  if (activeIndex < slides.length - 1) {
     return changeBibleLowerThirdSegment(1);
   }
   if (isScheduledBiblePresentationActive()) {
@@ -7578,8 +7853,21 @@ async function bibleEntriesWithAutofitSplits(entry, outputSize = null) {
 
 async function queueEntriesForBibleScheduleEntry(entry) {
   const outputSize = await currentBibleScheduleOutputSize();
-  const bibleEntries = await bibleEntriesWithAutofitSplits(entry, outputSize);
-  return bibleEntries.map(queueEntryFromBibleEntry);
+  const hydrated = hydrateBibleEntryStyle(entry);
+  const verseRows = await bibleVerseRowsForEntry(hydrated);
+  const resolvedEntry = verseRows.length > 0
+    ? { ...hydrated, verseRows }
+    : hydrated;
+  const resolved = renderScriptureForTarget(resolvedEntry, {
+    outputRole: "audience",
+    outputSize,
+    activeSlideId: resolvedEntry.currentSlideId,
+    style: resolvedEntry,
+  });
+  const queueEntry = queueEntryFromBibleEntry(resolvedEntry);
+  queueEntry.currentSlideId = resolved.activeUnit?.slideId || null;
+  queueEntry.bible.currentSlideId = queueEntry.currentSlideId;
+  return [queueEntry];
 }
 
 async function applySelectedBibleVersePreview() {
@@ -7648,6 +7936,21 @@ async function currentBibleTextOnlyEntry() {
 
 async function sendBibleTextToOutput(entry = bibleDesignerState) {
   const resolvedEntry = await bibleEntryWithLookupText(entry);
+  await waitForScriptureFonts(resolvedEntry);
+  if (appliedPresentationTheme) {
+    const outputSize = selectedBiblePreviewOutputSize("dspSelct");
+    const resolvedTheme = resolveThemeForTarget({
+      theme: appliedPresentationTheme,
+      contentKind: "scripture",
+      outputRole: "audience",
+      outputSize,
+    });
+    await waitForTextFonts([resolvedTheme.typography?.fontFamily], {
+      documentRef: globalThis.document,
+      sample: cleanBibleVerseTextForDisplay(resolvedEntry.text) || "EMS",
+      fontSize: resolvedTheme.typography?.fontSize || resolvedEntry.fontSize,
+    });
+  }
   setLastShownBibleStyleOverrides(bibleStyleSnapshot(resolvedEntry));
   const message = buildBibleTextMessage(resolvedEntry, {
     look: SCRIPTURE_LOOK_FULLSCREEN,
@@ -7681,6 +7984,26 @@ function hasLowerThirdOutputSelected() {
   return selectedDisplayValueFromSelect("lowerThirdDspSelct") !== null;
 }
 
+async function waitForBibleLowerThirdFonts(entry = bibleDesignerState) {
+  const outputSize = selectedBiblePreviewOutputSize("lowerThirdDspSelct");
+  const themedFont = appliedPresentationTheme
+    ? resolveThemeForTarget({
+        theme: appliedPresentationTheme,
+        contentKind: "scripture",
+        outputRole: "lowerThird",
+        outputSize,
+      }).typography?.fontFamily
+    : "";
+  await waitForTextFonts(
+    [themedFont, entry.lowerThirdFontFamily, entry.fontFamily].filter(Boolean),
+    {
+      documentRef: globalThis.document,
+      sample: cleanBibleVerseTextForDisplay(entry.text) || "EMS",
+      fontSize: entry.lowerThirdFontSize || entry.fontSize || SCRIPTURE_BODY_FONT_SIZE,
+    },
+  );
+}
+
 function buildBibleLowerThirdOutputMessage(entry = bibleDesignerState) {
   const message = {
     ...buildBibleTextMessage(entry, { look: SCRIPTURE_LOOK_LOWER_THIRD }),
@@ -7708,8 +8031,9 @@ function sendBibleLowerThirdTextMessage(message, options = {}) {
   updateClearLiveTextButtonState();
 }
 
-function sendBibleLowerThirdTextToOutput(entry = bibleDesignerState) {
+async function sendBibleLowerThirdTextToOutput(entry = bibleDesignerState) {
   if (!isBibleLowerThirdFeatureEnabled()) return;
+  await waitForBibleLowerThirdFonts(entry);
   const message = buildBibleLowerThirdOutputMessage(entry);
   sendBibleLowerThirdTextMessage(message);
   activeLowerThirdContentType = "bible";
@@ -7732,7 +8056,7 @@ async function showCuedBibleLowerThird() {
   });
   const wasActive = bibleLowerThirdOutputActive;
   if (wasActive) {
-    sendBibleLowerThirdTextToOutput(bibleDesignerState);
+    await sendBibleLowerThirdTextToOutput(bibleDesignerState);
   } else if (!(await ensureBibleLowerThirdOutput(bibleDesignerState))) {
     return false;
   }
@@ -7778,7 +8102,8 @@ async function clearLiveBibleText({ quiet = false } = {}) {
   if (lowerThirdLive) {
     const sourceMessage =
       lastLowerThirdBibleTextMessage ||
-      buildBibleLowerThirdOutputMessage(bibleDesignerState);
+      (await waitForBibleLowerThirdFonts(bibleDesignerState),
+      buildBibleLowerThirdOutputMessage(bibleDesignerState));
     const clearedMessage = clearTextFromPresentationMessage({
       ...sourceMessage,
       outputRole: "lower-third",
@@ -7818,7 +8143,8 @@ async function restoreLiveBibleText({ quiet = false } = {}) {
   if (lowerThirdLive) {
     const message = {
       ...(lastLowerThirdBibleTextMessage ||
-        buildBibleLowerThirdOutputMessage(bibleDesignerState)),
+        (await waitForBibleLowerThirdFonts(bibleDesignerState),
+        buildBibleLowerThirdOutputMessage(bibleDesignerState))),
       outputRole: "lower-third",
     };
     sendBibleLowerThirdTextMessage(message, { respectLiveTextClearState: false });
@@ -7956,6 +8282,7 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
   if (!displayValue) {
     return false;
   }
+  await waitForBibleLowerThirdFonts(entry);
   const message = buildBibleLowerThirdOutputMessage(entry);
   const windowOptions = {
     backgroundColor: message.chromaKeyColor || SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
@@ -7980,7 +8307,7 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
     bibleLowerThirdOutputActive = Boolean(windowId);
     updateClearLiveTextButtonState();
     if (bibleLowerThirdOutputActive) {
-      window.setTimeout(() => sendBibleLowerThirdTextToOutput(entry), 100);
+      window.setTimeout(() => void sendBibleLowerThirdTextToOutput(entry), 100);
     }
     return bibleLowerThirdOutputActive;
   } catch (err) {
@@ -8251,6 +8578,10 @@ function bibleQueueItemBaseEntry(item) {
   return {
     ...(item?.bible && typeof item.bible === "object" ? item.bible : {}),
     ...(pathEntry || {}),
+    currentSlideId:
+      item?.currentSlideId ||
+      item?.bible?.currentSlideId ||
+      null,
   };
 }
 
@@ -8403,6 +8734,12 @@ function projectBibleReferenceOnlyEntry(entry = {}, opts = {}) {
     lowerThirdSegmentIndex: Number.isFinite(source.lowerThirdSegmentIndex)
       ? Math.max(0, Math.trunc(source.lowerThirdSegmentIndex))
       : 0,
+    currentSlideId:
+      typeof source.currentSlideId === "string" ? source.currentSlideId : null,
+    currentLowerThirdSlideId:
+      typeof source.currentLowerThirdSlideId === "string"
+        ? source.currentLowerThirdSlideId
+        : null,
   };
   if (selectedVerses.length > 0) result.selectedVerses = selectedVerses;
   return result;
@@ -10040,6 +10377,7 @@ let currentEditingSongId = null;
 let currentSongRenderState = { ...DEFAULT_SONG_RENDER };
 let currentSongSectionId = null;
 let currentSongSequenceEntryId = null;
+let currentSongSlideId = null;
 let currentSongQueueItem = null;
 let currentSongFolderFilter = "__all__";
 let songFoldersCache = [];
@@ -10721,6 +11059,12 @@ function populateSongEditorTextarea(textarea, section) {
       }
     }
     textarea.appendChild(lineEl);
+    if (block.manualBreakAfter === true) {
+      const breakEl = document.createElement("div");
+      breakEl.dataset.manualSlideBreak = "true";
+      breakEl.textContent = "---";
+      textarea.appendChild(breakEl);
+    }
   }
 }
 
@@ -11013,6 +11357,29 @@ function currentSongActiveSection() {
   );
 }
 
+function currentResolvedSongPresentation() {
+  if (!currentWorkspaceSong) return null;
+  return resolvedSongPresentation(
+    songItemForAudienceResolution({
+      type: "song",
+      songSnapshot: currentWorkspaceSong,
+      sequence: {
+        arrangementId: currentWorkspaceSong.arrangements?.[0]?.id || "arr_default",
+        entries: arrangementSequenceEntries(currentWorkspaceSong),
+        currentSequenceEntryId: currentSongSequenceEntryId,
+      },
+      currentSlideId: currentSongSlideId,
+      currentSequenceEntryId: currentSongSequenceEntryId,
+      render: {
+        ...currentSongRenderState,
+        currentSectionId: currentSongSectionId,
+        currentSlideId: currentSongSlideId,
+        currentSequenceEntryId: currentSongSequenceEntryId,
+      },
+    }),
+  );
+}
+
 function scheduleSongPreviewRerender() {
   if (songPreviewRerenderRaf) {
     cancelAnimationFrame(songPreviewRerenderRaf);
@@ -11035,16 +11402,17 @@ function layoutSongPreviewStage(preview = document.getElementById("songsPreviewS
   if (!containerWidth || !containerHeight) {
     return { width: 0, height: 0, scale: 0 };
   }
+  const outputSize = selectedBiblePreviewOutputSize("dspSelct");
   const scale = Math.min(
-    containerWidth / SONG_PREVIEW_OUTPUT_WIDTH,
-    containerHeight / SONG_PREVIEW_OUTPUT_HEIGHT,
+    containerWidth / outputSize.width,
+    containerHeight / outputSize.height,
   );
-  const width = Math.max(1, SONG_PREVIEW_OUTPUT_WIDTH * scale);
-  const height = Math.max(1, SONG_PREVIEW_OUTPUT_HEIGHT * scale);
+  const width = Math.max(1, outputSize.width * scale);
+  const height = Math.max(1, outputSize.height * scale);
   preview.style.width = `${width}px`;
   preview.style.height = `${height}px`;
   preview.style.setProperty("--song-preview-output-scale", String(scale));
-  return { width, height, scale };
+  return { width, height, scale, outputSize };
 }
 
 function setSongNavigatorDeckMode(enabled) {
@@ -11060,12 +11428,7 @@ function setSongNavigatorDeckMode(enabled) {
 }
 
 function syncSongSlideNavigator() {
-  const hasDeckPages = Boolean(
-    currentWorkspaceSong &&
-      currentWorkspaceSongDeck &&
-      Array.isArray(currentWorkspaceSongDeck.pages) &&
-      currentWorkspaceSongDeck.pages.length > 0,
-  );
+  const hasDeckPages = Boolean(currentWorkspaceSong);
   setSongNavigatorDeckMode(hasDeckPages);
   if (hasDeckPages) {
     renderSongSlideNavigator();
@@ -11097,7 +11460,9 @@ function updateSongSlideNavigatorSelection({ scroll = true } = {}) {
   if (!list) return;
   let active = null;
   list.querySelectorAll(".song-slide-thumbnail-button").forEach((button) => {
-    const isActive = currentSongSequenceEntryId
+    const isActive = currentSongSlideId
+      ? button.dataset.slideId === currentSongSlideId
+      : currentSongSequenceEntryId
       ? button.dataset.sequenceEntryId === currentSongSequenceEntryId
       : button.dataset.sectionId === currentSongSectionId;
     button.classList.toggle("is-active", isActive);
@@ -11108,12 +11473,19 @@ function updateSongSlideNavigatorSelection({ scroll = true } = {}) {
   if (scroll) active?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
 }
 
-function syncCurrentSongQueueItemSection(sectionId) {
+function syncCurrentSongQueueItemSection(sectionId, slideId = currentSongSlideId) {
   if (!currentSongQueueItem || !sectionId) return;
   if (!currentSongQueueItem.render || typeof currentSongQueueItem.render !== "object") {
     currentSongQueueItem.render = {};
   }
   currentSongQueueItem.render.currentSectionId = sectionId;
+  currentSongQueueItem.render.currentSlideId = slideId || null;
+  currentSongQueueItem.render.currentSequenceEntryId = currentSongSequenceEntryId || null;
+  currentSongQueueItem.currentSlideId = slideId || null;
+  currentSongQueueItem.currentSequenceEntryId = currentSongSequenceEntryId || null;
+  if (currentSongQueueItem.sequence && typeof currentSongQueueItem.sequence === "object") {
+    currentSongQueueItem.sequence.currentSequenceEntryId = currentSongSequenceEntryId || null;
+  }
   if (!currentSongQueueItem.source || typeof currentSongQueueItem.source !== "object") {
     currentSongQueueItem.source = {};
   }
@@ -11143,8 +11515,23 @@ async function selectSongSection(sectionId, opts = {}) {
   } else {
     syncCurrentSongSequenceEntry();
   }
+  const resolved = currentResolvedSongPresentation();
+  const selectedUnit =
+    (opts.slideId
+      ? resolved?.resolvedPresentation?.slides?.find((unit) => unit.slideId === opts.slideId)
+      : null) ||
+    resolved?.resolvedPresentation?.slides?.find(
+      (unit) => unit.sequenceEntryId === currentSongSequenceEntryId,
+    ) ||
+    resolved?.activeUnit ||
+    null;
+  currentSongSlideId = selectedUnit?.slideId || null;
+  currentSongSequenceEntryId =
+    selectedUnit?.sequenceEntryId || currentSongSequenceEntryId;
+  currentSongSectionId = selectedUnit?.sectionId || section.id;
   renderSongSectionPreview(section);
-  syncCurrentSongQueueItemSection(section.id);
+  syncCurrentSongQueueItemSection(currentSongSectionId, currentSongSlideId);
+  if (currentSongQueueItem) saveMediaFile();
   updateSongArrangementSelection();
   updateSongSlideNavigatorSelection({ scroll: opts.scroll !== false });
   updateSongNavButtonsState();
@@ -11156,20 +11543,20 @@ async function selectSongSection(sectionId, opts = {}) {
 
 function renderSongSlideNavigator() {
   const list = document.getElementById("songSlideThumbnailList");
-  if (!list || !currentWorkspaceSongDeck || !currentWorkspaceSong) return;
-  const deck = currentWorkspaceSongDeck;
-  const sequenceItems = currentSongSequenceItems();
-  const token = ++songSlideNavigatorRenderToken;
+  if (!list || !currentWorkspaceSong) return;
+  const presentation = currentResolvedSongPresentation()?.resolvedPresentation;
+  const slides = presentation?.slides || [];
+  ++songSlideNavigatorRenderToken;
   list.innerHTML = "";
 
-  sequenceItems.forEach(({ section, entryId }, index) => {
-    const page = songDeckPageForSection(section, index);
-    if (!page) return;
+  slides.forEach((unit, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "song-slide-thumbnail-button";
-    button.dataset.sectionId = section.id;
-    button.dataset.sequenceEntryId = entryId;
+    button.dataset.sectionId = unit.sectionId;
+    button.dataset.sequenceEntryId = unit.sequenceEntryId;
+    button.dataset.slideId = unit.slideId;
+    button.dataset.layoutKey = presentation.layoutKey;
     button.setAttribute("role", "option");
     button.setAttribute("aria-label", `Go to slide ${index + 1}`);
 
@@ -11182,18 +11569,29 @@ function renderSongSlideNavigator() {
 
     const thumb = document.createElement("span");
     thumb.className = "slides-page-list__thumb song-slide-thumbnail-button__thumb";
-    renderDeckPageThumbnail(thumb, page, deck);
+    const thumbnailText = document.createElement("span");
+    thumbnailText.className = "song-slide-thumbnail-button__resolved-text";
+    thumbnailText.textContent = unit.bodyText || "";
+    thumbnailText.dir = "auto";
+    thumb.style.backgroundColor = currentSongRenderState.backgroundColor || "#000000";
+    thumb.style.color = currentSongRenderState.color || "#ffffff";
+    thumb.style.fontFamily = currentSongRenderState.fontFamily || SCRIPTURE_FONT_FAMILY;
+    thumb.replaceChildren(thumbnailText);
     viewport.appendChild(thumb);
 
     button.appendChild(number);
     button.appendChild(viewport);
     button.addEventListener("click", () => {
-      void selectSongSection(section.id, { sequenceEntryId: entryId }).catch(console.error);
+      void selectSongSection(unit.sectionId, {
+        sequenceEntryId: unit.sequenceEntryId,
+        slideId: unit.slideId,
+      }).catch(console.error);
     });
     button.addEventListener("dblclick", (event) => {
       event.preventDefault();
-      currentSongSequenceEntryId = entryId;
-      void recoverOutputHoldsToSongSection(section.id).catch(console.error);
+      currentSongSequenceEntryId = unit.sequenceEntryId;
+      currentSongSlideId = unit.slideId;
+      void recoverOutputHoldsToSongSection(unit.sectionId).catch(console.error);
     });
     button.addEventListener("keydown", (event) => {
       if (event.key === "ArrowDown") {
@@ -11210,29 +11608,13 @@ function renderSongSlideNavigator() {
         prev?.focus();
       } else if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        void selectSongSection(section.id, { sequenceEntryId: entryId }).catch(console.error);
+        void selectSongSection(unit.sectionId, {
+          sequenceEntryId: unit.sequenceEntryId,
+          slideId: unit.slideId,
+        }).catch(console.error);
       }
     });
     list.appendChild(button);
-
-    const signature = slideThumbnailSignature(page, deck);
-    const cached = slideThumbnailCache.get(page.id);
-    if (cached?.signature !== signature || !cached?.dataUrl) {
-      void renderSlidePageThumbnailDataUrl(page, deck)
-        .then((dataUrl) => {
-          if (
-            !dataUrl ||
-            token !== songSlideNavigatorRenderToken ||
-            !thumb.isConnected ||
-            slideThumbnailSignature(page, deck) !== signature
-          ) {
-            return;
-          }
-          slideThumbnailCache.set(page.id, { signature, dataUrl });
-          renderDeckPageThumbnail(thumb, page, deck);
-        })
-        .catch((err) => console.warn("Failed to render song slide thumbnail:", err));
-    }
   });
   updateSongSlideNavigatorSelection({ scroll: false });
 }
@@ -11863,6 +12245,10 @@ function handleSongEditorCanvasTextInput(editorDiv) {
   for (const node of editorDiv.childNodes) {
     if (node.nodeType === 3) { // Text node outside div
       if (node.textContent.trim() !== "") {
+        if (node.textContent.trim() === "---") {
+          if (blocks.length > 0) blocks[blocks.length - 1].manualBreakAfter = true;
+          continue;
+        }
         blocks.push({
           type: "lyricLine",
           id: "block_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
@@ -11874,6 +12260,10 @@ function handleSongEditorCanvasTextInput(editorDiv) {
       if (node.tagName === "BR") {
         blocks.push({ type: "spacer", id: "block_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6) });
       } else if (node.tagName === "DIV" || node.tagName === "P") {
+        if (node.dataset.manualSlideBreak === "true" || node.textContent.trim() === "---") {
+          if (blocks.length > 0) blocks[blocks.length - 1].manualBreakAfter = true;
+          continue;
+        }
         const segments = [];
         const walk = (n, currentStyle) => {
           if (n.nodeType === 3) {
@@ -11892,14 +12282,20 @@ function handleSongEditorCanvasTextInput(editorDiv) {
         const existingBlock = previousBlocks.find(b => b.id === blockId);
         
         if (segments.length === 0) {
-          blocks.push(existingBlock && existingBlock.type === "spacer" ? existingBlock : { type: "spacer", id: blockId });
+          blocks.push(
+            existingBlock && existingBlock.type === "spacer"
+              ? { ...existingBlock, manualBreakAfter: false }
+              : { type: "spacer", id: blockId, manualBreakAfter: false },
+          );
         } else {
           blocks.push({
+            ...(existingBlock || {}),
             type: "lyricLine",
             id: blockId,
             primary: { lang: "en", segments },
             translations: existingBlock?.translations || [],
             annotations: existingBlock?.annotations || [],
+            manualBreakAfter: false,
           });
         }
       }
@@ -12251,14 +12647,102 @@ function flushSongEditorStateForSave() {
 
 function currentSongPresentationItem() {
   if (!currentWorkspaceSongDeck && !currentWorkspaceSong) return null;
-  return buildSongQueueEntryFromDeck({
+  const item = buildSongQueueEntryFromDeck({
     deck: currentWorkspaceSongDeck || currentWorkspaceSong,
     render: {
       ...currentSongRenderState,
       currentSectionId: currentSongSectionId,
+      currentSlideId: currentSongSlideId,
+      currentSequenceEntryId: currentSongSequenceEntryId,
     },
     currentSectionId: currentSongSectionId,
   });
+  if (!item) return null;
+  item.currentSlideId = currentSongSlideId;
+  item.currentSequenceEntryId = currentSongSequenceEntryId;
+  item.render.currentSlideId = currentSongSlideId;
+  item.render.currentSequenceEntryId = currentSongSequenceEntryId;
+  const outputSize = selectedBiblePreviewOutputSize("dspSelct");
+  item.render.outputRole = "audience";
+  item.render.outputSize = outputSize;
+  item.resolvedTheme = appliedPresentationTheme
+    ? resolveThemeForTarget({
+        theme: appliedPresentationTheme,
+        contentKind: "song",
+        outputRole: "audience",
+        outputSize,
+      })
+    : null;
+  item.sequence.currentSequenceEntryId = currentSongSequenceEntryId;
+  return item;
+}
+
+function songItemForAudienceResolution(item) {
+  if (!item) return null;
+  const outputSize = selectedBiblePreviewOutputSize("dspSelct");
+  return {
+    ...item,
+    render: {
+      ...(item.render || {}),
+      outputRole: "audience",
+      outputSize,
+    },
+    resolvedTheme: appliedPresentationTheme
+      ? resolveThemeForTarget({
+          theme: appliedPresentationTheme,
+          contentKind: "song",
+          outputRole: "audience",
+          outputSize,
+        })
+      : null,
+  };
+}
+
+function songItemForLowerThirdResolution(item) {
+  if (!item) return null;
+  const outputSize = selectedBiblePreviewOutputSize("lowerThirdDspSelct");
+  const baseResolvedTheme = appliedPresentationTheme
+    ? resolveThemeForTarget({
+        theme: appliedPresentationTheme,
+        contentKind: "song",
+        outputRole: "lowerThird",
+        outputSize,
+      })
+    : null;
+  const resolvedTheme = baseResolvedTheme
+    ? {
+        ...baseResolvedTheme,
+        typography: {
+          ...(baseResolvedTheme.typography || {}),
+          maxLines: 2,
+        },
+      }
+    : null;
+  return {
+    ...item,
+    render: {
+      ...(item.render || {}),
+      outputRole: "lowerThird",
+      outputSize,
+      fontFamily:
+        bibleDesignerState.lowerThirdFontFamily ||
+        bibleDesignerState.fontFamily ||
+        item.render?.fontFamily,
+      fontSize:
+        bibleDesignerState.lowerThirdFontSize ||
+        bibleDesignerState.fontSize ||
+        item.render?.fontSize,
+      minFontSize: bibleDesignerState.minFontSize || SCRIPTURE_MIN_BODY_FONT_SIZE,
+      lineHeight: SCRIPTURE_LINE_HEIGHT,
+      maxLines: 2,
+    },
+    resolvedTheme,
+    chunking: {
+      mode: "autoFit",
+      avoidOrphans: true,
+      spacerBreaks: true,
+    },
+  };
 }
 
 function songPresentationSourceId(item) {
@@ -12293,6 +12777,12 @@ function isCurrentWorkspaceSongShownNow() {
 
 async function loadSongItemIntoWorkspace(item, token) {
   currentSongQueueItem = item || null;
+  currentSongSlideId = item?.currentSlideId || item?.render?.currentSlideId || null;
+  currentSongSequenceEntryId =
+    item?.currentSequenceEntryId ||
+    item?.sequence?.currentSequenceEntryId ||
+    item?.render?.currentSequenceEntryId ||
+    null;
   if (item?.deckSnapshot) {
     const deck = normalizeSlideDeck(item.deckSnapshot);
     const itemRender = songRenderFromItem({
@@ -12567,6 +13057,7 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     if (slide) slide.innerHTML = "";
     currentSongSectionId = null;
     currentSongSequenceEntryId = null;
+    currentSongSlideId = null;
     currentSongQueueItem = null;
     currentWorkspaceSongDeck = null;
     syncSongsMoveFolderSelect(null);
@@ -12604,6 +13095,18 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     currentSongSectionId = enabledSections[0]?.id || currentWorkspaceSong.sections?.[0]?.id || null;
   }
   syncCurrentSongSequenceEntry();
+  const initialPresentation = currentResolvedSongPresentation();
+  const initialUnit =
+    initialPresentation?.resolvedPresentation?.slides?.find(
+      (unit) => unit.slideId === currentSongSlideId,
+    ) ||
+    initialPresentation?.resolvedPresentation?.slides?.find(
+      (unit) => unit.sequenceEntryId === currentSongSequenceEntryId,
+    ) ||
+    initialPresentation?.activeUnit;
+  currentSongSlideId = initialUnit?.slideId || null;
+  currentSongSequenceEntryId =
+    initialUnit?.sequenceEntryId || currentSongSequenceEntryId;
 
   const strip = document.getElementById("songArrangementStrip");
   if (strip) {
@@ -12642,51 +13145,71 @@ function updateSongNavButtonsState() {
     if (nextBtn) nextBtn.disabled = true;
     return;
   }
-  const sequenceItems = currentSongSequenceItems();
-  if (sequenceItems.length <= 1) {
+  const slides = currentResolvedSongPresentation()?.resolvedPresentation?.slides || [];
+  if (slides.length <= 1) {
     prevBtn.disabled = true;
     nextBtn.disabled = true;
     return;
   }
-  const currentIndex = sequenceItems.findIndex((item) => item.entryId === currentSongSequenceEntryId);
+  const currentIndex = slides.findIndex((item) => item.slideId === currentSongSlideId);
   prevBtn.disabled = currentIndex <= 0;
-  nextBtn.disabled = currentIndex >= sequenceItems.length - 1 || currentIndex === -1;
+  nextBtn.disabled = currentIndex >= slides.length - 1 || currentIndex === -1;
 }
 
 function navigateSongSection(direction) {
   if (!currentWorkspaceSong) return;
-  const sequenceItems = currentSongSequenceItems();
-  if (sequenceItems.length === 0) return;
-  const currentIndex = sequenceItems.findIndex((item) => item.entryId === currentSongSequenceEntryId);
+  const slides = currentResolvedSongPresentation()?.resolvedPresentation?.slides || [];
+  if (slides.length === 0) return;
+  const currentIndex = slides.findIndex((item) => item.slideId === currentSongSlideId);
   if (currentIndex === -1) return;
   const nextIndex = currentIndex + direction;
-  if (nextIndex >= 0 && nextIndex < sequenceItems.length) {
-    const nextItem = sequenceItems[nextIndex];
-    void selectSongSection(nextItem.section.id, { sequenceEntryId: nextItem.entryId }).catch(console.error);
+  if (nextIndex >= 0 && nextIndex < slides.length) {
+    const nextItem = slides[nextIndex];
+    void selectSongSection(nextItem.sectionId, {
+      sequenceEntryId: nextItem.sequenceEntryId,
+      slideId: nextItem.slideId,
+    }).catch(console.error);
   }
 }
 
-function renderSongSectionPreview(section) {
+async function renderSongSectionPreview(section) {
   try {
   const isEditing = document.getElementById("songEditorDrawer")?.hidden === false;
   const targetId = isEditing ? "songEditorLivePreviewSlide" : "songsPreviewSlide";
   const preview = document.getElementById(targetId);
   if (!preview || !section || !currentWorkspaceSong) return;
   currentSongSectionId = section.id;
+  const targetItem = songItemForAudienceResolution(currentSongPresentationItem());
+  await waitForTextFonts(
+    [
+      targetItem?.resolvedTheme?.typography?.fontFamily,
+      currentSongRenderState.fontFamily,
+    ],
+    {
+      documentRef: globalThis.document,
+      sample: currentWorkspaceSong.title || "EMS",
+      fontSize:
+        targetItem?.resolvedTheme?.typography?.fontSize ||
+        currentSongRenderState.fontSize,
+    },
+  );
 
-  const presentation = resolvedSongPresentation({
-    type: "song",
-    songSnapshot: currentWorkspaceSong,
-    sequence: {
-      entries: arrangementSequenceEntries(currentWorkspaceSong),
-    },
-    render: {
-      ...currentSongRenderState,
-      currentSectionId: section.id,
-    },
-  });
+  let presentation = currentResolvedSongPresentation();
+  if (
+    presentation?.activeUnit?.sectionId &&
+    presentation.activeUnit.sectionId !== section.id
+  ) {
+    currentSongSlideId = null;
+    currentSongSequenceEntryId =
+      currentSongSequenceItems().find((item) => item.section.id === section.id)?.entryId ||
+      currentSongSequenceEntryId;
+    presentation = currentResolvedSongPresentation();
+  }
   const message = presentation?.message;
   if (!message) return;
+  currentSongSlideId = presentation.activeUnit?.slideId || currentSongSlideId;
+  currentSongSequenceEntryId =
+    presentation.activeUnit?.sequenceEntryId || currentSongSequenceEntryId;
 
   preview.style.backgroundColor = message.backgroundColor || "#000000";
   const outputFontSize = Number(message.fontSize) || DEFAULT_SONG_RENDER.fontSize;
@@ -12703,7 +13226,9 @@ function renderSongSectionPreview(section) {
   }
   const scaledPreviewFontSize = Math.max(
     12,
-    outputFontSize * Math.max(previewWidth || 1280, 1) / SONG_PREVIEW_OUTPUT_WIDTH,
+    outputFontSize *
+      Math.max(previewWidth || 1280, 1) /
+      (fittedStage?.outputSize?.width || selectedBiblePreviewOutputSize("dspSelct").width),
   );
   preview.style.setProperty('--base-font-size', outputFontSize);
   preview.style.setProperty('--song-preview-font-size', `${scaledPreviewFontSize}px`);
@@ -12783,20 +13308,17 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
     renderSongLowerThirdControls();
     return;
   }
-  const sourceText = songSectionLyricsText(section).trim();
-  const outputSize = selectedBiblePreviewOutputSize("lowerThirdDspSelct");
-  const sharedStyle = {
-    fontFamily: bibleDesignerState.fontFamily || SCRIPTURE_FONT_FAMILY,
-    fontSize: bibleDesignerState.fontSize || SCRIPTURE_BODY_FONT_SIZE,
-    fontWeight: SCRIPTURE_FONT_WEIGHT,
-  };
-  const layoutKey = [
-    outputSize.width,
-    outputSize.height,
-    sharedStyle.fontFamily,
-    sharedStyle.fontSize,
-    sharedStyle.fontWeight,
-  ].join("|");
+  const resolved = resolvedSongPresentation(
+    songItemForLowerThirdResolution(currentSongPresentationItem()),
+  );
+  const presentation = resolved?.resolvedPresentation;
+  const sectionSlides = (presentation?.slides || []).filter(
+    (slide) =>
+      slide.sequenceEntryId === currentSongSequenceEntryId ||
+      (!currentSongSequenceEntryId && slide.sectionId === section.id),
+  );
+  const sourceText = sectionSlides.map((slide) => slide.bodyText).join("\n").trim();
+  const layoutKey = presentation?.layoutKey || "";
   const sourceChanged =
     songLowerThirdState.sectionId !== section.id ||
     songLowerThirdState.sourceText !== sourceText ||
@@ -12805,13 +13327,11 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
     songLowerThirdState.sectionId = section.id;
     songLowerThirdState.sourceText = sourceText;
     songLowerThirdState.layoutKey = layoutKey;
-    songLowerThirdState.segments = buildMeasuredLowerThirdSegments(
-      sourceText,
-      sharedStyle,
-      {
-        getBoundingClientRect: () => ({ width: outputSize.width, height: outputSize.height }),
-      },
-    );
+    songLowerThirdState.segments = sectionSlides.map((slide) => ({
+      text: slide.bodyText,
+      slideId: slide.slideId,
+      sequenceEntryId: slide.sequenceEntryId,
+    }));
     songLowerThirdState.index = 0;
   }
   songLowerThirdState.index = clampLowerThirdSegmentIndex(
@@ -12822,9 +13342,17 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
 }
 
 function buildSongLowerThirdMessage() {
-  const presentation = resolvedSongPresentation(currentSongPresentationItem());
+  const cue = songLowerThirdState.segments[songLowerThirdState.index] || null;
+  const item = songItemForLowerThirdResolution(currentSongPresentationItem());
+  if (item && cue?.slideId) {
+    item.currentSlideId = cue.slideId;
+    item.currentSequenceEntryId = cue.sequenceEntryId || item.currentSequenceEntryId;
+    item.render.currentSlideId = cue.slideId;
+    item.render.currentSequenceEntryId = item.currentSequenceEntryId;
+  }
+  const presentation = resolvedSongPresentation(item);
   const base = presentation?.message || {};
-  const text = songLowerThirdState.segments[songLowerThirdState.index]?.text || "";
+  const text = presentation?.activeUnit?.bodyText || cue?.text || "";
   const keyColor =
     bibleDesignerState.lowerThirdChromaKeyColor || lowerThirdPreferenceChromaKeyColor;
   const message = {
@@ -12839,13 +13367,13 @@ function buildSongLowerThirdMessage() {
     attributionText: "",
     copyrightText: "",
     textBoxPosition: null,
-    fontFamily: bibleDesignerState.fontFamily || SCRIPTURE_FONT_FAMILY,
-    lowerThirdFontFamily: bibleDesignerState.lowerThirdFontFamily || "",
-    fontSize: bibleDesignerState.fontSize || SCRIPTURE_BODY_FONT_SIZE,
-    lowerThirdFontSize: bibleDesignerState.lowerThirdFontSize,
-    minFontSize: bibleDesignerState.minFontSize || SCRIPTURE_MIN_BODY_FONT_SIZE,
-    fontWeight: SCRIPTURE_FONT_WEIGHT,
-    lineHeight: SCRIPTURE_LINE_HEIGHT,
+    fontFamily: base.fontFamily || SCRIPTURE_FONT_FAMILY,
+    lowerThirdFontFamily: base.fontFamily || "",
+    fontSize: base.fontSize || SCRIPTURE_BODY_FONT_SIZE,
+    lowerThirdFontSize: base.fontSize || SCRIPTURE_LOWER_THIRD_DEFAULT_FONT_SIZE,
+    minFontSize: base.minFontSize || SCRIPTURE_MIN_BODY_FONT_SIZE,
+    fontWeight: base.fontWeight || SCRIPTURE_FONT_WEIGHT,
+    lineHeight: base.lineHeight || SCRIPTURE_LINE_HEIGHT,
     color: bibleDesignerState.lowerThirdColor || SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
     lowerThirdColor: bibleDesignerState.lowerThirdColor || SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
     lowerThirdBarBackgroundColor:
@@ -12861,6 +13389,9 @@ function buildSongLowerThirdMessage() {
     lowerThirdSegments: songLowerThirdState.segments,
     lowerThirdSegmentIndex: songLowerThirdState.index,
     lowerThirdSegmentCount: songLowerThirdState.segments.length,
+    resolvedPresentation: presentation?.resolvedPresentation || null,
+    resolvedUnit: presentation?.activeUnit || null,
+    slideId: presentation?.activeUnit?.slideId || cue?.slideId || null,
     position: { vertical: "center", horizontal: "center" },
   };
   return themeLowerThirdMessageIfApplied(
@@ -12950,6 +13481,25 @@ function setSongLowerThirdCue(index) {
   renderSongLowerThirdControls();
 }
 
+async function waitForSongLowerThirdFonts() {
+  const item = songItemForLowerThirdResolution(currentSongPresentationItem());
+  await waitForTextFonts(
+    [
+      item?.resolvedTheme?.typography?.fontFamily,
+      item?.render?.fontFamily,
+      bibleDesignerState.lowerThirdFontFamily,
+    ],
+    {
+      documentRef: globalThis.document,
+      sample: songLowerThirdState.sourceText || currentWorkspaceSong?.title || "EMS",
+      fontSize:
+        item?.resolvedTheme?.typography?.fontSize ||
+        bibleDesignerState.lowerThirdFontSize ||
+        item?.render?.fontSize,
+    },
+  );
+}
+
 async function ensureSongLowerThirdOutput() {
   if (!isBibleLowerThirdFeatureEnabled()) {
     showGnomeToast("Lower-third controls are disabled in Preferences");
@@ -12960,6 +13510,8 @@ async function ensureSongLowerThirdOutput() {
     showGnomeToast("Choose a lower-third output display");
     return false;
   }
+  await waitForSongLowerThirdFonts();
+  syncSongLowerThirdForSection();
   const message = buildSongLowerThirdMessage();
   const windowOptions = {
     backgroundColor: message.chromaKeyColor,
@@ -13004,6 +13556,8 @@ async function showCuedSongLowerThird() {
   }
   if (!songLowerThirdState.segments.length) return false;
   if (!bibleLowerThirdOutputActive) return ensureSongLowerThirdOutput();
+  await waitForSongLowerThirdFonts();
+  syncSongLowerThirdForSection();
   sendBibleLowerThirdTextMessage(buildSongLowerThirdMessage());
   activeLowerThirdContentType = "song";
   songLowerThirdState.liveKey = songLowerThirdCueKey();
@@ -13013,7 +13567,19 @@ async function showCuedSongLowerThird() {
 }
 
 async function sendSongTextToOutput(item = null) {
-  const presentation = resolvedSongPresentation(item || currentSongPresentationItem());
+  const sourceItem = songItemForAudienceResolution(item || currentSongPresentationItem());
+  await waitForTextFonts(
+    [
+      sourceItem?.resolvedTheme?.typography?.fontFamily,
+      sourceItem?.render?.fontFamily || sourceItem?.songSnapshot?.defaultRender?.fontFamily,
+    ],
+    {
+      documentRef: globalThis.document,
+      sample: sourceItem?.songSnapshot?.title || "EMS",
+      fontSize: sourceItem?.render?.fontSize,
+    },
+  );
+  const presentation = resolvedSongPresentation(sourceItem);
   if (!presentation?.message) return;
   const message = { ...presentation.message };
   const transitionItem =
@@ -13031,7 +13597,7 @@ async function sendSongTextToOutput(item = null) {
 function liveSongAudienceTextMessageForClear() {
   const liveItem = currentLiveQueueItem();
   if (isQueueItemSong(liveItem)) {
-    return resolvedSongPresentation(liveItem)?.message || null;
+    return resolvedSongPresentation(songItemForAudienceResolution(liveItem))?.message || null;
   }
   if (lastAudienceSongTextMessage) return lastAudienceSongTextMessage;
   const presentation = resolvedSongPresentation(
@@ -13259,6 +13825,8 @@ async function openSongsWorkspaceFromButton() {
   currentWorkspaceSong = null;
   currentWorkspaceSongDeck = null;
   currentSongSectionId = null;
+  currentSongSequenceEntryId = null;
+  currentSongSlideId = null;
   currentSongQueueItem = null;
   document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
   const launcher = document.getElementById("songsLauncher");
@@ -16637,6 +17205,13 @@ async function showCurrentDeckNow() {
       currentSongRenderState = mergeSongRenderState(DEFAULT_SONG_RENDER, entry.render || {});
     }
     if (typeof currentSongSectionId !== "undefined") currentSongSectionId = entry.render?.currentSectionId || null;
+    if (typeof currentSongSequenceEntryId !== "undefined") {
+      currentSongSequenceEntryId =
+        entry.currentSequenceEntryId || entry.sequence?.currentSequenceEntryId || null;
+    }
+    if (typeof currentSongSlideId !== "undefined") {
+      currentSongSlideId = entry.currentSlideId || entry.render?.currentSlideId || null;
+    }
     if (typeof currentSongQueueItem !== "undefined") currentSongQueueItem = entry;
     if (typeof mediaPlaybackEndedPending !== "undefined") mediaPlaybackEndedPending = false;
     if (typeof pendingQueueSwitchIndex !== "undefined") pendingQueueSwitchIndex = null;
@@ -22051,12 +22626,50 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     consumePendingCueVolume(index);
     const underLogoHold = Boolean(opts.underLogoHold);
     const clearOutputHold = Boolean(opts.clearOutputHold);
+    const resolvedBibleEntry = isBibleItem
+      ? await resolvedBibleEntryForItem(nextItem)
+      : null;
+    if (resolvedBibleEntry) {
+      await waitForScriptureFonts(resolvedBibleEntry);
+      if (appliedPresentationTheme) {
+        const outputSize = selectedBiblePreviewOutputSize("dspSelct");
+        const resolvedTheme = resolveThemeForTarget({
+          theme: appliedPresentationTheme,
+          contentKind: "scripture",
+          outputRole: "audience",
+          outputSize,
+        });
+        await waitForTextFonts([resolvedTheme.typography?.fontFamily], {
+          documentRef: globalThis.document,
+          sample: cleanBibleVerseTextForDisplay(resolvedBibleEntry.text) || "EMS",
+          fontSize: resolvedTheme.typography?.fontSize || resolvedBibleEntry.fontSize,
+        });
+      }
+    }
+    const resolvedSongItem = isSongItem
+      ? songItemForAudienceResolution(nextItem)
+      : null;
+    if (resolvedSongItem) {
+      await waitForTextFonts(
+        [
+          resolvedSongItem.resolvedTheme?.typography?.fontFamily,
+          resolvedSongItem.render?.fontFamily,
+        ],
+        {
+          documentRef: globalThis.document,
+          sample: resolvedSongItem.songSnapshot?.title || "EMS",
+          fontSize:
+            resolvedSongItem.resolvedTheme?.typography?.fontSize ||
+            resolvedSongItem.render?.fontSize,
+        },
+      );
+    }
     const slipstreamData = isBibleItem
       ? {
           isText: true,
           mediaFile: nextItem.path,
           textPayload: audienceTextMessageForSend("bible", {
-            ...buildBibleTextMessage(await resolvedBibleEntryForItem(nextItem), {
+            ...buildBibleTextMessage(resolvedBibleEntry, {
               look: SCRIPTURE_LOOK_FULLSCREEN,
             }),
             transition: slideTransitionPayloadForQueueItem(nextItem),
@@ -22070,7 +22683,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
             isText: true,
             mediaFile: nextItem.path,
             textPayload: audienceTextMessageForSend("song", {
-              ...(resolvedSongPresentation(nextItem)?.message || {}),
+              ...(resolvedSongPresentation(resolvedSongItem)?.message || {}),
               transition: slideTransitionPayloadForQueueItem(nextItem),
             }),
             transition: slideTransitionPayloadForQueueItem(nextItem),

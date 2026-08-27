@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emsmediasystem.org/schemas/ems-resolved-presentation.v1.json",
+  "title": "EMS Resolved Presentation",
+  "description": "Deterministic, target-specific slide units shared by preview and output.",
+  "type": "object",
+  "required": [
+    "schema",
+    "contentKind",
+    "target",
+    "source",
+    "slides",
+    "navigation",
+    "layoutKey"
+  ],
+  "properties": {
+    "schema": { "const": "ems.resolvedPresentation.v1" },
+    "contentKind": { "enum": ["song", "scripture", "text"] },
+    "target": {
+      "type": "object",
+      "required": ["outputRole", "outputSize"],
+      "properties": {
+        "outputRole": { "type": "string", "minLength": 1 },
+        "outputSize": {
+          "type": "object",
+          "required": ["width", "height"],
+          "properties": {
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "source": {
+      "type": "object",
+      "required": ["id", "revision"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "arrangementId": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "themeId": { "type": ["string", "null"] },
+    "themeRevision": { "type": ["string", "null"] },
+    "resolvedThemeVersion": { "type": ["integer", "null"] },
+    "slides": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/SlideUnit" }
+    },
+    "navigation": {
+      "type": "object",
+      "required": ["slideCount"],
+      "properties": {
+        "slideCount": { "type": "integer", "minimum": 0 },
+        "activeSlideId": { "type": ["string", "null"] },
+        "previousSlideId": { "type": ["string", "null"] },
+        "nextSlideId": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "activeSlide": {
+      "oneOf": [
+        { "$ref": "#/$defs/SlideUnit" },
+        { "type": "null" }
+      ]
+    },
+    "layoutKey": { "type": "string", "minLength": 1 },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "SlideUnit": {
+      "type": "object",
+      "required": ["slideId", "index", "bodyText", "layout"],
+      "properties": {
+        "slideId": { "type": "string", "minLength": 1 },
+        "index": { "type": "integer", "minimum": 0 },
+        "sectionId": { "type": ["string", "null"] },
+        "sequenceEntryId": { "type": ["string", "null"] },
+        "chunkIndex": { "type": "integer", "minimum": 0 },
+        "bodyText": { "type": "string" },
+        "blocks": { "type": "array" },
+        "referenceText": { "type": "string" },
+        "attributionText": { "type": "string" },
+        "copyrightText": { "type": "string" },
+        "manualBreak": { "type": "boolean" },
+        "layout": {
+          "type": "object",
+          "required": ["fits", "overflow"],
+          "properties": {
+            "fits": { "type": "boolean" },
+            "overflow": { "type": "boolean" },
+            "resolvedFontSize": { "type": "number" },
+            "lineCount": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

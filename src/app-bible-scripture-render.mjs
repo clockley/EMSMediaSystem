@@ -18,6 +18,11 @@ import {
   resolveLowerThirdFontFamily,
   resolveLowerThirdFontSize,
 } from "./lower-third-theme.mjs";
+import {
+  findLargestFittingFontSize as findLargestFittingSharedFontSize,
+  measureTextLayout,
+  waitForTextFonts,
+} from "./text-measure.mjs";
 
 export const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
 export {
@@ -675,25 +680,21 @@ export function findLargestFittingScriptureFontSize(
   maxBodySize,
   applyCandidate,
 ) {
-  const highLimit = Math.max(minBodySize, Math.round(maxBodySize));
-  applyCandidate(highLimit);
-  if (scriptureRenderBoxFits(render, box, fitBounds)) return highLimit;
-
-  let low = minBodySize;
-  let high = highLimit;
-  let best = minBodySize;
-  while (low <= high) {
-    const candidate = Math.floor((low + high) / 2);
-    applyCandidate(candidate);
-    if (scriptureRenderBoxFits(render, box, fitBounds)) {
-      best = candidate;
-      low = candidate + 1;
-    } else {
-      high = candidate - 1;
-    }
-  }
-  applyCandidate(best);
-  return best;
+  const resolved = findLargestFittingSharedFontSize({
+    minFontSize: minBodySize,
+    maxFontSize: maxBodySize,
+    bounds:
+      typeof fitBounds === "number"
+        ? { width: Number.POSITIVE_INFINITY, height: fitBounds }
+        : fitBounds,
+    measureAt: (candidate) => {
+      applyCandidate(candidate);
+      return { candidate };
+    },
+    fits: () => scriptureRenderBoxFits(render, box, fitBounds),
+  });
+  applyCandidate(resolved.fontSize);
+  return resolved.fontSize;
 }
 
 export function fitFullscreenScriptureRender(render, message) {
@@ -823,6 +824,40 @@ export function measureFullscreenScriptureMessage(message, outputSize = null) {
     elements.attribution.hidden = !message.attributionText;
   }
   return fitFullscreenScriptureRender(elements.root, message);
+}
+
+export async function measureFullscreenScriptureMessageAfterFonts(message, outputSize = null) {
+  const size = normalizeBiblePreviewOutputSize(outputSize) || selectedBiblePreviewOutputSize("dspSelct");
+  const safeMargins =
+    message?.resolvedTheme?.safeMargins ||
+    message?.resolvedTheme?.textContainer?.safeMargins;
+  const referenceReserve = message?.referenceText
+    ? Math.max(20, Number(message.referenceFontSize) || SCRIPTURE_REFERENCE_FONT_SIZE) * 1.8
+    : 0;
+  return measureTextLayout({
+    text: message?.bodyText || message?.text || "",
+    outputSize: size,
+    safeMargins,
+    extraHeight: referenceReserve,
+    documentRef: globalThis.document,
+    style: {
+      fontFamily: message?.fontFamily || SCRIPTURE_FONT_FAMILY,
+      fontWeight: message?.fontWeight || SCRIPTURE_FONT_WEIGHT,
+      fontSize: normalizeScriptureFontSize(message?.fontSize, SCRIPTURE_BODY_FONT_SIZE),
+      minFontSize: normalizeScriptureMinFontSize(message?.minFontSize, message?.fontSize),
+      lineHeight: message?.lineHeight || SCRIPTURE_LINE_HEIGHT,
+      autosizeMode: normalizeScriptureAutosizeMode(message?.autosizeMode),
+      direction: message?.direction || "auto",
+    },
+  });
+}
+
+export async function waitForScriptureFonts(message = {}) {
+  return waitForTextFonts([message.fontFamily || SCRIPTURE_FONT_FAMILY], {
+    documentRef: globalThis.document,
+    sample: message.bodyText || message.text || "EMS",
+    fontSize: message.fontSize || SCRIPTURE_BODY_FONT_SIZE,
+  });
 }
 
 export function measureBibleEntryAutofit(entry, outputSize = null) {
@@ -956,7 +991,9 @@ export function applyScriptureRenderToPreview(render, bodyEl, referenceEl, messa
     attributionEl.textContent = message.attributionText || "";
     attributionEl.hidden = !message.attributionText;
   }
-  fitFullscreenScriptureRender(render, message);
+  if (message.resolvedLayout?.measurementMode !== "dom") {
+    fitFullscreenScriptureRender(render, message);
+  }
 }
 
 export function isBibleLowerThirdFeatureEnabled() {

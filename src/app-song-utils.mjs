@@ -22,6 +22,8 @@ import {
   normalizeScriptureFontSize,
   scriptureReferencePresentationForBackground,
 } from "./app-bible-scripture-render.mjs";
+import { resolveSongSlides } from "./song-slides.mjs";
+import { stableValueHash } from "./resolved-presentation.mjs";
 
 export const songUriPrefix = "song://";
 
@@ -86,13 +88,16 @@ export function normalizeToSongAST(song) {
       : { name: null, number: null, display: null };
   const hymnal = { ...rawHymnal, ...(meter ? { meter } : {}) };
 
-  const sections = (Array.isArray(song.sections) ? song.sections : []).map(sec => {
+  const sections = (Array.isArray(song.sections) ? song.sections : []).map((sec, sectionIndex) => {
     const kind = (sec.kind || "verse").toLowerCase();
     const label = sec.label || "";
+    const sectionId =
+      sec.id ||
+      `sec_${stableValueHash({ songId: id, title, sectionIndex, kind, label })}`;
 
     let blocks = [];
     if (Array.isArray(sec.blocks)) {
-      blocks = sec.blocks.map(block => {
+      blocks = sec.blocks.map((block, blockIndex) => {
         const explicitSegments = Array.isArray(block.primary?.segments)
           ? block.primary.segments
           : null;
@@ -108,7 +113,14 @@ export function normalizeToSongAST(song) {
         return {
           ...structuredClone(block),
           type: blockType,
-          id: block.id || `block_${Math.random().toString(36).substring(2, 9)}`,
+          id:
+            block.id ||
+            `block_${stableValueHash({
+              sectionId,
+              blockIndex,
+              type: blockType,
+              primary: block.primary,
+            })}`,
           primary: {
             ...(block.primary && typeof block.primary === "object" ? structuredClone(block.primary) : {}),
             lang: block.primary?.lang || "en",
@@ -124,7 +136,7 @@ export function normalizeToSongAST(song) {
 
     return {
       ...structuredClone(sec),
-      id: sec.id || `sec_${Math.random().toString(36).substring(2, 9)}`,
+      id: sectionId,
       kind,
       ...(Number.isFinite(sec.number) && sec.number > 0 ? { number: sec.number } : {}),
       label,
@@ -536,20 +548,27 @@ export function songRenderFromItem(item) {
         item?.songSnapshot?.metadata?.oneLicense,
         item?.songSnapshot?.metadata?.one_license,
       ),
+      outputRole: render.outputRole,
+      outputSize: render.outputSize,
+      fontWeight: render.fontWeight,
+      lineHeight: render.lineHeight,
+      maxLines: render.maxLines,
       currentSectionId: render.currentSectionId,
     },
     {},
   );
 }
 
-export function buildSongTextMessage({
+function buildResolvedSongUnitTextMessage({
   song,
   section,
   render = {},
   showCopyright = true,
+  resolvedPresentation = null,
+  resolvedUnit = null,
 }) {
   const style = mergeSongRenderState({}, render);
-  const bodyText = songSectionLyricsText(section);
+  const bodyText = resolvedUnit?.bodyText ?? songSectionLyricsText(section);
   const referenceText = "";
   const attributionText = "";
   const copyrightText = showCopyright
@@ -565,7 +584,9 @@ export function buildSongTextMessage({
     style.backgroundColor,
     { forceLight: Boolean(style.backgroundPath || backgroundVideo) },
   );
-  const sourceSlideObjects = Array.isArray(section?.slideObjects) && section.slideObjects.length > 0
+  const sourceSlideObjects = Array.isArray(resolvedUnit?.slideObjects)
+    ? resolvedUnit.slideObjects
+    : Array.isArray(section?.slideObjects) && section.slideObjects.length > 0
     ? section.slideObjects
     : Array.isArray(section?.slideTextObjects)
       ? section.slideTextObjects
@@ -604,7 +625,7 @@ export function buildSongTextMessage({
   const slideTextObjects = slideObjects.filter((object) => object?.kind === "text");
 
   return {
-    blocks: section?.blocks || [],
+    blocks: resolvedUnit?.blocks || section?.blocks || [],
     text: bodyText,
     bodyText,
     reference: referenceText,
@@ -613,8 +634,12 @@ export function buildSongTextMessage({
     copyrightText,
     version: "",
     fontFamily: style.fontFamily || SCRIPTURE_FONT_FAMILY,
-    fontSize: normalizeScriptureFontSize(style.fontSize, SCRIPTURE_BODY_FONT_SIZE),
-    autosizeMode: style.autosizeMode || "fit",
+    fontSize: normalizeScriptureFontSize(
+      resolvedUnit?.layout?.resolvedFontSize ?? style.fontSize,
+      SCRIPTURE_BODY_FONT_SIZE,
+    ),
+    preferredFontSize: normalizeScriptureFontSize(style.fontSize, SCRIPTURE_BODY_FONT_SIZE),
+    autosizeMode: resolvedUnit ? "none" : style.autosizeMode || "fit",
     minFontSize: normalizeScriptureFontSize(style.minFontSize, 38),
     autoSplit: false,
     color: style.color || "#ffffff",
@@ -633,7 +658,90 @@ export function buildSongTextMessage({
     textBoxPosition: style.textBoxPosition || null,
     ...(slideObjects.length > 0 ? { slideObjects } : {}),
     ...(slideTextObjects.length > 0 ? { slideTextObjects } : {}),
+    ...(resolvedPresentation
+      ? {
+          resolvedPresentation,
+          resolvedUnit,
+          slideId: resolvedUnit?.slideId || null,
+          layoutKey: resolvedPresentation.layoutKey,
+          resolvedLayout: resolvedUnit?.layout || null,
+        }
+      : {}),
   };
+}
+
+function applyResolvedThemeToSongMessage(message, resolvedTheme) {
+  if (!resolvedTheme) return message;
+  const typography = resolvedTheme.typography || {};
+  const background = resolvedTheme.canvas?.background || {};
+  const backgroundPath = background.path || "";
+  const backgroundUrl = background.url || (backgroundPath ? pathToMediaUrl(backgroundPath) : "");
+  return {
+    ...message,
+    fontFamily: typography.fontFamily || message.fontFamily,
+    preferredFontSize: typography.fontSize || message.preferredFontSize,
+    minFontSize: typography.minFontSize || message.minFontSize,
+    fontWeight: typography.fontWeight || message.fontWeight,
+    lineHeight: typography.lineHeight || message.lineHeight,
+    color: typography.color || typography.fontColor || message.color,
+    backgroundColor: background.color || message.backgroundColor,
+    backgroundPath,
+    backgroundImage: background.type === "image" ? backgroundUrl : "",
+    backgroundVideo: background.type === "video" ? backgroundUrl : "",
+    textBoxPosition: resolvedTheme.textFrame
+      ? {
+          left: `${resolvedTheme.textFrame.x * 100}%`,
+          top: `${resolvedTheme.textFrame.y * 100}%`,
+          width: `${resolvedTheme.textFrame.width * 100}%`,
+          height: `${resolvedTheme.textFrame.height * 100}%`,
+        }
+      : message.textBoxPosition,
+    position: {
+      vertical: typography.verticalAlign || message.position?.vertical || "center",
+      horizontal: typography.align || message.position?.horizontal || "center",
+    },
+    resolvedTheme,
+  };
+}
+
+export function buildSongTextMessage({
+  song,
+  section,
+  render = {},
+  showCopyright = true,
+  resolvedPresentation = null,
+  resolvedUnit = null,
+}) {
+  const presentation =
+    resolvedPresentation ||
+    resolveSongSlides(song, {
+      render,
+      currentSectionId: section?.id || render.currentSectionId,
+      activeSlideId: render.currentSlideId,
+      sequenceEntryId: render.currentSequenceEntryId,
+      outputRole: render.outputRole || "audience",
+      outputSize: render.outputSize,
+      copyrightPlacement: showCopyright ? render.copyrightPlacement : "none",
+    });
+  const unit =
+    resolvedUnit ||
+    presentation?.activeSlide ||
+    presentation?.slides?.find((slide) => slide.sectionId === section?.id) ||
+    null;
+  const resolvedSection =
+    (Array.isArray(song?.sections)
+      ? song.sections.find((entry) => entry?.id === unit?.sectionId)
+      : null) ||
+    section ||
+    null;
+  return buildResolvedSongUnitTextMessage({
+    song,
+    section: resolvedSection,
+    render,
+    showCopyright,
+    resolvedPresentation: presentation,
+    resolvedUnit: unit,
+  });
 }
 
 function arrangementSequenceIdsForLibrary(sequence, sections = []) {
@@ -721,7 +829,11 @@ export function queueEntryFromSong({
     sequence: {
       arrangementId: song.arrangements?.[0]?.id || "arr_default",
       entries,
+      currentSequenceEntryId: entries.find((entry) => entry.sectionId === section?.id)?.id || null,
     },
+    currentSlideId: null,
+    currentSequenceEntryId:
+      entries.find((entry) => entry.sectionId === section?.id)?.id || null,
     render: {
       themeId: "song_default",
       backgroundColor: render.backgroundColor,
@@ -743,6 +855,9 @@ export function queueEntryFromSong({
           : null,
       copyright: normalizeSongCopyrightText(render.copyright || song.metadata?.copyright || ""),
       currentSectionId: section?.id || null,
+      currentSlideId: null,
+      currentSequenceEntryId:
+        entries.find((entry) => entry.sectionId === section?.id)?.id || null,
     },
     transition: slideTransitionOverrideSnapshot(render.transition),
   };
@@ -754,9 +869,30 @@ export function resolvedSongPresentation(item) {
   const render = songRenderFromItem(item);
   const entries = item?.sequence?.entries || arrangementSequenceEntries(song);
   const enabled = enabledSongSections(song, entries);
+  const resolutionSong = entries === song.playOrder
+    ? song
+    : { ...song, playOrder: entries };
+  const resolved = resolveSongSlides(resolutionSong, {
+    render,
+    typography: item?.resolvedTheme?.typography || render,
+    resolvedTheme: item?.resolvedTheme || null,
+    chunking: item?.chunking,
+    currentSectionId: render.currentSectionId || item?.render?.currentSectionId,
+    activeSlideId: item?.currentSlideId || render.currentSlideId,
+    sequenceEntryId:
+      item?.currentSequenceEntryId ||
+      item?.sequence?.currentSequenceEntryId ||
+      render.currentSequenceEntryId,
+    arrangementId: item?.sequence?.arrangementId,
+    sequenceEntries: entries,
+    outputRole: render.outputRole || "audience",
+    outputSize: render.outputSize,
+    copyrightPlacement: render.copyrightPlacement,
+  });
+  const activeUnit = resolved.activeSlide;
   const section =
+    song.sections?.find((entry) => entry.id === activeUnit?.sectionId) ||
     enabled.find((s) => s.id === render.currentSectionId) ||
-    enabled.find((s) => s.id === item?.render?.currentSectionId) ||
     enabled[0] ||
     song.sections?.[0] ||
     null;
@@ -765,17 +901,24 @@ export function resolvedSongPresentation(item) {
     render.copyrightPlacement !== "none" &&
     (
       render.copyrightPlacement !== "firstSlide" ||
-      (Boolean(section?.id) && section.id === firstSection?.id)
+      (Number.isFinite(activeUnit?.index)
+        ? activeUnit.index === 0
+        : Boolean(section?.id) && section.id === firstSection?.id)
     );
+  const message = buildResolvedSongUnitTextMessage({
+    song,
+    section,
+    render,
+    showCopyright,
+    resolvedPresentation: resolved,
+    resolvedUnit: activeUnit,
+  });
   return {
     song,
     section,
     render,
-    message: buildSongTextMessage({
-      song,
-      section,
-      render,
-      showCopyright,
-    }),
+    resolvedPresentation: resolved,
+    activeUnit,
+    message: applyResolvedThemeToSongMessage(message, item?.resolvedTheme),
   };
 }

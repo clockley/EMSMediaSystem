@@ -1,0 +1,48 @@
+{
+  "schema": "ems.song.v1",
+  "id": "fixture_long_song",
+  "title": "Long Song",
+  "metadata": {
+    "authors": ["Fixture Writer"],
+    "copyright": "Fixture Copyright"
+  },
+  "sections": [
+    {
+      "id": "verse_1",
+      "kind": "verse",
+      "label": "Verse 1",
+      "blocks": [
+        { "type": "lyricLine", "id": "v1l1", "primary": { "lang": "en", "segments": [{ "type": "text", "text": "First line of the opening verse" }] } },
+        { "type": "lyricLine", "id": "v1l2", "primary": { "lang": "en", "segments": [{ "type": "text", "text": "Second line continues the thought" }] } },
+        { "type": "lyricLine", "id": "v1l3", "primary": { "lang": "en", "segments": [{ "type": "text", "text": "Third line remains together" }] } },
+        { "type": "lyricLine", "id": "v1l4", "primary": { "lang": "en", "segments": [{ "type": "text", "text": "Fourth line closes the first slide" }] } },
+        { "type": "lyricLine", "id": "v1l5", "primary": { "lang": "en", "segments": [{ "type": "text", "text": "Fifth line starts another slide" }] } },
+        { "type": "lyricLine", "id": "v1l6", "primary": { "lang": "en", "segments": [{ "type": "text", "text": "Sixth line completes the verse" }] } }
+      ]
+    },
+    {
+      "id": "chorus",
+      "kind": "chorus",
+      "label": "Chorus",
+      "blocks": [
+        { "type": "lyricLine", "id": "c1", "primary": { "lang": "en", "segments": [{ "type": "text", "text": "Sing the chorus together" }] } },
+        { "type": "lyricLine", "id": "c2", "primary": { "lang": "en", "segments": [{ "type": "text", "text": "Sing the chorus once again" }] } }
+      ]
+    }
+  ],
+  "playOrder": [
+    { "id": "play_v1", "sectionId": "verse_1", "enabled": true },
+    { "id": "play_c1", "sectionId": "chorus", "enabled": true },
+    { "id": "play_c2", "sectionId": "chorus", "enabled": true }
+  ],
+  "presentation": {
+    "defaultChunking": {
+      "mode": "linesPerSlide",
+      "maxLines": 4,
+      "avoidOrphans": true
+    },
+    "manualBreaks": [
+      { "sectionId": "verse_1", "afterBlockId": "v1l4" }
+    ]
+  }
+}

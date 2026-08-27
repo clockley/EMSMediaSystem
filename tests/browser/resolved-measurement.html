@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Resolved measurement browser golden</title>
+  </head>
+  <body>
+    <script type="module">
+      import { resolveScriptureSlidesAfterFonts } from "../../src/scripture-slides.mjs";
+
+      const outputSizes = [
+        [1280, 720],
+        [1920, 1080],
+        [1024, 768],
+        [2560, 1080],
+        [1080, 1920],
+      ];
+      const entry = {
+        id: "browser_golden",
+        version: "KJV",
+        book: "Psalm",
+        chapter: 119,
+        verse: 105,
+        reference: "Psalm 119:105",
+        text: "Thy word is a lamp unto my feet, and a light unto my path. This deliberately extended fixture verifies measured word-boundary splitting without clipping on every supported output shape.",
+        fontFamily: "sans-serif",
+        fontSize: 72,
+        minFontSize: 30,
+        autoSplit: true,
+      };
+
+      try {
+        const results = [];
+        for (const [width, height] of outputSizes) {
+          const presentation = await resolveScriptureSlidesAfterFonts(entry, {
+            outputSize: { width, height },
+            cache: false,
+            documentRef: document,
+          });
+          results.push({
+            width,
+            height,
+            slideIds: presentation.slides.map((slide) => slide.slideId),
+            layouts: presentation.slides.map((slide) => slide.layout),
+          });
+        }
+        window.__emsResolvedMeasurementResult = { ok: true, results };
+      } catch (error) {
+        window.__emsResolvedMeasurementResult = {
+          ok: false,
+          error: error?.stack || String(error),
+        };
+      }
+    </script>
+  </body>
+</html>

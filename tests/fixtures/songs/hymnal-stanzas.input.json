@@ -1,0 +1,27 @@
+{
+  "number": 12,
+  "title": "Be Thou My Vision",
+  "author": "Mary E. Byrne",
+  "copyright": "Public Domain",
+  "meter": "10.10.10.10",
+  "stanzas": [
+    {
+      "reference": { "type": "Verse", "number": 1 },
+      "lines": [
+        "Be Thou my vision, O Lord of my heart",
+        "Naught be all else to me, save that Thou art",
+        "Thou my best thought, by day or by night",
+        "Waking or sleeping, Thy presence my light"
+      ]
+    },
+    {
+      "reference": { "type": "Verse", "number": 2 },
+      "lines": [
+        "Be Thou my wisdom, and Thou my true word",
+        "I ever with Thee and Thou with me, Lord",
+        "Thou my great Father, I Thy true son",
+        "Thou in me dwelling, and I with Thee one"
+      ]
+    }
+  ]
+}

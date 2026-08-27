@@ -257,6 +257,7 @@ function normalizeObject(obj) {
               b?.type === "spacer" ||
               (explicitSegments ? explicitSegments.length === 0 : fallbackText.trim() === "");
             return {
+              ...(b && typeof b === "object" ? structuredClone(b) : {}),
               type: isSpacer ? "spacer" : "lyricLine",
               id: b?.id || shortId("block"),
               primary: {
@@ -638,12 +639,17 @@ export function deckToTransientSong(deck) {
   if (!norm) return null;
   const sections = deckPagesToSongSections(norm);
   const metadata = norm.metadata && typeof norm.metadata === "object" ? norm.metadata : {};
+  const canonicalSong =
+    norm.canonicalSong && typeof norm.canonicalSong === "object"
+      ? structuredClone(norm.canonicalSong)
+      : {};
   const meter = metadata.meter || metadata.hymnal?.meter || "";
   const hymnal =
     metadata.hymnal && typeof metadata.hymnal === "object"
       ? { ...metadata.hymnal, ...(meter ? { meter } : {}) }
       : { name: null, number: norm.songNumber ? String(norm.songNumber) : null, display: null, ...(meter ? { meter } : {}) };
   const song = {
+    ...canonicalSong,
     schema: "ems.song.v1",
     id: norm.id,
     title: norm.title,
@@ -668,7 +674,13 @@ export function deckToTransientSong(deck) {
     playOrder: Array.isArray(norm.playOrder) && norm.playOrder.length
       ? norm.playOrder.map((entry) => ({ ...entry }))
       : sections.map((s) => ({ sectionId: s.id, enabled: true })),
-    presentation: { defaultChunking: { mode: "blocksPerSlide", maxBlocks: 99 } },
+    arrangements: Array.isArray(canonicalSong.arrangements)
+      ? structuredClone(canonicalSong.arrangements)
+      : [],
+    presentation:
+      canonicalSong.presentation && typeof canonicalSong.presentation === "object"
+        ? structuredClone(canonicalSong.presentation)
+        : { defaultChunking: { mode: "blocksPerSlide", maxBlocks: 99 } },
     defaultRender: deckDefaultRender(norm),
   };
   return normalizeToSongAST(song);
