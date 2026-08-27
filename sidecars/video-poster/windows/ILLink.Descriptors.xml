@@ -1,0 +1,5 @@
+<linker>
+  <assembly fullname="video-poster-win32-x64">
+    <type fullname="Program/IShellItemImageFactory" preserve="all" />
+  </assembly>
+</linker>

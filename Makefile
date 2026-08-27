@@ -88,6 +88,12 @@ ATEM_RPC_ROOT = sidecars/atem-rpc
 ATEM_RPC_SOURCE = $(ATEM_RPC_ROOT)/main.mjs
 ATEM_RPC_SHIM = $(ATEM_RPC_ROOT)/freetype2-shim.cjs
 ATEM_RPC_OUT = $(DERIVED_DIR)/bin/atem-rpc.cjs
+GNOME_VIDEO_POSTER_SRC = sidecars/video-poster/gnome-video-poster.js
+GNOME_VIDEO_POSTER_OUT = $(DERIVED_DIR)/bin/gnome-video-poster.js
+WINDOWS_VIDEO_POSTER_ROOT = sidecars/video-poster/windows
+WINDOWS_VIDEO_POSTER_PROJECT = $(WINDOWS_VIDEO_POSTER_ROOT)/VideoPoster.csproj
+WINDOWS_VIDEO_POSTER_SOURCES = $(WINDOWS_VIDEO_POSTER_PROJECT) $(WINDOWS_VIDEO_POSTER_ROOT)/Program.cs $(WINDOWS_VIDEO_POSTER_ROOT)/ILLink.Descriptors.xml
+WINDOWS_VIDEO_POSTER_OUT = $(DERIVED_DIR)/bin/video-poster-win32-x64.exe
 BIBLE_PRIVATE_ROOT = private-bibles
 BIBLE_RPC_ASSET_BUILDER = $(BIBLE_RPC_ROOT)/stage-bible-sources.mjs
 BIBLE_RPC_BUNDLE_FINALIZER = $(BIBLE_RPC_ROOT)/finalize-bible-bundle.mjs
@@ -192,8 +198,8 @@ endif
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
 IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
 DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all copied binary/static resources
-APP_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT)
-APP_DEV_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(DEV_BIBLE_SIDECAR_BINS) $(DEV_MEDIA_WATCHER_BINS) $(DEV_SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT)
+APP_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT) $(GNOME_VIDEO_POSTER_OUT) $(WINDOWS_VIDEO_POSTER_OUT)
+APP_DEV_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(DEV_BIBLE_SIDECAR_BINS) $(DEV_MEDIA_WATCHER_BINS) $(DEV_SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT) $(GNOME_VIDEO_POSTER_OUT) $(WINDOWS_VIDEO_POSTER_OUT)
 BIBLE_RESOURCES = $(BIBLE_DB_OUT) $(BIBLE_CACHE_OUT)
 
 ifeq ($(NO_COLOR), 1)
@@ -347,6 +353,22 @@ endif
 	@$(ESBUILD) "$(ATEM_RPC_SOURCE)" --bundle --platform=node --format=cjs --target=node20 --alias:@julusian/freetype2=./$(ATEM_RPC_SHIM) --outfile="$@"
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
 
+$(GNOME_VIDEO_POSTER_OUT): $(GNOME_VIDEO_POSTER_SRC) | $(DERIVED_DIR)
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+	@powershell -NoProfile -c "Copy-Item -Force '$(GNOME_VIDEO_POSTER_SRC)' '$@'"
+else
+	@mkdir -p $(dir $@)
+	@cp "$<" "$@"
+	@chmod 755 "$@"
+endif
+
+$(WINDOWS_VIDEO_POSTER_OUT): $(WINDOWS_VIDEO_POSTER_SOURCES) | $(DERIVED_DIR)
+	@echo "$(COLOR_YELLOW)Publishing Windows video poster sidecar -> $@$(COLOR_RESET)"
+	@dotnet publish "$(WINDOWS_VIDEO_POSTER_PROJECT)" -c Release -r win-x64 --self-contained true -o "$(CURDIR)/$(DERIVED_DIR)/bin"
+	@test -f "$@"
+	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
+
 .PHONY: test-songs-import
 test-songs-import:
 	@echo "$(COLOR_YELLOW)Running song import fixture tests$(COLOR_RESET)"
@@ -397,6 +419,7 @@ check-deps:
 	@test -f node_modules/html-minifier-terser/cli.js || { echo "$(COLOR_RED)Error: html-minifier-terser not found in node_modules. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@test -f node_modules/csso/package.json || { echo "$(COLOR_RED)Error: csso module required. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@command -v sqlite3 >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: sqlite3 is required$(COLOR_RESET)" >&2; exit 1; }
+	@command -v dotnet >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: .NET 8 SDK is required$(COLOR_RESET)" >&2; exit 1; }
 	@$(NODE) -e "const {spawnSync}=require('node:child_process'); const supported=(out)=>{const m=String(out||'').match(/go(\\d+)\\.(\\d+)/); return !!m && (Number(m[1])>1 || Number(m[2])>=22);}; for (const c of [process.env.GO,'/usr/local/go/bin/go','go'].filter(Boolean)) { const r=spawnSync(c,['version'],{encoding:'utf8'}); if (r.status===0 && supported(r.stdout)) process.exit(0); } process.exit(1);" || { echo "$(COLOR_RED)Error: Go 1.22+ is required$(COLOR_RESET)" >&2; exit 1; }
 
 # Rule: Generate CSS source map

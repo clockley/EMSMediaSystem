@@ -65,6 +65,7 @@ import {
   readEmprojProjectGuid,
 } from "./emproj.min.mjs";
 import { MediaWatcher } from "./media-watcher.min.mjs";
+import { generateVideoPoster } from "./video-poster.min.mjs";
 import {
   StagingIndex,
   normalizeProjectGuid,
@@ -227,6 +228,10 @@ const mediaWatcher = new MediaWatcher({
     }
   },
 });
+const videoPosterOptions = {
+  app,
+  devRoot: path.dirname(import.meta.dirname),
+};
 
 function isProjectFilePath(filePath) {
   return (
@@ -4250,6 +4255,16 @@ function handleRegisterMediaWatches(_, items) {
   return mediaWatcher.sync(items);
 }
 
+async function handleGenerateVideoPoster(_, filePath) {
+  let localPath;
+  try {
+    localPath = localFileSystemPathFromMediaPath(filePath);
+  } catch {
+    return { ok: false, code: "invalid_request" };
+  }
+  return generateVideoPoster(localPath, videoPosterOptions);
+}
+
 async function handleCheckMediaPathsExist(_, paths) {
   if (!Array.isArray(paths)) return [];
   const out = [];
@@ -4705,6 +4720,7 @@ function setIPC() {
   ipcMain.handle("rollback-media-refresh", handleRollbackMediaRefresh);
   ipcMain.handle("read-media-original-bytes", handleReadMediaOriginalBytes);
   ipcMain.handle("register-media-watches", handleRegisterMediaWatches);
+  ipcMain.handle("generate-video-poster", handleGenerateVideoPoster);
   ipcMain.handle("show-preflight-summary-dialog", handleShowPreflightSummaryDialog);
   ipcMain.handle("bible-rpc", handleBibleRPC);
   ipcMain.handle("songs-rpc", handleSongsRPC);

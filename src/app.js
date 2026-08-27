@@ -343,6 +343,9 @@ let previewAudioCueIndex = -1;
  */
 let previewCueVideo = null;
 let previewCueVideoIndex = -1;
+const videoPosterRequestIds = new WeakMap();
+const videoPosterSourcePaths = new WeakMap();
+let nextVideoPosterRequestId = 1;
 /**
  * Volume (0–1) for the actively-loaded cue. While a cue is loaded the GTK
  * slider writes here (and to mediaQueue[previewCueIndex].cueVolume) instead
@@ -4534,6 +4537,40 @@ function ensurePreviewCueVideoElement() {
   return previewCueVideo;
 }
 
+function clearVideoPoster(mediaEl) {
+  if (!mediaEl) return;
+  videoPosterRequestIds.set(mediaEl, nextVideoPosterRequestId++);
+  videoPosterSourcePaths.delete(mediaEl);
+  mediaEl.removeAttribute("poster");
+}
+
+async function applyVideoPoster(mediaEl, sourcePath) {
+  if (!mediaEl || !sourcePath || isNetworkStreamSource(sourcePath)) {
+    clearVideoPoster(mediaEl);
+    return;
+  }
+  if (videoPosterSourcePaths.get(mediaEl) === sourcePath) return;
+  const requestId = nextVideoPosterRequestId++;
+  videoPosterRequestIds.set(mediaEl, requestId);
+  videoPosterSourcePaths.set(mediaEl, sourcePath);
+  mediaEl.removeAttribute("poster");
+  try {
+    const poster = await invoke("generate-video-poster", sourcePath);
+    if (videoPosterRequestIds.get(mediaEl) !== requestId) return;
+    if (!poster?.ok || typeof poster.output !== "string" || !poster.output) {
+      videoPosterSourcePaths.delete(mediaEl);
+      return;
+    }
+    const cacheVersion = Number.isFinite(poster.mtime) ? String(poster.mtime) : undefined;
+    mediaEl.poster = pathToMediaUrl(poster.output, cacheVersion);
+  } catch (error) {
+    if (videoPosterRequestIds.get(mediaEl) === requestId) {
+      videoPosterSourcePaths.delete(mediaEl);
+      console.warn("Failed to generate video poster:", error);
+    }
+  }
+}
+
 function setPreviewCueVideoLocalAudio(el = previewCueVideo) {
   if (!el) return;
   const vol = Math.max(
@@ -4778,7 +4815,7 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, l
   el.loop = loopEnabledForQueueItem(item);
   el.preload = "metadata";
   el.removeAttribute("src");
-  el.removeAttribute("poster");
+  clearVideoPoster(el);
   el.load();
   let networkPreviewLoadStatusToken = 0;
   if (itemIsNetworkVideo) {
@@ -4802,6 +4839,7 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, l
   } else {
     resetNetworkPreviewStatus();
     const cueUrl = pathToMediaUrl(resolvedPath, queueItemMediaCacheBust(item));
+    void applyVideoPoster(el, resolvedPath);
     el.src = cueUrl;
     el.load();
   }
@@ -5449,15 +5487,20 @@ function enqueuePathsFromFilePicker(paths, options = {}) {
       : `Added ${addedLabel} to the end of the schedule`,
   );
   void (async () => {
-    await stampBaselineForQueueItems(newEntries);
-    if (
-      ((!isActiveMediaWindow() &&
-        !isLocalAppWindowPresentationActive() &&
-        currentQueueIndex < 0) ||
-        biblePresentationLive) &&
-      mediaQueue[firstNewIndex]
-    ) {
-      await onQueueItemActivate(firstNewIndex);
+    try {
+      if (
+        ((!isActiveMediaWindow() &&
+          !isLocalAppWindowPresentationActive()) ||
+          biblePresentationLive) &&
+        mediaQueue[firstNewIndex]
+      ) {
+        // The newly-added row is already painted as selected. Load it before
+        // the slower integrity-baseline work so selection and preview cannot
+        // visibly disagree while a large video is being inspected.
+        await onQueueItemActivate(firstNewIndex);
+      }
+    } finally {
+      await stampBaselineForQueueItems(newEntries);
     }
   })().catch((err) => console.error(err));
 }
@@ -5598,7 +5641,6 @@ async function enqueueNetworkScheduleItem(options) {
   if (
     !isActiveMediaWindow() &&
     !isLocalAppWindowPresentationActive() &&
-    currentQueueIndex < 0 &&
     mediaQueue[firstNewIndex]
   ) {
     try {
@@ -21444,6 +21486,34 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   hideBiblePreview();
   hideSongsWorkspace();
   hideSlidesWorkspace();
+
+  // Selection changes can spend noticeable time resolving or snapshotting a
+  // large media file. Clear the previous surface before that asynchronous
+  // work begins so the blue queue selection never appears to refer to the
+  // stale video, image, or poster that was loaded for the prior item.
+  restoreNonPptxPreviewSurface({ isImage: isImgFile });
+  localVideo = video;
+  stopNetworkPreviewRtcCapture();
+  teardownNetworkPreviewStreamingPlayers();
+  resetNetworkPreviewStatus();
+  networkPreviewMirrorLiveEdge = false;
+  networkPreviewMirrorSource = "";
+  if (localVideo) {
+    try {
+      localVideo.pause();
+      localVideo.srcObject = null;
+      localVideo.removeAttribute("src");
+      clearVideoPoster(localVideo);
+      localVideo.load();
+    } catch (err) {
+      console.error("Failed to clear the previous media preview:", err);
+    }
+  }
+  const pendingPreviewImg = document.querySelector("img#preview");
+  if (pendingPreviewImg) {
+    pendingPreviewImg.removeAttribute("src");
+  }
+
   const resolvedItemPath = await resolveQueueItemMediaPath(item);
   if (!previewRequestStillOwnsMainSurface()) {
     return;
@@ -21468,6 +21538,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
   restoreNonPptxPreviewSurface({ isImage: isImgFile });
   localVideo = video;
   if (itemIsNetworkVideo) {
+    clearVideoPoster(localVideo);
     if (skipNetworkPreviewLoad) {
       stopNetworkPreviewRtcCapture();
       resetNetworkPreviewStatus();
@@ -24750,7 +24821,11 @@ function handleMediaPlayback(isImgFile, sourcePath = mediaFile, cacheBust) {
   if (!video) return;
   if (isNonVideoPresentationItem(mediaFile)) return;
   if (!isImgFile) {
+    if (isNetworkStreamSource(sourcePath)) clearVideoPoster(video);
+    else void applyVideoPoster(video, sourcePath);
     video.src = pathToMediaUrl(sourcePath, cacheBust);
+  } else {
+    clearVideoPoster(video);
   }
 }
 
