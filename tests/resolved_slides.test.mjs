@@ -382,7 +382,8 @@ test("Scripture prefers verse boundaries and splits an oversized verse by words"
   });
   assert.ok(presentation.slides.length > entry.verseRows.length);
   assert.ok(presentation.slides.every((slide) => slide.layout.overflow === false));
-  assert.match(presentation.slides[0].bodyText, /^1\.\s+\S/u);
+  assert.doesNotMatch(presentation.slides[0].bodyText, /^1\.\s+/u);
+  assert.equal(presentation.slides[0].referenceText, "John 1:1 KJV");
   assert.ok(
     presentation.slides
       .filter((slide) => slide.intraVerse)
@@ -482,7 +483,7 @@ test("an oversized unbroken Scripture word splits at grapheme boundaries in any 
   });
   assert.ok(presentation.slides.length > 1);
   assert.ok(presentation.slides.every((slide) => slide.layout.overflow === false));
-  assert.match(presentation.slides[0].bodyText, /^1\.\s+\S/u);
+  assert.doesNotMatch(presentation.slides[0].bodyText, /^1\.\s+/u);
 });
 
 test("normalize mode applies one group font size", async () => {

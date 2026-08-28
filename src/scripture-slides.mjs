@@ -10,7 +10,7 @@ import {
   waitForTextFonts,
 } from "./text-measure.mjs";
 
-export const SCRIPTURE_SLIDE_RESOLVER_VERSION = 1;
+export const SCRIPTURE_SLIDE_RESOLVER_VERSION = 2;
 const scriptureCache = new Map();
 
 function cleanText(value) {
@@ -177,13 +177,13 @@ function segmentGraphemes(text, locale) {
   return Array.from(String(text || ""));
 }
 
-function splitOversizedVerse(row, entry, options, typography) {
+function splitOversizedVerse(row, entry, options, typography, includeVerseNumber = true) {
   const tokens = segmentWords(row.text, entry.language || entry.lang);
   const parts = [];
   let current = "";
   let first = true;
   const bodyTextFor = (text) =>
-    first ? `${row.verseNumber}. ${text.trimStart()}` : text.trimStart();
+    first && includeVerseNumber ? `${row.verseNumber}. ${text.trimStart()}` : text.trimStart();
   const overflows = (text) =>
     measureBody(bodyTextFor(text), entry, options, typography).overflow;
   const flush = () => {
@@ -270,6 +270,8 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
     outputRole: options.outputRole || options.target?.outputRole || "audience",
     outputSize: options.outputSize || options.target?.outputSize,
   };
+  const includeVerseNumbers =
+    options.includeVerseNumbers ?? target.outputRole !== "audience";
   const typography = typographyFor(entry, options);
   const passageKey =
     options.passageKey ||
@@ -299,6 +301,7 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
     typography,
     presentation: {
       autoSplit,
+      includeVerseNumbers,
       safeMargins: options.safeMargins || null,
       referenceReserve: options.referenceReserve ?? null,
       measurementMode:
@@ -313,7 +316,7 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
     chunks = structuredClone(chunks);
   } else if (!autoSplit) {
     const bodyText = rows.length > 1
-      ? rows.map((row) => verseText(row)).join("\n")
+      ? rows.map((row) => verseText(row, includeVerseNumbers)).join("\n")
       : cleanText(entry.text) || rows.map((row) => verseText(row, false)).join("\n");
     chunks = [{
       bodyText,
@@ -325,9 +328,13 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
     let currentRows = [];
     for (const row of rows) {
       const candidateRows = [...currentRows, row];
-      const candidateBody = candidateRows.map((value) => verseText(value)).join("\n");
+      const candidateBody = candidateRows
+        .map((value) => verseText(value, includeVerseNumbers))
+        .join("\n");
       if (currentRows.length > 0 && measureBody(candidateBody, entry, options, typography).overflow) {
-        const bodyText = currentRows.map((value) => verseText(value)).join("\n");
+        const bodyText = currentRows
+          .map((value) => verseText(value, includeVerseNumbers))
+          .join("\n");
         chunks.push({
           bodyText,
           verseNumbers: currentRows.map((value) => value.verseNumber),
@@ -339,7 +346,9 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
       }
     }
     if (currentRows.length > 0) {
-      const bodyText = currentRows.map((value) => verseText(value)).join("\n");
+      const bodyText = currentRows
+        .map((value) => verseText(value, includeVerseNumbers))
+        .join("\n");
       chunks.push({
         bodyText,
         verseNumbers: currentRows.map((value) => value.verseNumber),
@@ -349,7 +358,9 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
     chunks = chunks.flatMap((chunk) => {
       if (!chunk.layout.overflow || chunk.verseNumbers.length !== 1) return [chunk];
       const row = rows.find((value) => value.verseNumber === chunk.verseNumbers[0]);
-      return row ? splitOversizedVerse(row, entry, options, typography) : [chunk];
+      return row
+        ? splitOversizedVerse(row, entry, options, typography, includeVerseNumbers)
+        : [chunk];
     });
     chunks = normalizeGroupLayout(chunks, entry, options, typography);
     if (options.cache !== false) scriptureCache.set(layoutKey, structuredClone(chunks));
