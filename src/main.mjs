@@ -96,6 +96,7 @@ const THEME_MANAGER_CLOSE_CHANNEL = "theme-manager-close";
 const OUTPUT_HOLD_LOGO_PATH_KEY = "outputHoldLogoPath";
 const OUTPUT_HOLD_LOGO_FIT_KEY = "outputHoldLogoFit";
 const OUTPUT_HOLD_LOGO_BACKGROUND_KEY = "outputHoldLogoBackground";
+const MEDIA_WINDOW_BACKGROUND_COLOR = "#000000";
 const LOWER_THIRD_CHROMA_KEY_COLOR_KEY = "lowerThirdChromaKeyColor";
 const BIBLE_UI_ENABLED_KEY = "bibleUiEnabled";
 const LOWER_THIRD_UI_ENABLED_KEY = "lowerThirdUiEnabled";
@@ -628,6 +629,9 @@ function fullscreenWindowBoundsForDisplay(display) {
 }
 
 function applyMediaWindowPresentationMode(targetWindow) {
+  // Keep an opaque native surface behind renderer transitions so Windows never
+  // composites the desktop through a fading or not-yet-painted media frame.
+  targetWindow.setBackgroundColor(MEDIA_WINDOW_BACKGROUND_COLOR);
   targetWindow.setFullScreen(true);
   targetWindow.setAlwaysOnTop(true, "screen-saver");
   targetWindow.setIgnoreMouseEvents(false);
@@ -669,8 +673,8 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     const finalWindowOptions = {
       ...restWindowOptions,
       backgroundThrottling: false,
-      backgroundColor: "#00000000",
-      transparent: true,
+      backgroundColor: MEDIA_WINDOW_BACKGROUND_COLOR,
+      transparent: false,
       fullscreen: true,
       frame: false,
       icon: `${import.meta.dirname}/icon.png`,
@@ -4779,8 +4783,8 @@ function setIPC() {
   ipcMain.on("close-media-window", handleCloseMediaWindow);
   ipcMain.handle("close-media-window-now", handleCloseMediaWindowNow);
   ipcMain.on("media-playback-ended", (event, endedMediaFile) => {
-    // The window stays visible-but-transparent between queue items; the
-    // renderer hides its <video>/<img> via CSS so nothing paints on screen.
+    // The window stays visible with its black native backing between queue
+    // items; the renderer hides its <video>/<img> until the next item is ready.
     // Calling mediaWindow.hide() here would trigger Electron #50250, where
     // a hidden+throttled renderer stops decoding video frames after un-hide.
     if (mediaWindow && !mediaWindow.isDestroyed()) {
