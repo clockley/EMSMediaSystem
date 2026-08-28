@@ -199,6 +199,7 @@ import {
   DEFAULT_TEXT_FRAME,
   SONG_DECK_DOCUMENT_TYPE,
   blocksToText,
+  clearTextObjectInlineStyles,
   createBlankDeck,
   createBlankPage,
   createImageObject,
@@ -10458,6 +10459,7 @@ function songDeckWithResolvedTheme(deck, resolvedTheme) {
     };
     for (const object of page.objects || []) {
       if (object.kind !== "text") continue;
+      clearTextObjectInlineStyles(object);
       object.frame = { ...textFrame };
       object.autofit = typography.autosizeMode || "fit";
       object.style = {
@@ -14590,6 +14592,43 @@ async function returnFromSlideEditorToSongPreview() {
   renderSongSlideNavigator();
 }
 
+function resetCurrentSongToThemeDefault() {
+  if (!currentDeck || !currentDeckIsSongDocument()) return;
+  const selected = itemThemeForRole(currentSongQueueItem, "audience");
+  const theme = currentSongThemeEditingContext?.theme || selected.theme || appliedPresentationTheme;
+  if (!theme) {
+    showGnomeToast("Select or apply a theme before resetting this song");
+    return;
+  }
+
+  const outputSize = selectedBiblePreviewOutputSize("dspSelct");
+  const resolvedTheme = resolveThemeForTarget({
+    theme,
+    contentKind: "song",
+    outputRole: "audience",
+    outputSize,
+  });
+  recordSlideUndoCheckpoint("Reset song to theme");
+  currentDeck = songDeckWithResolvedTheme(currentDeck, resolvedTheme);
+  currentDeck.documentType = SONG_DECK_DOCUMENT_TYPE;
+  currentDeck.type = SONG_DECK_DOCUMENT_TYPE;
+  currentWorkspaceSongDeck = currentDeck;
+  currentWorkspaceSong = deckToTransientSong(currentDeck);
+  currentSongRenderState = mergeSongRenderState(
+    songRenderStateFromSongDocument(currentDeck),
+    liveThemeFields(resolvedTheme),
+  );
+  if (currentSongThemeEditingContext) {
+    // Subsequent saves persist the clean theme profile instead of rebuilding
+    // overrides from the profile that existed before the reset.
+    currentSongThemeEditingContext.baseProfile = resolvedTheme;
+  }
+  setDeckDirty(true);
+  renderSlideEditorState();
+  queueAllSlideThumbnailRenders(0);
+  showGnomeToast(`Reset ${currentDeck.title || "song"} to “${theme.name || "Theme"}”`);
+}
+
 async function deleteCurrentDeck() {
   if (!currentDeck) return;
   if (!confirm(`Delete "${currentDeck.title || "Untitled Deck"}"?`)) return;
@@ -14732,6 +14771,13 @@ function renderSlideEditorState() {
       ? "Theme Style · Local Song Override"
       : "Theme Style";
   }
+  const resetSongThemeRow = document.getElementById("slidesResetSongThemeRow");
+  const resetSongThemeBtn = document.getElementById("slidesResetSongThemeBtn");
+  const resetTheme = currentSongThemeEditingContext?.theme ||
+    itemThemeForRole(currentSongQueueItem, "audience").theme ||
+    appliedPresentationTheme;
+  if (resetSongThemeRow) resetSongThemeRow.hidden = !isSong;
+  if (resetSongThemeBtn) resetSongThemeBtn.disabled = !isSong || !resetTheme;
 
   const titleInput = document.getElementById("slidesDeckTitleInput");
   if (titleInput) titleInput.value = currentDeck?.title || "";
@@ -18533,6 +18579,9 @@ function installBibleMediaControls() {
       showGnomeToast("Could not return to song preview");
     });
   });
+  document.getElementById("slidesResetSongThemeBtn")?.addEventListener("click", () => {
+    resetCurrentSongToThemeDefault();
+  });
   document.getElementById("slidesDeleteDeckBtn")?.addEventListener("click", () => {
     void deleteCurrentDeck().catch(console.error);
   });
@@ -20844,6 +20893,72 @@ function hideScheduleBibleContextMenu() {
   document.getElementById("scheduleBibleContextMenu")?.setAttribute("hidden", "");
 }
 
+function hideScheduleSongContextMenu() {
+  document.getElementById("scheduleSongContextMenu")?.setAttribute("hidden", "");
+}
+
+function ensureScheduleSongContextMenu() {
+  let menu = document.getElementById("scheduleSongContextMenu");
+  if (menu) return menu;
+
+  menu = document.createElement("div");
+  menu.id = "scheduleSongContextMenu";
+  menu.className = "song-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-schedule-song-action="edit">Edit</button>
+  `;
+
+  menu.addEventListener("pointerdown", (event) => event.stopPropagation());
+  menu.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const button = event.target.closest("[data-schedule-song-action]");
+    if (!button) return;
+    const index = menu._queueIndex;
+    hideScheduleSongContextMenu();
+    if (button.getAttribute("data-schedule-song-action") !== "edit") return;
+    void loadQueueItemIntoPreviewCue(index)
+      .then(() => openSongEditor(currentWorkspaceSongDeck || currentWorkspaceSong))
+      .catch((error) => {
+        console.error("Failed to open scheduled song editor:", error);
+        showGnomeToast("Failed to open song editor");
+      });
+  });
+
+  document.body.appendChild(menu);
+  if (document.body.dataset.scheduleSongContextMenuBound !== "1") {
+    document.body.dataset.scheduleSongContextMenuBound = "1";
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.target.closest?.("#scheduleSongContextMenu")) return;
+        hideScheduleSongContextMenu();
+      },
+      true,
+    );
+    window.addEventListener("resize", hideScheduleSongContextMenu);
+    window.addEventListener("scroll", hideScheduleSongContextMenu, true);
+  }
+  return menu;
+}
+
+function showScheduleSongContextMenu(event, index) {
+  event.preventDefault();
+  event.stopPropagation();
+  hideScheduleBibleContextMenu();
+  const menu = ensureScheduleSongContextMenu();
+  menu._queueIndex = index;
+  menu.hidden = false;
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(event.clientX, window.innerWidth - menuRect.width - 8));
+  const top = Math.max(8, Math.min(event.clientY, window.innerHeight - menuRect.height - 8));
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
 function ensureScheduleBibleContextMenu() {
   let menu = document.getElementById("scheduleBibleContextMenu");
   if (menu) return menu;
@@ -20924,6 +21039,7 @@ function scheduledBibleItemHasMultipleVerses(item) {
 function showScheduleBibleContextMenu(event, index) {
   event.preventDefault();
   event.stopPropagation();
+  hideScheduleSongContextMenu();
   const menu = ensureScheduleBibleContextMenu();
   const splitButton = menu.querySelector('[data-schedule-bible-action="split"]');
   if (splitButton) {
@@ -21014,14 +21130,7 @@ function installMediaQueueListDelegation() {
     if (isQueueItemBible(mediaQueue[index])) {
       showScheduleBibleContextMenu(event, index);
     } else if (["song", "deck"].includes(mediaQueue[index]?.type)) {
-      event.preventDefault();
-      event.stopPropagation();
-      void loadQueueItemIntoPreviewCue(index)
-        .then(() => openSongEditor(currentWorkspaceSongDeck || currentWorkspaceSong))
-        .catch((error) => {
-          console.error("Failed to open themed song editor:", error);
-          showGnomeToast("Failed to open song editor");
-        });
+      showScheduleSongContextMenu(event, index);
     }
   });
   list.addEventListener("click", (e) => {

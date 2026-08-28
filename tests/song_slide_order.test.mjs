@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  clearTextObjectInlineStyles,
   deckToTransientSong,
   normalizeSlideDeck,
   pageRenderOverrides,
@@ -24,6 +25,26 @@ test("page background color remains more specific than the deck theme", () => {
   });
   assert.equal(deck.pages[0].background.color, "#7a2048");
   assert.equal(pageRenderOverrides(deck.pages[0], deck).backgroundColor, "#7a2048");
+});
+
+test("resetting text to a theme clears word-level formatting", () => {
+  const object = {
+    kind: "text",
+    blocks: [{
+      primary: {
+        segments: [
+          { type: "text", text: "Theme " },
+          { type: "text", text: "me", style: { color: "#ff0000", fontWeight: "400" } },
+        ],
+      },
+      translations: [{
+        segments: [{ type: "text", text: "Translation", style: { color: "#00ff00" } }],
+      }],
+    }],
+  };
+  clearTextObjectInlineStyles(object);
+  assert.equal(object.blocks[0].primary.segments[1].style, undefined);
+  assert.equal(object.blocks[0].translations[0].segments[0].style, undefined);
 });
 
 test("distinct song page backgrounds survive deck and canonical song conversion", () => {

@@ -212,6 +212,21 @@ export function blocksToText(blocks) {
     .join("\n");
 }
 
+/** Remove word/segment-level formatting so a text object inherits its theme. */
+export function clearTextObjectInlineStyles(object) {
+  if (!object || object.kind !== "text" || !Array.isArray(object.blocks)) return object;
+  for (const block of object.blocks) {
+    const localizedRuns = [block?.primary, ...(Array.isArray(block?.translations) ? block.translations : [])];
+    for (const run of localizedRuns) {
+      if (!Array.isArray(run?.segments)) continue;
+      for (const segment of run.segments) {
+        if (segment && typeof segment === "object") delete segment.style;
+      }
+    }
+  }
+  return object;
+}
+
 /* ── Normalize ──────────────────────────────────────────────── */
 
 function normalizeFrame(frame) {

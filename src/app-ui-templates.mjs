@@ -797,6 +797,10 @@ export function generateMediaFormHTML() {
               <div class="boxed-list-group" id="slidesThemeEditorGroup">
                 <div class="boxed-list-title">Theme Style</div>
                 <div class="boxed-list">
+                <div class="boxed-list-row" id="slidesResetSongThemeRow" hidden>
+                  <label>Song overrides</label>
+                  <button type="button" id="slidesResetSongThemeBtn" class="songs-action-btn" title="Reset every song slide to the current theme defaults">Reset to Theme</button>
+                </div>
                 <div class="boxed-list-row"><label for="slidesDeckTitleInput">Title</label><input type="text" id="slidesDeckTitleInput" placeholder="Untitled Deck" aria-label="Deck title"></div>
                 <div class="boxed-list-row"><label for="slidesDeckFolderSelect">Folder</label><select id="slidesDeckFolderSelect" aria-label="Deck folder">
                   <option value="">Default</option>
