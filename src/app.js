@@ -136,6 +136,7 @@ import {
   waitForScriptureFonts,
 } from "./app-bible-scripture-render.mjs";
 import { waitForTextFonts } from "./text-measure.mjs";
+import { installLowerThirdPreviewScaleObserver } from "./lower-third-preview-scale.mjs";
 import {
   configureCountdown,
   handleTimeMessage,
@@ -869,11 +870,15 @@ async function releaseOutputHoldsAndGoLiveQueueIndex(index, startTime = 0) {
   await takeQueueItemLive(index, itemStart, { skipLogoHoldPrep: true });
 }
 
-async function recoverOutputHoldsToSongSection(sectionId) {
+async function recoverOutputHoldsToSongSection(sectionId, options = {}) {
   if (!currentWorkspaceSong || !sectionId) return false;
   const hadRecovery = hasActiveOutputRecoveryState();
   await releaseOutputHoldsForRecovery();
-  await selectSongSection(sectionId, { syncLive: false });
+  await selectSongSection(sectionId, {
+    syncLive: false,
+    sequenceEntryId: options.sequenceEntryId,
+    slideId: options.slideId,
+  });
   const queueIndex = queueIndexForCurrentWorkspaceSong();
   if (queueIndex >= 0) {
     if (hadRecovery || !queueIndexIsCurrentLivePresentation(queueIndex)) {
@@ -10331,6 +10336,8 @@ let selectedSongIds = new Set();
 let songsBulkDeleteArmed = false;
 let songSlideNavigatorRenderToken = 0;
 let songPreviewRerenderRaf = 0;
+let songLibraryClickTimer = null;
+let deckPageClickTimer = null;
 
 const SONG_PREVIEW_OUTPUT_WIDTH = 1920;
 const SONG_PREVIEW_OUTPUT_HEIGHT = 1080;
@@ -11482,6 +11489,7 @@ async function selectSongSection(sectionId, opts = {}) {
     selectedUnit?.sequenceEntryId || currentSongSequenceEntryId;
   currentSongSectionId = selectedUnit?.sectionId || section.id;
   renderSongSectionPreview(section);
+  syncSongLowerThirdCueForAudienceSlide(selectedUnit);
   syncCurrentSongQueueItemSection(currentSongSectionId, currentSongSlideId);
   if (currentSongQueueItem) saveMediaFile();
   updateSongArrangementSelection();
@@ -11498,6 +11506,7 @@ function renderSongSlideNavigator() {
   if (!list || !currentWorkspaceSong) return;
   const presentation = currentResolvedSongPresentation()?.resolvedPresentation;
   const slides = presentation?.slides || [];
+  const baseThumbnailItem = currentSongPresentationItem();
   ++songSlideNavigatorRenderToken;
   list.innerHTML = "";
 
@@ -11525,9 +11534,25 @@ function renderSongSlideNavigator() {
     thumbnailText.className = "song-slide-thumbnail-button__resolved-text";
     thumbnailText.textContent = unit.bodyText || "";
     thumbnailText.dir = "auto";
-    thumb.style.backgroundColor = currentSongRenderState.backgroundColor || "#000000";
-    thumb.style.color = currentSongRenderState.color || "#ffffff";
-    thumb.style.fontFamily = currentSongRenderState.fontFamily || SCRIPTURE_FONT_FAMILY;
+    const thumbnailItem = songItemForAudienceResolution(baseThumbnailItem);
+    if (thumbnailItem) {
+      thumbnailItem.currentSlideId = unit.slideId;
+      thumbnailItem.currentSequenceEntryId = unit.sequenceEntryId;
+      thumbnailItem.render.currentSlideId = unit.slideId;
+      thumbnailItem.render.currentSequenceEntryId = unit.sequenceEntryId;
+    }
+    const thumbnailMessage = resolvedSongPresentation(thumbnailItem)?.message || {};
+    const thumbnailBackground =
+      thumbnailMessage.backgroundImage ||
+      (thumbnailMessage.backgroundPath ? pathToUrlSafe(thumbnailMessage.backgroundPath) : "");
+    thumb.style.backgroundColor =
+      thumbnailMessage.backgroundColor || currentSongRenderState.backgroundColor || "#000000";
+    thumb.style.backgroundImage = thumbnailBackground ? `url('${thumbnailBackground}')` : "";
+    thumb.style.backgroundSize = "cover";
+    thumb.style.backgroundPosition = "center";
+    thumb.style.color = thumbnailMessage.color || currentSongRenderState.color || "#ffffff";
+    thumb.style.fontFamily =
+      thumbnailMessage.fontFamily || currentSongRenderState.fontFamily || SCRIPTURE_FONT_FAMILY;
     thumb.replaceChildren(thumbnailText);
     viewport.appendChild(thumb);
 
@@ -11541,9 +11566,11 @@ function renderSongSlideNavigator() {
     });
     button.addEventListener("dblclick", (event) => {
       event.preventDefault();
-      currentSongSequenceEntryId = unit.sequenceEntryId;
-      currentSongSlideId = unit.slideId;
-      void recoverOutputHoldsToSongSection(unit.sectionId).catch(console.error);
+      event.stopPropagation();
+      void recoverOutputHoldsToSongSection(unit.sectionId, {
+        sequenceEntryId: unit.sequenceEntryId,
+        slideId: unit.slideId,
+      }).catch(console.error);
     });
     button.addEventListener("keydown", (event) => {
       if (event.key === "ArrowDown") {
@@ -13283,6 +13310,8 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
       text: slide.bodyText,
       slideId: slide.slideId,
       sequenceEntryId: slide.sequenceEntryId,
+      sourceBlockStart: slide.sourceBlockStart,
+      sourceBlockEnd: slide.sourceBlockEnd,
       blockIds: (Array.isArray(slide.blocks) ? slide.blocks : [])
         .map((block) => block?.id)
         .filter((blockId) => typeof blockId === "string" && blockId.length > 0),
@@ -13293,6 +13322,29 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
     songLowerThirdState.index,
     songLowerThirdState.segments,
   );
+  renderSongLowerThirdControls();
+}
+
+function syncSongLowerThirdCueForAudienceSlide(slide) {
+  if (!slide || songLowerThirdState.segments.length === 0) return;
+  const audienceBlockIds = new Set(
+    (Array.isArray(slide.blocks) ? slide.blocks : [])
+      .map((block) => block?.id)
+      .filter((blockId) => typeof blockId === "string" && blockId.length > 0),
+  );
+  let cueIndex = songLowerThirdState.segments.findIndex((segment) =>
+    segment.blockIds?.some((blockId) => audienceBlockIds.has(blockId)),
+  );
+  if (cueIndex < 0 && Number.isFinite(slide.sourceBlockStart)) {
+    cueIndex = songLowerThirdState.segments.findIndex(
+      (segment) =>
+        Number.isFinite(segment.sourceBlockStart) &&
+        Number.isFinite(segment.sourceBlockEnd) &&
+        segment.sourceBlockEnd >= slide.sourceBlockStart &&
+        segment.sourceBlockStart <= slide.sourceBlockEnd,
+    );
+  }
+  songLowerThirdState.index = cueIndex >= 0 ? cueIndex : 0;
   renderSongLowerThirdControls();
 }
 
@@ -13357,20 +13409,11 @@ function buildSongLowerThirdMessage() {
 
 function installSongLowerThirdPreviewScaleObserver() {
   const shell = document.getElementById("songLowerThirdPreviewShell");
-  if (!shell || shell.dataset.previewScaleObserverBound === "1") return;
-  shell.dataset.previewScaleObserverBound = "1";
-  // The Bible lower-third preview keeps itself scaled via a ResizeObserver
-  // (installBiblePreviewScaleObserver); the Song lower-third preview reuses
-  // the same bible-preview-surface CSS but was missing an equivalent
-  // observer, so its font scale only got recomputed on cue/song changes -
-  // never when the window/panel itself was resized.
-  if (typeof ResizeObserver === "function") {
-    const observer = new ResizeObserver(() => renderSongLowerThirdControls());
-    observer.observe(shell);
-    shell._songLowerThirdPreviewScaleObserver = observer;
-  } else {
-    window.addEventListener("resize", () => renderSongLowerThirdControls());
-  }
+  installLowerThirdPreviewScaleObserver(
+    shell,
+    renderSongLowerThirdControls,
+    "_songLowerThirdPreviewScaleObserver",
+  );
 }
 
 function renderSongLowerThirdControls() {
@@ -14764,9 +14807,21 @@ function renderDeckPageStrip() {
     wrap.appendChild(label);
     row.appendChild(idxEl);
     row.appendChild(wrap);
-    row.addEventListener("click", () => selectDeckPage(page.id));
+    row.addEventListener("click", (event) => {
+      if (event.detail > 1) return;
+      if (deckPageClickTimer !== null) window.clearTimeout(deckPageClickTimer);
+      deckPageClickTimer = window.setTimeout(() => {
+        deckPageClickTimer = null;
+        selectDeckPage(page.id);
+      }, 220);
+    });
     row.addEventListener("dblclick", (event) => {
       event.preventDefault();
+      event.stopPropagation();
+      if (deckPageClickTimer !== null) {
+        window.clearTimeout(deckPageClickTimer);
+        deckPageClickTimer = null;
+      }
       void recoverOutputHoldsToDeckPage(page.id).catch(console.error);
     });
     host.appendChild(row);
@@ -17883,7 +17938,12 @@ async function refreshSongsBrowser(query = "", prefetchedResults = null) {
               }
               return;
             }
-            await activateSongFromLibrary({ id: songId, title: songTitle });
+            if (event.detail > 1) return;
+            if (songLibraryClickTimer !== null) window.clearTimeout(songLibraryClickTimer);
+            songLibraryClickTimer = window.setTimeout(() => {
+              songLibraryClickTimer = null;
+              void activateSongFromLibrary({ id: songId, title: songTitle }).catch(console.error);
+            }, 220);
           }
         }
       });
@@ -17910,6 +17970,11 @@ async function refreshSongsBrowser(query = "", prefetchedResults = null) {
             return;
           }
           event.preventDefault();
+          event.stopPropagation();
+          if (songLibraryClickTimer !== null) {
+            window.clearTimeout(songLibraryClickTimer);
+            songLibraryClickTimer = null;
+          }
           const songId = row.dataset.songId;
           const songTitle = row.dataset.songTitle;
           void scheduleSongFromLibrary({ id: songId, title: songTitle }).catch(console.error);

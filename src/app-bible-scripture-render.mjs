@@ -23,6 +23,10 @@ import {
   measureTextLayout,
   waitForTextFonts,
 } from "./text-measure.mjs";
+import {
+  applyLowerThirdPreviewScale,
+  installLowerThirdPreviewScaleObserver,
+} from "./lower-third-preview-scale.mjs";
 
 export const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
 export {
@@ -953,35 +957,7 @@ export function queueBiblePreviewMediaWindowSizeRefresh(delayMs = 0) {
 }
 
 export function applyBiblePreviewOutputScale(surface, outputSize, options = {}) {
-  if (!surface || !outputSize) return;
-  const width = Math.max(1, Math.round(outputSize.width));
-  const height = Math.max(1, Math.round(outputSize.height));
-  surface.style.setProperty("--bible-preview-output-width", `${width}px`);
-  surface.style.setProperty("--bible-preview-output-height", `${height}px`);
-  const rect = surface.getBoundingClientRect();
-  const widthFit = options.fit === "width";
-  const scale = rect.width > 0 && rect.height > 0
-    ? widthFit
-      ? rect.width / width
-      : Math.min(rect.width / width, rect.height / height)
-    : 1;
-  const safeScale = Math.max(0.01, scale);
-  const offsetX = Math.max(0, (rect.width - width * safeScale) / 2);
-  const offsetY = options.align === "bottom"
-    ? rect.height - height * safeScale
-    : Math.max(0, (rect.height - height * safeScale) / 2);
-  surface.style.setProperty(
-    "--bible-preview-output-scale",
-    `${safeScale}`,
-  );
-  surface.style.setProperty("--bible-preview-scaled-width", `${width * safeScale}px`);
-  surface.style.setProperty("--bible-preview-scaled-height", `${height * safeScale}px`);
-  surface.style.setProperty(
-    "--bible-preview-scripture-gap",
-    `${Math.max(1, Math.round(24 * safeScale))}px`,
-  );
-  surface.style.setProperty("--bible-preview-output-offset-x", `${offsetX}px`);
-  surface.style.setProperty("--bible-preview-output-offset-y", `${offsetY}px`);
+  applyLowerThirdPreviewScale(surface, outputSize, options);
 }
 
 export function syncBiblePreviewOutputScale() {
@@ -1014,4 +990,9 @@ export function installBiblePreviewScaleObserver() {
   } else {
     window.addEventListener("resize", syncBiblePreviewOutputScale);
   }
+  installLowerThirdPreviewScaleObserver(
+    document.getElementById("bibleLowerThirdPreviewShell"),
+    syncBiblePreviewOutputScale,
+    "_bibleLowerThirdPreviewScaleObserver",
+  );
 }

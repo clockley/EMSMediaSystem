@@ -161,6 +161,15 @@ function applySlideTransition(el, transition) {
   }, normalized.durationMs + 80);
 }
 
+function applyTextPresentationTransition(textCanvas, textContent, transition, lowerThirdOutput) {
+  // Never animate the full lower-third canvas: opacity-based transitions on
+  // that element expose the BrowserWindow's black backing surface for their
+  // first frame, which produces a destructive black flash for chroma-key
+  // users. Keep the key color continuously opaque and animate only the
+  // foreground text/plate.
+  applySlideTransition(lowerThirdOutput ? textContent : textCanvas, transition);
+}
+
 function setLoopEnabled(enabled) {
   loopFile = !!enabled;
   if (video) {
@@ -2577,7 +2586,12 @@ function applyTextMessage(message) {
     renderTextCopyrightOverlay(textCanvas, copyrightText);
     textPresentationState.lastMessage = { ...safeMessage, look };
     applyTextCanvasBackground(textCanvas, safeMessage, lowerThirdOutput, look);
-    applySlideTransition(textCanvas, safeMessage.transition);
+    applyTextPresentationTransition(
+      textCanvas,
+      textContent,
+      safeMessage.transition,
+      lowerThirdOutput,
+    );
     return;
   }
   textContent.classList.remove("scripture-render--slide-objects");
@@ -2646,7 +2660,12 @@ function applyTextMessage(message) {
 
   applyTextCanvasBackground(textCanvas, safeMessage, lowerThirdOutput, look);
 
-  applySlideTransition(textCanvas, safeMessage.transition);
+  applyTextPresentationTransition(
+    textCanvas,
+    textContent,
+    safeMessage.transition,
+    lowerThirdOutput,
+  );
 }
 
 function installTextHandlers() {

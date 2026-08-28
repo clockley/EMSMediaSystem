@@ -1,0 +1,45 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { applyLowerThirdPreviewScale } from "../src/lower-third-preview-scale.mjs";
+
+function fakeSurface(width, height) {
+  const values = new Map();
+  return {
+    style: {
+      setProperty(name, value) {
+        values.set(name, value);
+      },
+    },
+    getBoundingClientRect() {
+      return { width, height };
+    },
+    value(name) {
+      return values.get(name);
+    },
+  };
+}
+
+test("lower-third preview scales down with its resized surface", () => {
+  const surface = fakeSurface(480, 270);
+  applyLowerThirdPreviewScale(surface, { width: 1920, height: 1080 }, {
+    fit: "width",
+    align: "bottom",
+  });
+  assert.equal(surface.value("--bible-preview-output-scale"), "0.25");
+  assert.equal(surface.value("--bible-preview-scaled-width"), "480px");
+  assert.equal(surface.value("--bible-preview-scaled-height"), "270px");
+  assert.equal(surface.value("--bible-preview-output-offset-y"), "0px");
+});
+
+test("lower-third preview recomputes a smaller scale after another resize", () => {
+  const surface = fakeSurface(240, 180);
+  applyLowerThirdPreviewScale(surface, { width: 1920, height: 1080 }, {
+    fit: "width",
+    align: "bottom",
+  });
+  assert.equal(surface.value("--bible-preview-output-scale"), "0.125");
+  assert.equal(surface.value("--bible-preview-scaled-width"), "240px");
+  assert.equal(surface.value("--bible-preview-scaled-height"), "135px");
+  assert.equal(surface.value("--bible-preview-output-offset-y"), "45px");
+});
