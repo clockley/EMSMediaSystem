@@ -60,6 +60,7 @@ import {
   normalizeScriptureReference,
   parseScriptureReference,
 } from "./app-bible-reference-utils.mjs";
+import { applyOperatorSelectionContrast } from "./operator-selection-contrast.mjs";
 import {
   bindTransportTimeDisplay,
   getHostnameOrBasename,
@@ -6521,6 +6522,7 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
     audienceReference,
     audienceMessage,
   );
+  applyOperatorSelectionContrast(audienceRender, audienceMessage);
   markAudiencePreviewTextSelection(audienceText, lowerThirdMessage?.bodyText);
   if (lowerThirdEnabled && lowerThirdMessage) {
     renderLowerThirdPreview({
@@ -13499,6 +13501,7 @@ async function renderSongSectionPreview(section) {
     preview.style.setProperty('--font-family', songFontFamilyCSS(message.fontFamily));
   }
   renderResolvedSongMessageIntoPreview(preview, message, { fontSize: scaledPreviewFontSize });
+  applyOperatorSelectionContrast(preview, message);
 
   if (isEditing) {
     syncSongEditorWorkspaceStyles(message);

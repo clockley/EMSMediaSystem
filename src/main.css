@@ -7216,28 +7216,26 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     text-shadow: 0 1px 2px #000;
 }
 
-/* Operator-only selection shown inside the full Audience previews. The
-   translucent amber fill plus light/dark edges remains identifiable across
-   user-selected text colors, solid colors, video, and image backgrounds. */
+/* Operator-only selection shown inside the full Audience preview. Use an
+   adaptive foreground instead of a box around every line, so selected text
+   remains legible without making a small preview feel crowded. */
 .operator-lower-third-selection {
-    /* No border-radius: with box-decoration-break: clone, each wrapped line
-       gets its own independently-rounded corners, and since consecutive
-       lines rarely share the same left/right edges (centered text of
-       different lengths), the rounded corners of adjacent line fragments
-       don't line up. That gap between two facing rounded corners was
-       rendering as a small stray "lip" poking out at the seam. Square
-       corners butt flush against each other with no gap, like native text
-       selection highlighting. */
-    color: inherit;
-    background: rgba(246, 211, 45, 0.34);
-    outline: 2px solid rgba(255, 255, 255, 0.96);
-    box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.88);
-    -webkit-box-decoration-break: clone;
-    box-decoration-break: clone;
+    color: var(--operator-selection-color, #ffe36e);
+    background: transparent;
+    outline: 0;
+    box-shadow: none;
+    font-weight: 800;
+    text-decoration-line: underline;
+    text-decoration-color: currentColor;
+    text-decoration-thickness: max(2px, 0.07em);
+    text-underline-offset: 0.12em;
+    text-shadow:
+        0 1px 2px var(--operator-selection-shadow, rgba(0, 0, 0, 0.96)),
+        0 0 0.12em var(--operator-selection-shadow, rgba(0, 0, 0, 0.96));
 }
 
 .song-preview-block.operator-lower-third-selection {
-    padding-inline: 0.18em;
+    padding-inline: 0;
 }
 
 @media (max-width: 620px) {
