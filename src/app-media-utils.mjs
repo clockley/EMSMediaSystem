@@ -33,6 +33,38 @@ export const DEFAULT_ITEM_SLIDE_TRANSITION = Object.freeze({
   effect: SLIDE_TRANSITION_INHERIT,
   durationMs: DEFAULT_SLIDE_TRANSITION_DURATION_MS,
 });
+
+/** Keep a lower-third output window keyed while removing every visible layer. */
+export function lowerThirdKeyOnlyMessage(message = {}, fallbackKeyColor = "#00ff00") {
+  const chromaKeyColor = message.chromaKeyColor || message.backgroundColor || fallbackKeyColor;
+  return {
+    ...message,
+    clearLowerThird: true,
+    blocks: [],
+    slideObjects: [],
+    slideTextObjects: [],
+    text: "",
+    bodyText: "",
+    fullBodyText: "",
+    referenceText: "",
+    attributionText: "",
+    copyrightText: "",
+    lowerThirdSegments: [],
+    lowerThirdSegmentIndex: 0,
+    lowerThirdSegmentCount: 0,
+    lowerThirdBarBackgroundColor: "transparent",
+    lowerThirdBarBackgroundPath: "",
+    lowerThirdBarBackgroundImage: "",
+    lowerThirdBarBackgroundVideo: "",
+    backgroundColor: chromaKeyColor,
+    chromaKeyColor,
+    backgroundImage: "",
+    backgroundVideo: "",
+    backgroundPath: "",
+    outputRole: "lower-third",
+    transition: { effect: "none", durationMs: 0 },
+  };
+}
 export const SLIDE_TRANSITION_EFFECT_LABELS = Object.freeze({
   [SLIDE_TRANSITION_INHERIT]: "Use Global",
   [SLIDE_TRANSITION_NONE]: "Off",

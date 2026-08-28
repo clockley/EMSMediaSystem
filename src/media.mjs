@@ -2571,11 +2571,75 @@ function applyTextMessage(message) {
       : DEFAULT_TEXT_PRESENTATION;
 
   const lowerThirdOutput = isLowerThirdOutput || safeMessage.outputRole === "lower-third";
+  const explicitLowerThirdClear = lowerThirdOutput && (
+    message == null || message?.clearLowerThird === true
+  );
   if (lowerThirdOutput) {
     safeMessage.look = SCRIPTURE_LOOK_LOWER_THIRD;
     safeMessage.backgroundImage = "";
     safeMessage.backgroundVideo = "";
     safeMessage.backgroundPath = "";
+  }
+
+  if (explicitLowerThirdClear) {
+    const previousMessage = textPresentationState.lastMessage || {};
+    const chromaKeyColor =
+      safeMessage.chromaKeyColor ||
+      previousMessage.chromaKeyColor ||
+      previousMessage.backgroundColor ||
+      "#00ff00";
+    const clearMessage = {
+      ...safeMessage,
+      clearLowerThird: true,
+      text: "",
+      bodyText: "",
+      fullBodyText: "",
+      referenceText: "",
+      attributionText: "",
+      copyrightText: "",
+      blocks: [],
+      slideObjects: [],
+      slideTextObjects: [],
+      lowerThirdSegments: [],
+      lowerThirdSegmentIndex: 0,
+      lowerThirdSegmentCount: 0,
+      lowerThirdBarBackgroundColor: "transparent",
+      lowerThirdBarBackgroundImage: "",
+      lowerThirdBarBackgroundVideo: "",
+      backgroundColor: chromaKeyColor,
+      chromaKeyColor,
+      transition: { effect: "none", durationMs: 0 },
+    };
+
+    clearSlideTransition(textContent);
+    clearSlideTransition(textCanvas);
+    textContent.replaceChildren();
+    textContent.classList.remove("scripture-render--slide-objects", "scripture-render--fullscreen");
+    textContent.classList.add("scripture-render--lower-third");
+    textContent.dataset.scriptureLook = SCRIPTURE_LOOK_LOWER_THIRD;
+    const shell = ensureScriptureTextShell(textContent);
+    applyScriptureRenderVariables(textContent, clearMessage);
+    applyLowerThirdBarBackground(shell.box, clearMessage);
+    if (shell.body) shell.body.textContent = "";
+    if (shell.reference) {
+      shell.reference.textContent = "";
+      shell.reference.hidden = true;
+    }
+    if (shell.attribution) {
+      shell.attribution.textContent = "";
+      shell.attribution.hidden = true;
+    }
+    renderTextCopyrightOverlay(textCanvas, "");
+    applyTextCanvasBackground(
+      textCanvas,
+      clearMessage,
+      true,
+      SCRIPTURE_LOOK_LOWER_THIRD,
+    );
+    textPresentationState.signature = "__lower_third_clear__";
+    textPresentationState.contentSignature = "__lower_third_clear__";
+    textPresentationState.lastMessage = clearMessage;
+    return;
   }
 
   const activeSegment =
@@ -2729,11 +2793,40 @@ function applyTextMessage(message) {
   );
 }
 
+// Main-process acknowledged clear hook. Unlike fire-and-forget IPC, callers
+// can wait until the lower-third renderer has actually removed its old DOM.
+globalThis.emsClearLowerThird = (payload = {}) => {
+  applyTextMessage({
+    clearLowerThird: true,
+    outputRole: "lower-third",
+    chromaKeyColor:
+      payload?.chromaKeyColor ||
+      textPresentationState.lastMessage?.chromaKeyColor ||
+      "#00ff00",
+  });
+  const textContent = document.getElementById("textContent");
+  return Boolean(
+    textContent &&
+    !(textContent.textContent || "").trim() &&
+    !textContent.querySelector(".slide-output-object, .scripture-render__bar-video"),
+  );
+};
+
 function installTextHandlers() {
   if (textIpcHandlersInstalled) return;
   textIpcHandlersInstalled = true;
   ipcRenderer.on("update-text", (evt, message) => {
     applyTextMessage(message);
+  });
+  ipcRenderer.on("clear-lower-third-text", (_evt, payload = {}) => {
+    applyTextMessage({
+      clearLowerThird: true,
+      outputRole: "lower-third",
+      chromaKeyColor:
+        payload?.chromaKeyColor ||
+        textPresentationState.lastMessage?.chromaKeyColor ||
+        "#00ff00",
+    });
   });
   window.addEventListener("resize", scheduleTextPresentationRefit);
 }

@@ -40,6 +40,7 @@ import {
   isFileBackedMediaPath,
   isNonVideoPresentationPath,
   isPlayInterruptedError,
+  lowerThirdKeyOnlyMessage,
   normalizeLiveSource,
   normalizedBibleVersions,
   pathToMediaUrl,
@@ -526,6 +527,7 @@ let songShowNowModeActive = false;
 let songShowNowSourceId = null;
 let bibleLowerThirdOutputActive = false;
 let activeLowerThirdContentType = null;
+let lowerThirdOutputUpdateToken = 0;
 let bibleLowerThirdLiveCueKey = "";
 let bibleLowerThirdPreviewSourceKey = "";
 let biblePreviewRenderToken = 0;
@@ -979,7 +981,7 @@ function applyLowerThirdOutputPreferences(prefs = {}) {
   if (bibleLowerThirdOutputActive) {
     if (activeLowerThirdContentType === "song") {
       sendBibleLowerThirdTextMessage(buildSongLowerThirdMessage());
-    } else {
+    } else if (activeLowerThirdContentType === "bible") {
       void sendBibleLowerThirdTextToOutput(bibleDesignerState);
     }
   }
@@ -8028,13 +8030,17 @@ function sendBibleLowerThirdTextMessage(message, options = {}) {
   updateClearLiveTextButtonState();
 }
 
-async function sendBibleLowerThirdTextToOutput(entry = bibleDesignerState) {
+async function sendBibleLowerThirdTextToOutput(entry = bibleDesignerState, updateToken) {
   if (!isBibleLowerThirdFeatureEnabled()) return;
+  const token = updateToken ?? ++lowerThirdOutputUpdateToken;
   await waitForBibleLowerThirdFonts(entry);
+  if (token !== lowerThirdOutputUpdateToken) return false;
   const message = buildBibleLowerThirdOutputMessage(entry);
   sendBibleLowerThirdTextMessage(message);
   activeLowerThirdContentType = "bible";
   bibleLowerThirdLiveCueKey = bibleLowerThirdCueKey(message.lowerThirdSegmentIndex);
+  songLowerThirdState.liveKey = "";
+  renderSongLowerThirdControls();
   syncBibleLookControls(message);
 }
 
@@ -8075,7 +8081,7 @@ async function liveBibleAudienceTextMessageForClear() {
 
 async function clearLiveBibleText({ quiet = false } = {}) {
   const audienceLive = hasLiveAudienceTextPresentation("bible");
-  const lowerThirdLive = isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive;
+  const lowerThirdLive = hasLiveLowerThirdText("bible");
   if (!audienceLive && !lowerThirdLive) {
     if (!quiet) showGnomeToast("No Bible text is live");
     return false;
@@ -8119,7 +8125,7 @@ async function clearLiveBibleText({ quiet = false } = {}) {
 
 async function restoreLiveBibleText({ quiet = false } = {}) {
   const audienceLive = hasLiveAudienceTextPresentation("bible");
-  const lowerThirdLive = isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive;
+  const lowerThirdLive = hasLiveLowerThirdText("bible");
   if (!audienceLive && !lowerThirdLive) {
     if (!quiet) showGnomeToast("No Bible text is live");
     return false;
@@ -8153,11 +8159,22 @@ async function restoreLiveBibleText({ quiet = false } = {}) {
   return false;
 }
 
+/**
+ * True while the lower-third output is showing content. A window left open on
+ * nothing but its key color (because the live schedule item does not support
+ * lower thirds) has no content to clear or restore.
+ */
+function hasLiveLowerThirdText(contentType = null) {
+  if (!isBibleLowerThirdFeatureEnabled() || !bibleLowerThirdOutputActive) return false;
+  if (!activeLowerThirdContentType) return false;
+  return contentType ? activeLowerThirdContentType === contentType : true;
+}
+
 function canClearLiveText() {
   return Boolean(
     hasLiveAudienceTextPresentation("bible") ||
       hasLiveAudienceTextPresentation("song") ||
-      (isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive),
+      hasLiveLowerThirdText(),
   );
 }
 
@@ -8206,8 +8223,7 @@ function updateClearLiveTextButtonState() {
 
 async function clearLiveText() {
   const hasBibleText =
-    hasLiveAudienceTextPresentation("bible") ||
-    (isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive);
+    hasLiveAudienceTextPresentation("bible") || hasLiveLowerThirdText("bible");
   const hasSongText = hasLiveAudienceTextPresentation("song");
   if (!hasBibleText && !hasSongText) {
     showGnomeToast("No live text to clear");
@@ -8241,12 +8257,15 @@ async function clearLiveText() {
 }
 
 async function closeBibleLowerThirdOutput() {
+  lowerThirdOutputUpdateToken += 1;
   bibleLowerThirdOutputActive = false;
   activeLowerThirdContentType = null;
   bibleLowerThirdLiveCueKey = "";
   lastLowerThirdBibleTextMessage = null;
+  songLowerThirdState.liveKey = "";
   stopLowerThirdRendererPreviewCapture();
   syncConfidenceMonitorCarousel();
+  renderSongLowerThirdControls();
   updateClearLiveTextButtonState();
   try {
     return await invoke("close-lower-third-window-now");
@@ -8257,15 +8276,70 @@ async function closeBibleLowerThirdOutput() {
 }
 
 function mediaSourceSupportsLowerThird(item) {
-  return Boolean(item) && (isQueueItemBible(item) || isQueueItemSong(item));
+  if (!item) return false;
+  // File/media identity wins over any stale text snapshot fields retained by
+  // an older project. A PowerPoint or regular media item must never keep a
+  // song/Scripture lower third visible merely because it carries legacy data.
+  if (
+    isQueueItemPptx(item) ||
+    isQueueItemDeck(item) ||
+    isQueueItemAudio(item) ||
+    isQueueItemImage(item) ||
+    isQueueItemVideo(item)
+  ) {
+    return false;
+  }
+  return isQueueItemBible(item) || isQueueItemSong(item);
 }
 
-async function closeLowerThirdForUnsupportedMediaSource(item) {
-  if (!bibleLowerThirdOutputActive || mediaSourceSupportsLowerThird(item)) return false;
-  await closeBibleLowerThirdOutput();
+async function clearLowerThirdForUnsupportedMediaSource(item) {
+  if (mediaSourceSupportsLowerThird(item)) return false;
+  lowerThirdOutputUpdateToken += 1;
+  const keyOnlyMessage = lowerThirdKeyOnlyMessage(
+    lastLowerThirdBibleTextMessage || {},
+    bibleDesignerState.lowerThirdChromaKeyColor || SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
+  );
+  // Drop the live content type before the send so the header's clear/restore
+  // control cannot put the old cue back on air over the new schedule item.
+  activeLowerThirdContentType = null;
+  bibleLowerThirdLiveCueKey = "";
   songLowerThirdState.liveKey = "";
+  // This is an imperative renderer reset, separate from the normal text
+  // update/diff pipeline. It guarantees stale song object DOM is destroyed.
+  send("clear-lower-third-text", {
+    chromaKeyColor: keyOnlyMessage.chromaKeyColor,
+  });
+  const rendererCleared = await invoke("clear-lower-third-text-now", {
+    chromaKeyColor: keyOnlyMessage.chromaKeyColor,
+  }).catch((error) => {
+    console.error("Failed to confirm lower-third clear:", error);
+    return false;
+  });
+  if (!rendererCleared && bibleLowerThirdOutputActive) {
+    console.warn("Lower-third renderer did not acknowledge the clear update");
+  }
+  sendBibleLowerThirdTextMessage(keyOnlyMessage, {
+    remember: false,
+    clearToggle: false,
+    respectLiveTextClearState: false,
+  });
   renderSongLowerThirdControls();
   return true;
+}
+
+async function updateLowerThirdForSupportedScheduleItem(item) {
+  if (!mediaSourceSupportsLowerThird(item) || !hasLowerThirdOutputSelected()) {
+    return false;
+  }
+  if (!isBibleLowerThirdFeatureEnabled()) return false;
+  if (isQueueItemBible(item)) {
+    const entry = await resolvedBibleEntryForItem(item);
+    return ensureBibleLowerThirdOutput(entry);
+  }
+  if (isQueueItemSong(item)) {
+    return sendSongLowerThirdForLiveItem();
+  }
+  return false;
 }
 
 async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
@@ -8276,7 +8350,10 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
   if (!displayValue) {
     return false;
   }
+  const alreadyOpen = bibleLowerThirdOutputActive;
+  const updateToken = ++lowerThirdOutputUpdateToken;
   await waitForBibleLowerThirdFonts(entry);
+  if (updateToken !== lowerThirdOutputUpdateToken) return false;
   const message = buildBibleLowerThirdOutputMessage(entry);
   const windowOptions = {
     backgroundColor: message.chromaKeyColor || SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
@@ -8300,8 +8377,24 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState) {
     const windowId = await invoke("create-lower-third-window", windowOptions, displayValue);
     bibleLowerThirdOutputActive = Boolean(windowId);
     updateClearLiveTextButtonState();
+    if (updateToken !== lowerThirdOutputUpdateToken) {
+      if (bibleLowerThirdOutputActive) {
+        sendBibleLowerThirdTextMessage(lowerThirdKeyOnlyMessage(
+          message,
+          message.chromaKeyColor || SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
+        ), { remember: false, clearToggle: false, respectLiveTextClearState: false });
+      }
+      return false;
+    }
     if (bibleLowerThirdOutputActive) {
-      window.setTimeout(() => void sendBibleLowerThirdTextToOutput(entry), 100);
+      if (alreadyOpen) {
+        await sendBibleLowerThirdTextToOutput(entry, updateToken);
+      } else {
+        window.setTimeout(() => {
+          if (updateToken !== lowerThirdOutputUpdateToken) return;
+          void sendBibleLowerThirdTextToOutput(entry, updateToken);
+        }, 100);
+      }
     }
     return bibleLowerThirdOutputActive;
   } catch (err) {
@@ -13687,18 +13780,29 @@ async function waitForSongLowerThirdFonts() {
   );
 }
 
-async function ensureSongLowerThirdOutput() {
-  if (!isBibleLowerThirdFeatureEnabled()) {
-    showGnomeToast("Lower-third controls are disabled in Preferences");
+function pushLiveSongLowerThirdMessage() {
+  sendBibleLowerThirdTextMessage(buildSongLowerThirdMessage());
+  activeLowerThirdContentType = "song";
+  bibleLowerThirdLiveCueKey = "";
+  songLowerThirdState.liveKey = songLowerThirdCueKey();
+  renderSongLowerThirdControls();
+}
+
+async function sendSongLowerThirdForLiveItem() {
+  if (!isBibleLowerThirdFeatureEnabled() || !hasLowerThirdOutputSelected()) {
     return false;
+  }
+  const alreadyOpen = bibleLowerThirdOutputActive;
+  const updateToken = ++lowerThirdOutputUpdateToken;
+  syncSongLowerThirdForSection();
+  await waitForSongLowerThirdFonts();
+  if (updateToken !== lowerThirdOutputUpdateToken) return false;
+  if (alreadyOpen) {
+    pushLiveSongLowerThirdMessage();
+    return true;
   }
   const displayValue = selectedDisplayValueFromSelect("lowerThirdDspSelct");
-  if (!displayValue) {
-    showGnomeToast("Choose a lower-third output display");
-    return false;
-  }
-  await waitForSongLowerThirdFonts();
-  syncSongLowerThirdForSection();
+  if (!displayValue) return false;
   const message = buildSongLowerThirdMessage();
   const windowOptions = {
     backgroundColor: message.chromaKeyColor,
@@ -13721,13 +13825,31 @@ async function ensureSongLowerThirdOutput() {
   const windowId = await invoke("create-lower-third-window", windowOptions, displayValue);
   bibleLowerThirdOutputActive = Boolean(windowId);
   if (!bibleLowerThirdOutputActive) return false;
+  if (updateToken !== lowerThirdOutputUpdateToken) {
+    sendBibleLowerThirdTextMessage(lowerThirdKeyOnlyMessage(
+      message,
+      message.chromaKeyColor || SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
+    ), { remember: false, clearToggle: false, respectLiveTextClearState: false });
+    return false;
+  }
   window.setTimeout(() => {
-    const liveMessage = buildSongLowerThirdMessage();
-    sendBibleLowerThirdTextMessage(liveMessage);
-    activeLowerThirdContentType = "song";
-    songLowerThirdState.liveKey = songLowerThirdCueKey();
-    renderSongLowerThirdControls();
+    if (updateToken !== lowerThirdOutputUpdateToken) return;
+    pushLiveSongLowerThirdMessage();
   }, 100);
+  return true;
+}
+
+async function ensureSongLowerThirdOutput() {
+  if (!isBibleLowerThirdFeatureEnabled()) {
+    showGnomeToast("Lower-third controls are disabled in Preferences");
+    return false;
+  }
+  if (!hasLowerThirdOutputSelected()) {
+    showGnomeToast("Choose a lower-third output display");
+    return false;
+  }
+  const started = await sendSongLowerThirdForLiveItem();
+  if (!started) return false;
   isPlaying = true;
   isQueuePlaying = false;
   const item = currentSongPresentationItem();
@@ -13743,14 +13865,9 @@ async function showCuedSongLowerThird() {
   }
   if (!songLowerThirdState.segments.length) return false;
   if (!bibleLowerThirdOutputActive) return ensureSongLowerThirdOutput();
-  await waitForSongLowerThirdFonts();
-  syncSongLowerThirdForSection();
-  sendBibleLowerThirdTextMessage(buildSongLowerThirdMessage());
-  activeLowerThirdContentType = "song";
-  songLowerThirdState.liveKey = songLowerThirdCueKey();
-  renderSongLowerThirdControls();
-  showGnomeToast("Song lower third updated");
-  return true;
+  const started = await sendSongLowerThirdForLiveItem();
+  if (started) showGnomeToast("Song lower third updated");
+  return started;
 }
 
 async function sendSongTextToOutput(item = null) {
@@ -22336,7 +22453,7 @@ async function onQueueItemActivate(index) {
   if (!isActiveMediaWindow() && !isLocalPresentation) {
     const activateIndex = index;
     const item = mediaQueue[activateIndex];
-    await closeLowerThirdForUnsupportedMediaSource(item);
+    await clearLowerThirdForUnsupportedMediaSource(item);
     if (!isQueueItemBible(item)) hideBibleWorkspace();
     if (!isQueueItemSong(item) || isQueueItemDeck(item)) hideSongsWorkspace();
     if (!isQueueItemDeck(item)) hideSlidesWorkspace();
@@ -22373,6 +22490,9 @@ async function stopQueuePresentationUserClosed() {
   manualBoundaryPauseIndex = -1;
   isQueuePlaying = false;
   isPlaying = false;
+  // The lower third survives every mid-schedule item change as a keyed-only
+  // output; stopping the presentation is what finally takes it off air.
+  await closeBibleLowerThirdOutput();
   updateDynUI();
   isActiveMediaWindowCache = false;
   activeResolvedMediaFile = "";
@@ -22906,7 +23026,7 @@ async function playCurrentQueueItem(opts) {
     return;
   }
 
-  await closeLowerThirdForUnsupportedMediaSource(item);
+  await clearLowerThirdForUnsupportedMediaSource(item);
 
 
   const itemIsNetworkPresentationVideo =
@@ -22922,10 +23042,7 @@ async function playCurrentQueueItem(opts) {
   updateDynUI();
 
   if (isQueueItemBible(item)) {
-    const entry = await resolvedBibleEntryForItem(item);
-    const lowerThirdStarted = hasLowerThirdOutputSelected()
-      ? await ensureBibleLowerThirdOutput(entry)
-      : false;
+    const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(item);
     const audienceStarted = hasAudienceOutputSelected()
       ? await createMediaWindow({ textItem: item })
       : false;
@@ -22940,11 +23057,12 @@ async function playCurrentQueueItem(opts) {
   }
 
   if (isQueueItemSong(item)) {
+    const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(item);
     const audienceStarted = hasAudienceOutputSelected()
       ? await createMediaWindow({ textItem: item, songItem: true })
       : false;
-    if (!audienceStarted) {
-      showGnomeToast("Choose an audience output display");
+    if (!audienceStarted && !lowerThirdStarted) {
+      showGnomeToast("Choose an output display");
       isPlaying = false;
       isQueuePlaying = false;
       updateDynUI();
@@ -23270,17 +23388,16 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     fileEnded = false;
     audioOnlyFile = false;
     playingMediaAudioOnly = false;
-    await closeLowerThirdForUnsupportedMediaSource(nextItem);
+    await clearLowerThirdForUnsupportedMediaSource(nextItem);
     updateDynUI();
     syncPreviewAudioTrackState();
     if (isBibleItem) {
       const entry = await resolvedBibleEntryForItem(nextItem);
       await sendBibleTextToOutput(entry);
-      if (hasLowerThirdOutputSelected()) {
-        await ensureBibleLowerThirdOutput(entry);
-      }
+      await updateLowerThirdForSupportedScheduleItem(nextItem);
     } else if (isSongItem) {
       await sendSongTextToOutput(nextItem);
+      await updateLowerThirdForSupportedScheduleItem(nextItem);
     }
     syncAudienceOutputHoldAfterPresentationStart();
     renderQueue();
@@ -25947,6 +26064,7 @@ async function handleMediaWindowClosed(event, id) {
     mediaPlaybackEndedPending = false;
     isPlaying = false;
     isQueuePlaying = false;
+    await closeBibleLowerThirdOutput();
     updateDynUI();
     isActiveMediaWindowCache = false;
     saveMediaFile();
@@ -25976,6 +26094,10 @@ async function handleMediaWindowClosed(event, id) {
 
     currentQueueIndex = idx;
     setSelectedQueueAnchor(idx);
+    // Switching live items through a window close/reopen cycle is the fallback
+    // for transitions slipstream cannot do in place, so it needs the same
+    // lower-third handling the slipstream and direct-play paths perform.
+    await clearLowerThirdForUnsupportedMediaSource(mediaQueue[idx]);
     await loadQueueItemIntoControlWindow(mediaQueue[idx], {
       preservePreviewSeek: false,
       startTime: switchStartTime,
@@ -25996,12 +26118,22 @@ async function handleMediaWindowClosed(event, id) {
         }
       }
     } else if (isQueueItemBible(mediaQueue[idx])) {
-      const entry = await resolvedBibleEntryForItem(mediaQueue[idx]);
-      const lowerThirdStarted = hasLowerThirdOutputSelected()
-        ? await ensureBibleLowerThirdOutput(entry)
-        : false;
+      const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(mediaQueue[idx]);
       const audienceStarted = hasAudienceOutputSelected()
         ? await createMediaWindow({ textItem: mediaQueue[idx] })
+        : false;
+      if (!audienceStarted && !lowerThirdStarted) {
+        showGnomeToast("Choose an output display");
+        isPlaying = false;
+        isQueuePlaying = false;
+        updateDynUI();
+        renderQueue();
+        return;
+      }
+    } else if (isQueueItemSong(mediaQueue[idx])) {
+      const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(mediaQueue[idx]);
+      const audienceStarted = hasAudienceOutputSelected()
+        ? await createMediaWindow({ textItem: mediaQueue[idx], songItem: true })
         : false;
       if (!audienceStarted && !lowerThirdStarted) {
         showGnomeToast("Choose an output display");
@@ -26550,6 +26682,7 @@ async function playMedia(e) {
       mediaPlaybackEndedPending = false;
       pendingQueueSwitchIndex = null;
       pendingQueueSwitchStartTime = 0;
+      await closeBibleLowerThirdOutput();
       userStopPresentationPending = isActiveMediaWindow();
       send("close-media-window", 0);
       saveMediaFile();
@@ -26614,6 +26747,7 @@ async function playMedia(e) {
     mediaPlaybackEndedPending = false;
     pendingQueueSwitchIndex = null;
     pendingQueueSwitchStartTime = 0;
+    await closeBibleLowerThirdOutput();
     if (isQueuePlaying) {
       isQueuePlaying = false;
       // Keep the stopped queue item selected. `queueStartIndexForPresent()`

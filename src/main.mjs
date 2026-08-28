@@ -766,6 +766,28 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
   });
 }
 
+async function clearLowerThirdRendererNow(payload = {}) {
+  if (!lowerThirdWindow || lowerThirdWindow.isDestroyed()) return false;
+  const currentBackground = String(lowerThirdWindow.getBackgroundColor?.() || "").slice(0, 7);
+  const chromaKeyColor =
+    typeof payload?.chromaKeyColor === "string" && /^#[0-9a-f]{6}$/i.test(payload.chromaKeyColor)
+      ? payload.chromaKeyColor
+      : /^#[0-9a-f]{6}$/i.test(currentBackground)
+        ? currentBackground
+        : "#00ff00";
+  lowerThirdWindow.setBackgroundColor(chromaKeyColor);
+  try {
+    return await lowerThirdWindow.webContents.executeJavaScript(
+      `Boolean(window.emsClearLowerThird?.(${JSON.stringify({ chromaKeyColor })}))`,
+    );
+  } catch (error) {
+    if (!lowerThirdWindow.isDestroyed()) {
+      console.error("Failed to clear lower-third renderer:", error);
+    }
+    return false;
+  }
+}
+
 async function handleDisplayChange() {
   const currentDisplays = screen.getAllDisplays();
 
@@ -4784,6 +4806,9 @@ function setIPC() {
         await targetMediaWindow.webContents.executeJavaScript(
           `window.emsApplySlipstream(${JSON.stringify(data)})`,
         );
+        if (data?.isText !== true) {
+          await clearLowerThirdRendererNow({});
+        }
       } catch (err) {
         if (!targetMediaWindow.isDestroyed()) {
           console.error("Failed to slipstream media window:", err);
@@ -4820,6 +4845,21 @@ function setIPC() {
       lowerThirdWindow.webContents.send("update-text", message);
     }
   });
+  ipcMain.on("clear-lower-third-text", (_event, payload = {}) => {
+    if (!lowerThirdWindow || lowerThirdWindow.isDestroyed()) return;
+    const chromaKeyColor =
+      typeof payload?.chromaKeyColor === "string" &&
+      /^#[0-9a-f]{6}$/i.test(payload.chromaKeyColor)
+        ? payload.chromaKeyColor
+        : null;
+    if (chromaKeyColor) lowerThirdWindow.setBackgroundColor(chromaKeyColor);
+    lowerThirdWindow.webContents.send("clear-lower-third-text", {
+      chromaKeyColor,
+    });
+  });
+  ipcMain.handle("clear-lower-third-text-now", (_event, payload = {}) =>
+    clearLowerThirdRendererNow(payload),
+  );
   ipcMain.handle("create-media-window", handleCreateMediaWindow);
   ipcMain.handle("create-lower-third-window", handleCreateLowerThirdWindow);
   ipcMain.handle("close-lower-third-window-now", handleCloseLowerThirdWindowNow);
