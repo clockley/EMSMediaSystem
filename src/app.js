@@ -171,6 +171,7 @@ import {
   updateOutputHoldButtonStates,
 } from "./app-output-hold.mjs";
 import { resolveThemeForTarget } from "./theme-resolver.mjs";
+import { itemThemeForRole, normalizeItemTheme, setItemThemeRole } from "./theme-item-overrides.mjs";
 import {
   renderScriptureForTarget,
 } from "./theme-render-message.mjs";
@@ -540,8 +541,22 @@ let lowerThirdPreferenceChromaKeyColor = SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR;
 // Lower-third cues are rebuilt whenever the operator changes cue, so styling
 // only the message that happened to be live at apply time is not sufficient.
 let appliedPresentationTheme = null;
+let projectThemeDefaults = null;
 let bibleUiEnabled = true;
 let lowerThirdUiEnabled = true;
+
+function resolvedThemeForItem(item, contentKind, outputRole, outputSize) {
+  const selected = itemThemeForRole(item, outputRole);
+  const theme = selected.theme || appliedPresentationTheme;
+  if (!theme) return null;
+  return resolveThemeForTarget({
+    theme,
+    contentKind,
+    outputRole,
+    outputSize,
+    itemOverrides: selected.itemOverrides,
+  });
+}
 
 function isBibleLowerThirdFeatureEnabled() {
   return isBuiltInBibleLowerThirdFeatureEnabled() && lowerThirdUiEnabled;
@@ -932,6 +947,11 @@ async function loadActiveThemeFromSettings() {
     const result = await invoke("themes:getActiveTheme");
     if (result?.theme) {
       appliedPresentationTheme = result.theme;
+      projectThemeDefaults ||= {
+        schema: "ems.project-themes.v1",
+        bindings: { song: result.theme.id, scripture: result.theme.id, text: result.theme.id, lowerThird: result.theme.id },
+        snapshots: { [result.theme.id]: { theme: result.theme } },
+      };
     }
   } catch (err) {
     console.error("Failed to load active theme:", err);
@@ -4991,6 +5011,9 @@ function renderQueue() {
         if (isCued) {
           badges.push('<span class="state-badge state-badge--cued">Cued</span>');
         }
+        if (item.itemTheme) {
+          badges.push('<span class="state-badge" title="This item overrides the project theme">Theme override</span>');
+        }
         const transitionBadge = slideTransitionBadgeMarkup(item);
         if (transitionBadge) {
           badges.push(transitionBadge);
@@ -5960,14 +5983,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
   if (isLowerThird) {
     const outputSize =
       opts.outputSize || selectedBiblePreviewOutputSize("lowerThirdDspSelct");
-    const resolvedTheme = appliedPresentationTheme
-      ? resolveThemeForTarget({
-          theme: appliedPresentationTheme,
-          contentKind: "scripture",
-          outputRole: "lowerThird",
-          outputSize,
-        })
-      : null;
+    const resolvedTheme = resolvedThemeForItem(entry, "scripture", "lowerThird", outputSize);
     const lowerThirdTypography = {
       fontFamily: style.lowerThirdFontFamily || style.fontFamily,
       fontSize: style.lowerThirdFontSize || SCRIPTURE_LOWER_THIRD_DEFAULT_FONT_SIZE,
@@ -6027,14 +6043,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
       : lowerThirdResult;
   }
   const outputSize = opts.outputSize || selectedBiblePreviewOutputSize("dspSelct");
-  const resolvedTheme = appliedPresentationTheme
-    ? resolveThemeForTarget({
-        theme: appliedPresentationTheme,
-        contentKind: "scripture",
-        outputRole: "audience",
-        outputSize,
-      })
-    : null;
+  const resolvedTheme = resolvedThemeForItem(entry, "scripture", "audience", outputSize);
   const resolved = renderScriptureForTarget(
     {
       ...entry,
@@ -8715,6 +8724,9 @@ function projectBibleReferenceOnlyEntry(entry = {}, opts = {}) {
         : null,
   };
   if (selectedVerses.length > 0) result.selectedVerses = selectedVerses;
+  if (source.itemTheme && typeof source.itemTheme === "object") {
+    result.itemTheme = normalizeItemTheme(source.itemTheme);
+  }
   return result;
 }
 
@@ -10350,6 +10362,7 @@ let currentSongSectionId = null;
 let currentSongSequenceEntryId = null;
 let currentSongSlideId = null;
 let currentSongQueueItem = null;
+let currentSongThemeEditingContext = null;
 let currentSongFolderFilter = "__all__";
 let songFoldersCache = [];
 let selectedSongIds = new Set();
@@ -10411,6 +10424,96 @@ function songDeckDocumentFromSongDocument(document, render = currentSongRenderSt
   return normalizeSlideDeck(deck);
 }
 
+function songDeckWithResolvedTheme(deck, resolvedTheme) {
+  if (!deck || !resolvedTheme) return deck;
+  const typography = resolvedTheme.typography || {};
+  const background = resolvedTheme.canvas?.background || {};
+  const textFrame = resolvedTheme.textFrame || DEFAULT_TEXT_FRAME;
+  const backdrop = resolvedTheme.backdrop || {};
+  const themed = structuredClone(deck);
+  themed.theme = {
+    ...(themed.theme || DEFAULT_DECK_THEME),
+    fontFamily: typography.fontFamily || DEFAULT_DECK_THEME.fontFamily,
+    fontSize: Number(typography.fontSize) || DEFAULT_DECK_THEME.fontSize,
+    minFontSize: Number(typography.minFontSize) || DEFAULT_DECK_THEME.minFontSize,
+    autosizeMode: typography.autosizeMode || "fit",
+    textColor: typography.color || typography.fontColor || DEFAULT_DECK_THEME.textColor,
+    backgroundColor: background.color || DEFAULT_DECK_THEME.backgroundColor,
+    align: typography.align || "center",
+    verticalAlign: typography.verticalAlign || "center",
+    fontWeight: typography.fontWeight || 700,
+    fontStyle: typography.fontStyle || "normal",
+    lineHeight: Number(typography.lineHeight) || 1.18,
+    textFrame: { ...textFrame },
+    backdrop: structuredClone(backdrop),
+    transition: structuredClone(resolvedTheme.transition || {}),
+  };
+  for (const page of themed.pages || []) {
+    page.background = background.type === "image" || background.type === "video"
+      ? { type: background.type, color: background.color || "#000000", path: background.path || background.url || "", ...(background.assetId ? { assetId: background.assetId } : {}) }
+      : { type: "color", color: background.color || DEFAULT_DECK_THEME.backgroundColor };
+    if (resolvedTheme.transition) page.transition = {
+      effect: resolvedTheme.transition.type || "none",
+      durationMs: resolvedTheme.transition.durationMs || 0,
+    };
+    for (const object of page.objects || []) {
+      if (object.kind !== "text") continue;
+      object.frame = { ...textFrame };
+      object.autofit = typography.autosizeMode || "fit";
+      object.style = {
+        ...(object.style || {}),
+        fontFamily: themed.theme.fontFamily,
+        fontSize: themed.theme.fontSize,
+        minFontSize: themed.theme.minFontSize,
+        color: themed.theme.textColor,
+        align: themed.theme.align,
+        verticalAlign: themed.theme.verticalAlign,
+        fontWeight: themed.theme.fontWeight,
+        fontStyle: themed.theme.fontStyle,
+        lineHeight: themed.theme.lineHeight,
+      };
+      object.background = backdrop.enabled
+        ? { type: "color", color: backdrop.background?.color || "#101010" }
+        : null;
+    }
+  }
+  return normalizeSlideDeck(themed);
+}
+
+function itemThemeProfileFromSongDeck(deck, baseProfile = {}) {
+  const theme = deck?.theme || {};
+  const firstText = deck?.pages?.flatMap(page => page.objects || []).find(object => object.kind === "text");
+  const style = firstText?.style || {};
+  const frame = firstText?.frame || theme.textFrame || DEFAULT_TEXT_FRAME;
+  const pageBackground = deck?.pages?.[0]?.background || {};
+  return {
+    ...structuredClone(baseProfile || {}),
+    typography: {
+      ...(baseProfile.typography || {}),
+      fontFamily: theme.fontFamily,
+      fontSize: Number(theme.fontSize),
+      minFontSize: Number(theme.minFontSize),
+      autosizeMode: theme.autosizeMode || firstText?.autofit || "fit",
+      color: theme.textColor,
+      align: style.align || theme.align || "center",
+      verticalAlign: style.verticalAlign || theme.verticalAlign || "center",
+      fontWeight: style.fontWeight || theme.fontWeight || 700,
+      fontStyle: style.fontStyle || theme.fontStyle || "normal",
+      lineHeight: Number(style.lineHeight || theme.lineHeight) || 1.18,
+    },
+    canvas: {
+      ...(baseProfile.canvas || {}),
+      background: { ...(baseProfile.canvas?.background || {}), ...pageBackground },
+    },
+    textFrame: { ...frame },
+    backdrop: structuredClone(theme.backdrop || baseProfile.backdrop || {}),
+    transition: (() => {
+      const transition = deck?.pages?.[0]?.transition || theme.transition || baseProfile.transition || {};
+      return { type: transition.type || transition.effect || "none", durationMs: Number(transition.durationMs) || 0 };
+    })(),
+  };
+}
+
 function transientSongFromSongDocument(document) {
   if (!document) return null;
   if (isSlideDeckDocument(document)) {
@@ -10442,8 +10545,11 @@ function buildSongQueueEntryFromDeck({
   const page = findPage(canonicalDeck, pageId);
   const pageRender = {
     ...deckDefaultRender(canonicalDeck),
-    ...pageRenderOverrides(page, canonicalDeck),
     ...definedSongQueueRenderValues(render),
+    // A page is the most specific visual scope. Theme/song defaults must not
+    // replace a color, media background, text frame, or transition explicitly
+    // edited on this slide.
+    ...pageRenderOverrides(page, canonicalDeck),
   };
   const entry = queueEntryFromSong({
     song: transientSong,
@@ -11392,25 +11498,7 @@ function currentSongActiveSection() {
 
 function currentResolvedSongPresentation() {
   if (!currentWorkspaceSong) return null;
-  return resolvedSongPresentation(
-    songItemForAudienceResolution({
-      type: "song",
-      songSnapshot: currentWorkspaceSong,
-      sequence: {
-        arrangementId: currentWorkspaceSong.arrangements?.[0]?.id || "arr_default",
-        entries: arrangementSequenceEntries(currentWorkspaceSong),
-        currentSequenceEntryId: currentSongSequenceEntryId,
-      },
-      currentSlideId: currentSongSlideId,
-      currentSequenceEntryId: currentSongSequenceEntryId,
-      render: {
-        ...currentSongRenderState,
-        currentSectionId: currentSongSectionId,
-        currentSlideId: currentSongSlideId,
-        currentSequenceEntryId: currentSongSequenceEntryId,
-      },
-    }),
-  );
+  return resolvedSongPresentation(songItemForAudienceResolution(currentSongPresentationItem()));
 }
 
 function scheduleSongPreviewRerender() {
@@ -12722,17 +12810,13 @@ function currentSongPresentationItem() {
   item.currentSequenceEntryId = currentSongSequenceEntryId;
   item.render.currentSlideId = currentSongSlideId;
   item.render.currentSequenceEntryId = currentSongSequenceEntryId;
+  if (currentSongQueueItem?.itemTheme) {
+    item.itemTheme = normalizeItemTheme(currentSongQueueItem.itemTheme);
+  }
   const outputSize = selectedBiblePreviewOutputSize("dspSelct");
   item.render.outputRole = "audience";
   item.render.outputSize = outputSize;
-  item.resolvedTheme = appliedPresentationTheme
-    ? resolveThemeForTarget({
-        theme: appliedPresentationTheme,
-        contentKind: "song",
-        outputRole: "audience",
-        outputSize,
-      })
-    : null;
+  item.resolvedTheme = resolvedThemeForItem(item, "song", "audience", outputSize);
   item.sequence.currentSequenceEntryId = currentSongSequenceEntryId;
   return item;
 }
@@ -12747,28 +12831,14 @@ function songItemForAudienceResolution(item) {
       outputRole: "audience",
       outputSize,
     },
-    resolvedTheme: appliedPresentationTheme
-      ? resolveThemeForTarget({
-          theme: appliedPresentationTheme,
-          contentKind: "song",
-          outputRole: "audience",
-          outputSize,
-        })
-      : null,
+    resolvedTheme: resolvedThemeForItem(item, "song", "audience", outputSize),
   };
 }
 
 function songItemForLowerThirdResolution(item) {
   if (!item) return null;
   const outputSize = selectedBiblePreviewOutputSize("lowerThirdDspSelct");
-  const baseResolvedTheme = appliedPresentationTheme
-    ? resolveThemeForTarget({
-        theme: appliedPresentationTheme,
-        contentKind: "song",
-        outputRole: "lowerThird",
-        outputSize,
-      })
-    : null;
+  const baseResolvedTheme = resolvedThemeForItem(item, "song", "lowerThird", outputSize);
   const resolvedTheme = baseResolvedTheme
     ? {
         ...baseResolvedTheme,
@@ -14439,6 +14509,37 @@ async function saveCurrentDeck() {
   commitSlideUndoTransaction();
   flushSlideEditorTextToModel();
   if (currentDeckIsSongDocument()) {
+    if (currentSongThemeEditingContext && queueIndexInRange(currentSongThemeEditingContext.queueIndex)) {
+      const index = currentSongThemeEditingContext.queueIndex;
+      const previous = mediaQueue[index];
+      const updated = buildSongQueueEntryFromDeck({
+        deck: currentDeck,
+        render: deckDefaultRender(currentDeck),
+        currentSectionId: currentDeckPageId,
+      });
+      if (!updated) return;
+      updated.autoAdvance = previous.autoAdvance;
+      updated.cueStartTime = queueItemCueStartTime(previous);
+      updated.cueVolume = previous.cueVolume;
+      updated.transition = previous.transition;
+      updated.itemTheme = setItemThemeRole(previous.itemTheme, {
+        theme: currentSongThemeEditingContext.theme,
+        outputRole: "audience",
+        profile: itemThemeProfileFromSongDeck(currentDeck, currentSongThemeEditingContext.baseProfile),
+      });
+      updated.itemTheme.editorMaterialized = true;
+      mediaQueue[index] = updated;
+      currentSongQueueItem = updated;
+      currentWorkspaceSongDeck = currentDeck;
+      currentWorkspaceSong = deckToTransientSong(currentDeck);
+      currentSongRenderState = mergeSongRenderState(currentSongRenderState, deckDefaultRender(currentDeck));
+      clearSlideUndoHistory();
+      setDeckDirty(false);
+      renderQueue();
+      saveMediaFile();
+      showGnomeToast(`Saved local theme and song changes for ${currentDeck.title || "song"}`);
+      return;
+    }
     try {
       currentDeck.documentType = SONG_DECK_DOCUMENT_TYPE;
       currentDeck.type = SONG_DECK_DOCUMENT_TYPE;
@@ -14478,6 +14579,15 @@ async function saveCurrentDeck() {
     console.error("Failed to save deck:", err);
     showGnomeToast(`Save failed: ${err.message || err}`);
   }
+}
+
+async function returnFromSlideEditorToSongPreview() {
+  if (!currentDeckIsSongDocument()) return;
+  if (deckDirty) await saveCurrentDeck();
+  showSongsWorkspace();
+  const activeSection = currentSongActiveSection();
+  if (activeSection) await renderSongSectionPreview(activeSection);
+  renderSongSlideNavigator();
 }
 
 async function deleteCurrentDeck() {
@@ -14607,8 +14717,21 @@ function renderSlideEditorState() {
   const hasDeck = Boolean(currentDeck);
   const page = currentPage();
   const isSong = currentDeckIsSongDocument();
+  const backToSongPreview = document.getElementById("slidesBackToSongPreviewBtn");
+  if (backToSongPreview) backToSongPreview.hidden = !isSong;
 
   syncSlidesWorkspaceTitle();
+  const themeEditorGroup = document.getElementById("slidesThemeEditorGroup");
+  const propertiesPanel = document.querySelector(".slides-workspace__properties");
+  if (themeEditorGroup && propertiesPanel && themeEditorGroup.parentElement !== propertiesPanel) {
+    propertiesPanel.prepend(themeEditorGroup);
+  }
+  const themeEditorTitle = themeEditorGroup?.querySelector(".boxed-list-title");
+  if (themeEditorTitle) {
+    themeEditorTitle.textContent = currentSongThemeEditingContext && isSong
+      ? "Theme Style · Local Song Override"
+      : "Theme Style";
+  }
 
   const titleInput = document.getElementById("slidesDeckTitleInput");
   if (titleInput) titleInput.value = currentDeck?.title || "";
@@ -14621,6 +14744,23 @@ function renderSlideEditorState() {
   if (textColor) textColor.value = currentDeck?.theme?.textColor || DEFAULT_DECK_THEME.textColor;
   const bgColor = document.getElementById("slidesDeckBgColor");
   if (bgColor) bgColor.value = currentDeck?.theme?.backgroundColor || DEFAULT_DECK_THEME.backgroundColor;
+  const deckTheme = currentDeck?.theme || DEFAULT_DECK_THEME;
+  const themeControls = {
+    slidesDeckMinFontSize: deckTheme.minFontSize ?? DEFAULT_DECK_THEME.minFontSize,
+    slidesDeckAutosizeMode: deckTheme.autosizeMode || "fit",
+    slidesDeckAlign: deckTheme.align || "center",
+    slidesDeckVerticalAlign: deckTheme.verticalAlign || "center",
+    slidesDeckFontWeight: String(deckTheme.fontWeight || 700),
+    slidesDeckFontStyle: deckTheme.fontStyle || "normal",
+    slidesDeckLineHeight: deckTheme.lineHeight || 1.18,
+    slidesDeckBackdropColor: deckTheme.backdrop?.background?.color || "#101010",
+  };
+  for (const [id, value] of Object.entries(themeControls)) {
+    const control = document.getElementById(id);
+    if (control) control.value = value;
+  }
+  const backdropEnabled = document.getElementById("slidesDeckBackdropEnabled");
+  if (backdropEnabled) backdropEnabled.checked = deckTheme.backdrop?.enabled === true;
 
   const songMetadataGroup = document.getElementById("slidesSongMetadataGroup");
   if (songMetadataGroup) songMetadataGroup.hidden = !isSong;
@@ -15572,9 +15712,11 @@ function fitSlideTextEditorElement(el, object, scale) {
   const minSize = Number.isFinite(Number(style.minFontSize))
     ? Number(style.minFontSize)
     : Number(currentDeck?.theme?.minFontSize) || DEFAULT_DECK_THEME.minFontSize;
+  const audienceBaseSize = normalizeScriptureFontSize(baseSize, DEFAULT_DECK_THEME.fontSize);
+  const audienceMinSize = normalizeScriptureMinFontSize(minSize, audienceBaseSize);
   fitTextElementToBox(el, editor, {
-    baseSize: Math.max(8, baseSize * scale),
-    minSize: Math.max(6, minSize * scale),
+    baseSize: Math.max(8, audienceBaseSize * scale),
+    minSize: Math.max(6, audienceMinSize * scale),
     mode: object.autofit || currentDeck?.theme?.autosizeMode || "fit",
   });
 }
@@ -15665,10 +15807,16 @@ function applySlideTextObjectElementStyle(el, editor, object, scale) {
     : Number.isFinite(deckFontSize)
       ? deckFontSize
       : DEFAULT_DECK_THEME.fontSize;
+  const audienceFontSize = normalizeScriptureFontSize(fontSize, DEFAULT_DECK_THEME.fontSize);
   editor.style.fontFamily =
     style.fontFamily || currentDeck?.theme?.fontFamily || DEFAULT_DECK_THEME.fontFamily;
-  editor.style.fontSize = `${Math.max(8, fontSize * scale)}px`;
+  editor.style.fontSize = `${Math.max(8, audienceFontSize * scale)}px`;
   editor.style.color = style.color || currentDeck?.theme?.textColor || "#fff";
+  editor.style.fontWeight = String(style.fontWeight || currentDeck?.theme?.fontWeight || 700);
+  editor.style.fontStyle = style.fontStyle || currentDeck?.theme?.fontStyle || "normal";
+  editor.style.textDecoration = style.textDecoration || "";
+  editor.style.lineHeight = String(style.lineHeight || currentDeck?.theme?.lineHeight || SCRIPTURE_LINE_HEIGHT);
+  editor.style.textShadow = `0 ${2 * scale}px ${14 * scale}px rgba(0, 0, 0, 0.72)`;
   editor.style.textAlign = style.align || "center";
   editor.style.alignItems =
     style.align === "left" ? "flex-start" : style.align === "right" ? "flex-end" : "center";
@@ -16110,6 +16258,29 @@ function renderSlideCanvas() {
       fitSlideTextEditorElement(objectEl, object, scale);
     }
   }
+  // The audience waits for its requested fonts before final fitting. Mirror
+  // that behavior here; otherwise the editor can fit using a fallback font
+  // and keep those metrics after the real family finishes loading.
+  const fontRequests = [];
+  for (const object of objects) {
+    if (object?.kind !== "text") continue;
+    const style = object.style || {};
+    const family = style.fontFamily || currentDeck?.theme?.fontFamily || DEFAULT_DECK_THEME.fontFamily;
+    const size = normalizeScriptureFontSize(style.fontSize || currentDeck?.theme?.fontSize, DEFAULT_DECK_THEME.fontSize);
+    const weight = style.fontWeight || currentDeck?.theme?.fontWeight || 700;
+    const fontStyle = style.fontStyle || currentDeck?.theme?.fontStyle || "normal";
+    fontRequests.push(document.fonts?.load?.(`${fontStyle} ${weight} ${size}px ${songFontFamilyCSS(family)}`, slideTextObjectText(object) || "EMS"));
+  }
+  const renderedDeck = currentDeck;
+  const renderedPageId = page.id;
+  void Promise.all(fontRequests.filter(Boolean)).then(() => {
+    if (currentDeck !== renderedDeck || currentDeckPageId !== renderedPageId) return;
+    for (const object of objects) {
+      if (object?.kind !== "text") continue;
+      const objectEl = slideTextObjectElementById(object.id);
+      if (objectEl) fitSlideTextEditorElement(objectEl, object, scale);
+    }
+  }).catch(() => {});
 }
 
 function flushSlideEditorTextToModel(_opts = {}) {
@@ -17392,9 +17563,21 @@ async function openSongEditor(song) {
   if (!drawer) return;
 
   let songToEdit = song || null;
+  const scheduledQueueIndex = mediaQueue.indexOf(currentSongQueueItem);
+  const scheduledSongId =
+    currentSongQueueItem?.deckSnapshot?.id ||
+    currentSongQueueItem?.songSnapshot?.id ||
+    currentSongQueueItem?.source?.songId ||
+    parseSongQueuePath(currentSongQueueItem?.path) ||
+    null;
+  const editingScheduledSnapshot = Boolean(
+    scheduledQueueIndex >= 0 &&
+    songToEdit?.id &&
+    scheduledSongId === songToEdit.id,
+  );
   if (songToEdit?.id) {
     const exists = await checkIfSongInLibrary(songToEdit.id);
-    if (exists) {
+    if (exists && !editingScheduledSnapshot) {
       try {
         songToEdit = await songsAPI.get(songToEdit.id);
         currentWorkspaceSong = songToEdit;
@@ -17404,10 +17587,19 @@ async function openSongEditor(song) {
         showGnomeToast("Failed to load song for editing");
         return;
       }
-    } else {
+    } else if (!exists) {
       console.warn("Song not found in library, editing local/schedule snapshot instead");
       currentWorkspaceSong = songToEdit;
       syncSongsMoveFolderSelect(songToEdit, false);
+    } else {
+      // A scheduled song owns a project-local deck snapshot and theme
+      // overrides. Replacing it with the library row here discards prior
+      // WYSIWYG edits every time the editor is reopened.
+      currentWorkspaceSongDeck = isSlideDeckDocument(songToEdit)
+        ? normalizeSlideDeck(songToEdit)
+        : currentWorkspaceSongDeck;
+      currentWorkspaceSong = transientSongFromSongDocument(songToEdit);
+      syncSongsMoveFolderSelect(songToEdit, true);
     }
   }
 
@@ -17431,10 +17623,34 @@ async function openSongEditor(song) {
     songToEdit = songAstToDeck(blankSong, { documentType: SONG_DECK_DOCUMENT_TYPE });
   }
 
-  const songDeck = songDeckDocumentFromSongDocument(songToEdit, currentSongRenderState);
+  let songDeck = songDeckDocumentFromSongDocument(songToEdit, currentSongRenderState);
   if (!songDeck) {
     showGnomeToast("Could not open song editor");
     return;
+  }
+  const queueIndex = scheduledQueueIndex;
+  const editingScheduledItem = queueIndex >= 0 && (
+    currentSongQueueItem?.source?.songId === songDeck.id ||
+    currentSongQueueItem?.deckSnapshot?.id === songDeck.id ||
+    currentSongQueueItem?.songSnapshot?.id === songDeck.id ||
+    parseSongQueuePath(currentSongQueueItem?.path) === songDeck.id
+  );
+  currentSongThemeEditingContext = null;
+  if (editingScheduledItem) {
+    const outputSize = selectedBiblePreviewOutputSize("dspSelct");
+    const resolvedTheme = resolvedThemeForItem(currentSongQueueItem, "song", "audience", outputSize);
+    if (resolvedTheme) {
+      if (currentSongQueueItem?.itemTheme?.editorMaterialized !== true) {
+        songDeck = songDeckWithResolvedTheme(songDeck, resolvedTheme);
+      }
+      const selected = itemThemeForRole(currentSongQueueItem, "audience");
+      currentSongThemeEditingContext = {
+        queueIndex,
+        theme: selected.theme || appliedPresentationTheme,
+        baseProfile: resolvedTheme,
+      };
+      currentSongRenderState = mergeSongRenderState(currentSongRenderState, liveThemeFields(resolvedTheme));
+    }
   }
   currentEditingSongId = songDeck.id;
   currentWorkspaceSongDeck = songDeck;
@@ -18311,6 +18527,12 @@ function installBibleMediaControls() {
   document.getElementById("slidesSaveDeckBtn")?.addEventListener("click", () => {
     void saveCurrentDeck().catch(console.error);
   });
+  document.getElementById("slidesBackToSongPreviewBtn")?.addEventListener("click", () => {
+    void returnFromSlideEditorToSongPreview().catch((error) => {
+      console.error("Failed to return to song preview:", error);
+      showGnomeToast("Could not return to song preview");
+    });
+  });
   document.getElementById("slidesDeleteDeckBtn")?.addEventListener("click", () => {
     void deleteCurrentDeck().catch(console.error);
   });
@@ -18384,8 +18606,7 @@ function installBibleMediaControls() {
     if (!currentDeck) return;
     recordSlideUndoForMutation("Change deck font");
     currentDeck.theme = { ...(currentDeck.theme || {}), fontFamily: e.target.value };
-    const obj = activeSlideTextObject();
-    if (obj) obj.style = { ...(obj.style || {}), fontFamily: e.target.value };
+    for (const page of currentDeck.pages || []) for (const obj of page.objects || []) if (obj.kind === "text") obj.style = { ...(obj.style || {}), fontFamily: e.target.value };
     setDeckDirty(true);
     renderSlideCanvas();
   });
@@ -18395,8 +18616,7 @@ function installBibleMediaControls() {
     if (!Number.isFinite(n)) return;
     recordSlideUndoForMutation("Change deck font size");
     currentDeck.theme = { ...(currentDeck.theme || {}), fontSize: n };
-    const obj = activeSlideTextObject();
-    if (obj) obj.style = { ...(obj.style || {}), fontSize: n };
+    for (const page of currentDeck.pages || []) for (const obj of page.objects || []) if (obj.kind === "text") obj.style = { ...(obj.style || {}), fontSize: n };
     setDeckDirty(true);
     renderSlideCanvas();
   });
@@ -18404,20 +18624,56 @@ function installBibleMediaControls() {
     if (!currentDeck) return;
     recordSlideUndoForMutation("Change deck text color");
     currentDeck.theme = { ...(currentDeck.theme || {}), textColor: e.target.value };
-    const obj = activeSlideTextObject();
-    if (obj) obj.style = { ...(obj.style || {}), color: e.target.value };
+    for (const page of currentDeck.pages || []) for (const obj of page.objects || []) if (obj.kind === "text") obj.style = { ...(obj.style || {}), color: e.target.value };
     setDeckDirty(true);
     renderSlideCanvas();
     renderDeckPageStrip();
   });
-  document.getElementById("slidesDeckBgColor")?.addEventListener("input", (e) => {
+  const updateThemeTypography = (label, patch) => {
     if (!currentDeck) return;
-    recordSlideUndoForMutation("Change deck background");
-    currentDeck.theme = { ...(currentDeck.theme || {}), backgroundColor: e.target.value };
+    recordSlideUndoForMutation(label);
+    currentDeck.theme = { ...(currentDeck.theme || {}), ...patch };
+    for (const page of currentDeck.pages || []) {
+      for (const object of page.objects || []) {
+        if (object.kind !== "text") continue;
+        object.style = {
+          ...(object.style || {}),
+          ...(patch.align ? { align: patch.align } : {}),
+          ...(patch.verticalAlign ? { verticalAlign: patch.verticalAlign } : {}),
+          ...(patch.fontWeight ? { fontWeight: patch.fontWeight } : {}),
+          ...(patch.fontStyle ? { fontStyle: patch.fontStyle } : {}),
+          ...(patch.lineHeight ? { lineHeight: patch.lineHeight } : {}),
+          ...(patch.minFontSize ? { minFontSize: patch.minFontSize } : {}),
+        };
+        if (patch.autosizeMode) object.autofit = patch.autosizeMode;
+      }
+    }
     setDeckDirty(true);
     renderSlideCanvas();
     renderDeckPageStrip();
+  };
+  document.getElementById("slidesDeckMinFontSize")?.addEventListener("input", (e) => {
+    const value = Number(e.target.value); if (Number.isFinite(value)) updateThemeTypography("Change minimum font size", { minFontSize: value });
   });
+  document.getElementById("slidesDeckAutosizeMode")?.addEventListener("change", (e) => updateThemeTypography("Change text fitting", { autosizeMode: e.target.value }));
+  document.getElementById("slidesDeckAlign")?.addEventListener("change", (e) => updateThemeTypography("Change alignment", { align: e.target.value }));
+  document.getElementById("slidesDeckVerticalAlign")?.addEventListener("change", (e) => updateThemeTypography("Change vertical alignment", { verticalAlign: e.target.value }));
+  document.getElementById("slidesDeckFontWeight")?.addEventListener("change", (e) => updateThemeTypography("Change font weight", { fontWeight: Number(e.target.value) || 700 }));
+  document.getElementById("slidesDeckFontStyle")?.addEventListener("change", (e) => updateThemeTypography("Change font style", { fontStyle: e.target.value }));
+  document.getElementById("slidesDeckLineHeight")?.addEventListener("input", (e) => {
+    const value = Number(e.target.value); if (Number.isFinite(value)) updateThemeTypography("Change line height", { lineHeight: value });
+  });
+  const updateThemeBackdrop = () => {
+    if (!currentDeck) return;
+    recordSlideUndoForMutation("Change backing plate");
+    const enabled = document.getElementById("slidesDeckBackdropEnabled")?.checked === true;
+    const color = document.getElementById("slidesDeckBackdropColor")?.value || "#101010";
+    currentDeck.theme = { ...(currentDeck.theme || {}), backdrop: { ...(currentDeck.theme?.backdrop || {}), enabled, background: { type: "color", color } } };
+    for (const page of currentDeck.pages || []) for (const object of page.objects || []) if (object.kind === "text") object.background = enabled ? { type: "color", color } : null;
+    setDeckDirty(true); renderSlideCanvas(); renderDeckPageStrip();
+  };
+  document.getElementById("slidesDeckBackdropEnabled")?.addEventListener("change", updateThemeBackdrop);
+  document.getElementById("slidesDeckBackdropColor")?.addEventListener("input", updateThemeBackdrop);
   document.getElementById("slidesSongNumber")?.addEventListener("input", (e) => {
     if (!currentDeck || !currentDeckIsSongDocument()) return;
     const value = Number.parseInt(e.target.value, 10);
@@ -19332,6 +19588,7 @@ function buildProjectQueueItemSnapshot(item) {
     deckSnapshot: songEntry?.deckSnapshot ? normalizeSlideDeck(songEntry.deckSnapshot) : undefined,
     sequence: songEntry?.sequence,
     render: songEntry?.render,
+    itemTheme: normalizeItemTheme(item.itemTheme || bibleEntry?.itemTheme),
   };
 }
 
@@ -19363,6 +19620,7 @@ function buildProjectStateSnapshot(opts = {}) {
     },
     projectStorageMode: currentProjectStorageMode,
     projectScriptureText: projectScriptureTextFromOverrides(projectScriptureOverrides),
+    projectThemes: projectThemeDefaults,
     projectOutputHold: buildProjectOutputHoldSnapshot(),
     currentMode,
     currentQueueIndex,
@@ -19439,6 +19697,12 @@ function applyProjectStateSnapshot(state, opts = {}) {
     projectScriptureOverrides,
     overridesFromProjectScriptureText(state.projectScriptureText),
   );
+  if (state.projectThemes && typeof state.projectThemes === "object") {
+    projectThemeDefaults = structuredClone(state.projectThemes);
+    const preferredId = projectThemeDefaults.bindings?.song || projectThemeDefaults.bindings?.scripture;
+    const embedded = preferredId ? projectThemeDefaults.snapshots?.[preferredId]?.theme : null;
+    if (embedded) appliedPresentationTheme = embedded;
+  }
   if (state.projectOutputHold && typeof state.projectOutputHold === "object") {
     applyOutputHoldPreferences(normalizeOutputHoldPreferences(state.projectOutputHold));
   }
@@ -19551,7 +19815,9 @@ function applyProjectStateSnapshot(state, opts = {}) {
         deckSnapshot: isSongItem && x.deckSnapshot ? normalizeSlideDeck(x.deckSnapshot) : undefined,
         sequence: isSongItem && x.sequence ? x.sequence : undefined,
         render: isSongItem && x.render ? x.render : undefined,
+        itemTheme: normalizeItemTheme(x.itemTheme || x.bible?.itemTheme),
       };
+      if (bibleEntry && item.itemTheme) item.bible.itemTheme = item.itemTheme;
       item.cueStartTime = queueItemCueStartTime(item);
       return item;
     })
@@ -20589,6 +20855,7 @@ function ensureScheduleBibleContextMenu() {
   menu.hidden = true;
   menu.innerHTML = `
     <button type="button" role="menuitem" data-schedule-bible-action="edit">Edit</button>
+    <button type="button" role="menuitem" data-schedule-bible-action="theme">Theme and Style…</button>
     <button type="button" role="menuitem" data-schedule-bible-action="split">Split into Verses</button>
   `;
 
@@ -20607,6 +20874,8 @@ function ensureScheduleBibleContextMenu() {
           console.error("Failed to open scheduled Bible text for editing:", err);
           showGnomeToast("Failed to open Bible text editor");
         });
+    } else if (action === "theme") {
+      void openThemeManagerForQueueItem(index);
     } else if (action === "split") {
       void splitScheduledBiblePassageIntoVerses(index).catch(console.error);
     }
@@ -20627,6 +20896,19 @@ function ensureScheduleBibleContextMenu() {
     window.addEventListener("scroll", hideScheduleBibleContextMenu, true);
   }
   return menu;
+}
+
+async function openThemeManagerForQueueItem(index, outputRole = "audience") {
+  if (!queueIndexInRange(index)) return;
+  const item = mediaQueue[index];
+  const contentKind = isQueueItemBible(item) ? "scripture" : item.type === "song" || item.type === "deck" ? "song" : null;
+  if (!contentKind) return;
+  await invoke("open-theme-manager-window", {
+    scope: "item",
+    queueIndex: index,
+    contentKind,
+    outputRole,
+  });
 }
 
 function scheduledBibleItemHasMultipleVerses(item) {
@@ -20726,10 +21008,21 @@ function installMediaQueueListDelegation() {
     const row = event.target.closest(".queue-item[data-queue-index]");
     if (!row || !list.contains(row)) return;
     const index = Number.parseInt(row.getAttribute("data-queue-index"), 10);
-    if (!queueIndexInRange(index) || !isQueueItemBible(mediaQueue[index])) return;
+    if (!queueIndexInRange(index)) return;
     setSelectedQueueAnchor(index, { explicit: true });
     updateQueueSelectionVisual();
-    showScheduleBibleContextMenu(event, index);
+    if (isQueueItemBible(mediaQueue[index])) {
+      showScheduleBibleContextMenu(event, index);
+    } else if (["song", "deck"].includes(mediaQueue[index]?.type)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void loadQueueItemIntoPreviewCue(index)
+        .then(() => openSongEditor(currentWorkspaceSongDeck || currentWorkspaceSong))
+        .catch((error) => {
+          console.error("Failed to open themed song editor:", error);
+          showGnomeToast("Failed to open song editor");
+        });
+    }
   });
   list.addEventListener("click", (e) => {
     const autoBtn = e.target.closest("[data-queue-auto]");
@@ -25275,6 +25568,7 @@ function themedLowerThirdMessage(message, resolved) {
 }
 
 function themeLowerThirdMessageIfApplied(message, contentKind) {
+  if (message?.resolvedTheme?.themeId) return message;
   if (!appliedPresentationTheme || !message) return message;
   const outputSize = selectedBiblePreviewOutputSize("lowerThirdDspSelct");
   const resolved = resolveThemeForTarget({
@@ -25293,6 +25587,7 @@ function themeLowerThirdMessageIfApplied(message, contentKind) {
 // once, the very next bible/song cue would silently revert to the unthemed
 // look. Routing every audience send through this keeps them in sync too.
 function themeAudienceMessageIfApplied(message, contentKind) {
+  if (message?.resolvedTheme?.themeId) return message;
   if (!appliedPresentationTheme || !message) return message;
   const outputSize = selectedBiblePreviewOutputSize("dspSelct");
   const resolved = resolveThemeForTarget({
@@ -25364,10 +25659,41 @@ function installIPCHandler() {
     scheduleAutosaveProjectState();
   });
   on("theme-applied", (_event, theme) => {
+    projectThemeDefaults = {
+      schema: "ems.project-themes.v1",
+      bindings: { song: theme.id, scripture: theme.id, text: theme.id, lowerThird: theme.id },
+      snapshots: { [theme.id]: { theme } },
+    };
     void applyThemeToLivePresentation(theme).catch(error => {
       console.error("Failed to apply theme to live presentation:", error);
       showGnomeToast("Theme saved, but the live output could not be updated");
     });
+  });
+  on("theme-applied-to-item", (_event, payload) => {
+    const index = payload?.queueIndex;
+    if (!queueIndexInRange(index) || !payload?.theme) return;
+    const item = mediaQueue[index];
+    item.itemTheme = setItemThemeRole(item.itemTheme, {
+      theme: payload.theme,
+      outputRole: payload.outputRole,
+      profile: payload.profile,
+    });
+    if (isQueueItemBible(item) && item.bible) item.bible.itemTheme = item.itemTheme;
+    renderQueue();
+    scheduleAutosaveProjectState();
+    if (index === previewCueIndex || index === currentQueueIndex) {
+      void loadQueueItemIntoControlWindow(item, { previewLoadToken: nextPreviewLoadToken() }).catch(console.error);
+    }
+    showGnomeToast(`Applied “${payload.theme.name}” to ${item.name || "scheduled item"}`);
+  });
+  on("theme-cleared-from-item", (_event, payload) => {
+    const index = payload?.queueIndex;
+    if (!queueIndexInRange(index)) return;
+    delete mediaQueue[index].itemTheme;
+    if (mediaQueue[index].bible) delete mediaQueue[index].bible.itemTheme;
+    renderQueue();
+    scheduleAutosaveProjectState();
+    showGnomeToast(`${mediaQueue[index].name || "Scheduled item"} now uses the project theme`);
   });
   on("songs-database-cleared", () => {
     void handleSongsDatabaseCleared().catch(console.error);

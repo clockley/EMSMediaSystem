@@ -307,6 +307,7 @@ function bibleProjectReferenceOnly(scripture = {}, opts = {}) {
         : undefined,
   };
   if (selectedVerses.length > 0) result.selectedVerses = selectedVerses;
+  if (source.itemTheme && typeof source.itemTheme === "object") result.itemTheme = source.itemTheme;
   if (typeof opts.backgroundAssetId === "string" && opts.backgroundAssetId) {
     result.backgroundAssetId = opts.backgroundAssetId;
   }
@@ -987,6 +988,7 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
     cueVolume: Number.isFinite(item?.playback?.volume) ? item.playback.volume : undefined,
     transition: projectSlideTransitionOverride(item?.transition),
     bible: scriptureReference,
+    itemTheme: item?.itemTheme && typeof item.itemTheme === "object" ? item.itemTheme : undefined,
     currentSlideId: scriptureReference.currentSlideId,
   };
 }
@@ -1048,6 +1050,7 @@ function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths
     source: item?.source,
     songSnapshot: deckSnapshot ? undefined : snapshot,
     sequence: item?.sequence,
+    itemTheme: item?.itemTheme && typeof item.itemTheme === "object" ? item.itemTheme : undefined,
     currentSlideId:
       typeof item?.currentSlideId === "string"
         ? item.currentSlideId
@@ -1435,6 +1438,10 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
     previewCueIndex: -1,
     projectStorageMode: manifestJson?.storage?.mode === "packed" ? "packed" : "working",
     projectScriptureText: projectScriptureTextFromOverrides(projectScriptureOverrides),
+    projectThemes:
+      queueJson.projectThemes && typeof queueJson.projectThemes === "object"
+        ? queueJson.projectThemes
+        : undefined,
     projectOutputHold: projectOutputHold || undefined,
     mediaQueue,
   };
@@ -1713,6 +1720,7 @@ async function saveEmprojSnapshotUnlocked(
           path: scripturePath,
         },
         scripture: projectScripture,
+        itemTheme: item.itemTheme && typeof item.itemTheme === "object" ? item.itemTheme : undefined,
         currentSlideId: scripture.currentSlideId,
         transition: projectSlideTransitionOverride(item.transition),
         playback: {
@@ -1791,6 +1799,7 @@ async function saveEmprojSnapshotUnlocked(
               ? item.sequence.currentSequenceEntryId
               : undefined,
         render,
+        itemTheme: item.itemTheme && typeof item.itemTheme === "object" ? item.itemTheme : undefined,
         transition: projectSlideTransitionOverride(item.transition),
         playback: {
           startTime: 0,
@@ -1984,6 +1993,10 @@ async function saveEmprojSnapshotUnlocked(
     loopQueue: false,
     created: nowIso,
     modified: nowIso,
+    projectThemes:
+      snapshot?.projectThemes && typeof snapshot.projectThemes === "object"
+        ? snapshot.projectThemes
+        : undefined,
     projectScriptureText: (() => {
       const scriptureText = projectScriptureTextFromOverrides(projectScriptureOverrides);
       if (!scriptureText) return undefined;
@@ -2108,7 +2121,7 @@ async function saveEmprojSnapshotUnlocked(
     features: {
       media: true,
       presentations: true,
-      themes: false,
+      themes: Boolean(snapshot?.projectThemes) || queue.some(item => item?.itemTheme),
       scriptures: true,
       ccli: false,
     },

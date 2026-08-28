@@ -4,6 +4,8 @@ contextBridge.exposeInMainWorld("themeManager", Object.freeze({
   list: () => ipcRenderer.invoke("themes:list"),
   save: theme => ipcRenderer.invoke("themes:save", theme),
   activate: id => ipcRenderer.invoke("themes:apply", id),
+  applyToItem: (id, context, profile) => ipcRenderer.invoke("themes:applyToItem", id, context, profile),
+  clearItem: context => ipcRenderer.invoke("themes:clearItem", context),
   duplicate: id => ipcRenderer.invoke("themes:duplicate", id),
   delete: id => ipcRenderer.invoke("themes:delete", id),
   importPack: () => ipcRenderer.invoke("themes:import"),

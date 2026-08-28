@@ -685,6 +685,11 @@ export function deckToTransientSong(deck) {
       // audience slide boundary. Retain the canonical chunking metadata for
       // editing/round-tripping, but do not apply it to the page a second time.
       explicitPageBoundaries: true,
+      pageOverrides: Object.fromEntries(
+        norm.pages.map((page) => [page.id, {
+          background: structuredClone(page.background),
+        }]),
+      ),
     },
     defaultRender: deckDefaultRender(norm),
   };
@@ -862,6 +867,9 @@ export function songAstToDeck(song, { documentType = SONG_DECK_DOCUMENT_TYPE } =
       }
     : { type: "color", color: theme.backgroundColor || DEFAULT_DECK_THEME.backgroundColor };
   const orderedSections = songSectionOrder(ast);
+  const pageOverrides = ast.presentation?.pageOverrides && typeof ast.presentation.pageOverrides === "object"
+    ? ast.presentation.pageOverrides
+    : {};
   const pages = orderedSections.map((section, index) => {
     const fallbackText = blocksToText(section.blocks || []);
     const fallbackFrame = importedSongTextFrame(section, ast.defaultRender?.textBoxPosition || null);
@@ -904,7 +912,9 @@ export function songAstToDeck(song, { documentType = SONG_DECK_DOCUMENT_TYPE } =
       kind: section.kind || "verse",
       durationMs: 0,
       autoAdvance: false,
-      background: { ...defaultBackground },
+      background: pageOverrides[section.id]?.background
+        ? structuredClone(pageOverrides[section.id].background)
+        : { ...defaultBackground },
       notes: "",
       objects,
     };

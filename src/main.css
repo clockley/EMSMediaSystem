@@ -3589,15 +3589,16 @@ body.is-deck-pages-resizing .deck-pages-resize-handle::before {
 .slides-canvas-text-object {
     position: absolute;
     box-sizing: border-box;
-    border: 1px dashed transparent;
-    transition: border-color 0.15s;
+    border: 0;
+    outline: 1px dashed transparent;
+    transition: outline-color 0.15s;
     overflow: hidden;
 }
 
 .slides-canvas-text-object:hover,
 .slides-canvas-text-object:focus-within,
 .slides-canvas-text-object.is-active {
-    border-color: color-mix(in srgb, var(--accent-bg-color) 70%, transparent);
+    outline-color: color-mix(in srgb, var(--accent-bg-color) 70%, transparent);
 }
 
 .slides-canvas-text-object-bg {

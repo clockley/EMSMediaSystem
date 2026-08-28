@@ -4,13 +4,69 @@ import test from "node:test";
 import {
   deckToTransientSong,
   normalizeSlideDeck,
+  pageRenderOverrides,
   songAstToDeck,
 } from "../src/app-slide-utils.mjs";
 import {
   normalizeToSongAST,
   reconcileSongPlayOrder,
+  resolvedSongPresentation,
   songAstToSearchText,
 } from "../src/app-song-utils.mjs";
+
+test("page background color remains more specific than the deck theme", () => {
+  const deck = normalizeSlideDeck({
+    schema: "ems.slideDeck.v1",
+    id: "background_test",
+    title: "Background Test",
+    theme: { backgroundColor: "#000000" },
+    pages: [{ id: "page_1", background: { type: "color", color: "#7a2048" }, objects: [] }],
+  });
+  assert.equal(deck.pages[0].background.color, "#7a2048");
+  assert.equal(pageRenderOverrides(deck.pages[0], deck).backgroundColor, "#7a2048");
+});
+
+test("distinct song page backgrounds survive deck and canonical song conversion", () => {
+  const deck = normalizeSlideDeck({
+    schema: "ems.slideDeck.v1",
+    id: "background_round_trip",
+    title: "Background Round Trip",
+    documentType: "song",
+    type: "song",
+    pages: [
+      { id: "verse_1", label: "Verse 1", background: { type: "color", color: "#7a2048" }, objects: [] },
+      { id: "chorus", label: "Chorus", background: { type: "color", color: "#184f78" }, objects: [] },
+    ],
+  });
+  const restored = songAstToDeck(deckToTransientSong(deck));
+  assert.deepEqual(restored.pages.map((page) => page.background.color), ["#7a2048", "#184f78"]);
+});
+
+test("page background overrides the resolved theme in preview and audience messages", () => {
+  const song = deckToTransientSong(normalizeSlideDeck({
+    schema: "ems.slideDeck.v1",
+    id: "background_render",
+    title: "Background Render",
+    documentType: "song",
+    type: "song",
+    pages: [{
+      id: "verse_1",
+      label: "Verse 1",
+      background: { type: "color", color: "#7a2048" },
+      objects: [],
+    }],
+  }));
+  const presentation = resolvedSongPresentation({
+    songSnapshot: song,
+    render: { currentSectionId: "verse_1", backgroundColor: "#000000" },
+    resolvedTheme: {
+      canvas: { background: { type: "color", color: "#184f78" } },
+      typography: {},
+    },
+  });
+  assert.equal(presentation.message.backgroundColor, "#7a2048");
+  assert.equal(presentation.message.backgroundPath, "");
+});
 
 test("song deck conversion preserves repeated stanza play order", () => {
   const song = {

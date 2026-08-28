@@ -6,6 +6,10 @@ let original = null;
 let draft = null;
 const initialParams = new URLSearchParams(window.location.search);
 let outputRole = initialParams.get("outputRole") === "lowerThird" ? "lowerThird" : "audience";
+let applyContext = {
+  scope: initialParams.get("scope") === "item" ? "item" : "global",
+  queueIndex: /^\d+$/.test(initialParams.get("queueIndex") || "") ? Number(initialParams.get("queueIndex")) : null,
+};
 
 const $ = id => document.getElementById(id);
 const copy = value => structuredClone(value);
@@ -20,6 +24,10 @@ function applyOpenContext(context = {}) {
     ? context.contentKind
     : "song";
   outputRole = context?.outputRole === "lowerThird" ? "lowerThird" : "audience";
+  applyContext = {
+    scope: context?.scope === "item" ? "item" : "global",
+    queueIndex: Number.isInteger(context?.queueIndex) ? context.queueIndex : null,
+  };
   $("tmKind").value = contentKind;
   $("tmAudienceTab").setAttribute("aria-pressed", outputRole === "audience" ? "true" : "false");
   $("tmLowerThirdTab").setAttribute("aria-pressed", outputRole === "lowerThird" ? "true" : "false");
@@ -76,11 +84,16 @@ function updateDirtyState() {
   // built-in or unedited theme just becomes the live theme, while unsaved
   // edits are saved first. It only disables once there is truly nothing to
   // do (the selection is already active and has no pending edits).
-  $("tmApply").disabled = isSelectedActive() && !dirty;
+  $("tmApply").disabled = applyContext.scope === "item" ? !selectedId : isSelectedActive() && !dirty;
+  $("tmApply").textContent = applyContext.scope === "item" ? "Apply to Item" : "Apply";
+  $("tmUseDefault").hidden = applyContext.scope !== "item";
   $("tmRevert").disabled = !dirty;
   $("tmDelete").disabled = builtIn;
   $("tmBuiltinNote").hidden = !builtIn;
-  $("tmEditor").querySelectorAll("input,select").forEach(control => { control.disabled = builtIn; });
+  $("tmEditor").querySelectorAll("input,select").forEach(control => { control.disabled = builtIn && applyContext.scope !== "item"; });
+  $("tmBuiltinNote").querySelector("span").textContent = builtIn && applyContext.scope === "item"
+    ? "Local changes apply only to this scheduled item; the built-in theme remains unchanged."
+    : "This is the built-in default and can't be edited. Use New Theme to create an editable copy.";
 }
 
 function fillEditor() {
@@ -105,7 +118,7 @@ function fillEditor() {
 }
 
 function readEditor() {
-  if (!draft || isBuiltIn()) return;
+  if (!draft || (isBuiltIn() && applyContext.scope !== "item")) return;
   draft.name = $("tmName").value.trim() || "Unnamed Theme";
   // "Content sample" changes only the preview copy. The visual controls define
   // the coordinated role appearance, so commit them to every content kind.
@@ -179,6 +192,16 @@ async function reload(preferredId = selectedId) {
 async function apply() {
   readEditor();
   const dirty = isDirty();
+  if (applyContext.scope === "item") {
+    try {
+      const targetProfile = copy(ensureProfile($("tmKind").value, outputRole));
+      await api.applyToItem(selectedId, { ...applyContext, contentKind: $("tmKind").value, outputRole }, targetProfile);
+      original = copy(draft);
+      setStatus(`Applied “${draft.name}” to this scheduled item.`);
+      updateDirtyState();
+    } catch (error) { setStatus(error.message || "Could not apply theme to item.", true); }
+    return;
+  }
   if (!dirty && isSelectedActive()) return;
   try {
     let appliedName = draft.name;
@@ -208,6 +231,13 @@ async function duplicate() {
   catch (error) { setStatus(error.message || "Could not create theme.", true); }
 }
 
+async function useProjectDefault() {
+  try {
+    await api.clearItem({ ...applyContext, contentKind: $("tmKind").value, outputRole });
+    setStatus("This item now uses the project default theme.");
+  } catch (error) { setStatus(error.message || "Could not reset item theme.", true); }
+}
+
 function closeMenu() {
   $("tmMenu").hidden = true;
   $("tmMenuButton").setAttribute("aria-expanded", "false");
@@ -230,6 +260,7 @@ function wire() {
   $("tmLowerThirdTab").addEventListener("click", () => { outputRole = "lowerThird"; $("tmAudienceTab").setAttribute("aria-pressed", "false"); $("tmLowerThirdTab").setAttribute("aria-pressed", "true"); fillEditor(); });
   $("tmKind").addEventListener("change", fillEditor); $("tmEditor").addEventListener("input", readEditor); $("tmEditor").addEventListener("change", readEditor);
   $("tmApply").addEventListener("click", () => void apply()); $("tmRevert").addEventListener("click", () => { draft = copy(original); fillEditor(); renderList(); setStatus("Changes reverted."); });
+  $("tmUseDefault").addEventListener("click", () => void useProjectDefault());
   $("tmDuplicate").addEventListener("click", () => void duplicate());
   $("tmMenuButton").addEventListener("click", event => { event.stopPropagation(); toggleMenu(); });
   $("tmMenu").addEventListener("click", event => { if (event.target.closest("button")) closeMenu(); });
@@ -250,6 +281,8 @@ wire();
 applyOpenContext({
   contentKind: initialParams.get("contentKind"),
   outputRole,
+  scope: applyContext.scope,
+  queueIndex: applyContext.queueIndex,
 });
 window.themeManager.onOpenContext?.(applyOpenContext);
 reload().catch(error => setStatus(error.message || "Could not load themes.", true));

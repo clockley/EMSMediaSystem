@@ -621,6 +621,10 @@ export function generateMediaFormHTML() {
           </aside>
           <section class="slides-workspace__main" aria-label="Deck editor">
             <div class="songs-workspace__toolbar">
+              <button type="button" id="slidesBackToSongPreviewBtn" class="songs-action-btn" hidden title="Save changes and return to song preview">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10.5 3.5L6 8l4.5 4.5M6.5 8H14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span>Song Preview</span>
+              </button>
               <button type="button" id="slidesWorkspaceTitleButton" class="songs-workspace__title slides-workspace__title-button" disabled title="Rename deck">
                 <span id="slidesWorkspaceTitle">Select or Create a Deck</span>
               </button>
@@ -747,7 +751,7 @@ export function generateMediaFormHTML() {
                       <input type="text" id="slidesPageLabelInput" placeholder="Page 1" aria-label="Page label">
                     </div>
                     <div class="boxed-list-row">
-                      <label for="slidesPageBackgroundColor">Background</label>
+                      <label for="slidesPageBackgroundColor">This page background</label>
                       <input type="color" id="slidesPageBackgroundColor" value="#000000">
                     </div>
                     <div class="boxed-list-row">
@@ -790,12 +794,14 @@ export function generateMediaFormHTML() {
                   </div>
                 </div>
               </aside>
-              <div class="slides-hidden-settings" hidden>
-                <input type="text" id="slidesDeckTitleInput" placeholder="Untitled Deck" aria-label="Deck title">
-                <select id="slidesDeckFolderSelect" aria-label="Deck folder">
+              <div class="boxed-list-group" id="slidesThemeEditorGroup">
+                <div class="boxed-list-title">Theme Style</div>
+                <div class="boxed-list">
+                <div class="boxed-list-row"><label for="slidesDeckTitleInput">Title</label><input type="text" id="slidesDeckTitleInput" placeholder="Untitled Deck" aria-label="Deck title"></div>
+                <div class="boxed-list-row"><label for="slidesDeckFolderSelect">Folder</label><select id="slidesDeckFolderSelect" aria-label="Deck folder">
                   <option value="">Default</option>
-                </select>
-                <select id="slidesDeckFontFamily" class="display-select">
+                </select></div>
+                <div class="boxed-list-row"><label for="slidesDeckFontFamily">Font</label><select id="slidesDeckFontFamily" class="display-select">
                   <option value="Adwaita Sans">Adwaita Sans</option>
                   <option value="CMG Sans">CMG Sans</option>
                   <option value="Arial">Arial</option>
@@ -806,10 +812,19 @@ export function generateMediaFormHTML() {
                   <option value="Tahoma">Tahoma</option>
                   <option value="Times New Roman">Times New Roman</option>
                   <option value="Verdana">Verdana</option>
-                </select>
-                <input type="number" id="slidesDeckFontSize" min="24" max="200" value="96">
-                <input type="color" id="slidesDeckTextColor" value="#ffffff">
-                <input type="color" id="slidesDeckBgColor" value="#000000">
+                </select></div>
+                <div class="boxed-list-row"><label for="slidesDeckFontSize">Font size</label><input type="number" id="slidesDeckFontSize" min="8" max="400" value="96"></div>
+                <div class="boxed-list-row"><label for="slidesDeckMinFontSize">Minimum</label><input type="number" id="slidesDeckMinFontSize" min="8" max="200" value="38"></div>
+                <div class="boxed-list-row"><label for="slidesDeckAutosizeMode">Fitting</label><select id="slidesDeckAutosizeMode" class="display-select"><option value="fit">Fit</option><option value="normalize">Normalize</option><option value="none">Fixed</option></select></div>
+                <div class="boxed-list-row"><label for="slidesDeckTextColor">Text</label><input type="color" id="slidesDeckTextColor" value="#ffffff"></div>
+                <div class="boxed-list-row"><label for="slidesDeckAlign">Horizontal</label><select id="slidesDeckAlign" class="display-select"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></div>
+                <div class="boxed-list-row"><label for="slidesDeckVerticalAlign">Vertical</label><select id="slidesDeckVerticalAlign" class="display-select"><option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option></select></div>
+                <div class="boxed-list-row"><label for="slidesDeckFontWeight">Weight</label><select id="slidesDeckFontWeight" class="display-select"><option value="400">Regular</option><option value="600">Semibold</option><option value="700">Bold</option><option value="800">Extra Bold</option></select></div>
+                <div class="boxed-list-row"><label for="slidesDeckFontStyle">Style</label><select id="slidesDeckFontStyle" class="display-select"><option value="normal">Normal</option><option value="italic">Italic</option></select></div>
+                <div class="boxed-list-row"><label for="slidesDeckLineHeight">Line height</label><input type="number" id="slidesDeckLineHeight" min="0.8" max="2" step="0.05" value="1.18"></div>
+                <div class="boxed-list-row"><label for="slidesDeckBackdropEnabled">Backing plate</label><input type="checkbox" id="slidesDeckBackdropEnabled"></div>
+                <div class="boxed-list-row"><label for="slidesDeckBackdropColor">Plate color</label><input type="color" id="slidesDeckBackdropColor" value="#101010"></div>
+                </div>
               </div>
               <input type="file" id="slidesTextObjectBackgroundInput" accept="image/*,video/mp4,video/webm" hidden>
               <input type="file" id="slidesObjectImageInput" accept="image/*" hidden>

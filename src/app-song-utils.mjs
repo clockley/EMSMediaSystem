@@ -707,6 +707,22 @@ function applyResolvedThemeToSongMessage(message, resolvedTheme) {
   };
 }
 
+function applySongPageOverridesToMessage(message, pageOverrides) {
+  const background = pageOverrides?.background;
+  if (!background || typeof background !== "object") return message;
+
+  const type = background.type || (background.path ? "image" : "color");
+  const backgroundPath = type === "color" ? "" : (background.path || "");
+  const backgroundUrl = backgroundPath ? pathToMediaUrl(backgroundPath) : "";
+  return {
+    ...message,
+    backgroundColor: background.color || message.backgroundColor,
+    backgroundPath,
+    backgroundImage: type === "image" ? backgroundUrl : "",
+    backgroundVideo: type === "video" ? backgroundUrl : "",
+  };
+}
+
 function arrangementSequenceIdsForLibrary(sequence, sections = []) {
   const sectionIds = (Array.isArray(sections) ? sections : [])
     .map((section) => section?.id)
@@ -882,6 +898,11 @@ export function resolvedSongPresentation(item) {
     render,
     resolvedPresentation: resolved,
     activeUnit,
-    message: applyResolvedThemeToSongMessage(message, item?.resolvedTheme),
+    // Page edits are more specific than both the selected theme and the
+    // song-wide render defaults. Apply them last for preview and audience.
+    message: applySongPageOverridesToMessage(
+      applyResolvedThemeToSongMessage(message, item?.resolvedTheme),
+      song.presentation?.pageOverrides?.[section?.id],
+    ),
   };
 }

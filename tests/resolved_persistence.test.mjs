@@ -18,6 +18,11 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
   song.sections[0].blocks[1].manualBreakAfter = true;
   const snapshot = {
     project: { name: "Resolved state" },
+    projectThemes: {
+      schema: "ems.project-themes.v1",
+      bindings: { song: "warm", scripture: "warm", text: "warm", lowerThird: "warm" },
+      snapshots: { warm: { theme: { schema: "ems.theme.v1", id: "warm", name: "Warm", tokens: {}, profiles: {}, assets: [] } } },
+    },
     mediaQueue: [
       {
         path: "song://fixture_long_song",
@@ -37,6 +42,13 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
         },
         currentSequenceEntryId: "play_v1",
         currentSlideId: "play_v1:1",
+        itemTheme: {
+          schema: "ems.item-theme.v1",
+          themeId: "warm",
+          snapshot: { schema: "ems.theme.v1", id: "warm", name: "Warm", tokens: {}, profiles: {}, assets: [] },
+          overrides: { audience: { typography: { fontSize: 72, color: "#ffeecc" } } },
+          editorMaterialized: true,
+        },
       },
       {
         path: "bible://KJV%3AJohn%201%3A1-3",
@@ -80,6 +92,10 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
     assert.equal(loadedBible.currentSlideId, "passage:1");
     assert.equal(loadedBible.bible.currentSlideId, "passage:1");
     assert.equal(loadedBible.bible.currentLowerThirdSlideId, "passage:3");
+    assert.equal(loaded.projectThemes.bindings.song, "warm");
+    assert.equal(loadedSong.itemTheme.themeId, "warm");
+    assert.equal(loadedSong.itemTheme.overrides.audience.typography.fontSize, 72);
+    assert.equal(loadedSong.itemTheme.editorMaterialized, true);
   } finally {
     if (loaded) await cleanupExtractedProjectMedia(loaded);
     await rm(root, { recursive: true, force: true });
