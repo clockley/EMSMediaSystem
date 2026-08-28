@@ -6001,6 +6001,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
       { ...entry, text: fullBodyText, ...style },
       {
         outputRole: "lowerThird",
+        includeVerseNumbers: false,
         outputSize,
         activeSlideId: opts.activeSlideId || entry.currentLowerThirdSlideId,
         style: lowerThirdTypography,
@@ -6062,6 +6063,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     },
     {
       outputRole: "audience",
+      includeVerseNumbers: false,
       outputSize,
       activeSlideId: opts.activeSlideId || entry.currentSlideId,
       style,
@@ -6509,7 +6511,9 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
     }
   }
   if (title) {
-    title.textContent = `${audienceMessage.reference || "Bible"} ${audienceMessage.version}`.trim();
+    // Resolved Scripture references already include the version. Appending
+    // message.version here produced labels such as “Genesis 1:11 NKJV NKJV”.
+    title.textContent = audienceMessage.reference || "Bible";
   }
   applyScriptureRenderToPreview(
     audienceRender,

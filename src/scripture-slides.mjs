@@ -271,7 +271,8 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
     outputSize: options.outputSize || options.target?.outputSize,
   };
   const includeVerseNumbers =
-    options.includeVerseNumbers ?? target.outputRole !== "audience";
+    options.includeVerseNumbers ??
+    !["audience", "lowerThird", "lower-third"].includes(target.outputRole);
   const typography = typographyFor(entry, options);
   const passageKey =
     options.passageKey ||
@@ -315,9 +316,9 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
   if (chunks) {
     chunks = structuredClone(chunks);
   } else if (!autoSplit) {
-    const bodyText = rows.length > 1
+    const bodyText = rows.length > 0
       ? rows.map((row) => verseText(row, includeVerseNumbers)).join("\n")
-      : cleanText(entry.text) || rows.map((row) => verseText(row, false)).join("\n");
+      : cleanText(entry.text);
     chunks = [{
       bodyText,
       verseNumbers: rows.map((row) => row.verseNumber),

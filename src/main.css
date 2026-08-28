@@ -7077,6 +7077,98 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     background: #00ff00;
 }
 
+/* Compact desktop layout for 1440x900-class operator displays.
+ *
+ * These screens are still wide enough for the full three-pane workflow, but
+ * the default desktop gutters and fixed 300px Schedule panel leave the actual
+ * audience preview unnecessarily narrow. Keep every pane visible while
+ * shifting space back to the preview and making the lower-third panel scale
+ * against its workspace instead of the entire screen. */
+@media (max-width: 1500px) {
+    .media-container {
+        padding: 10px 12px 12px;
+        gap: 12px;
+        margin-top: 4px;
+        height: calc(100vh - 45px - 4px - 22px);
+    }
+
+    .control-panel {
+        width: 252px;
+        padding: 12px;
+        gap: 10px;
+    }
+
+    .media-container .control-panel--media {
+        padding-bottom: 12px;
+    }
+
+    .bible-workspace {
+        grid-template-columns: clamp(210px, 22%, 248px) minmax(0, 1fr);
+    }
+
+    .bible-workspace__navigator {
+        gap: 8px;
+        padding: 12px;
+    }
+
+    .bible-workspace__toolbar {
+        gap: 10px;
+        padding: 9px 12px;
+    }
+
+    .bible-preview-panel {
+        gap: 6px;
+        padding: 6px;
+    }
+
+    .bible-lower-third-cue-panel {
+        gap: 8px;
+        margin-inline: 8px;
+        margin-bottom: 8px;
+        padding: 10px;
+    }
+
+    .bible-lower-third-cue-panel#bibleLowerThirdCuePanel {
+        margin-top: 8px;
+    }
+
+    .lower-third-preview--standalone {
+        height: clamp(150px, 16cqi, 210px);
+    }
+
+    .bible-lower-third-cue-list {
+        max-height: 96px;
+    }
+}
+
+/* A 900px-tall Windows desktop loses additional room to the taskbar and
+ * titlebar. Trim only vertical chrome; interactive controls retain their
+ * normal hit targets. */
+@media (max-height: 950px) {
+    .media-container .control-panel--media {
+        gap: 10px;
+    }
+
+    .options-expander__summary {
+        padding-block: 8px;
+    }
+
+    .options-expander__body {
+        gap: 8px;
+        padding-bottom: 10px;
+    }
+
+    .bible-workspace__main {
+        grid-template-rows: auto minmax(260px, 1fr) auto;
+    }
+
+    .bible-lower-third-cue-hint {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+}
+
 /* Standalone operator previews show the complete plate centered in their
    available shell. Do not bottom-align a cropped slice of the simulated
    1080p canvas here: Scripture adds reference/attribution rows and would

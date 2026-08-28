@@ -403,6 +403,7 @@ test("lower-third Scripture units use at most two lines and normalize attributio
     },
     {
       cache: false,
+      outputRole: "lowerThird",
       typography: { maxLines: 2 },
       measure: (text) => ({
         fits: true,
@@ -415,6 +416,31 @@ test("lower-third Scripture units use at most two lines and normalize attributio
   assert.ok(presentation.slides.length > 1);
   assert.ok(presentation.slides.every((slide) => slide.layout.lineCount <= 2));
   assert.ok(presentation.slides.every((slide) => slide.attributionText === "Test attribution"));
+  assert.doesNotMatch(presentation.slides[0].bodyText, /^1[.)]?\s+/u);
+});
+
+test("audience and lower-third Scripture omit a leading verse number without auto-split", () => {
+  const entry = {
+    version: "NKJV",
+    book: "Genesis",
+    chapter: 1,
+    verse: 11,
+    reference: "Genesis 1:11",
+    text: "11. Then God said, let the earth bring forth grass.",
+    autoSplit: false,
+  };
+  for (const outputRole of ["audience", "lowerThird"]) {
+    const presentation = resolveScriptureSlides(entry, {
+      outputRole,
+      cache: false,
+      measure: capacityMeasure(500),
+    });
+    assert.equal(
+      presentation.slides[0].bodyText,
+      "Then God said, let the earth bring forth grass.",
+    );
+    assert.equal(presentation.slides[0].referenceText, "Genesis 1:11 NKJV");
+  }
 });
 
 test("Scripture autoSplit false preserves one overflowing unit", async () => {
