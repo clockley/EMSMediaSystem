@@ -161,13 +161,40 @@ function applySlideTransition(el, transition) {
   }, normalized.durationMs + 80);
 }
 
-function applyTextPresentationTransition(textCanvas, textContent, transition, lowerThirdOutput) {
+function clearSlideTransition(el) {
+  if (!el) return;
+  el.classList.remove(
+    "ems-slide-transition",
+    "ems-slide-transition--fade",
+    "ems-slide-transition--slide-left",
+    "ems-slide-transition--slide-right",
+    "ems-slide-transition--zoom",
+  );
+  el.style.removeProperty("--ems-slide-transition-duration");
+  delete el.dataset.emsSlideTransitionToken;
+}
+
+function applyTextPresentationTransition(
+  textCanvas,
+  textContent,
+  transition,
+  lowerThirdOutput,
+  contentChanged = true,
+) {
   // Never animate the full lower-third canvas: opacity-based transitions on
   // that element expose the BrowserWindow's black backing surface for their
   // first frame, which produces a destructive black flash for chroma-key
   // users. Keep the key color continuously opaque and animate only the
   // foreground text/plate.
-  applySlideTransition(lowerThirdOutput ? textContent : textCanvas, transition);
+  // Live style edits must update in place. Restarting an opacity transition
+  // for a color/font/layout-only message makes both text outputs visibly
+  // blink. Lower thirds keep their key and foreground continuously opaque;
+  // full-screen text transitions only when the presented content changes.
+  if (lowerThirdOutput || !contentChanged) {
+    clearSlideTransition(lowerThirdOutput ? textContent : textCanvas);
+    return;
+  }
+  applySlideTransition(textCanvas, transition);
 }
 
 function setLoopEnabled(enabled) {
@@ -775,6 +802,7 @@ function teardownImageElement() {
 
 function teardownTextPresentation() {
   textPresentationState.signature = "";
+  textPresentationState.contentSignature = "";
   const textCanvas = document.getElementById("textCanvas");
   if (textCanvas) {
     textCanvas.style.display = "none";
@@ -1747,6 +1775,7 @@ const DEFAULT_TEXT_PRESENTATION = Object.freeze({
 
 const textPresentationState = {
   backgroundVideo: "",
+  contentSignature: "",
   lastMessage: null,
   signature: "",
 };
@@ -2403,6 +2432,27 @@ function textPresentationSignature(message, bodyText, referenceText, attribution
   });
 }
 
+function textPresentationContentSignature(
+  message,
+  bodyText,
+  referenceText,
+  attributionText,
+  copyrightText,
+) {
+  return JSON.stringify({
+    type: message?.type || "",
+    look: normalizeScriptureLook(message?.look),
+    bodyText,
+    referenceText,
+    attributionText,
+    copyrightText,
+    currentSlideId: message?.currentSlideId || message?.slideId || "",
+    lowerThirdSegmentIndex: Number.isFinite(message?.lowerThirdSegmentIndex)
+      ? message.lowerThirdSegmentIndex
+      : 0,
+  });
+}
+
 function applyTextCanvasBackground(textCanvas, safeMessage, lowerThirdOutput, look) {
   textCanvas.style.alignItems = safeMessage.position.vertical;
   textCanvas.style.justifyContent = safeMessage.position.horizontal;
@@ -2553,6 +2603,14 @@ function applyTextMessage(message) {
     attributionText,
     copyrightText,
   );
+  const contentSignature = textPresentationContentSignature(
+    safeMessage,
+    bodyText,
+    referenceText,
+    attributionText,
+    copyrightText,
+  );
+  const contentChanged = contentSignature !== textPresentationState.contentSignature;
   const look = lowerThirdOutput
     ? SCRIPTURE_LOOK_LOWER_THIRD
     : normalizeScriptureLook(safeMessage.look);
@@ -2577,6 +2635,7 @@ function applyTextMessage(message) {
     return;
   }
   textPresentationState.signature = signature;
+  textPresentationState.contentSignature = contentSignature;
   if (slideObjects.length > 0) {
     textContent.classList.toggle("scripture-render--fullscreen", true);
     textContent.classList.toggle("scripture-render--lower-third", false);
@@ -2591,6 +2650,7 @@ function applyTextMessage(message) {
       textContent,
       safeMessage.transition,
       lowerThirdOutput,
+      contentChanged,
     );
     return;
   }
@@ -2665,6 +2725,7 @@ function applyTextMessage(message) {
     textContent,
     safeMessage.transition,
     lowerThirdOutput,
+    contentChanged,
   );
 }
 

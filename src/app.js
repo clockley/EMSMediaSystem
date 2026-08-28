@@ -528,6 +528,7 @@ let bibleLowerThirdOutputActive = false;
 let activeLowerThirdContentType = null;
 let bibleLowerThirdLiveCueKey = "";
 let bibleLowerThirdPreviewSourceKey = "";
+let biblePreviewRenderToken = 0;
 const songLowerThirdState = {
   sourceKey: "",
   sectionId: "",
@@ -6383,6 +6384,10 @@ function renderBibleSlideNavigator(entry, presentation) {
 }
 
 function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
+  const renderToken = Number.isFinite(opts.renderToken)
+    ? opts.renderToken
+    : ++biblePreviewRenderToken;
+  if (renderToken !== biblePreviewRenderToken) return;
   if (opts.show !== false) showBibleWorkspace();
   const lowerThirdEnabled = isBibleLowerThirdFeatureEnabled();
   const panel = document.getElementById("biblePreviewPanel");
@@ -6416,9 +6421,6 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
     bibleLowerThirdPreviewSourceKey = previewSourceKey;
     previewEntry.lowerThirdSegmentIndex = 0;
     previewEntry.currentLowerThirdSlideId = null;
-    lowerThirdText.textContent = "";
-    lowerThirdReference.textContent = "";
-    lowerThirdRender.classList.remove("is-operator-cued");
     document.getElementById("bibleLowerThirdCueList")?.replaceChildren();
     audienceText
       .querySelectorAll("mark.operator-lower-third-selection")
@@ -6455,11 +6457,19 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
         fontSize: previewEntry.fontSize || SCRIPTURE_BODY_FONT_SIZE,
       }),
     ]).then(() => {
-      if (previewSourceKey !== bibleLowerThirdPreviewSourceKey) return;
-      applyBiblePreview(previewEntry, { ...opts, fontsReadyRetry: true });
+      if (
+        renderToken !== biblePreviewRenderToken ||
+        previewSourceKey !== bibleLowerThirdPreviewSourceKey
+      ) return;
+      applyBiblePreview(previewEntry, {
+        ...opts,
+        fontsReadyRetry: true,
+        renderToken,
+      });
     });
     return;
   }
+  if (renderToken !== biblePreviewRenderToken) return;
   const audienceMessage = buildBibleTextMessage(previewEntry, {
     look: SCRIPTURE_LOOK_FULLSCREEN,
   });
