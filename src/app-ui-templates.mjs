@@ -1001,9 +1001,16 @@ export function generateMediaFormHTML() {
                   </svg>
                 </button>
               </div>
-              <div class="bible-editor-fields">
-                <label class="bible-field bible-field--font">Font
-                  <select id="bibleFontInput" class="display-select">
+              <div class="bible-style-content">
+                <section class="bible-style-group" aria-labelledby="bibleAudienceStyleHeading">
+                  <div class="bible-style-group__heading">
+                    <span id="bibleAudienceStyleHeading">Audience</span>
+                    <span>Text and canvas appearance</span>
+                  </div>
+                  <div class="bible-style-list">
+                    <label class="bible-style-row bible-style-row--wide">
+                      <span class="bible-style-row__copy"><strong>Font</strong><small>Typeface used for Scripture text</small></span>
+                      <select id="bibleFontInput" class="display-select">
                     <option value="'CMG Sans'">CMG Sans</option>
                     <option value="'Adwaita'">Adwaita</option>
                     <option value="'Arial'">Arial</option>
@@ -1014,15 +1021,81 @@ export function generateMediaFormHTML() {
                     <option value="'Tahoma'">Tahoma</option>
                     <option value="'Times New Roman'">Times New Roman</option>
                     <option value="'Verdana'">Verdana</option>
-                  </select>
-                </label>
-                <label class="bible-field">Size <input id="bibleFontSizeInput" type="number" min="24" max="160" value="66" class="url-input"></label>
-                <label class="bible-field">Audience Text <input id="bibleTextColorInput" type="color" value="#ffffff"></label>
-                <label class="bible-field">Audience Backdrop <input id="bibleBackgroundColorInput" type="color" value="#000000"></label>
-                <label class="bible-field" data-lower-third-feature hidden>Lower Text <input id="bibleLowerThirdTextColorInput" type="color" value="#ffffff"></label>
-                <label class="bible-field" data-lower-third-feature hidden>Bar Backdrop <input id="bibleLowerThirdBarBackgroundColorInput" type="color" value="#101010"></label>
-                <label class="bible-field bible-field--font" data-lower-third-feature hidden>Lower Third Font
-                  <select id="bibleLowerThirdFontInput" class="display-select">
+                      </select>
+                    </label>
+                    <label class="bible-style-row">
+                      <span class="bible-style-row__copy"><strong>Font size</strong><small>Base size before autofit</small></span>
+                      <input id="bibleFontSizeInput" type="number" min="24" max="160" value="66" class="url-input bible-style-number">
+                    </label>
+                    <label class="bible-style-row">
+                      <span class="bible-style-row__copy"><strong>Text color</strong><small>Audience Scripture and reference</small></span>
+                      <input id="bibleTextColorInput" type="color" value="#ffffff">
+                    </label>
+                    <label class="bible-style-row">
+                      <span class="bible-style-row__copy"><strong>Background color</strong><small>Shown behind media or as a solid fill</small></span>
+                      <input id="bibleBackgroundColorInput" type="color" value="#000000">
+                    </label>
+                    <div class="bible-style-row bible-style-row--actions">
+                      <span class="bible-style-row__copy"><strong>Background media</strong><small>Choose an image or looping video</small></span>
+                      <span class="bible-style-row__buttons">
+                        <label class="pill-button secondary bible-background-picker">
+                          <input id="bibleBackgroundInput" type="file" accept="image/*,video/*" hidden>
+                          <span id="bibleBackgroundLabel">Choose…</span>
+                        </label>
+                        <button type="button" id="bibleClearBackgroundBtn" class="pill-button secondary">Clear</button>
+                      </span>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="bible-style-group" aria-labelledby="bibleLayoutStyleHeading">
+                  <div class="bible-style-group__heading">
+                    <span id="bibleLayoutStyleHeading">Layout</span>
+                    <span>Fitting and slide behavior</span>
+                  </div>
+                  <div class="bible-style-list">
+                    <label class="bible-style-row">
+                      <span class="bible-style-row__copy"><strong>Autofit</strong><small>Resize text to remain inside its frame</small></span>
+                      <select id="bibleAutosizeModeInput" class="display-select">
+                        <option value="fit">Fit</option>
+                        <option value="normalize">Normalize</option>
+                        <option value="none">Off</option>
+                      </select>
+                    </label>
+                    <label class="bible-style-row">
+                      <span class="bible-style-row__copy"><strong>Minimum size</strong><small>Smallest font size autofit may use</small></span>
+                      <input id="bibleMinFontSizeInput" type="number" min="20" max="160" value="38" class="url-input bible-style-number">
+                    </label>
+                    <label class="bible-style-row bible-style-row--wide">
+                      <span class="bible-style-row__copy"><strong>Transition</strong><small>Animation between Scripture slides</small></span>
+                      <span class="transition-inline-controls">
+                        <select id="bibleTransitionEffectInput" class="display-select" aria-label="Bible text slide transition">
+                          <option value="inherit">Use Global</option>
+                          <option value="none">Off</option>
+                          <option value="fade">Fade</option>
+                          <option value="slide-left">Slide Left</option>
+                          <option value="slide-right">Slide Right</option>
+                          <option value="zoom">Zoom</option>
+                        </select>
+                        <input id="bibleTransitionDurationInput" type="number" min="0" max="3000" step="50" value="350" class="url-input transition-duration-input" aria-label="Bible text transition duration in milliseconds">
+                      </span>
+                    </label>
+                    <div class="bible-style-row bible-style-row--actions">
+                      <span class="bible-style-row__copy"><strong>Defaults</strong><small>Use this fitting behavior for new Bible text</small></span>
+                      <button type="button" id="bibleSaveLayoutDefaultsBtn" class="pill-button secondary">Save Defaults</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="bible-style-group" aria-labelledby="bibleLowerThirdStyleHeading" data-lower-third-feature hidden>
+                  <div class="bible-style-group__heading">
+                    <span id="bibleLowerThirdStyleHeading">Lower Third</span>
+                    <span>Typography, plate, and key output</span>
+                  </div>
+                  <div class="bible-style-list">
+                    <label class="bible-style-row bible-style-row--wide">
+                      <span class="bible-style-row__copy"><strong>Font</strong><small>Typeface for lower-third text</small></span>
+                      <select id="bibleLowerThirdFontInput" class="display-select">
                     <option value="'CMG Sans'">CMG Sans</option>
                     <option value="'Adwaita'">Adwaita</option>
                     <option value="'Arial'">Arial</option>
@@ -1033,51 +1106,26 @@ export function generateMediaFormHTML() {
                     <option value="'Tahoma'">Tahoma</option>
                     <option value="'Times New Roman'">Times New Roman</option>
                     <option value="'Verdana'">Verdana</option>
-                  </select>
-                </label>
-                <label class="bible-field" data-lower-third-feature hidden>Lower Third Size <input id="bibleLowerThirdFontSizeInput" type="number" min="20" max="80" value="40" class="url-input"></label>
-                <label class="bible-field" data-lower-third-feature data-lower-third-key-color hidden>Key Color <input id="bibleLowerThirdChromaKeyInput" type="color" value="#00ff00"></label>
-                <label class="file-input-label bible-background-picker" data-lower-third-feature hidden>
-                  <input id="bibleLowerThirdBarBackgroundInput" type="file" accept="image/*,video/*" hidden>
-                  <span id="bibleLowerThirdBarBackgroundLabel">Choose Bar Graphic…</span>
-                </label>
-                <button type="button" id="bibleClearLowerThirdBarBackgroundBtn" class="pill-button" data-lower-third-feature hidden>Clear Bar Graphic</button>
-                <label class="bible-field bible-field--transition">Transition
-                  <span class="transition-inline-controls">
-                    <select id="bibleTransitionEffectInput" class="display-select" aria-label="Bible text slide transition">
-                      <option value="inherit">Use Global</option>
-                      <option value="none">Off</option>
-                      <option value="fade">Fade</option>
-                      <option value="slide-left">Slide Left</option>
-                      <option value="slide-right">Slide Right</option>
-                      <option value="zoom">Zoom</option>
-                    </select>
-                    <input id="bibleTransitionDurationInput" type="number" min="0" max="3000" step="50" value="350" class="url-input transition-duration-input" aria-label="Bible text transition duration in milliseconds">
-                  </span>
-                </label>
-                <label class="file-input-label bible-background-picker">
-                  <input id="bibleBackgroundInput" type="file" accept="image/*,video/*" hidden>
-                  <span id="bibleBackgroundLabel">Choose Background…</span>
-                </label>
-              </div>
-              <div class="bible-autofit-panel" aria-label="Bible text autofit">
-                <label class="bible-field bible-field--autosize">Autofit
-                  <select id="bibleAutosizeModeInput" class="display-select">
-                    <option value="fit">Fit</option>
-                    <option value="normalize">Normalize</option>
-                    <option value="none">Off</option>
-                  </select>
-                </label>
-                <label class="bible-field bible-field--min-size">Min
-                  <input id="bibleMinFontSizeInput" type="number" min="20" max="160" value="38" class="url-input">
-                </label>
+                      </select>
+                    </label>
+                    <label class="bible-style-row"><span class="bible-style-row__copy"><strong>Font size</strong><small>Lower-third base size</small></span><input id="bibleLowerThirdFontSizeInput" type="number" min="20" max="80" value="40" class="url-input bible-style-number"></label>
+                    <label class="bible-style-row"><span class="bible-style-row__copy"><strong>Text color</strong><small>Lower-third Scripture and reference</small></span><input id="bibleLowerThirdTextColorInput" type="color" value="#ffffff"></label>
+                    <label class="bible-style-row"><span class="bible-style-row__copy"><strong>Plate color</strong><small>Background behind lower-third text</small></span><input id="bibleLowerThirdBarBackgroundColorInput" type="color" value="#101010"></label>
+                    <label class="bible-style-row" data-lower-third-key-color><span class="bible-style-row__copy"><strong>Key color</strong><small>Transparent key output color</small></span><input id="bibleLowerThirdChromaKeyInput" type="color" value="#00ff00"></label>
+                    <div class="bible-style-row bible-style-row--actions">
+                      <span class="bible-style-row__copy"><strong>Plate graphic</strong><small>Optional image or video plate</small></span>
+                      <span class="bible-style-row__buttons">
+                        <label class="pill-button secondary bible-background-picker"><input id="bibleLowerThirdBarBackgroundInput" type="file" accept="image/*,video/*" hidden><span id="bibleLowerThirdBarBackgroundLabel">Choose…</span></label>
+                        <button type="button" id="bibleClearLowerThirdBarBackgroundBtn" class="pill-button secondary">Clear</button>
+                      </span>
+                    </div>
+                  </div>
+                </section>
               </div>
               <div class="bible-editor-actions">
                 <button type="button" id="bibleApplyCurrentBtn" class="pill-button suggested-action">Apply to Selected Text</button>
                 <button type="button" id="bibleApplyStyleScheduleBtn" class="pill-button secondary">Apply to Scheduled Text</button>
                 <button type="button" id="bibleEditThemeBtn" class="pill-button secondary" title="Edit the shared appearance for songs and text">Theme…</button>
-                <button type="button" id="bibleSaveLayoutDefaultsBtn" class="pill-button secondary" title="Save autofit and splitting behavior for new Bible text">Save Text Layout Defaults</button>
-                <button type="button" id="bibleClearBackgroundBtn" class="pill-button secondary">Clear Background</button>
               </div>
             </div>
           </div>
