@@ -71,6 +71,7 @@ export function messageFromResolvedPresentation(
     preferredFontSize: typography.fontSize || style.fontSize || 66,
     minFontSize: typography.minFontSize || style.minFontSize || 38,
     fontWeight: typography.fontWeight || style.fontWeight || 700,
+    fontStyle: typography.fontStyle || style.fontStyle || "normal",
     lineHeight: typography.lineHeight || style.lineHeight || 1.25,
     color: typography.color || typography.fontColor || style.color || "#ffffff",
     autosizeMode: "none",

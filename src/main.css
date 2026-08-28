@@ -4112,8 +4112,42 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     width: 100%;
     height: 100%;
     display: block;
+    position: relative;
+    overflow: hidden;
     object-fit: contain;
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--window-fg-color) 14%, transparent);
+}
+
+.song-slide-thumbnail-button__render-surface {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    aspect-ratio: auto;
+    padding: 1.667%;
+    box-shadow: none;
+    container-type: inline-size;
+}
+
+.song-slide-thumbnail-button__render-surface .song-preview-block {
+    font-size: calc(var(--base-font-size, 66) * 100cqw / 1920);
+}
+
+.song-slide-thumbnail-button__render-surface .song-preview-reference {
+    margin-top: 1.25cqw;
+    font-size: 1.458cqw;
+}
+
+.song-slide-thumbnail-button__render-surface .song-preview-attribution {
+    margin-top: 0.625cqw;
+    font-size: 0.938cqw;
+}
+
+.song-slide-thumbnail-button__render-surface .song-copyright-overlay {
+    max-width: 96%;
+    font-size: 0.781cqw;
 }
 
 .song-slide-thumbnail-button__resolved-text {
@@ -4951,7 +4985,9 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 .song-preview-block {
     font-family: var(--font-family, 'CMG Sans', sans-serif);
     font-size: var(--song-preview-font-size, clamp(24px, 3.2vw, 48px));
-    line-height: 1.35;
+    font-weight: var(--song-preview-font-weight, 700);
+    font-style: var(--song-preview-font-style, normal);
+    line-height: var(--song-preview-line-height, 1.35);
     text-align: center;
     color: #ffffff;
     white-space: pre-wrap;

@@ -10355,6 +10355,7 @@ let songFoldersCache = [];
 let selectedSongIds = new Set();
 let songsBulkDeleteArmed = false;
 let songSlideNavigatorRenderToken = 0;
+let songPreviewRenderToken = 0;
 let songPreviewRerenderRaf = 0;
 let songLibraryClickTimer = null;
 let deckPageClickTimer = null;
@@ -10730,6 +10731,59 @@ function renderSongCopyrightIntoPreview(preview, copyrightText) {
   }
   copyright.textContent = text;
   preview.appendChild(copyright);
+}
+
+function renderResolvedSongMessageIntoPreview(preview, message = {}, { fontSize } = {}) {
+  if (!preview) return;
+  const outputFontSize = Number(message.fontSize) || DEFAULT_SONG_RENDER.fontSize;
+  const renderedFontSize = Number(fontSize) || outputFontSize;
+  const backgroundImage =
+    message.backgroundImage ||
+    (message.backgroundPath ? pathToUrlSafe(message.backgroundPath) : "");
+  preview.style.backgroundColor = message.backgroundColor || "#000000";
+  preview.style.backgroundImage = backgroundImage
+    ? `url('${backgroundImage}')`
+    : "";
+  preview.style.setProperty("--base-font-size", outputFontSize);
+  preview.style.setProperty("--song-preview-font-size", `${renderedFontSize}px`);
+  preview.style.setProperty(
+    "--font-family",
+    songFontFamilyCSS(message.fontFamily || DEFAULT_SONG_RENDER.fontFamily),
+  );
+  preview.style.setProperty("--song-preview-font-weight", String(message.fontWeight || 700));
+  preview.style.setProperty("--song-preview-font-style", message.fontStyle || "normal");
+  preview.style.setProperty("--song-preview-line-height", String(message.lineHeight || 1.35));
+
+  const slideObjects = Array.isArray(message.slideObjects) && message.slideObjects.length > 0
+    ? message.slideObjects
+    : Array.isArray(message.slideTextObjects)
+      ? message.slideTextObjects
+      : [];
+  if (slideObjects.length > 0) {
+    renderSlideObjectsIntoPreview(preview, slideObjects, message);
+  } else {
+    renderSongBlocksIntoPreview(
+      preview,
+      message.blocks,
+      message.color || "#ffffff",
+      message.textBoxPosition || null,
+    );
+  }
+
+  if (message.referenceText) {
+    const reference = document.createElement("div");
+    reference.className = "song-preview-reference";
+    reference.style.color = message.referenceColor || message.color || "#ffffff";
+    reference.textContent = message.referenceText;
+    preview.appendChild(reference);
+  }
+  if (message.attributionText) {
+    const attribution = document.createElement("div");
+    attribution.className = "song-preview-attribution";
+    attribution.textContent = message.attributionText;
+    preview.appendChild(attribution);
+  }
+  renderSongCopyrightIntoPreview(preview, message.copyrightText);
 }
 
 function textStyleFromSegment(segment) {
@@ -11508,8 +11562,15 @@ async function selectSongSection(sectionId, opts = {}) {
   currentSongSequenceEntryId =
     selectedUnit?.sequenceEntryId || currentSongSequenceEntryId;
   currentSongSectionId = selectedUnit?.sectionId || section.id;
-  renderSongSectionPreview(section);
-  syncSongLowerThirdCueForAudienceSlide(selectedUnit);
+  await renderSongSectionPreview(section);
+  if (
+    selectedUnit?.slideId &&
+    (currentSongSlideId !== selectedUnit.slideId ||
+      currentSongSequenceEntryId !== selectedUnit.sequenceEntryId)
+  ) {
+    return false;
+  }
+  setSongLowerThirdCue(0);
   syncCurrentSongQueueItemSection(currentSongSectionId, currentSongSlideId);
   if (currentSongQueueItem) saveMediaFile();
   updateSongArrangementSelection();
@@ -11530,6 +11591,7 @@ function renderSongSlideNavigator() {
   ++songSlideNavigatorRenderToken;
   list.innerHTML = "";
 
+  const renderToken = songSlideNavigatorRenderToken;
   slides.forEach((unit, index) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -11545,15 +11607,13 @@ function renderSongSlideNavigator() {
     number.className = "song-slide-thumbnail-button__number";
     number.textContent = String(index + 1);
 
-    const viewport = document.createElement("span");
+    const viewport = document.createElement("div");
     viewport.className = "song-slide-thumbnail-button__viewport";
 
-    const thumb = document.createElement("span");
+    const thumb = document.createElement("div");
     thumb.className = "slides-page-list__thumb song-slide-thumbnail-button__thumb";
-    const thumbnailText = document.createElement("span");
-    thumbnailText.className = "song-slide-thumbnail-button__resolved-text";
-    thumbnailText.textContent = unit.bodyText || "";
-    thumbnailText.dir = "auto";
+    const renderSurface = document.createElement("div");
+    renderSurface.className = "songs-preview-slide song-slide-thumbnail-button__render-surface";
     const thumbnailItem = songItemForAudienceResolution(baseThumbnailItem);
     if (thumbnailItem) {
       thumbnailItem.currentSlideId = unit.slideId;
@@ -11562,18 +11622,7 @@ function renderSongSlideNavigator() {
       thumbnailItem.render.currentSequenceEntryId = unit.sequenceEntryId;
     }
     const thumbnailMessage = resolvedSongPresentation(thumbnailItem)?.message || {};
-    const thumbnailBackground =
-      thumbnailMessage.backgroundImage ||
-      (thumbnailMessage.backgroundPath ? pathToUrlSafe(thumbnailMessage.backgroundPath) : "");
-    thumb.style.backgroundColor =
-      thumbnailMessage.backgroundColor || currentSongRenderState.backgroundColor || "#000000";
-    thumb.style.backgroundImage = thumbnailBackground ? `url('${thumbnailBackground}')` : "";
-    thumb.style.backgroundSize = "cover";
-    thumb.style.backgroundPosition = "center";
-    thumb.style.color = thumbnailMessage.color || currentSongRenderState.color || "#ffffff";
-    thumb.style.fontFamily =
-      thumbnailMessage.fontFamily || currentSongRenderState.fontFamily || SCRIPTURE_FONT_FAMILY;
-    thumb.replaceChildren(thumbnailText);
+    thumb.appendChild(renderSurface);
     viewport.appendChild(thumb);
 
     button.appendChild(number);
@@ -11614,6 +11663,18 @@ function renderSongSlideNavigator() {
       }
     });
     list.appendChild(button);
+
+    void waitForTextFonts(
+      [thumbnailMessage.fontFamily, currentSongRenderState.fontFamily],
+      {
+        documentRef: globalThis.document,
+        sample: unit.bodyText || currentWorkspaceSong.title || "EMS",
+        fontSize: thumbnailMessage.fontSize || currentSongRenderState.fontSize,
+      },
+    ).catch(() => {}).then(() => {
+      if (renderToken !== songSlideNavigatorRenderToken || !renderSurface.isConnected) return;
+      renderResolvedSongMessageIntoPreview(renderSurface, thumbnailMessage);
+    });
   });
   updateSongSlideNavigatorSelection({ scroll: false });
 }
@@ -13195,6 +13256,7 @@ function navigateSongSection(direction) {
 
 async function renderSongSectionPreview(section) {
   try {
+  const renderToken = ++songPreviewRenderToken;
   const isEditing = document.getElementById("songEditorDrawer")?.hidden === false;
   const targetId = isEditing ? "songEditorLivePreviewSlide" : "songsPreviewSlide";
   const preview = document.getElementById(targetId);
@@ -13214,6 +13276,7 @@ async function renderSongSectionPreview(section) {
         currentSongRenderState.fontSize,
     },
   );
+  if (renderToken !== songPreviewRenderToken) return;
 
   let presentation = currentResolvedSongPresentation();
   if (
@@ -13256,44 +13319,7 @@ async function renderSongSectionPreview(section) {
   if (message.fontFamily) {
     preview.style.setProperty('--font-family', songFontFamilyCSS(message.fontFamily));
   }
-  if (message.backgroundImage) {
-    preview.style.backgroundImage = `url('${message.backgroundImage}')`;
-  } else {
-    preview.style.backgroundImage = "";
-  }
-
-  const slideObjects = Array.isArray(message.slideObjects) && message.slideObjects.length > 0
-    ? message.slideObjects
-    : Array.isArray(message.slideTextObjects)
-      ? message.slideTextObjects
-      : [];
-  if (slideObjects.length > 0) {
-    renderSlideObjectsIntoPreview(preview, slideObjects, message);
-  } else {
-    renderSongBlocksIntoPreview(
-      preview,
-      message.blocks,
-      message.color || "#ffffff",
-      message.textBoxPosition || null,
-    );
-  }
-
-  if (message.referenceText) {
-    const refEl = document.createElement("div");
-    refEl.className = "song-preview-reference";
-    refEl.style.color = message.referenceColor || message.color || "#ffffff";
-    refEl.textContent = message.referenceText;
-    preview.appendChild(refEl);
-  }
-
-  if (message.attributionText) {
-    const attrEl = document.createElement("div");
-    attrEl.className = "song-preview-attribution";
-    attrEl.textContent = message.attributionText;
-    preview.appendChild(attrEl);
-  }
-
-  renderSongCopyrightIntoPreview(preview, message.copyrightText);
+  renderResolvedSongMessageIntoPreview(preview, message, { fontSize: scaledPreviewFontSize });
 
   if (isEditing) {
     syncSongEditorWorkspaceStyles(message);
@@ -13339,8 +13365,39 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
       slide.sequenceEntryId === currentSongSequenceEntryId ||
       (!currentSongSequenceEntryId && slide.sectionId === section.id),
   );
-  const sourceText = sectionSlides.map((slide) => slide.bodyText).join("\n").trim();
-  const sourceKey = `${currentWorkspaceSong.id || "song"}\u0000${currentSongSequenceEntryId || section.id}`;
+  const audiencePresentation = currentResolvedSongPresentation()?.resolvedPresentation;
+  const audienceSlide =
+    audiencePresentation?.slides?.find((slide) => slide.slideId === currentSongSlideId) ||
+    audiencePresentation?.activeSlide ||
+    null;
+  const audienceBlockIds = new Set(
+    (Array.isArray(audienceSlide?.blocks) ? audienceSlide.blocks : [])
+      .map((block) => block?.id)
+      .filter((blockId) => typeof blockId === "string" && blockId.length > 0),
+  );
+  const slidesForAudienceCue = audienceSlide
+    ? sectionSlides.filter((slide) => {
+        const sharesBlock = (Array.isArray(slide.blocks) ? slide.blocks : []).some(
+          (block) => audienceBlockIds.has(block?.id),
+        );
+        if (sharesBlock) return true;
+        return (
+          Number.isFinite(slide.sourceBlockStart) &&
+          Number.isFinite(slide.sourceBlockEnd) &&
+          Number.isFinite(audienceSlide.sourceBlockStart) &&
+          Number.isFinite(audienceSlide.sourceBlockEnd) &&
+          slide.sourceBlockEnd >= audienceSlide.sourceBlockStart &&
+          slide.sourceBlockStart <= audienceSlide.sourceBlockEnd
+        );
+      })
+    : sectionSlides;
+  const cueSlides = slidesForAudienceCue.length > 0 ? slidesForAudienceCue : sectionSlides;
+  const sourceText = cueSlides.map((slide) => slide.bodyText).join("\n").trim();
+  const sourceKey = [
+    currentWorkspaceSong.id || "song",
+    currentSongSequenceEntryId || section.id,
+    audienceSlide?.slideId || currentSongSlideId || "",
+  ].join("\u0000");
   const layoutKey = presentation?.layoutKey || "";
   const sourceChanged =
     songLowerThirdState.sourceKey !== sourceKey ||
@@ -13352,7 +13409,7 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
     songLowerThirdState.sectionId = section.id;
     songLowerThirdState.sourceText = sourceText;
     songLowerThirdState.layoutKey = layoutKey;
-    songLowerThirdState.segments = sectionSlides.map((slide) => ({
+    songLowerThirdState.segments = cueSlides.map((slide) => ({
       text: slide.bodyText,
       slideId: slide.slideId,
       sequenceEntryId: slide.sequenceEntryId,
@@ -13368,29 +13425,6 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
     songLowerThirdState.index,
     songLowerThirdState.segments,
   );
-  renderSongLowerThirdControls();
-}
-
-function syncSongLowerThirdCueForAudienceSlide(slide) {
-  if (!slide || songLowerThirdState.segments.length === 0) return;
-  const audienceBlockIds = new Set(
-    (Array.isArray(slide.blocks) ? slide.blocks : [])
-      .map((block) => block?.id)
-      .filter((blockId) => typeof blockId === "string" && blockId.length > 0),
-  );
-  let cueIndex = songLowerThirdState.segments.findIndex((segment) =>
-    segment.blockIds?.some((blockId) => audienceBlockIds.has(blockId)),
-  );
-  if (cueIndex < 0 && Number.isFinite(slide.sourceBlockStart)) {
-    cueIndex = songLowerThirdState.segments.findIndex(
-      (segment) =>
-        Number.isFinite(segment.sourceBlockStart) &&
-        Number.isFinite(segment.sourceBlockEnd) &&
-        segment.sourceBlockEnd >= slide.sourceBlockStart &&
-        segment.sourceBlockStart <= slide.sourceBlockEnd,
-    );
-  }
-  songLowerThirdState.index = cueIndex >= 0 ? cueIndex : 0;
   renderSongLowerThirdControls();
 }
 

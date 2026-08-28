@@ -100,6 +100,38 @@ test("manual break inputs survive the deck editor compatibility round-trip", asy
   assert.deepEqual(roundTrip.presentation.manualBreaks, song.presentation.manualBreaks);
 });
 
+test("explicit song deck pages are not chunked a second time for audience output", async () => {
+  const song = await readFixture("long-song.json");
+  const deckSong = deckToTransientSong(songAstToDeck(song));
+  const audience = resolveSongSlides(deckSong, {
+    outputRole: "audience",
+    outputSize: { width: 1920, height: 1080 },
+    measure: capacityMeasure(1000),
+  });
+  assert.equal(deckSong.presentation.explicitPageBoundaries, true);
+  assert.equal(
+    audience.slides.filter((slide) => slide.sectionId === "verse_1").length,
+    1,
+  );
+
+  const lowerThird = resolveSongSlides(deckSong, {
+    outputRole: "lowerThird",
+    outputSize: { width: 1920, height: 1080 },
+    typography: { maxLines: 2 },
+    chunking: { mode: "autoFit", avoidOrphans: true, spacerBreaks: true },
+    measure: (text) => ({
+      fits: true,
+      overflow: false,
+      lineCount: String(text).split("\n").length,
+      resolvedFontSize: 52,
+    }),
+  });
+  assert.equal(
+    lowerThird.slides.filter((slide) => slide.sectionId === "verse_1").length,
+    3,
+  );
+});
+
 test("song chunking honors manual breaks and avoids a one-line orphan", async () => {
   const song = await readFixture("long-song.json");
   const verse = song.sections[0];
@@ -206,6 +238,31 @@ test("song slide IDs are stable while layout keys invalidate for content, theme,
     measurementMode: "dom",
   });
   assert.notEqual(first.layoutKey, domMeasured.layoutKey);
+});
+
+test("resolved song slide objects contain only the active chunk blocks", async () => {
+  const song = await readFixture("long-song.json");
+  song.sections[0].slideObjects = [{
+    id: "verse_text",
+    kind: "text",
+    blocks: structuredClone(song.sections[0].blocks),
+  }];
+  const resolved = resolveSongSlides(song, {
+    outputSize: { width: 1920, height: 1080 },
+    measure: capacityMeasure(500),
+  });
+  const verseSlides = resolved.slides.filter((slide) => slide.sectionId === "verse_1");
+  assert.equal(verseSlides.length, 2);
+  for (const slide of verseSlides) {
+    assert.deepEqual(
+      slide.slideObjects[0].blocks.map((block) => block.id),
+      slide.blocks.map((block) => block.id),
+    );
+  }
+  assert.notDeepEqual(
+    verseSlides[0].slideObjects[0].blocks.map((block) => block.id),
+    verseSlides[1].slideObjects[0].blocks.map((block) => block.id),
+  );
 });
 
 test("theme text frame participates in bounds and cache identity", async () => {

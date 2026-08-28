@@ -11,7 +11,7 @@ import {
   waitForTextFonts,
 } from "./text-measure.mjs";
 
-export const SONG_SLIDE_RESOLVER_VERSION = 1;
+export const SONG_SLIDE_RESOLVER_VERSION = 2;
 const resolvedSongCache = new Map();
 const MAX_CACHE_ENTRIES = 100;
 
@@ -61,6 +61,22 @@ function selectedActiveSlideId(slides, options = {}) {
     if (slide) return slide.slideId;
   }
   return slides[0]?.slideId || null;
+}
+
+function slideObjectsForChunk(slideObjects, chunkBlocks) {
+  const blockIds = new Set(
+    (Array.isArray(chunkBlocks) ? chunkBlocks : [])
+      .map((block) => block?.id)
+      .filter((id) => typeof id === "string" && id.length > 0),
+  );
+  return (Array.isArray(slideObjects) ? slideObjects : []).flatMap((object) => {
+    if (!object || object.kind === "image" || object.kind === "shape") {
+      return object ? [clone(object)] : [];
+    }
+    if (!Array.isArray(object.blocks)) return [clone(object)];
+    const blocks = object.blocks.filter((block) => blockIds.has(block?.id));
+    return blocks.length > 0 ? [{ ...clone(object), blocks: clone(blocks) }] : [];
+  });
 }
 
 function copyrightForSlide(song, options, index) {
@@ -186,7 +202,12 @@ export function resolveSongSlides(song, options = {}) {
           sourceBlockEnd: chunk.sourceBlockEnd,
           layout: chunk.layout,
           ...(Array.isArray(occurrence.section?.slideObjects)
-            ? { slideObjects: clone(occurrence.section.slideObjects) }
+            ? {
+                slideObjects: slideObjectsForChunk(
+                  occurrence.section.slideObjects,
+                  chunk.blocks,
+                ),
+              }
             : {}),
         });
       });

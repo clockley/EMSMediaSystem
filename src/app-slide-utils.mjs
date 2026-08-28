@@ -677,10 +677,15 @@ export function deckToTransientSong(deck) {
     arrangements: Array.isArray(canonicalSong.arrangements)
       ? structuredClone(canonicalSong.arrangements)
       : [],
-    presentation:
-      canonicalSong.presentation && typeof canonicalSong.presentation === "object"
+    presentation: {
+      ...(canonicalSong.presentation && typeof canonicalSong.presentation === "object"
         ? structuredClone(canonicalSong.presentation)
-        : { defaultChunking: { mode: "blocksPerSlide", maxBlocks: 99 } },
+        : {}),
+      // Once a song has been converted to a deck, each page is an explicit
+      // audience slide boundary. Retain the canonical chunking metadata for
+      // editing/round-tripping, but do not apply it to the page a second time.
+      explicitPageBoundaries: true,
+    },
     defaultRender: deckDefaultRender(norm),
   };
   return normalizeToSongAST(song);

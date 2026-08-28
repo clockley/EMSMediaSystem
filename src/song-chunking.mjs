@@ -26,6 +26,15 @@ function visualBlockCount(blocks) {
 }
 
 function normalizeChunking(song, section, options = {}) {
+  if (song?.presentation?.explicitPageBoundaries === true && !options.chunking) {
+    return {
+      mode: "blocksPerSlide",
+      maxLines: Number.MAX_SAFE_INTEGER,
+      maxBlocks: Number.MAX_SAFE_INTEGER,
+      avoidOrphans: false,
+      spacerBreaks: false,
+    };
+  }
   const configured =
     options.chunking ||
     section?.presentation?.chunking ||
@@ -47,6 +56,9 @@ function normalizeChunking(song, section, options = {}) {
 }
 
 function manualBreakIds(song, section, options = {}) {
+  if (song?.presentation?.explicitPageBoundaries === true && !options.chunking) {
+    return new Set();
+  }
   const source = [
     ...(Array.isArray(song?.presentation?.manualBreaks) ? song.presentation.manualBreaks : []),
     ...(Array.isArray(section?.manualBreaks) ? section.manualBreaks : []),
