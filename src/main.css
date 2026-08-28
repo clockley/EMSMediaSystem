@@ -7225,17 +7225,31 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     outline: 0;
     box-shadow: none;
     font-weight: 800;
-    text-decoration-line: underline;
-    text-decoration-color: currentColor;
-    text-decoration-thickness: max(2px, 0.07em);
-    text-underline-offset: 0.12em;
+    text-decoration: none;
+    -webkit-text-stroke:
+        var(--operator-selection-stroke-width, 0.032em)
+        var(--operator-selection-shadow, rgba(0, 0, 0, 0.96));
+    paint-order: stroke fill;
     text-shadow:
-        0 1px 2px var(--operator-selection-shadow, rgba(0, 0, 0, 0.96)),
-        0 0 0.12em var(--operator-selection-shadow, rgba(0, 0, 0, 0.96));
+        -0.045em 0 var(--operator-selection-shadow, rgba(0, 0, 0, 0.96)),
+        0.045em 0 var(--operator-selection-shadow, rgba(0, 0, 0, 0.96)),
+        0 -0.045em var(--operator-selection-shadow, rgba(0, 0, 0, 0.96)),
+        0 0.045em var(--operator-selection-shadow, rgba(0, 0, 0, 0.96)),
+        0 1px 0.12em var(--operator-selection-shadow, rgba(0, 0, 0, 0.96));
 }
 
 .song-preview-block.operator-lower-third-selection {
     padding-inline: 0;
+    /* Song renderers preserve imported/theme colors as inline styles. The
+       operator cue must win that cascade or the selected lyric looks
+       unchanged, especially when rich-text spans are present. */
+    color: var(--operator-selection-color, #ffe36e) !important;
+    font-weight: 800 !important;
+}
+
+.song-preview-block.operator-lower-third-selection > span {
+    color: inherit !important;
+    font-weight: inherit !important;
 }
 
 @media (max-width: 620px) {

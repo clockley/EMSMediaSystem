@@ -15863,18 +15863,24 @@ function selectedSlideTextRange(objectId) {
 }
 
 function fitTextElementToBox(box, textEl, { baseSize, minSize, mode = "fit" } = {}) {
-  if (!box || !textEl || mode === "none") return;
+  if (!box || !textEl) return;
   const boxWidth = Math.max(1, box.clientWidth || box.getBoundingClientRect().width || 0);
   const boxHeight = Math.max(1, box.clientHeight || box.getBoundingClientRect().height || 0);
   if (!boxWidth || !boxHeight) return;
   let size = Math.max(1, Number(baseSize) || 1);
   const min = Math.max(1, Math.min(size, Number(minSize) || size));
+  const hardMin = Math.min(size, 8);
   textEl.style.fontSize = `${size}px`;
-  while (
-    size > min &&
-    (textEl.scrollHeight > Math.ceil(boxHeight) + 1 || textEl.scrollWidth > Math.ceil(boxWidth) + 1)
-  ) {
-    size = Math.max(min, Math.floor(size * 0.92));
+  const overflows = () =>
+    textEl.scrollHeight > Math.ceil(boxHeight) + 1 ||
+    textEl.scrollWidth > Math.ceil(boxWidth) + 1;
+  const normalMin = mode === "none" ? size : min;
+  while (size > normalMin && overflows()) {
+    size = Math.max(normalMin, Math.floor(size * 0.92));
+    textEl.style.fontSize = `${size}px`;
+  }
+  while (size > hardMin && overflows()) {
+    size = Math.max(hardMin, Math.floor(size * 0.92));
     textEl.style.fontSize = `${size}px`;
   }
 }

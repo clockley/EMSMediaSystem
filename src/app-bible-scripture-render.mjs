@@ -54,6 +54,7 @@ export const SCRIPTURE_MIN_BODY_FONT_SIZE = 38;
 export const SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE = 20;
 export const SCRIPTURE_MIN_REFERENCE_FONT_SIZE = 20;
 export const SCRIPTURE_FIT_HEIGHT_RATIO = 0.86;
+export const TEXT_PREVIEW_HARD_MIN_FONT_SIZE = 8;
 export const SCRIPTURE_AUTOSIZE_NONE = "none";
 export const SCRIPTURE_AUTOSIZE_FIT = "fit";
 export const SCRIPTURE_AUTOSIZE_NORMALIZE = "normalize";
@@ -719,6 +720,17 @@ export function fitFullscreenScriptureRender(render, message) {
     );
   }
 
+  if (!scriptureRenderBoxFits(render, box, fitBounds)) {
+    fittedBodySize = findLargestFittingScriptureFontSize(
+      render,
+      box,
+      fitBounds,
+      Math.min(TEXT_PREVIEW_HARD_MIN_FONT_SIZE, fittedBodySize),
+      fittedBodySize,
+      applyCandidate,
+    );
+  }
+
   const fittedReferenceSize = scriptureReferenceSizeForBody(
     fittedBodySize,
     baseReferenceSize,
@@ -853,9 +865,7 @@ export function applyScriptureRenderToPreview(render, bodyEl, referenceEl, messa
     attributionEl.textContent = message.attributionText || "";
     attributionEl.hidden = !message.attributionText;
   }
-  if (message.resolvedLayout?.measurementMode !== "dom") {
-    fitFullscreenScriptureRender(render, message);
-  }
+  fitFullscreenScriptureRender(render, message);
 }
 
 export function isBibleLowerThirdFeatureEnabled() {

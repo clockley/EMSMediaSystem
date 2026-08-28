@@ -1,9 +1,21 @@
-function parseHexColor(value) {
-  const match = String(value || "").trim().match(/^#([\da-f]{3}|[\da-f]{6})$/i);
-  if (!match) return null;
-  const hex = match[1].length === 3
-    ? [...match[1]].map((part) => `${part}${part}`).join("")
-    : match[1];
+function parseCssColor(value) {
+  const source = String(value || "").trim();
+  const match = source.match(/^#([\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/i);
+  if (!match) {
+    const rgbMatch = source.match(
+      /^rgba?\(\s*([\d.]+)%?\s*[, ]\s*([\d.]+)%?\s*[, ]\s*([\d.]+)%?(?:\s*[,/]\s*[\d.]+%?)?\s*\)$/i,
+    );
+    if (!rgbMatch) return null;
+    const percentage = source.slice(0, source.lastIndexOf(")")).includes("%");
+    return rgbMatch.slice(1, 4).map((part) => {
+      const channel = Number(part) * (percentage ? 2.55 : 1);
+      return Math.max(0, Math.min(255, Math.round(channel)));
+    });
+  }
+  const colorHex = match[1];
+  const hex = colorHex.length <= 4
+    ? [...colorHex.slice(0, 3)].map((part) => `${part}${part}`).join("")
+    : colorHex.slice(0, 6);
   return [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
 }
 
@@ -31,8 +43,8 @@ export function operatorSelectionContrast({
   textColor,
   hasVariableBackground = false,
 } = {}) {
-  const background = parseHexColor(backgroundColor) || [0, 0, 0];
-  const text = parseHexColor(textColor);
+  const background = parseCssColor(backgroundColor) || [0, 0, 0];
+  const text = parseCssColor(textColor);
   const black = [8, 8, 8];
   const white = [255, 255, 255];
   const backgroundIsDark = relativeLuminance(background) < 0.42;
@@ -52,11 +64,15 @@ export function operatorSelectionContrast({
       : ideal.css;
   }
 
-  const colorRgb = parseHexColor(color);
+  const colorRgb = parseCssColor(color);
   const shadow = relativeLuminance(colorRgb) > 0.42
     ? "rgba(0, 0, 0, 0.96)"
     : "rgba(255, 255, 255, 0.96)";
-  return { color, shadow };
+  return {
+    color,
+    shadow,
+    strokeWidth: hasVariableBackground ? "0.055em" : "0.032em",
+  };
 }
 
 /** Apply the shared operator cue palette to a Bible or Song preview root. */
@@ -71,5 +87,6 @@ export function applyOperatorSelectionContrast(element, message = {}) {
   });
   element.style.setProperty("--operator-selection-color", selection.color);
   element.style.setProperty("--operator-selection-shadow", selection.shadow);
+  element.style.setProperty("--operator-selection-stroke-width", selection.strokeWidth);
   return selection;
 }

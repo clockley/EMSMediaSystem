@@ -97,6 +97,7 @@ const SCRIPTURE_MIN_BODY_FONT_SIZE = 38;
 const SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE = 20;
 const SCRIPTURE_MIN_REFERENCE_FONT_SIZE = 20;
 const SCRIPTURE_FIT_HEIGHT_RATIO = 0.86;
+const TEXT_OUTPUT_HARD_MIN_FONT_SIZE = 8;
 const SCRIPTURE_AUTOSIZE_NONE = "none";
 const SCRIPTURE_AUTOSIZE_FIT = "fit";
 const SCRIPTURE_AUTOSIZE_NORMALIZE = "normalize";
@@ -833,6 +834,8 @@ function activateTextTarget(data) {
   if (textCanvas) textCanvas.style.display = "flex";
   if (data.textPayload) {
     applyTextMessage(data.textPayload);
+  } else {
+    scheduleStableTextPresentationRefit();
   }
 }
 
@@ -1780,6 +1783,7 @@ const textPresentationState = {
   signature: "",
 };
 let textPresentationResizeFrame = 0;
+let textPresentationResizeObserver = null;
 
 function normalizeScriptureLook(value) {
   return value === SCRIPTURE_LOOK_LOWER_THIRD
@@ -2095,21 +2099,36 @@ function fitFullscreenScriptureRender(render, message) {
       baseBodySize,
     );
 
+  const enforceVisibleOutput = (currentSize) => {
+    if (scriptureRenderBoxFits(render, box, maxHeight)) return currentSize;
+    return findLargestFittingScriptureFontSize(
+      render,
+      box,
+      maxHeight,
+      Math.min(TEXT_OUTPUT_HARD_MIN_FONT_SIZE, currentSize),
+      currentSize,
+      applyCandidate,
+    );
+  };
+
   if (message?.resolvedLayout?.measurementMode === "dom") {
     const resolvedSize = Number(message.resolvedLayout.resolvedFontSize);
-    applyCandidate(Number.isFinite(resolvedSize) ? resolvedSize : baseBodySize);
+    const initialSize = Number.isFinite(resolvedSize) ? resolvedSize : baseBodySize;
+    applyCandidate(initialSize);
+    enforceVisibleOutput(initialSize);
     return message.resolvedLayout;
   }
 
   if (autosizeMode === SCRIPTURE_AUTOSIZE_NONE) {
     applyCandidate(baseBodySize);
+    enforceVisibleOutput(baseBodySize);
     return;
   }
 
   if (groupFontSize !== null) {
     applyCandidate(groupFontSize);
     if (!scriptureRenderBoxFits(render, box, maxHeight)) {
-      findLargestFittingScriptureFontSize(
+      const fittedSize = findLargestFittingScriptureFontSize(
         render,
         box,
         maxHeight,
@@ -2117,11 +2136,12 @@ function fitFullscreenScriptureRender(render, message) {
         groupFontSize,
         applyCandidate,
       );
+      enforceVisibleOutput(fittedSize);
     }
     return;
   }
 
-  findLargestFittingScriptureFontSize(
+  const fittedSize = findLargestFittingScriptureFontSize(
     render,
     box,
     maxHeight,
@@ -2129,12 +2149,28 @@ function fitFullscreenScriptureRender(render, message) {
     baseBodySize,
     applyCandidate,
   );
+  enforceVisibleOutput(fittedSize);
 }
 
 function refitCurrentTextPresentation() {
   if (!textPresentationState.lastMessage) return;
   const textContent = document.getElementById("textContent");
   if (!textContent) return;
+  const objectBodies = textContent.querySelectorAll(
+    ".slide-text-output-object__body[data-fit-base-size]",
+  );
+  if (objectBodies.length > 0) {
+    objectBodies.forEach((body) => {
+      const box = body.closest(".slide-text-output-object");
+      if (!box) return;
+      fitTextElementToBox(box, body, {
+        baseSize: Number(body.dataset.fitBaseSize),
+        minSize: Number(body.dataset.fitMinSize),
+        mode: body.dataset.fitMode || "fit",
+      });
+    });
+    return;
+  }
   fitFullscreenScriptureRender(textContent, textPresentationState.lastMessage);
 }
 
@@ -2143,9 +2179,19 @@ function scheduleTextPresentationRefit() {
     window.cancelAnimationFrame(textPresentationResizeFrame);
   }
   textPresentationResizeFrame = window.requestAnimationFrame(() => {
-    textPresentationResizeFrame = 0;
-    refitCurrentTextPresentation();
+    textPresentationResizeFrame = window.requestAnimationFrame(() => {
+      textPresentationResizeFrame = 0;
+      refitCurrentTextPresentation();
+    });
   });
+}
+
+function scheduleStableTextPresentationRefit() {
+  scheduleTextPresentationRefit();
+  const fontsReady = document.fonts?.ready;
+  if (fontsReady?.then) {
+    void fontsReady.then(() => scheduleTextPresentationRefit());
+  }
 }
 
 function ensureScriptureTextShell(textContent) {
@@ -2238,18 +2284,27 @@ function renderSlideTextObjectBackground(box, object) {
 }
 
 function fitTextElementToBox(box, textEl, { baseSize, minSize, mode = "fit" } = {}) {
-  if (!box || !textEl || mode === "none") return;
+  if (!box || !textEl) return;
   const boxWidth = Math.max(1, box.clientWidth || box.getBoundingClientRect().width || 0);
   const boxHeight = Math.max(1, box.clientHeight || box.getBoundingClientRect().height || 0);
   if (!boxWidth || !boxHeight) return;
   let size = Math.max(1, Number(baseSize) || 1);
   const min = Math.max(1, Math.min(size, Number(minSize) || size));
+  const hardMin = Math.min(size, TEXT_OUTPUT_HARD_MIN_FONT_SIZE);
   textEl.style.fontSize = `${size}px`;
-  while (
-    size > min &&
-    (textEl.scrollHeight > Math.ceil(boxHeight) + 1 || textEl.scrollWidth > Math.ceil(boxWidth) + 1)
-  ) {
-    size = Math.max(min, Math.floor(size * 0.92));
+  const overflows = () =>
+    textEl.scrollHeight > Math.ceil(boxHeight) + 1 ||
+    textEl.scrollWidth > Math.ceil(boxWidth) + 1;
+  const normalMin = mode === "none" ? size : min;
+  while (size > normalMin && overflows()) {
+    size = Math.max(normalMin, Math.floor(size * 0.92));
+    textEl.style.fontSize = `${size}px`;
+  }
+  // The configured minimum is a design preference, not permission to crop
+  // live text. Continue to an emergency floor when the real output is smaller
+  // or shaped differently from the operator-side measurement surface.
+  while (size > hardMin && overflows()) {
+    size = Math.max(hardMin, Math.floor(size * 0.92));
     textEl.style.fontSize = `${size}px`;
   }
 }
@@ -2342,12 +2397,21 @@ function renderSlideObjects(textContent, objects, message) {
     body.style.textDecoration = object.textDecoration || "";
     body.style.lineHeight = String(object.lineHeight || message.lineHeight || SCRIPTURE_LINE_HEIGHT);
     body.innerHTML = renderSongSectionHTML(object.blocks);
+    const fitBaseSize = bodyFontSize;
+    const fitMinSize = normalizeScriptureFontSize(
+      object.minFontSize,
+      message.minFontSize || SCRIPTURE_MIN_BODY_FONT_SIZE,
+    );
+    const fitMode = object.autofit || message.autosizeMode || "fit";
+    body.dataset.fitBaseSize = String(fitBaseSize);
+    body.dataset.fitMinSize = String(fitMinSize);
+    body.dataset.fitMode = fitMode;
     box.appendChild(body);
     textContent.appendChild(box);
     fitTextElementToBox(box, body, {
-      baseSize: bodyFontSize,
-      minSize: normalizeScriptureFontSize(object.minFontSize, message.minFontSize || SCRIPTURE_MIN_BODY_FONT_SIZE),
-      mode: object.autofit || message.autosizeMode || "fit",
+      baseSize: fitBaseSize,
+      minSize: fitMinSize,
+      mode: fitMode,
     });
   }
 }
@@ -2696,6 +2760,7 @@ function applyTextMessage(message) {
     renderTextCopyrightOverlay(textCanvas, copyrightText);
     textPresentationState.lastMessage = { ...safeMessage, look };
     refitCurrentTextPresentation();
+    scheduleStableTextPresentationRefit();
     return;
   }
   textPresentationState.signature = signature;
@@ -2708,6 +2773,7 @@ function applyTextMessage(message) {
     renderSlideObjects(textContent, slideObjects, safeMessage);
     renderTextCopyrightOverlay(textCanvas, copyrightText);
     textPresentationState.lastMessage = { ...safeMessage, look };
+    scheduleStableTextPresentationRefit();
     applyTextCanvasBackground(textCanvas, safeMessage, lowerThirdOutput, look);
     applyTextPresentationTransition(
       textCanvas,
@@ -2781,6 +2847,7 @@ function applyTextMessage(message) {
   renderTextCopyrightOverlay(textCanvas, copyrightText);
   textPresentationState.lastMessage = { ...safeMessage, look };
   refitCurrentTextPresentation();
+  scheduleStableTextPresentationRefit();
 
   applyTextCanvasBackground(textCanvas, safeMessage, lowerThirdOutput, look);
 
@@ -2829,6 +2896,13 @@ function installTextHandlers() {
     });
   });
   window.addEventListener("resize", scheduleTextPresentationRefit);
+  const textCanvas = document.getElementById("textCanvas");
+  if (!textPresentationResizeObserver && textCanvas && typeof ResizeObserver === "function") {
+    textPresentationResizeObserver = new ResizeObserver(() => {
+      scheduleTextPresentationRefit();
+    });
+    textPresentationResizeObserver.observe(textCanvas);
+  }
 }
 
 async function loadMedia() {
@@ -2854,6 +2928,7 @@ async function loadMedia() {
     if (videoEl) videoEl.style.display = "none";
     if (textCanvas) textCanvas.style.display = "flex";
     installTextHandlers();
+    scheduleStableTextPresentationRefit();
     return;
   }
 
