@@ -6417,11 +6417,8 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     min-width: 0;
     min-height: 0;
     display: grid;
-    /* The preview row keeps a firm floor so the lower-third plate (which is
-       pinned to the bottom of a simulated 16:9 frame) always has enough room
-       to render without being cropped by its own overflow:hidden. Anything
-       that still doesn't fit (toolbar + cue panel on very short windows)
-       scrolls instead of silently clipping. */
+    /* The audience preview owns the flexible row. The shared lower-third
+       component lives in the cue panel below it, matching the Songs page. */
     grid-template-rows: auto minmax(280px, 1fr) auto;
     background: var(--window-bg-color);
     overflow-x: hidden;
@@ -6498,7 +6495,7 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     isolation: isolate;
 }
 
-.bible-preview-surface--lower-third {
+.lower-third-preview {
     background: #00ff00;
 }
 
@@ -6702,25 +6699,30 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     gap: var(--bible-preview-scripture-gap);
 }
 
-.bible-preview-surface--lower-third .scripture-render--lower-third {
+.lower-third-preview .scripture-render--lower-third {
     padding: 0 4% 8%;
 }
 
-.bible-preview-surface--lower-third .scripture-render--lower-third .scripture-render__box {
+.lower-third-preview .scripture-render--lower-third .scripture-render__box {
     flex: 0 0 100%;
     width: 100%;
     max-width: 1766px;
     padding: clamp(10px, 2.8cqh, 20px) clamp(16px, 4cqi, 34px);
 }
 
-.bible-preview-surface--lower-third .scripture-render--lower-third .scripture-render__body {
+.lower-third-preview .scripture-render--lower-third .scripture-render__body {
     font-size: clamp(18px, var(--scripture-lower-third-font-size), 52px);
 }
 
-.bible-preview-surface--lower-third .scripture-render--lower-third .scripture-render__reference {
+.lower-third-preview .scripture-render--lower-third .scripture-render__reference {
     font-size: clamp(12px, calc(var(--scripture-lower-third-font-size) * 0.4), 24px);
 }
 
+/* The actual lower-third output is bottom-aligned, but its operator preview
+   should present the complete plate in the center of the available shell.
+   Scripture plates can be taller than Song plates because they include a
+   reference and attribution; centering the plate prevents that extra content
+   from making the preview appear pinned to the top. */
 .bible-preview-reference {
     display: block;
 }
@@ -7025,8 +7027,10 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     margin: 0;
 }
 
-.song-lower-third-preview {
+.lower-third-preview--standalone {
     position: relative;
+    display: grid;
+    place-items: center;
     /* Preserve enough of the width-scaled output's lower band to show the
        complete two-line plate instead of cropping everything above its foot. */
     height: clamp(210px, 18vw, 300px);
@@ -7036,16 +7040,40 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     background: #00ff00;
 }
 
+/* Standalone operator previews show the complete plate centered in their
+   available shell. Do not bottom-align a cropped slice of the simulated
+   1080p canvas here: Scripture adds reference/attribution rows and would
+   otherwise extend above the visible area. This affects previews only; the
+   audience lower-third window retains its real bottom-aligned layout. */
+.lower-third-preview--standalone .lower-third-preview__render {
+    position: relative;
+    top: auto;
+    left: auto;
+    width: var(--bible-preview-scaled-width) !important;
+    height: auto;
+    max-height: 100%;
+    padding-top: 0;
+    padding-bottom: 0;
+    align-items: center;
+    overflow: visible;
+}
+
+/* Match the visual breathing room between the audience preview and shared
+   lower-third panel used by the Songs workspace. */
+#bibleLowerThirdCuePanel {
+    margin-top: 12px;
+}
+
 /* Operator-only cue marker. The light/dark/accent rings stay legible over
    chroma keys, photographs, and user-selected plate/text colors. */
-.bible-preview-surface--lower-third .scripture-render.is-operator-cued .scripture-render__box {
+.lower-third-preview .scripture-render.is-operator-cued .scripture-render__box {
     position: relative;
     outline: 2px solid #fff;
     outline-offset: -3px;
     box-shadow: inset 0 0 0 5px #1a5fb4, inset 0 0 0 7px rgba(0, 0, 0, 0.9);
 }
 
-.bible-preview-surface--lower-third .scripture-render.is-operator-cued .scripture-render__box::after {
+.lower-third-preview .scripture-render.is-operator-cued .scripture-render__box::after {
     content: "Cued";
     position: absolute;
     right: 10px;

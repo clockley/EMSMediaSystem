@@ -107,7 +107,6 @@ import {
   SCRIPTURE_MIN_BODY_FONT_SIZE,
   SCRIPTURE_REFERENCE_FONT_SIZE,
   applyScriptureRenderToPreview,
-  applyBiblePreviewOutputScale,
   bibleStyleSnapshot,
   classifyPresentationType,
   clampLowerThirdSegmentIndex,
@@ -136,7 +135,10 @@ import {
   waitForScriptureFonts,
 } from "./app-bible-scripture-render.mjs";
 import { waitForTextFonts } from "./text-measure.mjs";
-import { installLowerThirdPreviewScaleObserver } from "./lower-third-preview-scale.mjs";
+import {
+  installLowerThirdPreviewScaleObserver,
+  renderLowerThirdPreview,
+} from "./lower-third-preview.mjs";
 import {
   configureCountdown,
   handleTimeMessage,
@@ -523,7 +525,9 @@ let songShowNowSourceId = null;
 let bibleLowerThirdOutputActive = false;
 let activeLowerThirdContentType = null;
 let bibleLowerThirdLiveCueKey = "";
+let bibleLowerThirdPreviewSourceKey = "";
 const songLowerThirdState = {
+  sourceKey: "",
   sectionId: "",
   sourceText: "",
   layoutKey: "",
@@ -6290,6 +6294,17 @@ function selectScriptureResolvedSlide(entry, presentation, slideId) {
   const unit = presentation?.slides?.find((slide) => slide.slideId === slideId);
   if (!unit || !entry) return false;
   entry.currentSlideId = unit.slideId;
+  const lowerThirdPresentation = buildBibleTextMessage(entry, {
+    look: SCRIPTURE_LOOK_LOWER_THIRD,
+  }).resolvedPresentation;
+  const audienceVerses = new Set(Array.isArray(unit.verseNumbers) ? unit.verseNumbers : []);
+  let lowerThirdIndex = (lowerThirdPresentation?.slides || []).findIndex((slide) =>
+    slide.verseNumbers?.some((verse) => audienceVerses.has(verse)),
+  );
+  if (lowerThirdIndex < 0) lowerThirdIndex = 0;
+  const lowerThirdSlide = lowerThirdPresentation?.slides?.[lowerThirdIndex] || null;
+  entry.lowerThirdSegmentIndex = lowerThirdIndex;
+  entry.currentLowerThirdSlideId = lowerThirdSlide?.slideId || null;
   if (entry === bibleDesignerState) bibleDesignerState.currentSlideId = unit.slideId;
   for (const index of [previewCueIndex, currentQueueIndex]) {
     const item = Number.isInteger(index) ? mediaQueue[index] : null;
@@ -6297,6 +6312,8 @@ function selectScriptureResolvedSlide(entry, presentation, slideId) {
     item.currentSlideId = unit.slideId;
     if (item.bible && typeof item.bible === "object") {
       item.bible.currentSlideId = unit.slideId;
+      item.bible.lowerThirdSegmentIndex = lowerThirdIndex;
+      item.bible.currentLowerThirdSlideId = lowerThirdSlide?.slideId || null;
     }
   }
   applyBiblePreview(entry);
@@ -6380,6 +6397,24 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
   }
   syncLowerThirdFeatureAvailability();
   const previewEntry = entry === bibleDesignerState ? bibleDesignerState : entry;
+  const previewSourceKey = [
+    previewEntry.version || "",
+    normalizeScriptureReference(previewEntry.reference || ""),
+    previewEntry.text || "",
+  ].join("\u0000");
+  if (previewSourceKey !== bibleLowerThirdPreviewSourceKey) {
+    bibleLowerThirdPreviewSourceKey = previewSourceKey;
+    previewEntry.lowerThirdSegmentIndex = 0;
+    previewEntry.currentLowerThirdSlideId = null;
+    lowerThirdText.textContent = "";
+    lowerThirdReference.textContent = "";
+    lowerThirdRender.classList.remove("is-operator-cued");
+    document.getElementById("bibleLowerThirdCueList")?.replaceChildren();
+    audienceText
+      .querySelectorAll("mark.operator-lower-third-selection")
+      .forEach((mark) => mark.replaceWith(document.createTextNode(mark.textContent || "")));
+    audienceText.normalize();
+  }
   if (!opts.fontsReadyRetry) {
     const themeFonts = [];
     if (appliedPresentationTheme) {
@@ -6410,6 +6445,7 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
         fontSize: previewEntry.fontSize || SCRIPTURE_BODY_FONT_SIZE,
       }),
     ]).then(() => {
+      if (previewSourceKey !== bibleLowerThirdPreviewSourceKey) return;
       applyBiblePreview(previewEntry, { ...opts, fontsReadyRetry: true });
     });
     return;
@@ -6426,10 +6462,6 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
   panel.hidden = false;
   audienceShell.style.backgroundColor = audienceMessage.backgroundColor;
   const lowerThirdShell = document.getElementById("bibleLowerThirdPreviewShell");
-  if (lowerThirdShell && lowerThirdMessage) {
-    lowerThirdShell.style.backgroundColor =
-      lowerThirdMessage.chromaKeyColor || SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR;
-  }
   queueBiblePreviewMediaWindowSizeRefresh();
   syncBiblePreviewOutputScale();
   if (audienceMessage.backgroundImage) {
@@ -6465,16 +6497,18 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
   );
   markAudiencePreviewTextSelection(audienceText, lowerThirdMessage?.bodyText);
   if (lowerThirdEnabled && lowerThirdMessage) {
-    applyScriptureRenderToPreview(
-      lowerThirdRender,
-      lowerThirdText,
-      lowerThirdReference,
-      lowerThirdMessage,
-    );
-    lowerThirdRender.classList.toggle(
-      "is-operator-cued",
-      Array.isArray(lowerThirdMessage.lowerThirdSegments) && lowerThirdMessage.lowerThirdSegments.length > 0,
-    );
+    renderLowerThirdPreview({
+      shell: lowerThirdShell,
+      render: lowerThirdRender,
+      body: lowerThirdText,
+      reference: lowerThirdReference,
+      message: lowerThirdMessage,
+      outputSize: selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
+      renderMessage: applyScriptureRenderToPreview,
+      cued:
+        Array.isArray(lowerThirdMessage.lowerThirdSegments) &&
+        lowerThirdMessage.lowerThirdSegments.length > 0,
+    });
   }
   syncBibleBackgroundLabel(audienceMessage.backgroundPath);
   syncBibleLookControls(lowerThirdMessage || audienceMessage);
@@ -6785,20 +6819,6 @@ async function advanceBibleLowerThirdCursor() {
     return advanceToNextScheduledBibleText();
   }
   return advanceBibleDesignerToNextVerse();
-}
-
-async function rebuildBibleLowerThirdSegments() {
-  if (!isBibleLowerThirdFeatureEnabled()) return false;
-  await syncBibleStateFromControls();
-  const resolvedEntry = await bibleEntryWithLookupText(bibleDesignerState);
-  if (resolvedEntry && resolvedEntry !== bibleDesignerState) {
-    Object.assign(bibleDesignerState, resolvedEntry);
-  }
-  bibleDesignerState.lowerThirdSegmentIndex = 0;
-  bibleDesignerState.currentLowerThirdSlideId = null;
-  applyBiblePreview(bibleDesignerState, { show: false });
-  persistBibleLowerThirdCueState();
-  return true;
 }
 
 function showBibleWorkspace() {
@@ -13004,6 +13024,28 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     ? transientSongFromSongDocument(currentWorkspaceSongDeck)
     : null;
 
+  const nextLowerThirdSongId = currentWorkspaceSong?.id || "";
+  if (
+    songLowerThirdState.sourceKey &&
+    !songLowerThirdState.sourceKey.startsWith(`${nextLowerThirdSongId}\u0000`)
+  ) {
+    songLowerThirdState.sourceKey = nextLowerThirdSongId
+      ? `${nextLowerThirdSongId}\u0000`
+      : "";
+    songLowerThirdState.sectionId = "";
+    songLowerThirdState.sourceText = "";
+    songLowerThirdState.layoutKey = "";
+    songLowerThirdState.segments = [];
+    songLowerThirdState.index = 0;
+    document.getElementById("songLowerThirdCueList")?.replaceChildren();
+    document.getElementById("songLowerThirdPreviewText")?.replaceChildren();
+    document.getElementById("songLowerThirdPreviewReference")?.replaceChildren();
+    document
+      .getElementById("songLowerThirdPreviewRender")
+      ?.classList.remove("is-operator-cued");
+    markSongAudiencePreviewSelection({ text: "", blockIds: [] });
+  }
+
   const launcher = document.getElementById("songsLauncher");
   const slide = document.getElementById("songsPreviewSlide");
   if (launcher && slide) {
@@ -13279,6 +13321,7 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
   panel.hidden = !currentWorkspaceSong || !lowerThirdEnabled;
   panel.setAttribute("aria-hidden", panel.hidden ? "true" : "false");
   if (!lowerThirdEnabled || !currentWorkspaceSong || !section) {
+    songLowerThirdState.sourceKey = "";
     songLowerThirdState.sectionId = "";
     songLowerThirdState.sourceText = "";
     songLowerThirdState.layoutKey = "";
@@ -13297,12 +13340,15 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
       (!currentSongSequenceEntryId && slide.sectionId === section.id),
   );
   const sourceText = sectionSlides.map((slide) => slide.bodyText).join("\n").trim();
+  const sourceKey = `${currentWorkspaceSong.id || "song"}\u0000${currentSongSequenceEntryId || section.id}`;
   const layoutKey = presentation?.layoutKey || "";
   const sourceChanged =
+    songLowerThirdState.sourceKey !== sourceKey ||
     songLowerThirdState.sectionId !== section.id ||
     songLowerThirdState.sourceText !== sourceText ||
     songLowerThirdState.layoutKey !== layoutKey;
   if (rebuild || sourceChanged || songLowerThirdState.segments.length === 0) {
+    songLowerThirdState.sourceKey = sourceKey;
     songLowerThirdState.sectionId = section.id;
     songLowerThirdState.sourceText = sourceText;
     songLowerThirdState.layoutKey = layoutKey;
@@ -13468,14 +13514,16 @@ function renderSongLowerThirdControls() {
   const body = document.getElementById("songLowerThirdPreviewText");
   const reference = document.getElementById("songLowerThirdPreviewReference");
   const message = buildSongLowerThirdMessage();
-  if (shell) shell.style.backgroundColor = message.chromaKeyColor;
-  applyBiblePreviewOutputScale(
+  renderLowerThirdPreview({
     shell,
-    selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
-    { fit: "width", align: "bottom" },
-  );
-  applyScriptureRenderToPreview(render, body, reference, message);
-  render?.classList.toggle("is-operator-cued", count > 0);
+    render,
+    body,
+    reference,
+    message,
+    outputSize: selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
+    renderMessage: applyScriptureRenderToPreview,
+    cued: count > 0,
+  });
   const selectedCueText = normalizedCueMatchText(message.bodyText).toLocaleLowerCase();
   const selectedCueOccurrence = songLowerThirdState.segments
     .slice(0, index)
@@ -18562,9 +18610,6 @@ function installBibleMediaControls() {
   document.getElementById("songLowerThirdNextBtn")?.addEventListener("click", () => {
     setSongLowerThirdCue(songLowerThirdState.index + 1);
   });
-  document.getElementById("songLowerThirdAutoSplitBtn")?.addEventListener("click", () => {
-    syncSongLowerThirdForSection(currentSongActiveSection(), { rebuild: true });
-  });
   document.getElementById("songLowerThirdShowBtn")?.addEventListener("click", () => {
     void showCuedSongLowerThird().catch((err) => {
       console.error("Failed to show song lower third:", err);
@@ -18971,9 +19016,6 @@ function installBibleMediaControls() {
   });
   document.getElementById("bibleLowerThirdNextBtn")?.addEventListener("click", () => {
     void changeBibleLowerThirdSegment(1).catch(console.error);
-  });
-  document.getElementById("bibleLowerThirdAutoSplitBtn")?.addEventListener("click", () => {
-    void rebuildBibleLowerThirdSegments().catch(console.error);
   });
   document.getElementById("bibleLowerThirdShowBtn")?.addEventListener("click", () => {
     void showCuedBibleLowerThird().catch((err) => {

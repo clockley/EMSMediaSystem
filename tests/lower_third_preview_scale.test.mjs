@@ -1,7 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { applyLowerThirdPreviewScale } from "../src/lower-third-preview-scale.mjs";
+import {
+  applyLowerThirdPreviewScale,
+  lowerThirdPreviewMarkup,
+} from "../src/lower-third-preview.mjs";
+
+test("shared lower-third markup provides stable component slots", () => {
+  const markup = lowerThirdPreviewMarkup({
+    prefix: "scriptureLowerThird",
+    label: "Lower Third",
+    feature: true,
+  });
+  assert.match(markup, /class="lower-third-preview bible-preview-surface/);
+  assert.match(markup, /id="scriptureLowerThirdShell"/);
+  assert.match(markup, /id="scriptureLowerThirdRender"/);
+  assert.match(markup, /id="scriptureLowerThirdText"/);
+  assert.match(markup, /id="scriptureLowerThirdReference"/);
+  assert.match(markup, /id="scriptureLowerThirdAttribution"/);
+  assert.match(markup, /data-lower-third-feature hidden/);
+});
 
 function fakeSurface(width, height) {
   const values = new Map();

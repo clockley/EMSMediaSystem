@@ -26,7 +26,7 @@ import {
 import {
   applyLowerThirdPreviewScale,
   installLowerThirdPreviewScaleObserver,
-} from "./lower-third-preview-scale.mjs";
+} from "./lower-third-preview.mjs";
 
 export const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
 export {
@@ -894,7 +894,7 @@ export function syncLowerThirdFeatureAvailability() {
 
   document
     .getElementById("biblePreviewPanel")
-    ?.classList.toggle("bible-preview-panel--audience-only", !enabled);
+    ?.classList.add("bible-preview-panel--audience-only");
   document
     .querySelector(".bible-editor-fields")
     ?.classList.toggle("bible-editor-fields--audience-only", !enabled);

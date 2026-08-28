@@ -16,6 +16,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 /** Hidden host for the persistent <video id="preview"> across tab switches. */
+import { lowerThirdPreviewMarkup } from "./lower-third-preview.mjs";
+
 export const PREVIEW_STASH_ID = "previewStash";
 /** Persistent panel shell under `#dyneForm` — built once so live playback survives UI refreshes. */
 export const TAB_PANEL_MEDIA_ID = "tab-panel-media";
@@ -569,16 +571,13 @@ export function generateMediaFormHTML() {
                     <span id="songLowerThirdHeading" class="bible-lower-third-label">Song Lower Third</span>
                     <span class="bible-lower-third-cue-hint">Select a two-line lyric cue, then show it on the lower-third output</span>
                   </div>
-                  <button type="button" id="songLowerThirdAutoSplitBtn" class="pill-button secondary">Auto Arrange</button>
                 </div>
-                <section id="songLowerThirdPreviewShell" class="bible-preview-surface bible-preview-surface--lower-third song-lower-third-preview" aria-label="Song lower-third preview">
-                  <div id="songLowerThirdPreviewRender" class="bible-preview-copy scripture-render scripture-render--lower-third">
-                    <div class="scripture-render__box">
-                      <div id="songLowerThirdPreviewText" class="scripture-render__body"></div>
-                      <div id="songLowerThirdPreviewReference" class="scripture-render__reference"></div>
-                    </div>
-                  </div>
-                </section>
+                ${lowerThirdPreviewMarkup({
+                  prefix: "songLowerThirdPreview",
+                  ariaLabel: "Song lower-third preview",
+                  shellClass: "lower-third-preview--standalone",
+                  attribution: false,
+                })}
                 <div id="songLowerThirdCueList" class="bible-lower-third-cue-list" role="listbox" aria-label="Song lower-third lyric cues" tabindex="0"></div>
                 <div class="bible-lower-third-cue-actions">
                   <button type="button" id="songLowerThirdPrevBtn" class="pill-button secondary">Previous</button>
@@ -929,7 +928,7 @@ export function generateMediaFormHTML() {
           <div class="bible-workspace__toolbar">
             <span id="bibleWorkspaceTitle" class="bible-workspace__title">Bible</span>
           </div>
-          <div id="biblePreviewPanel" class="bible-preview-panel">
+          <div id="biblePreviewPanel" class="bible-preview-panel bible-preview-panel--audience-only">
             <section id="bibleAudiencePreviewShell" class="bible-preview-surface bible-preview-surface--audience" aria-label="Audience output preview">
               <span class="bible-preview-surface-label">Audience</span>
               <video id="biblePreviewBackgroundVideo" class="bible-preview-background-video" muted loop playsinline hidden></video>
@@ -938,16 +937,6 @@ export function generateMediaFormHTML() {
                   <div id="biblePreviewText" class="bible-preview-text scripture-render__body"></div>
                   <div id="biblePreviewReference" class="bible-preview-reference scripture-render__reference"></div>
                   <div id="biblePreviewAttribution" class="bible-preview-attribution scripture-render__attribution"></div>
-                </div>
-              </div>
-            </section>
-            <section id="bibleLowerThirdPreviewShell" class="bible-preview-surface bible-preview-surface--lower-third" aria-label="Lower third output preview" data-lower-third-feature hidden>
-              <span class="bible-preview-surface-label">Lower Third</span>
-              <div id="bibleLowerThirdPreviewRender" class="bible-preview-copy scripture-render scripture-render--lower-third">
-                <div class="scripture-render__box">
-                  <div id="bibleLowerThirdPreviewText" class="bible-preview-text scripture-render__body"></div>
-                  <div id="bibleLowerThirdPreviewReference" class="bible-preview-reference scripture-render__reference"></div>
-                  <div id="bibleLowerThirdPreviewAttribution" class="bible-preview-attribution scripture-render__attribution"></div>
                 </div>
               </div>
             </section>
@@ -966,8 +955,12 @@ export function generateMediaFormHTML() {
                 <span id="bibleLowerThirdCueHeading" class="bible-lower-third-label">Lower Third</span>
                 <span class="bible-lower-third-cue-hint">Select text to cue, then show it on the lower-third output</span>
               </div>
-              <button type="button" id="bibleLowerThirdAutoSplitBtn" class="pill-button secondary">Auto Arrange</button>
             </div>
+            ${lowerThirdPreviewMarkup({
+              prefix: "bibleLowerThirdPreview",
+              ariaLabel: "Scripture lower-third preview",
+              shellClass: "lower-third-preview--standalone",
+            })}
             <div id="bibleLowerThirdCueList" class="bible-lower-third-cue-list" role="listbox" aria-label="Lower-third text cues" tabindex="0"></div>
             <div class="bible-lower-third-cue-actions">
               <button type="button" id="bibleLowerThirdPrevBtn" class="pill-button secondary">Previous</button>
