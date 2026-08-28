@@ -6186,7 +6186,7 @@ function markAudiencePreviewTextSelection(element, cueText) {
   element.replaceChildren(before, mark, after);
 }
 
-function markSongAudiencePreviewSelection(cueText) {
+function markSongAudiencePreviewSelection(cue, cueOccurrence = 0) {
   const preview = document.getElementById("songsPreviewSlide");
   if (!preview) return;
   const lines = [...preview.querySelectorAll(".song-preview-block:not(.song-preview-block--spacer)")];
@@ -6195,8 +6195,24 @@ function markSongAudiencePreviewSelection(cueText) {
     mark.replaceWith(...mark.childNodes);
   });
   lines.forEach((line) => line.normalize());
-  const cue = normalizedCueMatchText(cueText).toLocaleLowerCase();
-  if (!cue || !lines.length) return;
+  const cueBlockIds = new Set(
+    (Array.isArray(cue?.blockIds) ? cue.blockIds : []).filter(
+      (blockId) => typeof blockId === "string" && blockId.length > 0,
+    ),
+  );
+  if (cueBlockIds.size > 0) {
+    const matchingLines = lines.filter((line) => cueBlockIds.has(line.dataset.songBlockId || ""));
+    if (matchingLines.length > 0) {
+      matchingLines.forEach((line) => line.classList.add("operator-lower-third-selection"));
+      return;
+    }
+  }
+
+  // Compatibility fallback for legacy/imported slides whose rendered blocks
+  // do not carry stable AST block IDs.
+  const cueText = typeof cue === "string" ? cue : cue?.text;
+  const normalizedCue = normalizedCueMatchText(cueText).toLocaleLowerCase();
+  if (!normalizedCue || !lines.length) return;
 
   let combined = "";
   const characterLocations = [];
@@ -6223,9 +6239,25 @@ function markSongAudiencePreviewSelection(cueText) {
       node = walker.nextNode();
     }
   });
-  const matchStart = combined.indexOf(cue);
+  const requestedOccurrence = Math.max(
+    0,
+    Number.isFinite(cueOccurrence) ? Math.trunc(cueOccurrence) : 0,
+  );
+  let matchStart = -1;
+  let searchFrom = 0;
+  for (let occurrence = 0; occurrence <= requestedOccurrence; occurrence += 1) {
+    matchStart = combined.indexOf(normalizedCue, searchFrom);
+    if (matchStart < 0) break;
+    searchFrom = matchStart + Math.max(1, normalizedCue.length);
+  }
+  // The audience slide may contain fewer copies than the whole lower-third
+  // section. In that case prefer its last visible copy instead of leaving a
+  // stale highlight behind.
+  if (matchStart < 0 && requestedOccurrence > 0) {
+    matchStart = combined.lastIndexOf(normalizedCue);
+  }
   if (matchStart < 0) return;
-  const matchEnd = matchStart + cue.length;
+  const matchEnd = matchStart + normalizedCue.length;
 
   const rangesByNode = new Map();
   characterLocations.slice(matchStart, matchEnd).forEach((location) => {
@@ -10470,6 +10502,9 @@ function renderSongBlocksIntoPreview(preview, blocks, color = "#ffffff", textBox
   const astBlocks = Array.isArray(blocks) ? blocks : [];
   for (const block of astBlocks) {
     const lineEl = document.createElement("div");
+    if (typeof block?.id === "string" && block.id) {
+      lineEl.dataset.songBlockId = block.id;
+    }
     const text = block?.type === "lyricLine"
       ? block.primary?.segments?.map((segment) => segment?.text || "").join("") || ""
       : "";
@@ -10622,6 +10657,9 @@ function renderSlideObjectsIntoPreview(preview, objects, message = {}) {
     for (const block of Array.isArray(object.blocks) ? object.blocks : []) {
       const lineEl = document.createElement("div");
       lineEl.className = "song-preview-block";
+      if (typeof block?.id === "string" && block.id) {
+        lineEl.dataset.songBlockId = block.id;
+      }
       const segments = block?.type === "lyricLine" && Array.isArray(block.primary?.segments)
         ? block.primary.segments
         : [];
@@ -13245,6 +13283,9 @@ function syncSongLowerThirdForSection(section = currentSongActiveSection(), { re
       text: slide.bodyText,
       slideId: slide.slideId,
       sequenceEntryId: slide.sequenceEntryId,
+      blockIds: (Array.isArray(slide.blocks) ? slide.blocks : [])
+        .map((block) => block?.id)
+        .filter((blockId) => typeof blockId === "string" && blockId.length > 0),
     }));
     songLowerThirdState.index = 0;
   }
@@ -13344,6 +13385,11 @@ function renderSongLowerThirdControls() {
     row.setAttribute("role", "option");
     row.setAttribute("aria-selected", index === songLowerThirdState.index ? "true" : "false");
     row.classList.toggle("is-cued", index === songLowerThirdState.index);
+    // Bind the generated row itself. The Songs workspace can be rebuilt,
+    // replacing the cue-list element and its delegated listener; direct row
+    // activation ensures every regenerated cue remains selectable, including
+    // the final row at the bottom of the scrolling list.
+    row.addEventListener("click", () => setSongLowerThirdCue(index, { focus: true }));
     const isLive = bibleLowerThirdOutputActive && songLowerThirdState.liveKey === songLowerThirdCueKey(index);
     row.classList.toggle("is-live", isLive);
     const marker = document.createElement("span");
@@ -13387,12 +13433,32 @@ function renderSongLowerThirdControls() {
   );
   applyScriptureRenderToPreview(render, body, reference, message);
   render?.classList.toggle("is-operator-cued", count > 0);
-  markSongAudiencePreviewSelection(message.bodyText);
+  const selectedCueText = normalizedCueMatchText(message.bodyText).toLocaleLowerCase();
+  const selectedCueOccurrence = songLowerThirdState.segments
+    .slice(0, index)
+    .filter(
+      (segment) =>
+        normalizedCueMatchText(segment?.text).toLocaleLowerCase() === selectedCueText,
+    ).length;
+  markSongAudiencePreviewSelection(
+    songLowerThirdState.segments[index] || { text: message.bodyText },
+    selectedCueOccurrence,
+  );
 }
 
-function setSongLowerThirdCue(index) {
+function setSongLowerThirdCue(index, options = {}) {
   songLowerThirdState.index = clampLowerThirdSegmentIndex(index, songLowerThirdState.segments);
   renderSongLowerThirdControls();
+  if (options.focus === true) {
+    const selectedIndex = songLowerThirdState.index;
+    requestAnimationFrame(() => {
+      const selectedRow = document.querySelector(
+        `#songLowerThirdCueList [data-cue-index="${selectedIndex}"]`,
+      );
+      selectedRow?.focus?.({ preventScroll: true });
+      selectedRow?.scrollIntoView?.({ block: "nearest" });
+    });
+  }
 }
 
 async function waitForSongLowerThirdFonts() {
@@ -18441,10 +18507,6 @@ function installBibleMediaControls() {
     });
   });
   const songLowerThirdCueList = document.getElementById("songLowerThirdCueList");
-  songLowerThirdCueList?.addEventListener("click", (event) => {
-    const row = event.target.closest?.("[data-cue-index]");
-    if (row) setSongLowerThirdCue(Number(row.dataset.cueIndex));
-  });
   songLowerThirdCueList?.addEventListener("keydown", (event) => {
     let target = songLowerThirdState.index;
     if (event.key === "ArrowUp" || event.key === "PageUp") target -= 1;
