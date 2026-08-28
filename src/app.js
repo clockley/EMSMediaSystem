@@ -108,9 +108,7 @@ import {
   SCRIPTURE_REFERENCE_FONT_SIZE,
   applyScriptureRenderToPreview,
   applyBiblePreviewOutputScale,
-  bibleLowerThirdMeasurePanel,
   bibleStyleSnapshot,
-  buildMeasuredLowerThirdSegments,
   classifyPresentationType,
   clampLowerThirdSegmentIndex,
   configureBibleScriptureRender,
@@ -130,7 +128,6 @@ import {
   queueBiblePreviewMediaWindowSizeRefresh,
   refreshBiblePreviewMediaWindowSize,
   resetBiblePreviewMediaWindowSize,
-  resolveBibleLowerThirdState,
   scriptureReferencePresentationForBackground,
   selectedBiblePreviewOutputSize,
   setLastShownBibleStyleOverrides,
@@ -585,10 +582,8 @@ const bibleDesignerState = {
   lowerThirdBarBackgroundColor: SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
   lowerThirdBarBackgroundPath: "",
   look: SCRIPTURE_DEFAULT_LOOK,
-  lowerThirdSegments: [],
   lowerThirdSegmentIndex: 0,
   currentLowerThirdSlideId: null,
-  lowerThirdSourceText: "",
   transition: DEFAULT_ITEM_SLIDE_TRANSITION,
 };
 
@@ -5909,10 +5904,6 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
   };
   const look = normalizeScriptureLook(opts.look || entry.look || bibleDesignerState.look);
   const isLowerThird = look === SCRIPTURE_LOOK_LOWER_THIRD;
-  const lowerThird = resolveBibleLowerThirdState(entry, {
-    rebuild: opts.rebuildLowerThird === true,
-    panel: opts.measurePanel || bibleLowerThirdMeasurePanel(),
-  });
   const backgroundUrl = style.backgroundPath ? pathToMediaUrl(style.backgroundPath) : "";
   const backgroundVideo = !isLowerThird && /\.(mp4|m4v|mov|mkv|webm)$/i.test(style.backgroundPath)
     ? backgroundUrl
@@ -5951,10 +5942,10 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     lineHeight: SCRIPTURE_LINE_HEIGHT,
     look,
     fullBodyText,
-    lowerThirdSegments: lowerThird.segments,
-    lowerThirdSegmentIndex: lowerThird.index,
-    lowerThirdSegmentCount: lowerThird.segments.length,
-    bodyText: isLowerThird ? lowerThird.text : fullBodyText,
+    lowerThirdSegments: [],
+    lowerThirdSegmentIndex: 0,
+    lowerThirdSegmentCount: 0,
+    bodyText: fullBodyText,
     position: { vertical: "center", horizontal: "center" },
   };
   if (isLowerThird) {
@@ -5977,7 +5968,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
       autosizeMode: SCRIPTURE_AUTOSIZE_FIT,
       maxLines: 2,
     };
-    let resolved = renderScriptureForTarget(
+    const resolved = renderScriptureForTarget(
       { ...entry, text: fullBodyText, ...style },
       {
         outputRole: "lowerThird",
@@ -5992,36 +5983,6 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
       },
       resolvedTheme,
     );
-    if (
-      !opts.activeSlideId &&
-      !entry.currentLowerThirdSlideId &&
-      Number.isFinite(entry.lowerThirdSegmentIndex) &&
-      entry.lowerThirdSegmentIndex > 0
-    ) {
-      const legacySlide = resolved.presentation.slides[
-        Math.min(
-          Math.trunc(entry.lowerThirdSegmentIndex),
-          resolved.presentation.slides.length - 1,
-        )
-      ];
-      if (legacySlide) {
-        resolved = renderScriptureForTarget(
-          { ...entry, text: fullBodyText, ...style },
-          {
-            outputRole: "lowerThird",
-            outputSize,
-            activeSlideId: legacySlide.slideId,
-            style: lowerThirdTypography,
-            typography: {
-              ...(resolvedTheme?.typography || lowerThirdTypography),
-              maxLines: 2,
-            },
-            forceAutoSplit: true,
-          },
-          resolvedTheme,
-        );
-      }
-    }
     const resolvedSegments = resolved.presentation.slides.map((unit) => ({
       text: unit.bodyText,
       slideId: unit.slideId,
@@ -6032,7 +5993,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
         (unit) => unit.slideId === resolved.activeUnit?.slideId,
       ),
     );
-    return {
+    const lowerThirdResult = {
       ...enrichLowerThirdPresentationMessage(message, pathToMediaUrl),
       ...resolved.message,
       bodyText: resolved.activeUnit?.bodyText || "",
@@ -6052,6 +6013,9 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
       layoutKey: resolved.presentation.layoutKey,
       resolvedLayout: resolved.activeUnit?.layout || null,
     };
+    return resolvedTheme
+      ? themedLowerThirdMessage(lowerThirdResult, resolvedTheme)
+      : lowerThirdResult;
   }
   const outputSize = opts.outputSize || selectedBiblePreviewOutputSize("dspSelct");
   const resolvedTheme = appliedPresentationTheme
@@ -6082,7 +6046,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     },
     resolvedTheme,
   );
-  return {
+  const audienceResult = {
     ...message,
     ...resolved.message,
     color: message.color,
@@ -6096,6 +6060,9 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     referenceFontSize: message.referenceFontSize,
     transition: entry.transition || message.transition,
   };
+  return resolvedTheme
+    ? themedAudienceMessage(audienceResult, resolvedTheme)
+    : audienceResult;
 }
 
 function nonTextPresentationObjects(objects) {
@@ -6495,7 +6462,7 @@ function syncBibleLookControls(message) {
   const look = normalizeScriptureLook(bibleDesignerState.look || controlMessage.look);
   const count = Number.isFinite(controlMessage.lowerThirdSegmentCount)
     ? controlMessage.lowerThirdSegmentCount
-    : normalizeLowerThirdSegments(bibleDesignerState.lowerThirdSegments).length;
+    : 0;
   const segmentCount = Math.max(0, Math.trunc(count));
   const rawIndex = Number.isFinite(controlMessage.lowerThirdSegmentIndex)
     ? Math.trunc(controlMessage.lowerThirdSegmentIndex)
@@ -6515,7 +6482,7 @@ function syncBibleLookControls(message) {
 }
 
 function bibleLowerThirdCueKey(index = bibleDesignerState.lowerThirdSegmentIndex) {
-  return `${bibleDesignerState.lowerThirdSourceText || bibleDesignerState.text || ""}\u0000${index}`;
+  return `${bibleDesignerState.text || ""}\u0000${index}`;
 }
 
 function renderBibleLowerThirdCueList(rawSegments, selectedIndex) {
@@ -6569,9 +6536,7 @@ function persistBibleLowerThirdCueState() {
     currentSlideId: bibleDesignerState.currentSlideId || null,
     bible: {
       ...(mediaQueue[targetIndex].bible || {}),
-      lowerThirdSegments: normalizeLowerThirdSegments(bibleDesignerState.lowerThirdSegments),
       lowerThirdSegmentIndex: bibleDesignerState.lowerThirdSegmentIndex,
-      lowerThirdSourceText: bibleDesignerState.lowerThirdSourceText,
       currentSlideId: bibleDesignerState.currentSlideId || null,
       currentLowerThirdSlideId: bibleDesignerState.currentLowerThirdSlideId || null,
     },
@@ -6583,10 +6548,10 @@ function persistBibleLowerThirdCueState() {
 
 async function commitBibleDesignerRenderState({ rebuildLowerThird = false } = {}) {
   await syncBibleStateFromControls();
-  resolveBibleLowerThirdState(bibleDesignerState, {
-    rebuild: rebuildLowerThird,
-    panel: bibleLowerThirdMeasurePanel(),
-  });
+  if (rebuildLowerThird) {
+    bibleDesignerState.lowerThirdSegmentIndex = 0;
+    bibleDesignerState.currentLowerThirdSlideId = null;
+  }
   applyBiblePreview(bibleDesignerState, { show: false });
   if (await syncBibleDesignerStateToPreviewedQueueItem()) {
     saveMediaFile();
@@ -6602,16 +6567,13 @@ async function setBibleLowerThirdSegmentIndex(index) {
   if (resolvedEntry && resolvedEntry !== bibleDesignerState) {
     Object.assign(bibleDesignerState, resolvedEntry);
   }
-  const lowerThird = resolveBibleLowerThirdState(bibleDesignerState, {
-    panel: bibleLowerThirdMeasurePanel(),
-  });
   const resolvedMessage = buildBibleTextMessage(bibleDesignerState, {
     look: SCRIPTURE_LOOK_LOWER_THIRD,
   });
   const resolvedSlides = resolvedMessage.resolvedPresentation?.slides || [];
   const nextIndex = clampLowerThirdSegmentIndex(
     index,
-    resolvedSlides.length > 0 ? resolvedSlides : lowerThird.segments,
+    resolvedSlides,
   );
   const nextSlideId = resolvedSlides[nextIndex]?.slideId || null;
   if (
@@ -6708,9 +6670,8 @@ async function nextBibleVerseEntryFromDesigner() {
     verse: nextVerse,
     verseEnd: 0,
     selectedVerses: [nextVerse],
-    lowerThirdSegments: [],
     lowerThirdSegmentIndex: 0,
-    lowerThirdSourceText: "",
+    currentLowerThirdSlideId: null,
   };
 }
 
@@ -6797,10 +6758,7 @@ async function rebuildBibleLowerThirdSegments() {
     Object.assign(bibleDesignerState, resolvedEntry);
   }
   bibleDesignerState.lowerThirdSegmentIndex = 0;
-  resolveBibleLowerThirdState(bibleDesignerState, {
-    rebuild: true,
-    panel: bibleLowerThirdMeasurePanel(),
-  });
+  bibleDesignerState.currentLowerThirdSlideId = null;
   applyBiblePreview(bibleDesignerState, { show: false });
   persistBibleLowerThirdCueState();
   return true;
@@ -7661,9 +7619,8 @@ async function bibleEntryFromVerseDragPayload(payload) {
     verseEnd: verseEnd > verseStart ? verseEnd : 0,
     selectedVerses,
     look: normalized.look,
-    lowerThirdSegments: [],
     lowerThirdSegmentIndex: 0,
-    lowerThirdSourceText: "",
+    currentLowerThirdSlideId: null,
   });
   return {
     ...entry,
@@ -7757,17 +7714,11 @@ function bibleEntryForVerseRows(baseEntry, rows) {
     verse: verseStart,
     verseEnd: verseEnd > verseStart ? verseEnd : 0,
     selectedVerses,
-    lowerThirdSegments: [],
     lowerThirdSegmentIndex: 0,
-    lowerThirdSourceText: "",
+    currentLowerThirdSlideId: null,
   };
   delete entry.autosizeGroupFontSize;
   return entry;
-}
-
-function bibleEntryAutofitOverflows(entry, outputSize = null) {
-  const result = measureBibleEntryAutofit(entry, outputSize);
-  return Boolean(result && !result.fits);
 }
 
 async function currentBibleScheduleOutputSize() {
@@ -7818,37 +7769,6 @@ function normalizeBibleScheduleEntryGroup(entries, outputSize = null) {
     autosizeGroupFontSize: groupFontSize,
     autosizeGroupScope,
   }));
-}
-
-async function bibleEntriesWithAutofitSplits(entry, outputSize = null) {
-  const hydratedEntry = hydrateBibleEntryStyle(entry);
-  const fitOutputSize = normalizeBiblePreviewOutputSize(outputSize) || selectedBiblePreviewOutputSize("dspSelct");
-  if (!bibleEntryAutofitOverflows(hydratedEntry, fitOutputSize)) {
-    return normalizeBibleScheduleEntryGroup([hydratedEntry], fitOutputSize);
-  }
-
-  const rows = await bibleVerseRowsForEntry(hydratedEntry);
-  if (rows.length <= 1) return normalizeBibleScheduleEntryGroup([hydratedEntry], fitOutputSize);
-
-  const chunks = [];
-  let currentRows = [];
-  for (const row of rows) {
-    const candidateRows = [...currentRows, row];
-    const candidateEntry = bibleEntryForVerseRows(hydratedEntry, candidateRows);
-    if (currentRows.length > 0 && bibleEntryAutofitOverflows(candidateEntry, fitOutputSize)) {
-      chunks.push(currentRows);
-      currentRows = [row];
-    } else {
-      currentRows = candidateRows;
-    }
-  }
-  if (currentRows.length > 0) chunks.push(currentRows);
-
-  const splitEntries = chunks.map((chunkRows) => bibleEntryForVerseRows(hydratedEntry, chunkRows));
-  return normalizeBibleScheduleEntryGroup(
-    splitEntries.length ? splitEntries : [hydratedEntry],
-    fitOutputSize,
-  );
 }
 
 async function queueEntriesForBibleScheduleEntry(entry) {
@@ -8051,9 +7971,6 @@ async function showCuedBibleLowerThird() {
   if (resolvedEntry && resolvedEntry !== bibleDesignerState) {
     Object.assign(bibleDesignerState, resolvedEntry);
   }
-  resolveBibleLowerThirdState(bibleDesignerState, {
-    panel: bibleLowerThirdMeasurePanel(),
-  });
   const wasActive = bibleLowerThirdOutputActive;
   if (wasActive) {
     await sendBibleLowerThirdTextToOutput(bibleDesignerState);
@@ -8647,9 +8564,8 @@ function resolvedBibleStyleDefaults() {
     lowerThirdBarBackgroundPath:
       projectScriptureOverrides.lowerThirdBarBackgroundPath || "",
     look: SCRIPTURE_DEFAULT_LOOK,
-    lowerThirdSegments: [],
     lowerThirdSegmentIndex: 0,
-    lowerThirdSourceText: "",
+    currentLowerThirdSlideId: null,
   };
 }
 
@@ -8803,14 +8719,13 @@ function hydrateBibleEntryStyle(entry = {}) {
         ? entry.lowerThirdChromaKeyColor
         : defaults.lowerThirdChromaKeyColor,
     look: normalizeScriptureLook(entry?.look || defaults.look),
-    lowerThirdSegments: normalizeLowerThirdSegments(entry?.lowerThirdSegments),
     lowerThirdSegmentIndex: Number.isFinite(entry?.lowerThirdSegmentIndex)
       ? Math.max(0, Math.trunc(entry.lowerThirdSegmentIndex))
       : 0,
-    lowerThirdSourceText:
-      typeof entry?.lowerThirdSourceText === "string"
-        ? entry.lowerThirdSourceText
-        : "",
+    currentLowerThirdSlideId:
+      typeof entry?.currentLowerThirdSlideId === "string"
+        ? entry.currentLowerThirdSlideId
+        : null,
   };
 }
 
@@ -9185,9 +9100,8 @@ function applyBibleStylePayloadToEntry(entry, style) {
     ...style,
     autosizeGroupFontSize: undefined,
     autosizeGroupScope: "",
-    lowerThirdSegments: [],
     lowerThirdSegmentIndex: 0,
-    lowerThirdSourceText: "",
+    currentLowerThirdSlideId: null,
   };
 }
 
@@ -18922,9 +18836,6 @@ function installBibleMediaControls() {
   document.getElementById("bibleLookSelect")?.addEventListener("change", () => {
     void (async () => {
       await syncBibleStateFromControls();
-      resolveBibleLowerThirdState(bibleDesignerState, {
-        panel: bibleLowerThirdMeasurePanel(),
-      });
       await commitBibleDesignerRenderState();
     })().catch(console.error);
   });
@@ -18950,14 +18861,20 @@ function installBibleMediaControls() {
     void setBibleLowerThirdSegmentIndex(Number(row.dataset.cueIndex)).catch(console.error);
   });
   lowerThirdCueList?.addEventListener("keydown", (event) => {
-    const lowerThird = resolveBibleLowerThirdState(bibleDesignerState, {
-      panel: bibleLowerThirdMeasurePanel(),
+    const resolvedMessage = buildBibleTextMessage(bibleDesignerState, {
+      look: SCRIPTURE_LOOK_LOWER_THIRD,
     });
-    let target = lowerThird.index;
+    const slides = resolvedMessage.resolvedPresentation?.slides || [];
+    let target = Math.max(
+      0,
+      slides.findIndex(
+        (slide) => slide.slideId === bibleDesignerState.currentLowerThirdSlideId,
+      ),
+    );
     if (event.key === "ArrowUp" || event.key === "PageUp") target -= 1;
     else if (event.key === "ArrowDown" || event.key === "PageDown") target += 1;
     else if (event.key === "Home") target = 0;
-    else if (event.key === "End") target = lowerThird.segments.length - 1;
+    else if (event.key === "End") target = slides.length - 1;
     else if (event.key === "Enter") {
       event.preventDefault();
       void showCuedBibleLowerThird().catch(console.error);
@@ -19011,10 +18928,8 @@ function installBibleMediaControls() {
         ) {
           delete bibleDesignerState.autosizeGroupFontSize;
           bibleDesignerState.autosizeGroupScope = "";
-          resolveBibleLowerThirdState(bibleDesignerState, {
-            rebuild: true,
-            panel: bibleLowerThirdMeasurePanel(),
-          });
+          bibleDesignerState.lowerThirdSegmentIndex = 0;
+          bibleDesignerState.currentLowerThirdSlideId = null;
         }
         applyBiblePreview(bibleDesignerState, { show: false });
         if (await syncBibleDesignerStateToPreviewedQueueItem()) {
@@ -25222,6 +25137,16 @@ async function applyThemeToLivePresentation(theme) {
       ...buildSongLowerThirdMessage(),
       transition: { effect: "none", durationMs: 0 },
     });
+  }
+  if (document.getElementById("bibleWorkspace")?.hidden === false) {
+    applyBiblePreview(bibleDesignerState, { show: false });
+  }
+  if (isSongsWorkspaceVisible()) {
+    const section = currentSongActiveSection();
+    if (section) {
+      await renderSongSectionPreview(section);
+      renderSongSlideNavigator();
+    }
   }
   renderSongLowerThirdControls();
   showGnomeToast(`Applied “${theme.name}” to live outputs`);

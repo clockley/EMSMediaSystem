@@ -167,7 +167,13 @@ function selectTheme(id) {
 async function reload(preferredId = selectedId) {
   const result = await api.list();
   records = result.themes; activeThemeId = result.activeThemeId;
-  renderList(); selectTheme(records.some(item => item.id === preferredId) ? preferredId : records[0]?.id);
+  const initialSelection = records.some(item => item.id === preferredId)
+    ? preferredId
+    : records.some(item => item.id === activeThemeId)
+      ? activeThemeId
+      : records[0]?.id;
+  renderList();
+  selectTheme(initialSelection);
 }
 
 async function apply() {

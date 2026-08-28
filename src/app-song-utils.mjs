@@ -674,8 +674,11 @@ function applyResolvedThemeToSongMessage(message, resolvedTheme) {
   if (!resolvedTheme) return message;
   const typography = resolvedTheme.typography || {};
   const background = resolvedTheme.canvas?.background || {};
-  const backgroundPath = background.path || "";
-  const backgroundUrl = background.url || (backgroundPath ? pathToMediaUrl(backgroundPath) : "");
+  const backgroundPath = background.assetUrl || background.path || "";
+  const backgroundUrl =
+    background.assetUrl ||
+    background.url ||
+    (backgroundPath ? pathToMediaUrl(backgroundPath) : "");
   return {
     ...message,
     fontFamily: typography.fontFamily || message.fontFamily,
@@ -702,46 +705,6 @@ function applyResolvedThemeToSongMessage(message, resolvedTheme) {
     },
     resolvedTheme,
   };
-}
-
-export function buildSongTextMessage({
-  song,
-  section,
-  render = {},
-  showCopyright = true,
-  resolvedPresentation = null,
-  resolvedUnit = null,
-}) {
-  const presentation =
-    resolvedPresentation ||
-    resolveSongSlides(song, {
-      render,
-      currentSectionId: section?.id || render.currentSectionId,
-      activeSlideId: render.currentSlideId,
-      sequenceEntryId: render.currentSequenceEntryId,
-      outputRole: render.outputRole || "audience",
-      outputSize: render.outputSize,
-      copyrightPlacement: showCopyright ? render.copyrightPlacement : "none",
-    });
-  const unit =
-    resolvedUnit ||
-    presentation?.activeSlide ||
-    presentation?.slides?.find((slide) => slide.sectionId === section?.id) ||
-    null;
-  const resolvedSection =
-    (Array.isArray(song?.sections)
-      ? song.sections.find((entry) => entry?.id === unit?.sectionId)
-      : null) ||
-    section ||
-    null;
-  return buildResolvedSongUnitTextMessage({
-    song,
-    section: resolvedSection,
-    render,
-    showCopyright,
-    resolvedPresentation: presentation,
-    resolvedUnit: unit,
-  });
 }
 
 function arrangementSequenceIdsForLibrary(sequence, sections = []) {

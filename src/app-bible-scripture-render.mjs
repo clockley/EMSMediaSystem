@@ -54,8 +54,6 @@ export const SCRIPTURE_AUTOSIZE_NONE = "none";
 export const SCRIPTURE_AUTOSIZE_FIT = "fit";
 export const SCRIPTURE_AUTOSIZE_NORMALIZE = "normalize";
 export const SCRIPTURE_DEFAULT_AUTOSIZE_MODE = SCRIPTURE_AUTOSIZE_FIT;
-export const LOWER_THIRD_MAX_LINES = 2;
-export const LOWER_THIRD_MEASURE_ID = "bibleLowerThirdMeasure";
 export const FULLSCREEN_SCRIPTURE_MEASURE_ID = "bibleFullscreenScriptureMeasure";
 export const BIBLE_PREVIEW_DEFAULT_OUTPUT_WIDTH = 1920;
 export const BIBLE_PREVIEW_DEFAULT_OUTPUT_HEIGHT = 1080;
@@ -388,48 +386,6 @@ export function clampLowerThirdSegmentIndex(index, segments) {
   if (!Array.isArray(segments) || segments.length === 0) return 0;
   const numericIndex = Number.isFinite(index) ? Math.trunc(index) : 0;
   return Math.max(0, Math.min(segments.length - 1, numericIndex));
-}
-
-export function fallbackLowerThirdSegments(text, maxChars = 82) {
-  const clean = normalizeLowerThirdSegmentText(text);
-  if (!clean) return [];
-  const words = clean.split(/\s+/);
-  const segments = [];
-  let current = "";
-  words.forEach((word) => {
-    const candidate = current ? `${current} ${word}` : word;
-    if (current && candidate.length > maxChars) {
-      segments.push({ text: current });
-      current = word;
-    } else {
-      current = candidate;
-    }
-  });
-  if (current) segments.push({ text: current });
-  return segments;
-}
-
-export function lowerThirdMeasureElements() {
-  if (!document?.body) return null;
-  let root = document.getElementById(LOWER_THIRD_MEASURE_ID);
-  if (!root) {
-    root = document.createElement("div");
-    root.id = LOWER_THIRD_MEASURE_ID;
-    root.className = "scripture-render scripture-render--lower-third scripture-render-measure";
-    root.innerHTML = `
-      <div class="scripture-render__box">
-        <div class="scripture-render__body"></div>
-        <div class="scripture-render__reference"></div>
-        <div class="scripture-render__attribution"></div>
-      </div>
-    `;
-    document.body.appendChild(root);
-  }
-  return {
-    root,
-    body: root.querySelector(".scripture-render__body"),
-    reference: root.querySelector(".scripture-render__reference"),
-  };
 }
 
 export function scriptureRenderScale(el) {
@@ -873,104 +829,6 @@ export function refitBiblePreviewScripture() {
     audienceRender,
     message,
   );
-}
-
-export function lowerThirdSegmentFits(text, style, width) {
-  const elements = lowerThirdMeasureElements();
-  if (!elements?.root || !elements.body) return true;
-  const message = {
-    look: SCRIPTURE_LOOK_LOWER_THIRD,
-    fontFamily: style.fontFamily || SCRIPTURE_FONT_FAMILY,
-    lowerThirdFontFamily: style.lowerThirdFontFamily || "",
-    fontSize: Number.isFinite(style.fontSize) ? style.fontSize : SCRIPTURE_BODY_FONT_SIZE,
-    lowerThirdFontSize: style.lowerThirdFontSize,
-    referenceFontSize: SCRIPTURE_REFERENCE_FONT_SIZE,
-    fontWeight: SCRIPTURE_FONT_WEIGHT,
-    lineHeight: SCRIPTURE_LINE_HEIGHT,
-    color: style.lowerThirdColor || style.color || "#ffffff",
-    lowerThirdColor: style.lowerThirdColor || style.color || "#ffffff",
-  };
-  elements.root.style.width = `${Math.max(360, Math.round(width || window.innerWidth || 1280))}px`;
-  elements.root.style.height = `${Math.max(220, Math.round((window.innerHeight || 720) * 0.35))}px`;
-  applyScriptureRenderVariables(elements.root, message);
-  elements.body.textContent = normalizeLowerThirdSegmentText(text) || " ";
-  // The visible renderer clips beyond two lines as a final safety net. The
-  // measuring copy must expose its full content height so overflow becomes a
-  // new cue instead of being mistaken for text that fits.
-  elements.body.style.maxHeight = "none";
-  elements.body.style.overflow = "visible";
-  if (elements.reference) elements.reference.textContent = "";
-  const fontSize = resolveLowerThirdFontSize(message, scriptureLowerThirdFontSize);
-  const maxHeight = fontSize * 1.18 * LOWER_THIRD_MAX_LINES + 4;
-  return elements.body.scrollHeight <= maxHeight;
-}
-
-export function buildMeasuredLowerThirdSegments(text, style = {}, panel = null) {
-  const clean = normalizeLowerThirdSegmentText(text);
-  if (!clean) return [];
-  const width =
-    panel?.getBoundingClientRect?.().width ||
-    document.getElementById("biblePreviewPanel")?.getBoundingClientRect?.().width ||
-    window.innerWidth ||
-    1280;
-  const words = clean.split(/\s+/);
-  const segments = [];
-  let current = "";
-  words.forEach((word) => {
-    const candidate = current ? `${current} ${word}` : word;
-    if (current && !lowerThirdSegmentFits(candidate, style, width)) {
-      segments.push({ text: current });
-      current = word;
-    } else {
-      current = candidate;
-    }
-  });
-  if (current) segments.push({ text: current });
-  return segments.length ? segments : fallbackLowerThirdSegments(clean);
-}
-
-export function bibleLowerThirdMeasurePanel() {
-  return (
-    document.getElementById("bibleAudiencePreviewShell") ||
-    document.getElementById("biblePreviewPanel")
-  );
-}
-
-export function resolveBibleLowerThirdState(entry, opts = {}) {
-  if (!entry || typeof entry !== "object") {
-    return { segments: [], index: 0, text: "" };
-  }
-  const sourceText = String(entry.text || "");
-  let segments = normalizeLowerThirdSegments(entry.lowerThirdSegments);
-  const sourceChanged = entry.lowerThirdSourceText !== sourceText;
-  const measurementWidth =
-    opts.panel?.getBoundingClientRect?.().width ||
-    document.getElementById("biblePreviewPanel")?.getBoundingClientRect?.().width ||
-    window.innerWidth ||
-    1280;
-  const hasOverflowingSegment = segments.some(
-    (segment) => !lowerThirdSegmentFits(segment.text, entry, measurementWidth),
-  );
-  const needsRebuild =
-    opts.rebuild === true ||
-    segments.length === 0 ||
-    sourceChanged ||
-    hasOverflowingSegment;
-  if (needsRebuild) {
-    segments = buildMeasuredLowerThirdSegments(sourceText, entry, opts.panel);
-    entry.lowerThirdSegments = segments;
-    entry.lowerThirdSourceText = sourceText;
-    if (sourceChanged) {
-      entry.lowerThirdSegmentIndex = 0;
-    }
-  }
-  const index = clampLowerThirdSegmentIndex(entry.lowerThirdSegmentIndex, segments);
-  entry.lowerThirdSegmentIndex = index;
-  return {
-    segments,
-    index,
-    text: segments[index]?.text || normalizeLowerThirdSegmentText(sourceText),
-  };
 }
 
 export function applyScriptureRenderToPreview(render, bodyEl, referenceEl, message) {
