@@ -53,6 +53,14 @@ import {
   isSongPath,
 } from "./app-media-utils.mjs";
 import { createOutputCommand } from "./output-compositor.mjs";
+import { stageContentFromPresentation } from "./stage-content.mjs";
+import {
+  firstPlayableScheduleIndex,
+  isScheduleItemPlayable,
+  isScheduleItemVisible,
+  nextPlayableScheduleIndex,
+  previousPlayableScheduleIndex,
+} from "./schedule-item-availability.mjs";
 import {
   NAVIGATION_STATES,
   createNavigationStateMachine,
@@ -579,6 +587,42 @@ function isBibleLowerThirdFeatureEnabled() {
   return isBuiltInBibleLowerThirdFeatureEnabled() && lowerThirdUiEnabled;
 }
 
+function scheduleAvailabilityOptions() {
+  return { bibleUiEnabled };
+}
+
+function isScheduleItemCurrentlyVisible(item) {
+  return isScheduleItemVisible(item, scheduleAvailabilityOptions());
+}
+
+function isScheduleItemCurrentlyPlayable(item) {
+  return isScheduleItemPlayable(item, scheduleAvailabilityOptions());
+}
+
+function nextPlayableQueueIndexAfter(fromIndex) {
+  return nextPlayableScheduleIndex(mediaQueue, fromIndex, scheduleAvailabilityOptions());
+}
+
+function previousPlayableQueueIndexBefore(fromIndex) {
+  return previousPlayableScheduleIndex(mediaQueue, fromIndex, scheduleAvailabilityOptions());
+}
+
+function firstPlayableQueueIndex() {
+  return firstPlayableScheduleIndex(mediaQueue, scheduleAvailabilityOptions());
+}
+
+function queueItemStageLabel(item) {
+  if (!item) return "";
+  return String(
+    isQueueItemBible(item) ? bibleQueueItemDisplayName(item) : item.name || "",
+  ).trim();
+}
+
+function nextPlayableQueueItemStageText(fromIndex = currentQueueIndex) {
+  const index = nextPlayableQueueIndexAfter(fromIndex);
+  return index >= 0 ? queueItemStageLabel(mediaQueue[index]) : "";
+}
+
 function syncLowerThirdFeatureAvailability() {
   syncBuiltInLowerThirdFeatureAvailability();
   const lowerThirdEnabled = isBibleLowerThirdFeatureEnabled();
@@ -979,6 +1023,7 @@ function applyLowerThirdOutputPreferences(prefs = {}) {
   bibleUiEnabled = prefs?.bibleUiEnabled !== false;
   lowerThirdUiEnabled = prefs?.lowerThirdUiEnabled !== false;
   syncLowerThirdFeatureAvailability();
+  syncScheduleAfterBibleFeatureChange();
   const color = String(prefs?.lowerThirdChromaKeyColor || "").trim();
   lowerThirdPreferenceChromaKeyColor = /^#[0-9a-f]{6}$/i.test(color)
     ? color
@@ -1819,8 +1864,8 @@ function isQueueItemAutoAdvanceEnabled(index) {
 }
 
 function isNextQueueItemAutoAdvanceEnabled() {
-  const nextIndex = currentQueueIndex + 1;
-  if (nextIndex < 0 || nextIndex >= mediaQueue.length) return false;
+  const nextIndex = nextQueueBoundaryIndex();
+  if (nextIndex < 0) return false;
   return isQueueItemAutoAdvanceEnabled(nextIndex);
 }
 
@@ -1828,6 +1873,7 @@ function shouldAutoTransitionToIndex(nextIndex) {
   if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= mediaQueue.length) {
     return false;
   }
+  if (!isScheduleItemCurrentlyPlayable(mediaQueue[nextIndex])) return false;
   return isQueueItemAutoAdvanceEnabled(nextIndex);
 }
 
@@ -1838,10 +1884,14 @@ function shouldAdvanceAfterCurrentItemEnds() {
 
 function nextQueueBoundaryIndex() {
   const cue = currentPreviewCue();
-  if (cue && cue.index !== currentQueueIndex) return cue.index;
-  const nextIndex = currentQueueIndex + 1;
-  if (nextIndex >= 0 && nextIndex < mediaQueue.length) return nextIndex;
-  return -1;
+  if (
+    cue &&
+    cue.index !== currentQueueIndex &&
+    isScheduleItemCurrentlyPlayable(cue.item)
+  ) {
+    return cue.index;
+  }
+  return nextPlayableQueueIndexAfter(currentQueueIndex);
 }
 
 function rememberLivePreviewMirrorMuteState(mediaEl = video) {
@@ -2725,6 +2775,17 @@ function sendPptxSlideToMediaWindow(slideIndex) {
     filePath: pptxFilePath,
     transition: livePptxItem ? slideTransitionPayloadForQueueItem(livePptxItem) : undefined,
   });
+  const nextSlide =
+    Number.isInteger(slideIndex) && slideIndex + 1 < pptxSlideCount
+      ? `Slide ${slideIndex + 2}`
+      : nextPlayableQueueItemStageText();
+  stageContentCache = {
+    ...stageContentCache,
+    current: `Slide ${Math.max(1, (Number(slideIndex) || 0) + 1)}`,
+    next: nextSlide,
+    serviceItem: queueItemStageLabel(livePptxItem) || "",
+  };
+  void sendCachedStageContent().catch(() => {});
 }
 
 function pptxStartSlideForItem(item) {
@@ -4109,13 +4170,22 @@ function currentAudioPreviewQueueIndex() {
 
 function queueStartIndexForPresent() {
   const cue = currentPreviewCue();
-  if (cue) {
+  if (cue && isScheduleItemCurrentlyPlayable(cue.item)) {
     return cue.index;
   }
-  if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
+  if (
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length &&
+    isScheduleItemCurrentlyPlayable(mediaQueue[currentQueueIndex])
+  ) {
     return currentQueueIndex;
   }
-  return 0;
+  if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
+    const afterCurrent = nextPlayableQueueIndexAfter(currentQueueIndex);
+    if (afterCurrent >= 0) return afterCurrent;
+  }
+  const firstPlayable = firstPlayableQueueIndex();
+  return firstPlayable >= 0 ? firstPlayable : 0;
 }
 
 function currentCueEditableQueueIndex() {
@@ -4163,10 +4233,10 @@ function currentCueEditableQueueIndex() {
 function currentImplicitNextItem() {
   if (mediaQueue.length === 0) return null;
   let nextIdx = -1;
-  if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length - 1) {
-    nextIdx = currentQueueIndex + 1;
+  if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
+    nextIdx = nextPlayableQueueIndexAfter(currentQueueIndex);
   } else if (currentQueueIndex < 0) {
-    nextIdx = 0;
+    nextIdx = firstPlayableQueueIndex();
   }
   if (nextIdx < 0) return null;
   const item = mediaQueue[nextIdx];
@@ -4180,11 +4250,8 @@ function currentImplicitNextItem() {
 }
 
 function currentImplicitPreviousItem() {
-  if (mediaQueue.length === 0) return null;
-  let prevIdx = -1;
-  if (currentQueueIndex > 0 && currentQueueIndex < mediaQueue.length) {
-    prevIdx = currentQueueIndex - 1;
-  }
+  if (mediaQueue.length === 0 || currentQueueIndex <= 0) return null;
+  const prevIdx = previousPlayableQueueIndexBefore(currentQueueIndex);
   if (prevIdx < 0) return null;
   const item = mediaQueue[prevIdx];
   if (!item) return null;
@@ -4988,11 +5055,16 @@ function renderQueue() {
     selectedQueueItems.add(mediaQueue[selectedQueueAnchorIndex]);
   }
 
-  if (mediaQueue.length === 0) {
+  const visibleQueueItems = mediaQueue
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => isScheduleItemCurrentlyVisible(item));
+  const bibleHint = bibleUiEnabled ? ", or Bible text" : "";
+
+  if (visibleQueueItems.length === 0) {
     listContainer.innerHTML =
       '<div class="list-placeholder">' +
       '<span class="list-placeholder-title">No items scheduled</span>' +
-      '<span class="list-placeholder-hint">Add media, network items, or Bible text</span>' +
+      `<span class="list-placeholder-hint">Add media, network items${bibleHint}</span>` +
       "</div>";
   } else {
     // Queue order is the primary source of truth. Badges show live/cued
@@ -5000,8 +5072,8 @@ function renderQueue() {
     const separatePreviewCue = isPreparingSeparateCue();
     const selectedQueueIndex = selectedQueueIndexForDisplay();
 
-    listContainer.innerHTML = mediaQueue
-      .map((item, index) => {
+    listContainer.innerHTML = visibleQueueItems
+      .map(({ item, index }) => {
         const cueStartTime = queueItemCueStartTime(item);
         const hasCueStart = cueStartTime > 0;
 
@@ -5092,6 +5164,34 @@ function renderQueue() {
   }
   updateClearQueueButtonState();
   updatePreviewCueUI();
+}
+
+function syncScheduleAfterBibleFeatureChange() {
+  if (!bibleUiEnabled) {
+    const liveBible =
+      isQueuePresentationActive() &&
+      queueIndexInRange(currentQueueIndex) &&
+      isQueueItemBible(mediaQueue[currentQueueIndex]);
+    if (!liveBible && queueIndexInRange(currentQueueIndex) && isQueueItemBible(mediaQueue[currentQueueIndex])) {
+      const next = nextPlayableQueueIndexAfter(currentQueueIndex);
+      const previous = previousPlayableQueueIndexBefore(currentQueueIndex);
+      const target = next >= 0 ? next : previous;
+      currentQueueIndex = target;
+      setSelectedQueueAnchor(target);
+    }
+    if (queueIndexInRange(previewCueIndex) && isQueueItemBible(mediaQueue[previewCueIndex])) {
+      clearPreviewCue();
+    }
+    if (
+      queueIndexInRange(selectedQueueAnchorIndex) &&
+      isQueueItemBible(mediaQueue[selectedQueueAnchorIndex])
+    ) {
+      const next = nextPlayableQueueIndexAfter(selectedQueueAnchorIndex);
+      const previous = previousPlayableQueueIndexBefore(selectedQueueAnchorIndex);
+      setSelectedQueueAnchor(next >= 0 ? next : previous);
+    }
+  }
+  renderQueue();
 }
 
 function queueIndexInRange(index) {
@@ -5275,14 +5375,20 @@ function ensureQueueDropIndicator(list) {
 
 function updateQueueDropIndicator(list, insertIndex) {
   const indicator = ensureQueueDropIndicator(list);
-  const rows = list.querySelectorAll(".queue-item[data-queue-index]");
+  const rows = [...list.querySelectorAll(".queue-item[data-queue-index]")];
   if (rows.length === 0) {
     indicator.style.top = "0px";
-  } else if (insertIndex >= rows.length) {
-    const lastRow = rows[rows.length - 1];
-    indicator.style.top = `${lastRow.offsetTop + lastRow.offsetHeight}px`;
   } else {
-    indicator.style.top = `${rows[insertIndex].offsetTop}px`;
+    const nextRow = rows.find((row) => {
+      const rowIndex = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+      return Number.isInteger(rowIndex) && rowIndex >= insertIndex;
+    });
+    if (!nextRow) {
+      const lastRow = rows[rows.length - 1];
+      indicator.style.top = `${lastRow.offsetTop + lastRow.offsetHeight}px`;
+    } else {
+      indicator.style.top = `${nextRow.offsetTop}px`;
+    }
   }
   indicator.hidden = false;
   queueDropIndicatorIndex = insertIndex;
@@ -6181,28 +6287,64 @@ function sendAudienceTextMessage(type, message, options = {}) {
   updateOutputHoldButtonStates();
 }
 
-function stageSlideText(slide) {
-  if (!slide || typeof slide !== "object") return "";
-  return String(slide.bodyText || slide.text || blocksToText(slide.blocks || []) || "").trim();
+function livePresentationForStage(type, message = {}) {
+  const embedded = message?.resolvedPresentation;
+  const embeddedCount = Array.isArray(embedded?.slides) ? embedded.slides.length : 0;
+  if (embeddedCount > 1) return embedded;
+  if (type === "song") {
+    const liveItem = currentLiveQueueItem();
+    const sourceItem = isQueueItemSong(liveItem)
+      ? songItemForAudienceResolution(liveItem)
+      : songItemForAudienceResolution(currentSongPresentationItem());
+    const live = sourceItem
+      ? resolvedSongPresentation(sourceItem)?.resolvedPresentation
+      : currentResolvedSongPresentation()?.resolvedPresentation;
+    if ((live?.slides?.length || 0) > embeddedCount) return live;
+  }
+  if (type === "bible") {
+    const live = lastAudienceBibleTextMessage?.resolvedPresentation || embedded;
+    if ((live?.slides?.length || 0) > embeddedCount) return live;
+  }
+  return embedded || null;
 }
 
-async function syncStageContentFromAudienceMessage(type, message = {}) {
-  const presentation = message?.resolvedPresentation;
-  const slides = Array.isArray(presentation?.slides) ? presentation.slides : [];
-  const activeId = presentation?.navigation?.activeSlideId;
-  const activeIndex = Math.max(0, slides.findIndex((slide) => slide.slideId === activeId));
-  const current = stageSlideText(slides[activeIndex]) || String(message.bodyText || message.text || "").trim();
-  const next = stageSlideText(slides[activeIndex + 1]);
-  stageContentCache = {
-    ...stageContentCache,
-    current: current || (type === "bible" ? "Scripture" : "Song"),
-    next,
-    serviceItem: String(message.title || message.referenceText || "").trim(),
-  };
+async function sendCachedStageContent() {
   const status = await invoke("get-output-status").catch(() => null);
   if (status?.stage?.window !== "open") return false;
   stageSessionIdCache = status.sessionId || stageSessionIdCache;
   return sendStageLayer("content", stageContentCache);
+}
+
+async function syncStageContentFromAudienceMessage(type, message = {}) {
+  const presentation = livePresentationForStage(type, message);
+  const payload = stageContentFromPresentation(
+    { ...message, resolvedPresentation: presentation || message?.resolvedPresentation },
+    {
+      type,
+      nextItemText: nextPlayableQueueItemStageText(),
+      slides: presentation?.slides,
+    },
+  );
+  stageContentCache = {
+    ...stageContentCache,
+    ...payload,
+  };
+  return sendCachedStageContent();
+}
+
+async function syncStageContentFromQueueItem(item = currentLiveQueueItem()) {
+  if (!item) return false;
+  if (isQueueItemSong(item) || isQueueItemBible(item)) {
+    return false;
+  }
+  const nextText = nextPlayableQueueItemStageText();
+  stageContentCache = {
+    ...stageContentCache,
+    current: queueItemStageLabel(item) || "Live content",
+    next: nextText,
+    serviceItem: queueItemStageLabel(item),
+  };
+  return sendCachedStageContent();
 }
 
 function nextStageRevision(layer) {
@@ -6382,6 +6524,10 @@ function showMediaWorkspace() {
 
 function selectNavigationForQueueItem(item) {
   if (isQueueItemBible(item)) {
+    if (!bibleUiEnabled) {
+      navigationState.transition(NAVIGATION_STATES.MEDIA);
+      return;
+    }
     navigationState.transition(NAVIGATION_STATES.BIBLE);
   } else if (isQueueItemDeck(item)) {
     navigationState.transition(NAVIGATION_STATES.SLIDES);
@@ -7078,6 +7224,10 @@ async function advanceBibleLowerThirdCursor() {
 }
 
 function showBibleWorkspace() {
+  if (!bibleUiEnabled) {
+    hideBibleWorkspace();
+    return;
+  }
   const workspace = document.getElementById("bibleWorkspace");
   if (!workspace) return;
   hideSongsWorkspace();
@@ -18834,6 +18984,7 @@ async function refreshSongsBrowser(query = "", prefetchedResults = null) {
 }
 
 async function openBibleWorkspaceFromButton() {
+  if (!bibleUiEnabled) return;
   showBibleWorkspace();
   await bibleAPI.waitForReady();
   const versions = await loadBibleVersionMetadataFromSidecar().catch(() => []);
@@ -21781,6 +21932,10 @@ function installMediaQueueListDelegation() {
       e.stopPropagation();
       hideQueueDropIndicator();
       clearBibleVerseDragVisualState();
+      if (!bibleUiEnabled) {
+        showGnomeToast("Bible items are disabled in Preferences");
+        return;
+      }
       const insertIndex = queueDropInsertIndexFromEvent(list, e);
       try {
         const entries = await queueEntriesForBibleVerseDragPayload(droppedBibleVersePayload);
@@ -22529,6 +22684,14 @@ async function loadQueueItemIntoPreviewCue(index) {
 
 async function takeQueueItemLive(index, startTime = 0, opts = {}) {
   if (index < 0 || index >= mediaQueue.length) return;
+  if (!isScheduleItemCurrentlyPlayable(mediaQueue[index])) {
+    const next = nextPlayableQueueIndexAfter(index);
+    if (next < 0) {
+      showGnomeToast("No playable items in the schedule");
+      return;
+    }
+    return takeQueueItemLive(next, startTime, opts);
+  }
   if (pendingQueueSwitchIndex !== null) return;
   if (
     !opts.skipLogoHoldPrep &&
@@ -22676,6 +22839,14 @@ function confirmLiveSwitchAccepted(targetItem) {
 
 async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
+  if (!isScheduleItemCurrentlyPlayable(mediaQueue[index])) {
+    const next = nextPlayableQueueIndexAfter(index);
+    if (next < 0) {
+      showGnomeToast("No playable items in the schedule");
+      return;
+    }
+    return switchQueueItemLiveWithConfirmation(next, startTime);
+  }
   const item = mediaQueue[index];
   if (!(await ensurePendingMediaUpdateApproved(index))) return;
   if (queueIndexIsCurrentLivePresentation(index) || queueIndexMatchesCurrentLiveOutput(index)) {
@@ -23290,6 +23461,21 @@ async function playCurrentQueueItem(opts) {
     renderQueue();
     return;
   }
+  if (!isScheduleItemCurrentlyPlayable(item)) {
+    const next = nextPlayableQueueIndexAfter(currentQueueIndex);
+    if (next >= 0) {
+      currentQueueIndex = next;
+      setSelectedQueueAnchor(next);
+      renderQueue();
+      return playCurrentQueueItem(opts);
+    }
+    showGnomeToast("No playable items in the schedule");
+    isQueuePlaying = false;
+    isPlaying = false;
+    renderQueue();
+    updateDynUI();
+    return;
+  }
   if (queueItemNeedsPendingUpdateApproval(item)) {
     showGnomeToast("Reload the changed media file before taking it live");
     isQueuePlaying = false;
@@ -23343,6 +23529,8 @@ async function playCurrentQueueItem(opts) {
     }
     return;
   }
+
+  void syncStageContentFromQueueItem(item).catch(() => {});
 
   if (!audioOnlyFile && !hasAudienceOutputSelected()) {
     showGnomeToast("Choose an audience output display");
@@ -23430,8 +23618,8 @@ async function advanceQueueAfterMediaWindowClosed() {
       return;
     }
 
-    const nextIndex = currentQueueIndex + 1;
-    if (nextIndex < mediaQueue.length && shouldAutoTransitionToIndex(nextIndex)) {
+    const nextIndex = nextQueueBoundaryIndex();
+    if (nextIndex >= 0 && shouldAutoTransitionToIndex(nextIndex)) {
       currentQueueIndex = nextIndex;
       setSelectedQueueAnchor(nextIndex);
       const item = mediaQueue[currentQueueIndex];
@@ -23449,7 +23637,7 @@ async function advanceQueueAfterMediaWindowClosed() {
     // pauses on that item; otherwise (end of queue) keep the last item
     // highlighted instead of wrapping back to the top.
     await pauseQueuePresentationAtBoundary(
-      nextIndex < mediaQueue.length ? nextIndex : -1,
+      nextIndex >= 0 ? nextIndex : -1,
     );
   } finally {
     isAdvancingQueue = false;
@@ -23472,6 +23660,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
   );
   if (queueSlipstreamTransitionInProgress) return false;
   const nextItem = index >= 0 && index < mediaQueue.length ? mediaQueue[index] : null;
+  if (nextItem && !isScheduleItemCurrentlyPlayable(nextItem)) return false;
   const allowBibleInPlaceSwitch =
     Boolean(nextItem) &&
     isQueueItemBible(nextItem) &&
@@ -23671,6 +23860,8 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     } else if (isSongItem) {
       await sendSongTextToOutput(nextItem);
       await updateLowerThirdForSupportedScheduleItem(nextItem);
+    } else {
+      void syncStageContentFromQueueItem(nextItem).catch(() => {});
     }
     syncAudienceOutputHoldAfterPresentationStart();
     renderQueue();
@@ -23705,10 +23896,10 @@ async function trySlipstreamNextQueueItem() {
       clearCue: true,
     });
   }
-  if (!shouldAutoTransitionToIndex(currentQueueIndex + 1)) {
+  const nextIndex = nextQueueBoundaryIndex();
+  if (!shouldAutoTransitionToIndex(nextIndex)) {
     return false;
   }
-  const nextIndex = currentQueueIndex + 1;
   const nextItem = mediaQueue[nextIndex];
   return slipstreamQueueItemAtIndex(nextIndex, {
     startTime: queueItemCueStartTime(nextItem),
