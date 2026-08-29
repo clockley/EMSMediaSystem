@@ -110,18 +110,6 @@ export function generateMediaFormHTML() {
         </div>
       </div>
 
-      <button type="button" id="openBibleWorkspaceBtn" class="sidebar-bible-button">
-        Bible
-      </button>
-      
-      <button type="button" id="openSongsWorkspaceBtn" class="sidebar-songs-button">
-        Songs
-      </button>
-
-      <button type="button" id="openSlidesWorkspaceBtn" class="sidebar-slides-button">
-        Slides
-      </button>
-
       <!--
         Settings expander: Output Display and Autoplay. Collapsed by default
         to maximize schedule real estate; open-state is persisted to localStorage
@@ -621,10 +609,6 @@ export function generateMediaFormHTML() {
           </aside>
           <section class="slides-workspace__main" aria-label="Deck editor">
             <div class="songs-workspace__toolbar">
-              <button type="button" id="slidesBackToSongPreviewBtn" class="songs-action-btn" hidden title="Save changes and return to song preview">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10.5 3.5L6 8l4.5 4.5M6.5 8H14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <span>Song Preview</span>
-              </button>
               <button type="button" id="slidesWorkspaceTitleButton" class="songs-workspace__title slides-workspace__title-button" disabled title="Rename deck">
                 <span id="slidesWorkspaceTitle">Select or Create a Deck</span>
               </button>

@@ -52,6 +52,11 @@ import {
   songUriPrefix,
   isSongPath,
 } from "./app-media-utils.mjs";
+import { createOutputCommand } from "./output-compositor.mjs";
+import {
+  NAVIGATION_STATES,
+  createNavigationStateMachine,
+} from "./global-navigation-state.mjs";
 import {
   waitForLoadedMetadata,
   waitForMetadata as waitForMediaMetadata,
@@ -237,6 +242,12 @@ let send;
 let invoke;
 let on;
 let getPathForFile;
+let stageSessionIdCache = "";
+const stageLayerRevisions = new Map();
+let stageContentCache = { current: "Waiting for live content", next: "", profile: "current-next" };
+const navigationState = createNavigationStateMachine(NAVIGATION_STATES.MEDIA);
+let navigationStateBeforeStage = NAVIGATION_STATES.MEDIA;
+navigationState.subscribe(renderGlobalNavigationState);
 
 async function waitForPreloadBridge(maxWaitTime = 30000) {
   const bridgeStartTime = Date.now();
@@ -4512,6 +4523,7 @@ function clearPreviewCue() {
   cueVolumeDirty = false;
   syncGtkSliderToCueState();
   if (isBiblePresentationActive()) showBibleWorkspace();
+  else selectNavigationForQueueItem(currentLiveQueueItem());
   restoreCountdownForLiveMedia();
   syncMediaLoopState({ notify: false });
   updatePreviewCueUI();
@@ -4529,6 +4541,7 @@ function clearCueAfterTake(index) {
     cueVolumeDirty = false;
     syncGtkSliderToCueState();
     if (isBiblePresentationActive()) showBibleWorkspace();
+    else selectNavigationForQueueItem(mediaQueue[index]);
     restoreCountdownForLiveMedia();
   }
   syncMediaLoopState({ notify: false });
@@ -6159,11 +6172,189 @@ function sendAudienceTextMessage(type, message, options = {}) {
     rememberAudienceTextMessage(type, themedMessage);
   }
   send("update-text", audienceTextMessageForSend(type, themedMessage, options));
+  void syncStageContentFromAudienceMessage(type, themedMessage);
   if (clearToggle && !applyClearState) {
     liveTextClearActive = false;
   }
   updateClearLiveTextButtonState();
   updateOutputHoldButtonStates();
+}
+
+function stageSlideText(slide) {
+  if (!slide || typeof slide !== "object") return "";
+  return String(slide.bodyText || slide.text || blocksToText(slide.blocks || []) || "").trim();
+}
+
+async function syncStageContentFromAudienceMessage(type, message = {}) {
+  const presentation = message?.resolvedPresentation;
+  const slides = Array.isArray(presentation?.slides) ? presentation.slides : [];
+  const activeId = presentation?.navigation?.activeSlideId;
+  const activeIndex = Math.max(0, slides.findIndex((slide) => slide.slideId === activeId));
+  const current = stageSlideText(slides[activeIndex]) || String(message.bodyText || message.text || "").trim();
+  const next = stageSlideText(slides[activeIndex + 1]);
+  stageContentCache = {
+    ...stageContentCache,
+    current: current || (type === "bible" ? "Scripture" : "Song"),
+    next,
+    serviceItem: String(message.title || message.referenceText || "").trim(),
+  };
+  const status = await invoke("get-output-status").catch(() => null);
+  if (status?.stage?.window !== "open") return false;
+  stageSessionIdCache = status.sessionId || stageSessionIdCache;
+  return sendStageLayer("content", stageContentCache);
+}
+
+function nextStageRevision(layer) {
+  const next = Math.max(Date.now(), (stageLayerRevisions.get(layer) || 0) + 1);
+  stageLayerRevisions.set(layer, next);
+  return next;
+}
+
+async function sendStageLayer(layer, payload = {}, type = "layer.set") {
+  if (!stageSessionIdCache) {
+    const status = await invoke("get-output-status").catch(() => null);
+    stageSessionIdCache = status?.sessionId || "";
+  }
+  if (!stageSessionIdCache) return { delivered: false, reason: "stage-closed" };
+  const command = createOutputCommand({
+    commandId: globalThis.crypto?.randomUUID?.() || `stage-${Date.now()}-${Math.random()}`,
+    sessionId: stageSessionIdCache,
+    revision: nextStageRevision(layer),
+    targetRole: "stage",
+    type,
+    layer,
+    payload,
+  });
+  return invoke("stage-output-command", command);
+}
+
+function updateStageStatusUi(status) {
+  const stage = status?.stage || {};
+  if (status?.sessionId) stageSessionIdCache = status.sessionId;
+  const open = stage.window === "open";
+  const text = open
+    ? `Stage output open · ${stage.privateMessage === "live" ? "private message live" : stage.profile || "ready"}`
+    : "Stage output closed";
+  const label = document.getElementById("stageOutputStatus");
+  if (label) label.textContent = text;
+  const dot = document.getElementById("stageNavStatus");
+  dot?.classList.toggle("is-open", open);
+  dot?.setAttribute("aria-label", text);
+}
+
+async function populateStageDisplaySelect() {
+  const select = document.getElementById("stageDisplaySelect");
+  if (!select) return;
+  const result = await invoke("get-all-displays");
+  select.options.length = 1;
+  for (const display of result.displays || []) {
+    const option = document.createElement("option");
+    option.value = display.value;
+    option.textContent = display.label;
+    select.appendChild(option);
+  }
+  select.value = result.defaultStageDisplayIndex || "";
+}
+
+async function ensureStageOutput() {
+  const display = document.getElementById("stageDisplaySelect")?.value || "";
+  if (!display) {
+    showGnomeToast("Choose a stage output display");
+    return false;
+  }
+  const created = await invoke("create-stage-window", display);
+  if (!created) return false;
+  stageSessionIdCache = created.sessionId || stageSessionIdCache;
+  await sendStageLayer("content", {
+    ...stageContentCache,
+    profile: document.getElementById("stageProfileSelect")?.value || "current-next",
+  });
+  updateStageStatusUi(await invoke("get-output-status"));
+  return true;
+}
+
+async function showPrivateStageMessage() {
+  const message = document.getElementById("stageMessageText")?.value?.trim() || "";
+  if (!message) {
+    showGnomeToast("Enter a private stage message");
+    return false;
+  }
+  if (!(await ensureStageOutput())) return false;
+  const result = await sendStageLayer("privateMessage", {
+    schema: "ems.alert.v1",
+    id: globalThis.crypto?.randomUUID?.() || `message-${Date.now()}`,
+    kind: "privateStage",
+    title: "Stage message",
+    message: message.slice(0, 500),
+    priority: "normal",
+    routes: { audience: false, stage: true },
+  });
+  showGnomeToast(result?.delivered ? "Private message shown on stage" : "Stage message was not delivered");
+  return result?.delivered === true;
+}
+
+async function clearPrivateStageMessage() {
+  const result = await sendStageLayer("privateMessage", {}, "layer.clear");
+  showGnomeToast(result?.delivered ? "Private stage message cleared" : "Stage output is closed");
+  return result?.delivered === true;
+}
+
+async function openStageControls() {
+  await populateStageDisplaySelect().catch(console.error);
+  updateStageStatusUi(await invoke("get-output-status").catch(() => null));
+  document.getElementById("stageControlsBackdrop")?.removeAttribute("hidden");
+  if (navigationState.state !== NAVIGATION_STATES.STAGE) {
+    navigationStateBeforeStage = navigationState.state;
+  }
+  navigationState.transition(NAVIGATION_STATES.STAGE);
+  document.getElementById("stageMessageText")?.focus();
+}
+
+function closeStageControls() {
+  document.getElementById("stageControlsBackdrop")?.setAttribute("hidden", "");
+  if (navigationState.state === NAVIGATION_STATES.STAGE) {
+    navigationState.transition(navigationStateBeforeStage);
+  }
+}
+
+function renderGlobalNavigationState(state) {
+  const buttonIdByState = {
+    [NAVIGATION_STATES.MEDIA]: "openMediaWorkspaceBtn",
+    [NAVIGATION_STATES.SONGS]: "openSongsWorkspaceBtn",
+    [NAVIGATION_STATES.BIBLE]: "openBibleWorkspaceBtn",
+    [NAVIGATION_STATES.SLIDES]: "openSlidesWorkspaceBtn",
+    [NAVIGATION_STATES.STAGE]: "openStageControlsBtn",
+  };
+  const activeButtonId = buttonIdByState[state];
+  document.querySelectorAll(".global-navigation__item").forEach((button) => {
+    const active = button.id === activeButtonId;
+    button.classList.toggle("is-active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+}
+
+function showMediaWorkspace() {
+  hideBibleWorkspace();
+  hideSongsWorkspace();
+  hideSlidesWorkspace();
+  syncPreviewStackSurface();
+  document.getElementById("customControls")?.style.removeProperty("visibility");
+  navigationState.transition(NAVIGATION_STATES.MEDIA);
+}
+
+function selectNavigationForQueueItem(item) {
+  if (isQueueItemBible(item)) {
+    navigationState.transition(NAVIGATION_STATES.BIBLE);
+  } else if (isQueueItemDeck(item)) {
+    navigationState.transition(NAVIGATION_STATES.SLIDES);
+  } else if (isQueueItemSong(item)) {
+    navigationState.transition(NAVIGATION_STATES.SONGS);
+  } else {
+    // PowerPoint remains externally-authored presentation media. It uses its
+    // contextual PPT/PPTX viewer inside Media, not the native Slides editor.
+    navigationState.transition(NAVIGATION_STATES.MEDIA);
+  }
 }
 
 function normalizedCueMatchText(value) {
@@ -6851,13 +7042,12 @@ async function advanceBibleLowerThirdCursor() {
 
 function showBibleWorkspace() {
   const workspace = document.getElementById("bibleWorkspace");
-  const button = document.getElementById("openBibleWorkspaceBtn");
   if (!workspace) return;
   hideSongsWorkspace();
   hideSlidesWorkspace();
   syncLowerThirdFeatureAvailability();
   workspace.hidden = false;
-  button?.setAttribute("data-active", "true");
+  navigationState.transition(NAVIGATION_STATES.BIBLE);
   document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
   document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   setPreviewStackSurface(PREVIEW_SURFACE_BIBLE);
@@ -6877,22 +7067,22 @@ function setBibleStyleEditorVisible(visible) {
 
 function hideBibleWorkspace() {
   const workspace = document.getElementById("bibleWorkspace");
-  const button = document.getElementById("openBibleWorkspaceBtn");
   if (workspace) workspace.hidden = true;
   setBibleStyleEditorVisible(false);
-  button?.setAttribute("data-active", "false");
+  if (navigationState.state === NAVIGATION_STATES.BIBLE) {
+    navigationState.transition(NAVIGATION_STATES.MEDIA);
+  }
   syncPreviewStackSurface();
 }
 
 function showSongsWorkspace() {
   const workspace = document.getElementById("songsWorkspace");
-  const button = document.getElementById("openSongsWorkspaceBtn");
   if (!workspace) return;
   hideBibleWorkspace();
   hideSlidesWorkspace();
   syncLowerThirdFeatureAvailability();
   workspace.hidden = false;
-  button?.setAttribute("data-active", "true");
+  navigationState.transition(NAVIGATION_STATES.SONGS);
   document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
   document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   setPreviewStackSurface(PREVIEW_SURFACE_SONGS);
@@ -6921,20 +7111,20 @@ function showSongsWorkspace() {
 
 function hideSongsWorkspace() {
   const workspace = document.getElementById("songsWorkspace");
-  const button = document.getElementById("openSongsWorkspaceBtn");
   if (workspace) workspace.hidden = true;
-  button?.setAttribute("data-active", "false");
+  if (navigationState.state === NAVIGATION_STATES.SONGS) {
+    navigationState.transition(NAVIGATION_STATES.MEDIA);
+  }
   syncPreviewStackSurface();
 }
 
 function showSlidesWorkspace() {
   const workspace = document.getElementById("slidesWorkspace");
-  const button = document.getElementById("openSlidesWorkspaceBtn");
   if (!workspace) return;
   hideBibleWorkspace();
   hideSongsWorkspace();
   workspace.hidden = false;
-  button?.setAttribute("data-active", "true");
+  navigationState.transition(NAVIGATION_STATES.SLIDES);
   document.getElementById("previewEmptyState")?.setAttribute("hidden", "");
   document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   setPreviewStackSurface(PREVIEW_SURFACE_SLIDES);
@@ -6947,9 +7137,10 @@ function showSlidesWorkspace() {
 
 function hideSlidesWorkspace() {
   const workspace = document.getElementById("slidesWorkspace");
-  const button = document.getElementById("openSlidesWorkspaceBtn");
   if (workspace) workspace.hidden = true;
-  button?.setAttribute("data-active", "false");
+  if (navigationState.state === NAVIGATION_STATES.SLIDES) {
+    navigationState.transition(NAVIGATION_STATES.MEDIA);
+  }
   syncPreviewStackSurface();
 }
 
@@ -14717,15 +14908,6 @@ async function saveCurrentDeck() {
   }
 }
 
-async function returnFromSlideEditorToSongPreview() {
-  if (!currentDeckIsSongDocument()) return;
-  if (deckDirty) await saveCurrentDeck();
-  showSongsWorkspace();
-  const activeSection = currentSongActiveSection();
-  if (activeSection) await renderSongSectionPreview(activeSection);
-  renderSongSlideNavigator();
-}
-
 function resetCurrentSongToThemeDefault() {
   if (!currentDeck || !currentDeckIsSongDocument()) return;
   const selected = itemThemeForRole(currentSongQueueItem, "audience");
@@ -14890,8 +15072,6 @@ function renderSlideEditorState() {
   const hasDeck = Boolean(currentDeck);
   const page = currentPage();
   const isSong = currentDeckIsSongDocument();
-  const backToSongPreview = document.getElementById("slidesBackToSongPreviewBtn");
-  if (backToSongPreview) backToSongPreview.hidden = !isSong;
 
   syncSlidesWorkspaceTitle();
   const themeEditorGroup = document.getElementById("slidesThemeEditorGroup");
@@ -18698,6 +18878,36 @@ function installBibleMediaControls() {
   document.getElementById("openSlidesWorkspaceBtn")?.addEventListener("click", () => {
     void openSlidesWorkspaceFromButton().catch(console.error);
   });
+  document.getElementById("openMediaWorkspaceBtn")?.addEventListener("click", showMediaWorkspace);
+  document.getElementById("openStageControlsBtn")?.addEventListener("click", () => void openStageControls());
+  document.getElementById("closeStageControlsBtn")?.addEventListener("click", closeStageControls);
+  document.getElementById("stageControlsBackdrop")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeStageControls();
+  });
+  document.getElementById("stageDisplaySelect")?.addEventListener("change", (event) => {
+    send("set-stage-display-index", event.target.value || "");
+    if (event.target.value) void ensureStageOutput();
+  });
+  document.getElementById("stageProfileSelect")?.addEventListener("change", async (event) => {
+    stageContentCache.profile = event.target.value;
+    if (await ensureStageOutput()) await sendStageLayer("content", stageContentCache);
+  });
+  document.getElementById("showStageMessageBtn")?.addEventListener("click", () => void showPrivateStageMessage());
+  document.getElementById("clearStageMessageBtn")?.addEventListener("click", () => void clearPrivateStageMessage());
+  on("output-status", (_event, status) => updateStageStatusUi(status));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !document.getElementById("stageControlsBackdrop")?.hidden) {
+      event.preventDefault();
+      closeStageControls();
+      return;
+    }
+    if (event.repeat || event.key !== "F8" || !event.ctrlKey) return;
+    event.preventDefault();
+    if (event.shiftKey) void clearPrivateStageMessage();
+    else void showPrivateStageMessage();
+  });
+  void invoke("get-output-status").then(updateStageStatusUi).catch(() => {});
+  renderGlobalNavigationState(navigationState.state);
   document.getElementById("newDeckBtn")?.addEventListener("click", () => createNewDeck());
   document.getElementById("newDeckFolderBtn")?.addEventListener("click", async () => {
     const name = (window.prompt("New deck folder name") || "").trim();
@@ -18712,12 +18922,6 @@ function installBibleMediaControls() {
   });
   document.getElementById("slidesSaveDeckBtn")?.addEventListener("click", () => {
     void saveCurrentDeck().catch(console.error);
-  });
-  document.getElementById("slidesBackToSongPreviewBtn")?.addEventListener("click", () => {
-    void returnFromSlideEditorToSongPreview().catch((error) => {
-      console.error("Failed to return to song preview:", error);
-      showGnomeToast("Could not return to song preview");
-    });
   });
   document.getElementById("slidesResetSongThemeBtn")?.addEventListener("click", () => {
     resetCurrentSongToThemeDefault();
@@ -20642,9 +20846,9 @@ function firstDroppedProjectPath(dataTransfer) {
 
 function applyDroppedMediaPaths(paths, options = {}) {
   if (!paths || paths.length === 0) return;
-  if (currentMode === MEDIAPLAYER) {
-    enqueuePathsFromFilePicker(paths, options);
-  }
+  if (currentMode !== MEDIAPLAYER) setSBFormMediaPlayer();
+  showMediaWorkspace();
+  enqueuePathsFromFilePicker(paths, options);
   saveMediaFile();
   invoke("remember-media-folder", paths).catch((err) => {
     console.error("remember-media-folder failed:", err);
@@ -21744,6 +21948,7 @@ function queueItemUsesWorkspacePreview(item) {
 
 async function restoreWorkspacePreviewForQueueItem(item, options = {}) {
   if (!queueItemUsesWorkspacePreview(item)) return false;
+  selectNavigationForQueueItem(item);
 
   const token = Number.isFinite(options.previewLoadToken)
     ? options.previewLoadToken
@@ -21803,6 +22008,7 @@ async function restoreWorkspacePreviewForQueueItem(item, options = {}) {
 async function restorePreviewToLiveOutput(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   const item = mediaQueue[index];
+  selectNavigationForQueueItem(item);
   const token = nextPreviewLoadToken();
   if (!isQueueItemBible(item)) {
     hideBibleWorkspace();
@@ -22101,6 +22307,8 @@ function clearVideoPreviewCueOverlay() {
 async function loadQueueItemIntoPreviewCue(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   setSelectedQueueAnchor(index);
+  const item = mediaQueue[index];
+  selectNavigationForQueueItem(item);
   if (queueIndexIsCurrentLivePresentation(index)) {
     await restorePreviewToLiveOutput(index);
     return;
@@ -22114,7 +22322,6 @@ async function loadQueueItemIntoPreviewCue(index) {
   // async and callers may flip playback flags before it finishes.
   renderQueue();
   syncMediaLoopState({ notify: false });
-  const item = mediaQueue[index];
   pendingCueVolume = Number.isFinite(item.cueVolume) ? item.cueVolume : 1;
   syncGtkSliderToCueState();
   const cueStart = queueItemCueStartTime(item);
@@ -22726,6 +22933,7 @@ function resolveQueuePresentationVideo() {
 }
 
 async function loadQueueItemIntoControlWindow(item, opts) {
+  selectNavigationForQueueItem(item);
   resolveQueuePresentationVideo();
   let localVideo = video;
   const preservePreviewSeek = !opts || opts.preservePreviewSeek !== false;

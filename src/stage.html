@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <meta name="color-scheme" content="dark">
+  <link rel="stylesheet" href="src/main.css">
+  <title>EMS Stage Output</title>
+</head>
+<body>
+  <main id="stageRoot" class="stage" data-profile="current-next">
+    <section class="stage__content" aria-label="Current and next content">
+      <article class="stage-card stage-card--current">
+        <span class="stage-card__label">Current</span>
+        <div id="stageCurrent" class="stage-card__text">Waiting for live content</div>
+      </article>
+      <article id="stageNextCard" class="stage-card stage-card--next">
+        <span class="stage-card__label">Next</span>
+        <div id="stageNext" class="stage-card__text">—</div>
+      </article>
+    </section>
+    <aside class="stage__widgets">
+      <time id="stageClock" class="stage__clock"></time>
+      <div id="stageServiceItem" class="stage__service-item"></div>
+      <div id="stageNotes" class="stage__notes"></div>
+    </aside>
+    <section id="stageAlert" class="stage-overlay stage-overlay--alert" hidden aria-live="assertive">
+      <strong id="stageAlertTitle"></strong><span id="stageAlertMessage"></span>
+    </section>
+    <section id="stagePrivateMessage" class="stage-overlay stage-overlay--private" hidden aria-live="assertive">
+      <span class="stage-overlay__eyebrow">Private stage message</span>
+      <strong id="stagePrivateTitle"></strong><span id="stagePrivateText"></span>
+    </section>
+    <section id="stageFault" class="stage__fault" hidden role="alert">Stage output unavailable</section>
+  </main>
+  <script type="module" src="stage.min.mjs"></script>
+</body>
+</html>

@@ -647,11 +647,94 @@ main {
     margin-top: 57px;
     /* Height of headerbar */
     overflow: hidden;
+    display: flex;
 }
 
 #dyneForm {
     overflow: hidden;
+    flex: 1;
+    min-width: 0;
 }
+
+.global-navigation {
+    width: 82px;
+    flex: 0 0 82px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 12px 8px;
+    border-right: 1px solid var(--border-color);
+    background: color-mix(in srgb, var(--window-bg-color) 92%, var(--card-bg-color));
+}
+
+.global-navigation__item {
+    position: relative;
+    display: flex;
+    min-height: 58px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 7px 4px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--text-color-secondary);
+    font-size: 11px;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.global-navigation__item svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.global-navigation__item:hover { background: var(--row-hover-bg-color); color: var(--window-fg-color); }
+.global-navigation__item.is-active { background: color-mix(in srgb, var(--accent-bg-color) 18%, transparent); color: var(--accent-bg-color); }
+.global-navigation__spacer { flex: 1; }
+.global-navigation__status { position: absolute; top: 8px; right: 15px; width: 8px; height: 8px; border: 2px solid var(--window-bg-color); border-radius: 50%; background: #77767b; }
+.global-navigation__status.is-open { background: #2ec27e; }
+
+.stage-controls-backdrop { position: fixed; z-index: 1000; inset: 57px 0 0; display: flex; justify-content: flex-start; padding: 12px 12px 12px 94px; background: rgb(0 0 0 / 28%); }
+.stage-controls-backdrop[hidden] { display: none; }
+.stage-controls { width: min(440px, calc(100vw - 118px)); height: fit-content; max-height: calc(100vh - 82px); overflow: auto; border: 1px solid var(--border-color); border-radius: 12px; background: var(--window-bg-color); box-shadow: 0 18px 44px rgb(0 0 0 / 30%); }
+.stage-controls__header { display: flex; align-items: flex-start; justify-content: space-between; padding: 18px 20px 14px; border-bottom: 1px solid var(--border-color); }
+.stage-controls__header h2 { margin: 0; font-size: 20px; }
+.stage-controls__header p { margin: 4px 0 0; color: var(--text-color-secondary); font-size: 13px; }
+.stage-controls__close { width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--card-shade-color); color: inherit; font-size: 22px; cursor: pointer; }
+.stage-controls__body { display: flex; flex-direction: column; gap: 16px; padding: 20px; }
+.stage-controls__row { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: center; gap: 12px; }
+.stage-controls__row label, .stage-message-card > label { font-weight: 700; }
+.stage-controls select, .stage-controls textarea { width: 100%; min-height: 36px; box-sizing: border-box; border: 1px solid var(--border-color); border-radius: 7px; padding: 8px 10px; background: var(--input-bg-color); color: var(--window-fg-color); font: inherit; }
+.stage-message-card { display: flex; flex-direction: column; gap: 9px; padding: 16px; border-radius: 10px; background: var(--card-bg-color); box-shadow: 0 1px 3px var(--card-shade-color); }
+.stage-message-card textarea { resize: vertical; }
+.stage-message-card p { margin: 0; color: var(--text-color-secondary); font-size: 12px; }
+.stage-message-card__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.stage-message-card__actions button { min-height: 34px; padding: 6px 14px; border: 1px solid var(--border-color); border-radius: 7px; background: var(--card-bg-color); color: inherit; cursor: pointer; }
+.stage-message-card__actions .suggested-action { border-color: var(--accent-bg-color); background: var(--accent-bg-color); color: #fff; }
+
+/* Dedicated stage output. These rules live in the shared source so the
+   production HTML pruner can inline them into stage.prod.html. */
+.stage { position: relative; display: grid; grid-template-rows: 1fr auto; width: 100vw; height: 100vh; margin-top: 0; padding: clamp(24px, 3vw, 64px); box-sizing: border-box; gap: clamp(18px, 2vw, 40px); border-radius: 0; overflow: hidden; background: radial-gradient(circle at 50% 0%, #20242b 0, #0c0e12 58%, #050607 100%); color: #fff; }
+.stage__content { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: clamp(18px, 2vw, 40px); min-height: 0; }
+.stage-card { display: flex; flex-direction: column; min-width: 0; padding: clamp(24px, 3vw, 58px); border: 2px solid #3d424a; border-radius: clamp(16px, 2vw, 32px); background: rgb(20 23 28 / 92%); }
+.stage-card--current { border-color: #33d17a; }
+.stage-card__label, .stage-overlay__eyebrow { color: #9da2aa; font-weight: 800; font-size: clamp(16px, 1.4vw, 28px); letter-spacing: .08em; text-transform: uppercase; }
+.stage-card__text { display: flex; flex: 1; align-items: center; overflow: hidden; white-space: pre-wrap; font-size: clamp(34px, 4.8vw, 94px); font-weight: 750; line-height: 1.12; }
+.stage-card--next .stage-card__text { color: #d0d3d8; font-size: clamp(26px, 3.2vw, 64px); }
+.stage__widgets { display: grid; grid-template-columns: auto 1fr 1fr; align-items: center; gap: 28px; min-height: clamp(64px, 9vh, 120px); }
+.stage__clock { color: #33d17a; font-size: clamp(34px, 4.2vw, 76px); font-variant-numeric: tabular-nums; font-weight: 800; }
+.stage__service-item, .stage__notes { color: #c0c4ca; font-size: clamp(18px, 2vw, 36px); }
+.stage[data-profile="current-only"] .stage__content { grid-template-columns: 1fr; }
+.stage[data-profile="current-only"] .stage-card--next, .stage[data-profile="clock"] .stage-card--next { display: none; }
+.stage[data-profile="clock"] .stage__clock { position: absolute; inset: 0; display: grid; place-items: center; font-size: 18vw; }
+.stage[data-profile="clock"] .stage__content, .stage[data-profile="clock"] .stage__service-item, .stage[data-profile="clock"] .stage__notes { visibility: hidden; }
+.stage-overlay { position: absolute; z-index: 20; left: 5vw; right: 5vw; top: 5vh; display: flex; flex-direction: column; gap: 12px; padding: clamp(24px, 3vw, 56px); border-radius: clamp(18px, 2vw, 36px); box-shadow: 0 18px 60px #000b; }
+.stage-overlay[hidden] { display: none; }
+.stage-overlay--alert { background: #613583; border: 4px solid #dc8add; }
+.stage-overlay--private { background: #813d09; border: 5px solid #ffbe6f; }
+.stage-overlay strong { font-size: clamp(28px, 3.5vw, 68px); }
+.stage-overlay span:not(.stage-overlay__eyebrow) { font-size: clamp(26px, 3.2vw, 62px); line-height: 1.2; }
+.stage__fault { position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; background: #000; color: #ff7b63; font-size: 7vw; font-weight: 800; }
+.stage__fault[hidden] { display: none; }
 
 footer {
     grid-area: footerBar;
@@ -3184,83 +3267,6 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-.sidebar-bible-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    min-height: 42px;
-    padding: 10px 14px;
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--card-bg-color) 92%, var(--window-fg-color));
-    color: var(--window-fg-color);
-    font-size: 14px;
-    font-weight: 700;
-}
-
-.sidebar-bible-button:hover {
-    background: color-mix(in srgb, var(--card-bg-color) 84%, var(--window-fg-color));
-}
-
-.sidebar-bible-button[data-active="true"] {
-    background: var(--accent-bg-color);
-    border-color: var(--accent-bg-color-hover);
-    color: #ffffff;
-}
-
-.sidebar-songs-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    min-height: 42px;
-    padding: 10px 14px;
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--card-bg-color) 92%, var(--window-fg-color));
-    color: var(--window-fg-color);
-    font-size: 14px;
-    font-weight: 700;
-    margin-top: 8px;
-}
-
-.sidebar-songs-button:hover {
-    background: color-mix(in srgb, var(--card-bg-color) 84%, var(--window-fg-color));
-}
-
-.sidebar-songs-button[data-active="true"] {
-    background: var(--accent-bg-color);
-    border-color: var(--accent-bg-color-hover);
-    color: #ffffff;
-}
-
-.sidebar-slides-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    min-height: 42px;
-    padding: 10px 14px;
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    background: color-mix(in srgb, var(--card-bg-color) 92%, var(--window-fg-color));
-    color: var(--window-fg-color);
-    font-size: 14px;
-    font-weight: 700;
-    margin-top: 8px;
-}
-
-.sidebar-slides-button:hover {
-    background: color-mix(in srgb, var(--card-bg-color) 84%, var(--window-fg-color));
-}
-
-.sidebar-slides-button[data-active="true"] {
-    background: var(--accent-bg-color);
-    border-color: var(--accent-bg-color-hover);
-    color: #ffffff;
 }
 
 /* ── Slides workspace ─────────────────────────────────────── */

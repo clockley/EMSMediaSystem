@@ -109,10 +109,38 @@
     </div>
   </header>
   <main>
+    <nav id="globalNavigation" class="global-navigation" aria-label="Primary navigation">
+      <button id="openMediaWorkspaceBtn" class="global-navigation__item" type="button" title="Media and schedule">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v11H4zM9 19h6M12 16.5V19"/></svg><span>Media</span>
+      </button>
+      <button id="openSongsWorkspaceBtn" class="global-navigation__item" type="button" title="Songs">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 17V6l9-2v11M9 9l9-2M6.5 20A2.5 2.5 0 1 0 6.5 15a2.5 2.5 0 0 0 0 5Zm9-2A2.5 2.5 0 1 0 15.5 13a2.5 2.5 0 0 0 0 5Z"/></svg><span>Songs</span>
+      </button>
+      <button id="openBibleWorkspaceBtn" class="global-navigation__item" type="button" title="Bible">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4Zm0 12h11M9 8h6"/></svg><span>Bible</span>
+      </button>
+      <button id="openSlidesWorkspaceBtn" class="global-navigation__item" type="button" title="Slides">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 5h17v12h-17zM9 20h6M12 17v3"/></svg><span>Slides</span>
+      </button>
+      <span class="global-navigation__spacer"></span>
+      <button id="openStageControlsBtn" class="global-navigation__item" type="button" title="Stage output and private messages">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H4zM8 21h8M12 17v4M8 10h8M8 13h5"/></svg><span>Stage</span><span id="stageNavStatus" class="global-navigation__status" aria-label="Stage output closed"></span>
+      </button>
+    </nav>
     <!-- Persistent media shell: presentation elements stay mounted while the
          schedule UI refreshes, so live playback is not interrupted. -->
     <div id="dyneForm">
       <div id="tab-panel-media" class="tab-panel tab-panel--media"></div>
+    </div>
+    <div id="stageControlsBackdrop" class="stage-controls-backdrop" hidden>
+      <section id="stageControls" class="stage-controls" role="dialog" aria-modal="true" aria-labelledby="stageControlsTitle">
+        <header class="stage-controls__header"><div><h2 id="stageControlsTitle">Stage Output</h2><p id="stageOutputStatus" aria-live="polite">Stage output closed</p></div><button id="closeStageControlsBtn" class="stage-controls__close" type="button" aria-label="Close stage controls">×</button></header>
+        <div class="stage-controls__body">
+          <div class="stage-controls__row"><label for="stageDisplaySelect">Stage display</label><select id="stageDisplaySelect"><option value="">No Stage Output</option></select></div>
+          <div class="stage-controls__row"><label for="stageProfileSelect">Layout</label><select id="stageProfileSelect"><option value="current-next">Current + Next</option><option value="current-only">Current Only</option><option value="notes">Notes</option><option value="clock">Clock</option></select></div>
+          <div class="stage-message-card"><label for="stageMessageText">Private message</label><textarea id="stageMessageText" rows="4" maxlength="500" placeholder="Message visible only on the stage display"></textarea><p>Private messages are never sent to the audience output.</p><div class="stage-message-card__actions"><button id="clearStageMessageBtn" type="button" title="Clear private stage message (Ctrl+Shift+F8)">Clear</button><button id="showStageMessageBtn" class="suggested-action" type="button" title="Show private stage message (Ctrl+F8)">Show on Stage</button></div></div>
+        </div>
+      </section>
     </div>
   </main>
   </div>

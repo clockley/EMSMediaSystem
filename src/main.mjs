@@ -66,6 +66,7 @@ import {
 } from "./emproj.min.mjs";
 import { MediaWatcher } from "./media-watcher.min.mjs";
 import { generateVideoPoster } from "./video-poster.min.mjs";
+import { validateOutputCommand } from "./output-compositor.min.mjs";
 import {
   StagingIndex,
   normalizeProjectGuid,
@@ -100,6 +101,7 @@ const MEDIA_WINDOW_BACKGROUND_COLOR = "#000000";
 const LOWER_THIRD_CHROMA_KEY_COLOR_KEY = "lowerThirdChromaKeyColor";
 const BIBLE_UI_ENABLED_KEY = "bibleUiEnabled";
 const LOWER_THIRD_UI_ENABLED_KEY = "lowerThirdUiEnabled";
+const STAGE_DISPLAY_KEY = "lastStageDisplayIndex";
 const SWITCHER_CONNECTIONS_KEY = "switcherConnections";
 const ACTIVE_THEME_ID_KEY = "activeThemeId";
 let allowMainWindowClose = false;
@@ -217,6 +219,11 @@ function getPreferencesWindowBounds() {
 
 let mediaWindow = null;
 let lowerThirdWindow = null;
+let stageWindow = null;
+let stageWindowCreatePromise = null;
+let stageSessionId = randomUUID();
+const stageLayerCommands = new Map();
+let stageHealth = "inactive";
 let mediaWindowCreatePromise = null;
 let windowBounds = measurePerformance("Getting window bounds", getWindowBounds);
 let win = null;
@@ -770,6 +777,116 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
   });
 }
 
+function stageOutputStatus() {
+  return {
+    schema: "ems.output-status.v1",
+    sessionId: stageSessionId,
+    stage: {
+      window: stageWindow && !stageWindow.isDestroyed() ? "open" : "closed",
+      display: settings.getSync(STAGE_DISPLAY_KEY) || "",
+      profile: stageLayerCommands.get("content")?.payload?.profile || "current-next",
+      privateMessage: stageLayerCommands.has("privateMessage") ? "live" : "clear",
+      health: stageWindow && !stageWindow.isDestroyed() ? stageHealth : "inactive",
+    },
+  };
+}
+
+function publishStageOutputStatus() {
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send("output-status", stageOutputStatus());
+  }
+}
+
+async function handleCreateStageWindow(_event, displayIndex) {
+  const targetSelection = resolveDisplaySelection(displayIndex);
+  if (!targetSelection) return null;
+  if (stageWindow && !stageWindow.isDestroyed()) {
+    stageWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
+    stageWindow.setFullScreen(true);
+    await settings.set(STAGE_DISPLAY_KEY, targetSelection.value);
+    publishStageOutputStatus();
+    return { id: stageWindow.id, sessionId: stageSessionId };
+  }
+  if (stageWindowCreatePromise) return stageWindowCreatePromise;
+  stageSessionId = randomUUID();
+  stageWindowCreatePromise = (async () => {
+    const created = new BrowserWindow({
+      ...fullscreenWindowBoundsForDisplay(targetSelection.display),
+      backgroundColor: "#08090b",
+      backgroundThrottling: false,
+      fullscreen: true,
+      frame: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      icon: `${import.meta.dirname}/icon.png`,
+      webPreferences: {
+        contextIsolation: true,
+        sandbox: true,
+        preload: `${import.meta.dirname}/stage_preload.min.js`,
+        additionalArguments: [`__stage-session=${stageSessionId}`],
+      },
+    });
+    stageWindow = created;
+    stageHealth = "ok";
+    created.setAlwaysOnTop(true, "screen-saver");
+    await created.loadFile("derived/src/stage.prod.html");
+    await settings.set(STAGE_DISPLAY_KEY, targetSelection.value);
+    created.on("closed", () => {
+      if (stageWindow === created) stageWindow = null;
+      stageHealth = "inactive";
+      stageLayerCommands.delete("privateMessage");
+      stageLayerCommands.delete("alert");
+      publishStageOutputStatus();
+    });
+    publishStageOutputStatus();
+    return { id: created.id, sessionId: stageSessionId };
+  })();
+  try {
+    return await stageWindowCreatePromise;
+  } finally {
+    stageWindowCreatePromise = null;
+  }
+}
+
+function handleStageOutputCommand(event, command) {
+  if (!win || event.sender !== win.webContents) {
+    throw new TypeError("Stage output commands are accepted only from the control window");
+  }
+  validateOutputCommand(command, "stage");
+  if (command.sessionId !== stageSessionId) {
+    throw new TypeError("Stage command session does not match the active output");
+  }
+  const prior = stageLayerCommands.get(command.layer);
+  if (prior && command.revision <= prior.revision) {
+    return { delivered: false, reason: "stale-revision" };
+  }
+  if (command.type === "layer.clear") stageLayerCommands.delete(command.layer);
+  else stageLayerCommands.set(command.layer, command);
+  if (!stageWindow || stageWindow.isDestroyed()) {
+    if (command.layer === "privateMessage" || command.layer === "alert") {
+      stageLayerCommands.delete(command.layer);
+    }
+    publishStageOutputStatus();
+    return { delivered: false, reason: "stage-closed" };
+  }
+  stageWindow.webContents.send("stage-output-command", command);
+  publishStageOutputStatus();
+  return { delivered: true };
+}
+
+function handleSetStageDisplayIndex(_event, selection) {
+  const target = resolveDisplaySelection(selection);
+  settings.set(STAGE_DISPLAY_KEY, target?.value || "").catch(console.error);
+  if (stageWindow && !stageWindow.isDestroyed()) {
+    if (!target) stageWindow.close();
+    else {
+      stageWindow.setBounds(fullscreenWindowBoundsForDisplay(target.display));
+      stageWindow.setFullScreen(true);
+    }
+  }
+  publishStageOutputStatus();
+}
+
 async function clearLowerThirdRendererNow(payload = {}) {
   if (!lowerThirdWindow || lowerThirdWindow.isDestroyed()) return false;
   const currentBackground = String(lowerThirdWindow.getBackgroundColor?.() || "").slice(0, 7);
@@ -794,6 +911,20 @@ async function clearLowerThirdRendererNow(payload = {}) {
 
 async function handleDisplayChange() {
   const currentDisplays = screen.getAllDisplays();
+
+  if (stageWindow && !stageWindow.isDestroyed()) {
+    const bounds = stageWindow.getBounds();
+    const stageDisplayStillConnected = currentDisplays.some(
+      (display) =>
+        bounds.x >= display.bounds.x &&
+        bounds.y >= display.bounds.y &&
+        bounds.x < display.bounds.x + display.bounds.width &&
+        bounds.y < display.bounds.y + display.bounds.height,
+    );
+    // Never fail a disconnected confidence display over to the audience or
+    // primary monitor: close it and require an explicit operator selection.
+    if (!stageDisplayStillConnected) stageWindow.close();
+  }
 
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     const currentBounds = mediaWindow.getBounds();
@@ -1464,6 +1595,7 @@ async function handleGetAllDisplays() {
   let edidDisplayInfo = [];
   const savedDisplayIndex = settings.getSync("lastDisplayIndex");
   const savedLowerThirdDisplayIndex = settings.getSync("lastLowerThirdDisplayIndex");
+  const savedStageDisplayIndex = settings.getSync(STAGE_DISPLAY_KEY);
 
   const defaultDisplayIndex = defaultDisplayValueForSavedSelection(
     savedDisplayIndex,
@@ -1471,6 +1603,10 @@ async function handleGetAllDisplays() {
   );
   const defaultLowerThirdDisplayIndex = defaultDisplayValueForSavedSelection(
     savedLowerThirdDisplayIndex,
+    displays,
+  );
+  const defaultStageDisplayIndex = defaultDisplayValueForSavedSelection(
+    savedStageDisplayIndex,
     displays,
   );
 
@@ -1531,6 +1667,7 @@ async function handleGetAllDisplays() {
     displays: displayOptions,
     defaultDisplayIndex,
     defaultLowerThirdDisplayIndex,
+    defaultStageDisplayIndex,
   };
 }
 
@@ -4866,6 +5003,24 @@ function setIPC() {
   );
   ipcMain.handle("create-media-window", handleCreateMediaWindow);
   ipcMain.handle("create-lower-third-window", handleCreateLowerThirdWindow);
+  ipcMain.handle("create-stage-window", handleCreateStageWindow);
+  ipcMain.handle("stage-output-command", handleStageOutputCommand);
+  ipcMain.handle("get-output-status", () => stageOutputStatus());
+  ipcMain.on("set-stage-display-index", handleSetStageDisplayIndex);
+  ipcMain.on("stage-output-ready", (event) => {
+    if (!stageWindow || event.sender !== stageWindow.webContents) return;
+    stageHealth = "ok";
+    for (const command of stageLayerCommands.values()) {
+      stageWindow.webContents.send("stage-output-command", command);
+    }
+    publishStageOutputStatus();
+  });
+  ipcMain.on("stage-output-ack", (event, acknowledgement) => {
+    if (!stageWindow || event.sender !== stageWindow.webContents) return;
+    stageHealth = acknowledgement?.applied === false ? "degraded" : "ok";
+    publishStageOutputStatus();
+    if (win && !win.isDestroyed()) win.webContents.send("stage-output-ack", acknowledgement);
+  });
   ipcMain.handle("close-lower-third-window-now", handleCloseLowerThirdWindowNow);
   ipcMain.on("timeGoto-message", handleTimeGotoMessage);
   ipcMain.on("play-ctl", handlePlayCtl);
