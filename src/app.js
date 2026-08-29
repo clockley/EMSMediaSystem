@@ -26160,6 +26160,25 @@ async function handlePlaybackState(event, playbackState) {
   if (playbackState.playing) {
     const syncGeneration = ++playbackStateSyncGeneration;
     desiredProjectionPreviewPlayback = "playing";
+    // The first stable state for a newly loaded projection is authoritative.
+    // If a source reset put the persistent preview element back at zero, seek
+    // it to the projection before starting playback. PID rate correction is
+    // intended only for small clock drift and must not be used to replay the
+    // omitted portion at high speed.
+    if (
+      Number.isFinite(playbackState.currentTime) &&
+      Number.isFinite(video.currentTime) &&
+      Math.abs(video.currentTime - playbackState.currentTime) > 0.25
+    ) {
+      beginPidSeekSuppression();
+      video.playbackRate = 1;
+      try {
+        video.currentTime = Number.isFinite(video.duration) && video.duration > 0
+          ? clampMediaTime(playbackState.currentTime, video.duration)
+          : Math.max(0, playbackState.currentTime);
+      } catch {}
+      resetPIDOnSeek();
+    }
     finishProjectionPlaybackStartupSync();
     masterPauseState = false;
     if (video.paused && !isImg(mediaFile)) {

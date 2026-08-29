@@ -78,8 +78,7 @@ export class PIDController {
 
     this.synchronizationThreshold = 0.005;
     this.maxIntegralError = 0.5;
-    this.fastSyncThreshold = 1;
-    this.maxFastSyncRate = 2;
+    this.hardSeekThreshold = 1;
 
     this.maxHistoryLength = 32;
     this.isFirstAdjustment = true;
@@ -182,7 +181,13 @@ export class PIDController {
       this.lastWallTime = wallNow;
       this.lastUpdateTime = now;
       this.isFirstAdjustment = false;
-      const timeDifference = targetTime - this.video.currentTime;
+      let timeDifference = targetTime - this.video.currentTime;
+      if (Math.abs(timeDifference) > this.hardSeekThreshold) {
+        this.beginPidSeekSuppression();
+        this.video.playbackRate = 1.0;
+        this.video.currentTime = targetTime;
+        timeDifference = targetTime - this.video.currentTime;
+      }
       this.updateSystemMetrics(timeDifference, wallNow);
       return timeDifference;
     }
@@ -214,18 +219,15 @@ export class PIDController {
       deltaTime,
     );
 
-    if (timeDifferenceAbs > this.fastSyncThreshold) {
-      let playbackRate;
-      if (timeDifference > 0) {
-        const calcRate = 1 + timeDifferenceAbs / deltaTime;
-        playbackRate =
-          calcRate > this.maxFastSyncRate ? this.maxFastSyncRate : calcRate;
-      } else {
-        const calcRate = 1 - timeDifferenceAbs / deltaTime;
-        const minRate = 1 / this.maxFastSyncRate;
-        playbackRate = calcRate < minRate ? minRate : calcRate;
-      }
-      this.video.playbackRate = playbackRate;
+    if (timeDifferenceAbs > this.hardSeekThreshold) {
+      // A large offset is a discontinuity (most commonly a saved cue start or
+      // a newly loaded clip), not clock drift. Playing the operator preview at
+      // up to 2x made it visibly race from zero toward the audience output and
+      // could leave that rate behind across a source swap. Land on the correct
+      // frame immediately and reserve rate adjustment for sub-second drift.
+      this.beginPidSeekSuppression();
+      this.video.playbackRate = 1.0;
+      this.video.currentTime = targetTime;
       return timeDifference;
     }
 
@@ -262,6 +264,12 @@ export class PIDController {
     this.lastUpdateTime = performance.now();
     this.isFirstAdjustment = true;
     this.lastWallTime = null;
+
+    // A reset denotes a seek or source transition. Never carry a temporary
+    // synchronization rate into the next clip.
+    if (this.video && Number.isFinite(this.video.playbackRate)) {
+      this.video.playbackRate = 1.0;
+    }
 
     this.historyIndex = 0;
     this.historySize = 0;
