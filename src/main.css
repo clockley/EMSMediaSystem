@@ -1426,7 +1426,7 @@ button:focus-visible,
 }
 
 .headerbar {
-    --headerbar-title-inset: 96px;
+    --headerbar-title-end-inset: 96px;
     /* REMOVE the gradient and hardcoded colors */
     background: var(--headerbar-bg-color);
     color: var(--headerbar-fg-color);
@@ -1455,15 +1455,14 @@ button:focus-visible,
 
 #WindowTitle {
     position: absolute;
-    left: 50%;
+    left: 18px;
     width: max-content;
-    max-width: max(0px, calc(100% - var(--headerbar-title-inset) - var(--headerbar-title-inset)));
+    max-width: max(0px, calc(100% - var(--headerbar-title-end-inset) - 30px));
     overflow: hidden;
-    text-align: center;
+    text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
     pointer-events: none;
-    transform: translateX(-50%);
 }
 
 @media (prefers-color-scheme: dark) {

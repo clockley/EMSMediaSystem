@@ -29316,25 +29316,22 @@ function installPreviewEventHandlers() {
   });
 }
 
-function installAdaptiveHeaderTitleCentering() {
+function installAdaptiveHeaderTitleSpacing() {
   const header = document.querySelector(".headerbar");
-  const start = header?.querySelector(":scope > .headerbar-start");
   const end = header?.querySelector(":scope > .headerbar-end");
   const title = header?.querySelector(":scope > #WindowTitle");
-  if (!header || !start || !end || !title || header.dataset.titleCenterBound === "1") {
+  if (!header || !end || !title || header.dataset.titleSpacingBound === "1") {
     return;
   }
-  header.dataset.titleCenterBound = "1";
+  header.dataset.titleSpacingBound = "1";
   let frame = null;
   const updateInset = () => {
     frame = null;
     const headerRect = header.getBoundingClientRect();
-    const startRect = start.getBoundingClientRect();
     const endRect = end.getBoundingClientRect();
-    const leftInset = Math.max(0, startRect.right - headerRect.left);
     const rightInset = Math.max(0, headerRect.right - endRect.left);
-    const safeInset = Math.ceil(Math.max(leftInset, rightInset) + 12);
-    header.style.setProperty("--headerbar-title-inset", `${safeInset}px`);
+    const safeInset = Math.ceil(rightInset + 12);
+    header.style.setProperty("--headerbar-title-end-inset", `${safeInset}px`);
   };
   const scheduleUpdate = () => {
     if (frame !== null) return;
@@ -29342,7 +29339,6 @@ function installAdaptiveHeaderTitleCentering() {
   };
   const resizeObserver = new ResizeObserver(scheduleUpdate);
   resizeObserver.observe(header);
-  resizeObserver.observe(start);
   resizeObserver.observe(end);
   scheduleUpdate();
 }
@@ -29350,7 +29346,7 @@ function installAdaptiveHeaderTitleCentering() {
 async function loadOpMode(mode) {
   const execute = async () => {
     try {
-      installAdaptiveHeaderTitleCentering();
+      installAdaptiveHeaderTitleSpacing();
       // Show loading indicator
       const loadingDiv = document.createElement("div");
       loadingDiv.id = "loading-indicator";
