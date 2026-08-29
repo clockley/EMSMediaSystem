@@ -701,6 +701,11 @@ main {
 .stage-controls__header p { margin: 4px 0 0; color: var(--text-color-secondary); font-size: 13px; }
 .stage-controls__close { width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--card-shade-color); color: inherit; font-size: 22px; cursor: pointer; }
 .stage-controls__body { display: flex; flex-direction: column; gap: 16px; padding: 20px; }
+.stage-experimental-warning { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, #e5a50a 58%, var(--border-color)); border-radius: 9px; background: color-mix(in srgb, #e5a50a 14%, var(--card-bg-color)); color: var(--window-fg-color); }
+.stage-experimental-warning svg { width: 24px; height: 24px; fill: none; stroke: #b58300; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.stage-experimental-warning div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.stage-experimental-warning strong { font-size: 14px; }
+.stage-experimental-warning span { color: var(--text-color-secondary); font-size: 12px; line-height: 1.35; }
 .settings-controls { width: min(500px, calc(100vw - 118px)); }
 .settings-controls__body > .control-group { width: 100%; max-width: none; }
 .settings-controls__body .loop-control { min-height: 36px; }
@@ -1421,6 +1426,7 @@ button:focus-visible,
 }
 
 .headerbar {
+    --headerbar-title-inset: 96px;
     /* REMOVE the gradient and hardcoded colors */
     background: var(--headerbar-bg-color);
     color: var(--headerbar-fg-color);
@@ -1445,6 +1451,19 @@ button:focus-visible,
     font-weight: 400;
     /* Normal weight, not 700 */
     font-size: 14px;
+}
+
+#WindowTitle {
+    position: absolute;
+    left: 50%;
+    width: max-content;
+    max-width: max(0px, calc(100% - var(--headerbar-title-inset) - var(--headerbar-title-inset)));
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+    transform: translateX(-50%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1482,12 +1501,16 @@ button:focus-visible,
 }
 
 .headerbar-start {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: stretch;
     height: 100%;
 }
 
 .headerbar-end {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -5627,6 +5650,22 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     border-radius: 6px;
 }
 
+.confidence-monitor--popout {
+    position: fixed;
+    z-index: 900;
+    right: 20px;
+    bottom: 84px;
+    width: min(720px, calc(100vw - 140px));
+    height: min(405px, calc(100vh - 160px));
+    min-width: 420px;
+    min-height: 236px;
+    max-height: none;
+    aspect-ratio: auto;
+    resize: both;
+    border-radius: 10px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
 .confidence-monitor__viewport,
 .confidence-monitor__page,
 .confidence-monitor__lower-third-shell {
@@ -5745,6 +5784,8 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     color: #fff;
     background: rgba(0, 0, 0, 0.64);
     opacity: 0.58;
+    pointer-events: auto;
+    cursor: pointer;
     transition: opacity 140ms ease;
 }
 
@@ -5752,6 +5793,10 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 .confidence-monitor__popout:focus-visible,
 .confidence-monitor__popout[aria-pressed="true"] {
     opacity: 1;
+}
+
+.confidence-monitor__popout:disabled {
+    opacity: 0.32;
 }
 
 .confidence-monitor__popout:focus-visible {

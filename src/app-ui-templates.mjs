@@ -138,7 +138,7 @@ export function generateMediaFormHTML() {
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
           </button>
         </div>
-        <button type="button" id="confidenceMonitorPopout" class="confidence-monitor__popout" aria-label="Open current output in Picture-in-Picture" title="Open Picture-in-Picture" hidden>
+        <button type="button" id="confidenceMonitorPopout" class="confidence-monitor__popout" aria-pressed="false" aria-label="Open larger Picture-in-Picture" title="Open larger Picture-in-Picture" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM12 11h6v6h-6z"/></svg>
         </button>
       </div>

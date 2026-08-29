@@ -123,7 +123,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 5h17v12h-17zM9 20h6M12 17v3"/></svg><span>Slides</span>
       </button>
       <span class="global-navigation__spacer"></span>
-      <button id="openStageControlsBtn" class="global-navigation__item" type="button" title="Stage output and private messages">
+      <button id="openStageControlsBtn" class="global-navigation__item" type="button" title="Stage output and private messages (Experimental)">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H4zM8 21h8M12 17v4M8 10h8M8 13h5"/></svg><span>Stage</span><span id="stageNavStatus" class="global-navigation__status" aria-label="Stage output closed"></span>
       </button>
       <button id="openSettingsBtn" class="global-navigation__item" type="button" title="Application settings">
@@ -139,6 +139,10 @@
       <section id="stageControls" class="stage-controls" role="dialog" aria-modal="true" aria-labelledby="stageControlsTitle">
         <header class="stage-controls__header"><div><h2 id="stageControlsTitle">Stage Output</h2><p id="stageOutputStatus" aria-live="polite">Stage output closed</p></div><button id="closeStageControlsBtn" class="stage-controls__close" type="button" aria-label="Close stage controls">×</button></header>
         <div class="stage-controls__body">
+          <div class="stage-experimental-warning" role="note" aria-label="Experimental feature warning">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.8 20h18.4L12 3Zm0 6v5M12 17.5v.5"/></svg>
+            <div><strong>Experimental</strong><span>Stage output and private messaging are under active development. Test them before relying on them during a live service.</span></div>
+          </div>
           <div class="stage-controls__row"><label for="stageDisplaySelect">Stage display</label><select id="stageDisplaySelect"><option value="">No Stage Output</option></select></div>
           <div class="stage-controls__row"><label for="stageProfileSelect">Layout</label><select id="stageProfileSelect"><option value="current-next">Current + Next</option><option value="current-only">Current Only</option><option value="notes">Notes</option><option value="clock">Clock</option></select></div>
           <div class="stage-message-card"><label for="stageMessageText">Private message</label><textarea id="stageMessageText" rows="4" maxlength="500" placeholder="Message visible only on the stage display"></textarea><p>Private messages are never sent to the audience output.</p><div class="stage-message-card__actions"><button id="clearStageMessageBtn" type="button" title="Clear private stage message (Ctrl+Shift+F8)">Clear</button><button id="showStageMessageBtn" class="suggested-action" type="button" title="Show private stage message (Ctrl+F8 while this window is open)">Show on Stage</button></div></div>

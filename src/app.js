@@ -56,6 +56,7 @@ import { createOutputCommand } from "./output-compositor.mjs";
 import { stageContentFromPresentation } from "./stage-content.mjs";
 import {
   firstPlayableScheduleIndex,
+  isEmbeddedScheduleItem,
   isScheduleItemPlayable,
   isScheduleItemVisible,
   nextPlayableScheduleIndex,
@@ -3383,6 +3384,10 @@ function ensurePreviewAudioElement() {
   return previewAudio;
 }
 
+function isConfidenceMonitorVideo(el) {
+  return el === getConfidenceMonitorElement() || el === getLowerThirdConfidenceMonitorElement();
+}
+
 function disableNativeVideoControls(el) {
   if (!el) return;
   el.controls = false;
@@ -3391,7 +3396,7 @@ function disableNativeVideoControls(el) {
     el.controlsList?.add("nodownload", "nofullscreen", "noremoteplayback");
   } catch {}
   try {
-    el.disablePictureInPicture = true;
+    el.disablePictureInPicture = !isConfidenceMonitorVideo(el);
   } catch {}
 }
 
@@ -3624,8 +3629,7 @@ function applyPinnedMediaSource(item, pinned, opts = {}) {
 function mediaPinPayloadForItem(item, opts = {}) {
   if (
     !item ||
-    isQueueItemBible(item) ||
-    isQueueItemSong(item) ||
+    isEmbeddedScheduleItem(item) ||
     !isFileBackedMediaPath(item.path)
   ) {
     return null;
@@ -3663,11 +3667,14 @@ function scheduleMediaWatchSync() {
 async function syncMediaWatches() {
   const watchItems = mediaQueue
     .map((item, index) => {
+      if (isEmbeddedScheduleItem(item)) return null;
       const liveSource = queueItemLiveSource(item);
       if (!liveSource || liveSource.mode !== "linked") return null;
+      const originalPath = liveSource.originalPath || item.path;
+      if (!isFileBackedMediaPath(originalPath)) return null;
       return {
         queueItemId: String(index),
-        originalPath: liveSource.originalPath || item.path,
+        originalPath,
         pinnedFileHash: liveSource.pinnedFileHash || item.fileHash,
         pinnedSizeBytes: Number.isFinite(liveSource.pinnedSizeBytes)
           ? liveSource.pinnedSizeBytes
@@ -27656,12 +27663,182 @@ function getLowerThirdConfidenceMonitorElement() {
 }
 
 let confidenceMonitorPage = "audience";
+let confidenceMonitorPopoutActive = false;
+let confidenceMonitorPipTransfer = false;
 
 function activeConfidenceMonitorPages() {
   const pages = [];
   if (isActiveMediaWindow()) pages.push("audience");
   if (bibleLowerThirdOutputActive && lastLowerThirdBibleTextMessage) pages.push("lower-third");
   return pages;
+}
+
+function currentConfidenceMonitorVideo() {
+  return confidenceMonitorPage === "lower-third"
+    ? getLowerThirdConfidenceMonitorElement()
+    : getConfidenceMonitorElement();
+}
+
+function nativePictureInPictureAvailable() {
+  return Boolean(
+    document.pictureInPictureEnabled &&
+      typeof HTMLVideoElement !== "undefined" &&
+      HTMLVideoElement.prototype.requestPictureInPicture,
+  );
+}
+
+function confidenceMonitorPipPageLabel(page) {
+  return page === "lower-third" ? "Lower Third" : "Audience";
+}
+
+function setMediaSessionAction(action, handler) {
+  try {
+    navigator.mediaSession?.setActionHandler(action, handler);
+  } catch {}
+}
+
+function syncConfidenceMonitorPipMediaSession() {
+  const session = navigator.mediaSession;
+  if (!session) return;
+  const pipVideo = isConfidenceMonitorVideo(document.pictureInPictureElement)
+    ? document.pictureInPictureElement
+    : null;
+  if (!pipVideo) {
+    setMediaSessionAction("previoustrack", null);
+    setMediaSessionAction("nexttrack", null);
+    return;
+  }
+  const canStep = activeConfidenceMonitorPages().length >= 2;
+  try {
+    session.metadata = new MediaMetadata({
+      title: confidenceMonitorPipPageLabel(confidenceMonitorPage),
+      artist: "EMS Confidence Monitor",
+    });
+    session.playbackState = "playing";
+  } catch {}
+  setMediaSessionAction("previoustrack", canStep ? () => stepConfidenceMonitorPage(-1) : null);
+  setMediaSessionAction("nexttrack", canStep ? () => stepConfidenceMonitorPage(1) : null);
+}
+
+function confidenceMonitorPopoutButtonLabels(active) {
+  return active
+    ? {
+        label: "Dock confidence monitor",
+        title: "Dock confidence monitor",
+      }
+    : {
+        label: "Open larger Picture-in-Picture",
+        title: "Open larger Picture-in-Picture",
+      };
+}
+
+function setConfidenceMonitorPopoutButtonState() {
+  const button = document.getElementById("confidenceMonitorPopout");
+  if (!button) return;
+  const pages = activeConfidenceMonitorPages();
+  const video = currentConfidenceMonitorVideo();
+  const available = pages.length > 0 && Boolean(video);
+  const active =
+    confidenceMonitorPopoutActive || document.pictureInPictureElement === video;
+  const labels = confidenceMonitorPopoutButtonLabels(active);
+  button.hidden = !available;
+  button.disabled = false;
+  button.setAttribute("aria-pressed", active ? "true" : "false");
+  button.setAttribute("aria-label", labels.label);
+  button.title = labels.title;
+}
+
+function applyConfidenceMonitorOverlayPopout(active) {
+  document
+    .getElementById("confidenceMonitor")
+    ?.classList.toggle("confidence-monitor--popout", active === true);
+}
+
+function syncConfidenceCaptureQualityForPopout() {
+  streamRendererPreviewQualityMode = null;
+  if (streamRendererPreviewStream) {
+    syncRendererCaptureQuality(streamRendererPreviewStream);
+  }
+  const lowerThirdStream = lowerThirdRendererPreviewStream;
+  if (lowerThirdStream) {
+    const [track] = lowerThirdStream.getVideoTracks();
+    track
+      ?.applyConstraints?.(rendererCaptureVideoConstraints(activeRendererCaptureQualityMode()))
+      .catch(() => {});
+  }
+}
+
+async function requestVideoPictureInPicture(video) {
+  if (!video || typeof video.requestPictureInPicture !== "function") {
+    throw new Error("Picture-in-Picture is not available");
+  }
+  video.disablePictureInPicture = false;
+  if (video.readyState < 2) {
+    await Promise.race([
+      new Promise((resolve) => video.addEventListener("loadeddata", resolve, { once: true })),
+      new Promise((resolve) => window.setTimeout(resolve, 400)),
+    ]);
+  }
+  return video.requestPictureInPicture();
+}
+
+async function syncConfidenceMonitorNativePip() {
+  if (!confidenceMonitorPopoutActive || !nativePictureInPictureAvailable()) return false;
+  const video = currentConfidenceMonitorVideo();
+  if (!video?.srcObject) return false;
+  if (document.pictureInPictureElement === video) return true;
+  if (document.pictureInPictureElement) {
+    confidenceMonitorPipTransfer = true;
+    try {
+      await document.exitPictureInPicture();
+    } catch {
+      /* continue and try the new video */
+    } finally {
+      confidenceMonitorPipTransfer = false;
+    }
+  }
+  await requestVideoPictureInPicture(video);
+  syncConfidenceMonitorPipMediaSession();
+  return document.pictureInPictureElement === video;
+}
+
+async function closeConfidenceMonitorPopout() {
+  confidenceMonitorPopoutActive = false;
+  if (document.pictureInPictureElement) {
+    await document.exitPictureInPicture().catch(() => {});
+  }
+  applyConfidenceMonitorOverlayPopout(false);
+  syncConfidenceCaptureQualityForPopout();
+  setConfidenceMonitorPopoutButtonState();
+  syncConfidenceMonitorPipMediaSession();
+}
+
+async function openConfidenceMonitorPopout() {
+  const video = currentConfidenceMonitorVideo();
+  confidenceMonitorPopoutActive = true;
+  if (nativePictureInPictureAvailable() && video?.srcObject) {
+    try {
+      if (await syncConfidenceMonitorNativePip()) {
+        applyConfidenceMonitorOverlayPopout(false);
+        syncConfidenceCaptureQualityForPopout();
+        setConfidenceMonitorPopoutButtonState();
+        return;
+      }
+    } catch (error) {
+      console.error("Picture-in-Picture failed:", error);
+    }
+  }
+  applyConfidenceMonitorOverlayPopout(true);
+  syncConfidenceCaptureQualityForPopout();
+  setConfidenceMonitorPopoutButtonState();
+}
+
+async function toggleConfidenceMonitorPopout() {
+  if (confidenceMonitorPopoutActive) {
+    await closeConfidenceMonitorPopout();
+    return;
+  }
+  await openConfidenceMonitorPopout();
 }
 
 function setConfidenceMonitorPage(page) {
@@ -27676,6 +27853,11 @@ function setConfidenceMonitorPage(page) {
   document.querySelectorAll(".confidence-monitor__dot").forEach((dot) => {
     dot.setAttribute("aria-current", dot.dataset.page === confidenceMonitorPage ? "true" : "false");
   });
+  setConfidenceMonitorPopoutButtonState();
+  if (confidenceMonitorPopoutActive && nativePictureInPictureAvailable()) {
+    void syncConfidenceMonitorNativePip().catch(() => {});
+  }
+  syncConfidenceMonitorPipMediaSession();
 }
 
 function stepConfidenceMonitorPage(delta) {
@@ -27692,6 +27874,9 @@ function syncConfidenceMonitorCarousel() {
   const controls = document.getElementById("confidenceMonitorControls");
   const dots = document.getElementById("confidenceMonitorDots");
   monitor.hidden = currentMode !== MEDIAPLAYER;
+  if (currentMode !== MEDIAPLAYER && confidenceMonitorPopoutActive) {
+    void closeConfidenceMonitorPopout();
+  }
   if (controls) controls.hidden = pages.length < 2;
   if (dots) {
     dots.replaceChildren();
@@ -27706,12 +27891,36 @@ function syncConfidenceMonitorCarousel() {
     });
   }
 
+  applyConfidenceMonitorOverlayPopout(
+    confidenceMonitorPopoutActive &&
+      document.pictureInPictureElement !== currentConfidenceMonitorVideo(),
+  );
   setConfidenceMonitorPage(confidenceMonitorPage);
 
   if (monitor.dataset.carouselBound !== "1") {
     monitor.dataset.carouselBound = "1";
     document.getElementById("confidenceMonitorPrevious")?.addEventListener("click", () => stepConfidenceMonitorPage(-1));
     document.getElementById("confidenceMonitorNext")?.addEventListener("click", () => stepConfidenceMonitorPage(1));
+    document.getElementById("confidenceMonitorPopout")?.addEventListener("click", () => {
+      void toggleConfidenceMonitorPopout().catch(console.error);
+    });
+    document.addEventListener("enterpictureinpicture", (event) => {
+      if (!isConfidenceMonitorVideo(event.target)) return;
+      confidenceMonitorPopoutActive = true;
+      applyConfidenceMonitorOverlayPopout(false);
+      syncConfidenceCaptureQualityForPopout();
+      setConfidenceMonitorPopoutButtonState();
+      syncConfidenceMonitorPipMediaSession();
+    }, true);
+    document.addEventListener("leavepictureinpicture", (event) => {
+      if (!isConfidenceMonitorVideo(event.target)) return;
+      if (confidenceMonitorPipTransfer || document.pictureInPictureElement) return;
+      confidenceMonitorPopoutActive = false;
+      applyConfidenceMonitorOverlayPopout(false);
+      syncConfidenceCaptureQualityForPopout();
+      setConfidenceMonitorPopoutButtonState();
+      syncConfidenceMonitorPipMediaSession();
+    }, true);
   }
 }
 
@@ -27756,14 +27965,25 @@ function setStreamsPreviewNetworkState(active) {
 
 const RENDERER_CAPTURE_QUALITY_STREAMS = "streams";
 const RENDERER_CAPTURE_QUALITY_CONFIDENCE = "confidence";
+const RENDERER_CAPTURE_QUALITY_CONFIDENCE_PIP = "confidence-pip";
 
 function activeRendererCaptureQualityMode() {
-  return currentMode === MEDIAPLAYER
-    ? RENDERER_CAPTURE_QUALITY_CONFIDENCE
-    : RENDERER_CAPTURE_QUALITY_STREAMS;
+  if (currentMode === MEDIAPLAYER) {
+    return confidenceMonitorPopoutActive
+      ? RENDERER_CAPTURE_QUALITY_CONFIDENCE_PIP
+      : RENDERER_CAPTURE_QUALITY_CONFIDENCE;
+  }
+  return RENDERER_CAPTURE_QUALITY_STREAMS;
 }
 
 function rendererCaptureVideoConstraints(mode = activeRendererCaptureQualityMode()) {
+  if (mode === RENDERER_CAPTURE_QUALITY_CONFIDENCE_PIP) {
+    return {
+      width: { ideal: 1280, max: 1920 },
+      height: { ideal: 720, max: 1080 },
+      frameRate: { ideal: 30, max: 30 },
+    };
+  }
   if (mode === RENDERER_CAPTURE_QUALITY_CONFIDENCE) {
     return {
       width: { ideal: 426, max: 640 },
@@ -28020,7 +28240,9 @@ async function startLowerThirdRendererPreviewCapture() {
     disableCapturedAudioTracks(stream);
     lowerThirdRendererPreviewStream = stream;
     const [track] = stream.getVideoTracks();
-    track?.applyConstraints?.(rendererCaptureVideoConstraints(RENDERER_CAPTURE_QUALITY_CONFIDENCE)).catch(() => {});
+    track
+      ?.applyConstraints?.(rendererCaptureVideoConstraints(activeRendererCaptureQualityMode()))
+      .catch(() => {});
     track?.addEventListener("ended", stopLowerThirdRendererPreviewCapture, { once: true });
     prepareRendererCaptureElement(getLowerThirdConfidenceMonitorElement(), stream);
     syncConfidenceMonitorCarousel();
@@ -29075,9 +29297,41 @@ function installPreviewEventHandlers() {
   });
 }
 
+function installAdaptiveHeaderTitleCentering() {
+  const header = document.querySelector(".headerbar");
+  const start = header?.querySelector(":scope > .headerbar-start");
+  const end = header?.querySelector(":scope > .headerbar-end");
+  const title = header?.querySelector(":scope > #WindowTitle");
+  if (!header || !start || !end || !title || header.dataset.titleCenterBound === "1") {
+    return;
+  }
+  header.dataset.titleCenterBound = "1";
+  let frame = null;
+  const updateInset = () => {
+    frame = null;
+    const headerRect = header.getBoundingClientRect();
+    const startRect = start.getBoundingClientRect();
+    const endRect = end.getBoundingClientRect();
+    const leftInset = Math.max(0, startRect.right - headerRect.left);
+    const rightInset = Math.max(0, headerRect.right - endRect.left);
+    const safeInset = Math.ceil(Math.max(leftInset, rightInset) + 12);
+    header.style.setProperty("--headerbar-title-inset", `${safeInset}px`);
+  };
+  const scheduleUpdate = () => {
+    if (frame !== null) return;
+    frame = requestAnimationFrame(updateInset);
+  };
+  const resizeObserver = new ResizeObserver(scheduleUpdate);
+  resizeObserver.observe(header);
+  resizeObserver.observe(start);
+  resizeObserver.observe(end);
+  scheduleUpdate();
+}
+
 async function loadOpMode(mode) {
   const execute = async () => {
     try {
+      installAdaptiveHeaderTitleCentering();
       // Show loading indicator
       const loadingDiv = document.createElement("div");
       loadingDiv.id = "loading-indicator";
