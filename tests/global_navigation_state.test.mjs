@@ -13,8 +13,13 @@ test("global navigation has one authoritative state", () => {
   assert.equal(machine.state, NAVIGATION_STATES.MEDIA);
   assert.equal(machine.transition(NAVIGATION_STATES.SONGS).changed, true);
   assert.equal(machine.transition(NAVIGATION_STATES.SONGS).changed, false);
+  assert.equal(machine.transition(NAVIGATION_STATES.SETTINGS).changed, true);
   assert.equal(machine.transition(NAVIGATION_STATES.MEDIA).changed, true);
-  assert.deepEqual(transitions, [["media", "songs"], ["songs", "media"]]);
+  assert.deepEqual(transitions, [
+    ["media", "songs"],
+    ["songs", "settings"],
+    ["settings", "media"],
+  ]);
 });
 
 test("global navigation rejects states outside the machine", () => {

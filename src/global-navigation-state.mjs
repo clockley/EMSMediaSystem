@@ -4,6 +4,7 @@ export const NAVIGATION_STATES = Object.freeze({
   BIBLE: "bible",
   SLIDES: "slides",
   STAGE: "stage",
+  SETTINGS: "settings",
 });
 
 const VALID_STATES = new Set(Object.values(NAVIGATION_STATES));

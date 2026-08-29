@@ -247,6 +247,7 @@ const stageLayerRevisions = new Map();
 let stageContentCache = { current: "Waiting for live content", next: "", profile: "current-next" };
 const navigationState = createNavigationStateMachine(NAVIGATION_STATES.MEDIA);
 let navigationStateBeforeStage = NAVIGATION_STATES.MEDIA;
+let navigationStateBeforeSettings = NAVIGATION_STATES.MEDIA;
 navigationState.subscribe(renderGlobalNavigationState);
 
 async function waitForPreloadBridge(maxWaitTime = 30000) {
@@ -6300,6 +6301,9 @@ async function clearPrivateStageMessage() {
 }
 
 async function openStageControls() {
+  if (!document.getElementById("settingsControlsBackdrop")?.hidden) {
+    closeSettingsControls();
+  }
   await populateStageDisplaySelect().catch(console.error);
   updateStageStatusUi(await invoke("get-output-status").catch(() => null));
   document.getElementById("stageControlsBackdrop")?.removeAttribute("hidden");
@@ -6317,6 +6321,25 @@ function closeStageControls() {
   }
 }
 
+function openSettingsControls() {
+  if (!document.getElementById("stageControlsBackdrop")?.hidden) {
+    closeStageControls();
+  }
+  document.getElementById("settingsControlsBackdrop")?.removeAttribute("hidden");
+  if (navigationState.state !== NAVIGATION_STATES.SETTINGS) {
+    navigationStateBeforeSettings = navigationState.state;
+  }
+  navigationState.transition(NAVIGATION_STATES.SETTINGS);
+  document.getElementById("closeSettingsControlsBtn")?.focus();
+}
+
+function closeSettingsControls() {
+  document.getElementById("settingsControlsBackdrop")?.setAttribute("hidden", "");
+  if (navigationState.state === NAVIGATION_STATES.SETTINGS) {
+    navigationState.transition(navigationStateBeforeSettings);
+  }
+}
+
 function renderGlobalNavigationState(state) {
   const buttonIdByState = {
     [NAVIGATION_STATES.MEDIA]: "openMediaWorkspaceBtn",
@@ -6324,6 +6347,7 @@ function renderGlobalNavigationState(state) {
     [NAVIGATION_STATES.BIBLE]: "openBibleWorkspaceBtn",
     [NAVIGATION_STATES.SLIDES]: "openSlidesWorkspaceBtn",
     [NAVIGATION_STATES.STAGE]: "openStageControlsBtn",
+    [NAVIGATION_STATES.SETTINGS]: "openSettingsBtn",
   };
   const activeButtonId = buttonIdByState[state];
   document.querySelectorAll(".global-navigation__item").forEach((button) => {
@@ -6331,6 +6355,19 @@ function renderGlobalNavigationState(state) {
     button.classList.toggle("is-active", active);
     if (active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
+  });
+  document
+    .getElementById("stageControlsBackdrop")
+    ?.toggleAttribute("hidden", state !== NAVIGATION_STATES.STAGE);
+  document
+    .getElementById("settingsControlsBackdrop")
+    ?.toggleAttribute("hidden", state !== NAVIGATION_STATES.SETTINGS);
+}
+
+function openPreferencesWindow() {
+  return invoke("open-preferences-window").catch((error) => {
+    console.error("Failed to open Preferences:", error);
+    showGnomeToast("Could not open Preferences");
   });
 }
 
@@ -18880,9 +18917,14 @@ function installBibleMediaControls() {
   });
   document.getElementById("openMediaWorkspaceBtn")?.addEventListener("click", showMediaWorkspace);
   document.getElementById("openStageControlsBtn")?.addEventListener("click", () => void openStageControls());
+  document.getElementById("openSettingsBtn")?.addEventListener("click", openSettingsControls);
   document.getElementById("closeStageControlsBtn")?.addEventListener("click", closeStageControls);
   document.getElementById("stageControlsBackdrop")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeStageControls();
+  });
+  document.getElementById("closeSettingsControlsBtn")?.addEventListener("click", closeSettingsControls);
+  document.getElementById("settingsControlsBackdrop")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeSettingsControls();
   });
   document.getElementById("stageDisplaySelect")?.addEventListener("change", (event) => {
     send("set-stage-display-index", event.target.value || "");
@@ -18896,6 +18938,14 @@ function installBibleMediaControls() {
   document.getElementById("clearStageMessageBtn")?.addEventListener("click", () => void clearPrivateStageMessage());
   on("output-status", (_event, status) => updateStageStatusUi(status));
   document.addEventListener("keydown", (event) => {
+    if (
+      event.key === "Escape" &&
+      !document.getElementById("settingsControlsBackdrop")?.hidden
+    ) {
+      event.preventDefault();
+      closeSettingsControls();
+      return;
+    }
     if (event.key === "Escape" && !document.getElementById("stageControlsBackdrop")?.hidden) {
       event.preventDefault();
       closeStageControls();
@@ -18903,8 +18953,15 @@ function installBibleMediaControls() {
     }
     if (event.repeat || event.key !== "F8" || !event.ctrlKey) return;
     event.preventDefault();
-    if (event.shiftKey) void clearPrivateStageMessage();
-    else void showPrivateStageMessage();
+    if (event.shiftKey) {
+      void clearPrivateStageMessage();
+      return;
+    }
+    if (document.getElementById("stageControlsBackdrop")?.hidden) {
+      void openStageControls();
+      return;
+    }
+    void showPrivateStageMessage();
   });
   void invoke("get-output-status").then(updateStageStatusUi).catch(() => {});
   renderGlobalNavigationState(navigationState.state);
@@ -20392,17 +20449,45 @@ function acknowledgePreflightWarningForItem(item) {
 async function refreshMissingFlagsAndWarn(opts = {}) {
   const warn = opts?.warn !== false;
   if (!Array.isArray(mediaQueue) || mediaQueue.length === 0) return;
+  let embeddedPreflightStateCleared = false;
   for (const item of mediaQueue) {
-    if (!isQueueItemSong(item)) continue;
+    // Bible passages, songs, and native slide decks carry their presentation
+    // content inside the project. Their original library/source path is not a
+    // runtime dependency and must never make the schedule appear incomplete.
+    if (
+      !isQueueItemBible(item) &&
+      !isQueueItemSong(item) &&
+      !isQueueItemDeck(item)
+    ) {
+      continue;
+    }
+    embeddedPreflightStateCleared ||= Boolean(
+      item.missing ||
+        item.changedSinceSave ||
+        item.pendingMediaUpdate ||
+        item.lastPreflightWarningFingerprint,
+    );
     item.missing = false;
     item.changedSinceSave = false;
     if (item.pendingMediaUpdate) {
       delete item.pendingMediaUpdate;
     }
+    if (item.lastPreflightWarningFingerprint) {
+      delete item.lastPreflightWarningFingerprint;
+    }
+  }
+  if (embeddedPreflightStateCleared) {
+    renderQueue();
+    scheduleAutosaveProjectState();
   }
   const fileItems = mediaQueue
     .map((item, index) => ({ item, index }))
-    .filter(({ item }) => !isQueueItemBible(item) && !isQueueItemSong(item));
+    .filter(
+      ({ item }) =>
+        !isQueueItemBible(item) &&
+        !isQueueItemSong(item) &&
+        !isQueueItemDeck(item),
+    );
   if (fileItems.length === 0) return;
   const preflightItems = fileItems.map(({ item }) => queueItemPreflightCheckPayload(item));
   let results = [];
@@ -21780,17 +21865,6 @@ function installCueButtonHandlers() {
   });
 }
 
-/**
- * The Settings expander hides Display + Autoplay + Auto-advance behind a
- * disclosure so the queue can dominate the sidebar. Restoring the user's
- * last-chosen open state keeps the sidebar adaptive — operators who change
- * the switches every show don't have to re-expand each session, while users
- * who set them once and forget still get the compact default. We use
- * localStorage instead of the settings IPC because there's no
- * `set-setting` handler in main and adding one for a UI-only flag would be
- * over-architected.
- */
-const OPTIONS_EXPANDER_STORAGE_KEY = "ems.mediaOptionsExpander.open";
 const GLOBAL_SLIDE_TRANSITION_STORAGE_KEY = "ems.slideTransition.global";
 
 function readSlideTransitionControls(effectId, durationId, { allowInherit = false } = {}) {
@@ -21888,28 +21962,6 @@ function installGlobalSlideTransitionControls() {
   effectEl.addEventListener("change", handleChange);
   durationEl.addEventListener("input", handleChange);
   durationEl.addEventListener("change", handleChange);
-}
-
-function installMediaOptionsExpander() {
-  const expander = document.getElementById("mediaOptionsExpander");
-  if (!expander || expander.dataset.expanderBound === "1") return;
-  expander.dataset.expanderBound = "1";
-  try {
-    expander.open =
-      window.localStorage?.getItem(OPTIONS_EXPANDER_STORAGE_KEY) === "1";
-  } catch {
-    // localStorage can throw in restricted contexts; default to collapsed.
-  }
-  expander.addEventListener("toggle", () => {
-    try {
-      window.localStorage?.setItem(
-        OPTIONS_EXPANDER_STORAGE_KEY,
-        expander.open ? "1" : "0",
-      );
-    } catch {
-      /* swallow — UI works either way */
-    }
-  });
 }
 
 /**
@@ -27898,7 +27950,6 @@ function setSBFormMediaPlayer() {
   installMediaOpenButton();
   installNetworkItemButton();
   installPreviewEmptyStateHandlers();
-  installMediaOptionsExpander();
   installGlobalSlideTransitionControls();
   installBibleMediaControls();
   const clearQueueBtn = document.getElementById("clearQueueBtn");
@@ -28936,7 +28987,7 @@ async function loadOpMode(mode) {
       document
         .getElementById("menuPreferences")
         ?.addEventListener("click", () => {
-          void invoke("open-preferences-window").catch(console.error);
+          void openPreferencesWindow();
         });
 
       // Window control functionality

@@ -110,65 +110,6 @@ export function generateMediaFormHTML() {
         </div>
       </div>
 
-      <!--
-        Settings expander: Output Display and Autoplay. Collapsed by default
-        to maximize schedule real estate; open-state is persisted to localStorage
-        so users who routinely toggle the switches don't have to re-expand
-        each session.
-      -->
-      <details class="options-expander" id="mediaOptionsExpander">
-        <summary class="options-expander__summary">
-          <span class="options-expander__title">Settings</span>
-          <svg class="options-expander__chevron" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M6 4l4 4-4 4"/>
-          </svg>
-        </summary>
-        <div class="options-expander__body">
-          <div class="control-group">
-            <span class="control-label">Output Display</span>
-            <div class="display-select-group">
-              <select name="dspSelct" id="dspSelct" class="display-select">
-                <option value="">No Audience Output</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="control-group" data-lower-third-feature hidden>
-            <span class="control-label">Lower Third Display</span>
-            <div class="display-select-group">
-              <select name="lowerThirdDspSelct" id="lowerThirdDspSelct" class="display-select">
-                <option value="">No Lower Third Output</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="control-group media-toggle-rows">
-            <div class="loop-control">
-              <span class="control-label">Autoplay</span>
-              <label class="switch">
-                <input type="checkbox" checked name="autoPlayCtl" id="autoPlayCtl">
-                <span class="switch-track"></span>
-                <span class="switch-thumb"></span>
-              </label>
-            </div>
-          </div>
-
-          <div class="control-group">
-            <span class="control-label">Slide Transition</span>
-            <div class="transition-inline-controls transition-inline-controls--global">
-              <select id="globalSlideTransitionEffect" class="display-select" aria-label="Default slide transition">
-                <option value="none">Off</option>
-                <option value="fade">Fade</option>
-                <option value="slide-left">Slide Left</option>
-                <option value="slide-right">Slide Right</option>
-                <option value="zoom">Zoom</option>
-              </select>
-              <input id="globalSlideTransitionDuration" class="url-input transition-duration-input" type="number" min="0" max="3000" step="50" value="350" aria-label="Default transition duration in milliseconds">
-            </div>
-          </div>
-        </div>
-      </details>
-
       <div id="confidenceMonitor" class="confidence-monitor" aria-label="Confidence monitor">
         <div class="confidence-monitor__viewport">
           <section id="confidenceMonitorIdle" class="confidence-monitor__page confidence-monitor__idle" aria-label="No active outputs">
@@ -180,19 +121,26 @@ export function generateMediaFormHTML() {
             <span>No active outputs</span>
           </section>
           <section id="confidenceAudiencePage" class="confidence-monitor__page" aria-label="Audience output" hidden>
-            <video id="confidenceMonitorPreview" class="confidence-monitor__video" autoplay muted playsinline disablePictureInPicture></video>
+            <video id="confidenceMonitorPreview" class="confidence-monitor__video" autoplay muted playsinline></video>
             <span class="confidence-monitor__label">Audience</span>
           </section>
           <section id="confidenceLowerThirdPage" class="confidence-monitor__page" aria-label="Lower third output" hidden>
-            <video id="confidenceLowerThirdPreview" class="confidence-monitor__video" autoplay muted playsinline disablePictureInPicture></video>
+            <video id="confidenceLowerThirdPreview" class="confidence-monitor__video" autoplay muted playsinline></video>
             <span class="confidence-monitor__label">Lower Third</span>
           </section>
         </div>
         <div id="confidenceMonitorControls" class="confidence-monitor__controls" aria-label="Confidence monitor pages" hidden>
-          <button type="button" id="confidenceMonitorPrevious" class="confidence-monitor__arrow" aria-label="Previous output">‹</button>
+          <button type="button" id="confidenceMonitorPrevious" class="confidence-monitor__arrow confidence-monitor__arrow--previous" aria-label="Previous output">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>
+          </button>
           <div id="confidenceMonitorDots" class="confidence-monitor__dots"></div>
-          <button type="button" id="confidenceMonitorNext" class="confidence-monitor__arrow" aria-label="Next output">›</button>
+          <button type="button" id="confidenceMonitorNext" class="confidence-monitor__arrow confidence-monitor__arrow--next" aria-label="Next output">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>
+          </button>
         </div>
+        <button type="button" id="confidenceMonitorPopout" class="confidence-monitor__popout" aria-label="Open current output in Picture-in-Picture" title="Open Picture-in-Picture" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM12 11h6v6h-6z"/></svg>
+        </button>
       </div>
     </form>
 
