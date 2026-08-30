@@ -59,6 +59,7 @@ export function lowerThirdThemeFieldsFromStyle(style = {}, derivedFontSize) {
   if (resolved) {
     const backdrop = resolved.backdrop || {};
     const backdropBackground = backdrop.background || {};
+    const backdropEnabled = backdrop.enabled !== false;
     return {
       lowerThirdFontFamily: resolveLowerThirdFontFamily({
         lowerThirdFontFamily: resolved.typography?.fontFamily,
@@ -66,9 +67,13 @@ export function lowerThirdThemeFieldsFromStyle(style = {}, derivedFontSize) {
       lowerThirdFontSize: normalizeLowerThirdFontSize(resolved.typography?.fontSize),
       lowerThirdColor: resolved.typography?.color || "#ffffff",
       lowerThirdBarBackgroundColor:
-        backdropBackground.color || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+        backdropEnabled
+          ? backdropBackground.color || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND
+          : "transparent",
       lowerThirdBarBackgroundPath:
-        backdropBackground.assetUrl || backdropBackground.path || "",
+        backdropEnabled
+          ? backdropBackground.assetUrl || backdropBackground.path || ""
+          : "",
       lowerThirdChromaKeyColor:
         resolved.key?.chromaColor || resolved.canvas?.background?.color || "#00ff00",
     };

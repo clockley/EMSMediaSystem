@@ -39,3 +39,30 @@ test("lower-third compatibility utility accepts resolved themes", () => {
   assert.equal(fields.lowerThirdFontFamily, "Inter");
   assert.equal(fields.lowerThirdChromaKeyColor, "#00ff00");
 });
+
+test("lower-third compatibility utility honors a disabled backing plate", () => {
+  const disabledTheme = {
+    ...theme,
+    profiles: {
+      ...theme.profiles,
+      song: {
+        ...theme.profiles.song,
+        lowerThird: {
+          backdrop: {
+            enabled: false,
+            background: { type: "image", color: "#123456", path: "plate.png" },
+          },
+        },
+      },
+    },
+  };
+  const resolvedTheme = resolveThemeForTarget({
+    theme: disabledTheme,
+    contentKind: "song",
+    outputRole: "lowerThird",
+  });
+  const fields = lowerThirdThemeFieldsFromStyle({ resolvedTheme });
+
+  assert.equal(fields.lowerThirdBarBackgroundColor, "transparent");
+  assert.equal(fields.lowerThirdBarBackgroundPath, "");
+});

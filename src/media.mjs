@@ -1840,9 +1840,16 @@ function resolveLowerThirdFontFamily(message = {}) {
 
 function applyLowerThirdBarBackground(box, message = {}) {
   if (!box) return;
-  const barColor = message.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND;
-  const barImage = message.lowerThirdBarBackgroundImage || "";
-  const barVideo = message.lowerThirdBarBackgroundVideo || "";
+  // The resolved theme is authoritative for whether a plate exists. Some
+  // live-update paths retain legacy flat plate fields from the Bible designer;
+  // without this guard those stale values can keep a black plate on the real
+  // output even though Theme Manager and the operator preview show it disabled.
+  const backingPlateDisabled = message.resolvedTheme?.backdrop?.enabled === false;
+  const barColor = backingPlateDisabled
+    ? "transparent"
+    : message.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND;
+  const barImage = backingPlateDisabled ? "" : message.lowerThirdBarBackgroundImage || "";
+  const barVideo = backingPlateDisabled ? "" : message.lowerThirdBarBackgroundVideo || "";
 
   box.style.backgroundColor = barColor;
 
