@@ -6814,7 +6814,7 @@ function selectScriptureResolvedSlide(entry, presentation, slideId) {
     scheduleIndex: targetIndex,
   });
   if (
-    scripturePresentation.state.status !== "live" ||
+    !["live", "taking"].includes(scripturePresentation.state.status) ||
     scripturePresentation.state.source?.id === source.id
   ) {
     if (scripturePresentation.state.source?.id !== source.id) {
@@ -7099,6 +7099,7 @@ function renderBibleLowerThirdCueList(rawSegments, selectedIndex) {
     row.className = "bible-lower-third-cue-row";
     row.dataset.cueIndex = String(index);
     row.setAttribute("role", "option");
+    row.title = "Click to cue; double-click to show live";
     row.setAttribute("aria-selected", index === selectedIndex ? "true" : "false");
     row.classList.toggle("is-cued", index === selectedIndex);
     const isLive = bibleLowerThirdOutputActive && bibleLowerThirdLiveCueKey === bibleLowerThirdCueKey(index);
@@ -7127,23 +7128,38 @@ function renderBibleLowerThirdCueList(rawSegments, selectedIndex) {
 
 function persistBibleLowerThirdCueState() {
   const targetIndex = currentBibleEditorTargetIndex();
+  const indexes = new Set();
   if (
-    targetIndex < 0 ||
-    targetIndex >= mediaQueue.length ||
-    !isQueueItemBible(mediaQueue[targetIndex])
+    targetIndex >= 0 &&
+    targetIndex < mediaQueue.length &&
+    isQueueItemBible(mediaQueue[targetIndex])
   ) {
-    return false;
+    indexes.add(targetIndex);
   }
-  mediaQueue[targetIndex] = {
-    ...mediaQueue[targetIndex],
-    currentSlideId: bibleDesignerState.currentSlideId || null,
-    bible: {
-      ...(mediaQueue[targetIndex].bible || {}),
-      lowerThirdSegmentIndex: bibleDesignerState.lowerThirdSegmentIndex,
+  if (
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length &&
+    isQueueItemBible(mediaQueue[currentQueueIndex]) &&
+    bibleEntryMatchesQueueItemShallow(
+      bibleDesignerState,
+      mediaQueue[currentQueueIndex],
+    )
+  ) {
+    indexes.add(currentQueueIndex);
+  }
+  if (indexes.size === 0) return false;
+  for (const index of indexes) {
+    mediaQueue[index] = {
+      ...mediaQueue[index],
       currentSlideId: bibleDesignerState.currentSlideId || null,
-      currentLowerThirdSlideId: bibleDesignerState.currentLowerThirdSlideId || null,
-    },
-  };
+      bible: {
+        ...(mediaQueue[index].bible || {}),
+        lowerThirdSegmentIndex: bibleDesignerState.lowerThirdSegmentIndex,
+        currentSlideId: bibleDesignerState.currentSlideId || null,
+        currentLowerThirdSlideId: bibleDesignerState.currentLowerThirdSlideId || null,
+      },
+    };
+  }
   renderQueue();
   saveMediaFile();
   return true;
@@ -7163,6 +7179,28 @@ async function commitBibleDesignerRenderState({ rebuildLowerThird = false } = {}
   void syncShowNowBiblePresentation().catch(console.error);
 }
 
+async function syncLiveBibleAudienceForLowerThirdCue(expectedRevision) {
+  if (!(isActiveMediaWindow() && activeMediaWindowContentType === "bible")) {
+    return false;
+  }
+  let entry = null;
+  if (
+    isQueuePlaying &&
+    currentQueueIndex >= 0 &&
+    currentQueueIndex < mediaQueue.length &&
+    isQueueItemBible(mediaQueue[currentQueueIndex])
+  ) {
+    entry = await resolvedBibleEntryForItem(mediaQueue[currentQueueIndex]);
+  } else if (bibleShowNowModeActive) {
+    const transientEntry = await currentBibleTextOnlyEntry();
+    entry = transientEntry ? bibleEntryWithShowNowStyle(transientEntry).bible : null;
+  }
+  if (!entry || !scripturePresentation.isCurrentRevision(expectedRevision)) {
+    return false;
+  }
+  return sendBibleTextToOutput(entry, expectedRevision);
+}
+
 async function setBibleLowerThirdSegmentIndex(index) {
   if (!isBibleLowerThirdFeatureEnabled()) return false;
   await syncBibleStateFromControls();
@@ -7179,22 +7217,87 @@ async function setBibleLowerThirdSegmentIndex(index) {
     resolvedSlides,
   );
   const nextSlideId = resolvedSlides[nextIndex]?.slideId || null;
-  if (
+  const lowerThirdUnchanged =
     nextIndex === bibleDesignerState.lowerThirdSegmentIndex &&
-    (!nextSlideId || nextSlideId === bibleDesignerState.currentLowerThirdSlideId)
-  ) {
+    (!nextSlideId || nextSlideId === bibleDesignerState.currentLowerThirdSlideId);
+  const selectedLowerThirdSlide = resolvedSlides[nextIndex] || null;
+  const lowerThirdCursor = scriptureCursorForSlide(
+    selectedLowerThirdSlide,
+    resolvedSlides,
+  );
+  const audienceMessage = buildBibleTextMessage(bibleDesignerState, {
+    look: SCRIPTURE_LOOK_FULLSCREEN,
+  });
+  const audienceSlides = audienceMessage.resolvedPresentation?.slides || [];
+  const containingAudienceSlide = resolveScriptureSlideForCursor(
+    audienceSlides,
+    lowerThirdCursor,
+  );
+  const audienceSlideChanged = Boolean(
+    containingAudienceSlide?.slideId &&
+      containingAudienceSlide.slideId !== bibleDesignerState.currentSlideId,
+  );
+  if (lowerThirdUnchanged && !audienceSlideChanged) {
     syncBibleLookControls(resolvedMessage);
     return false;
   }
+  const showNowTarget = bibleShowNowModeActive && !isQueuePlaying;
+  const targetIndex = showNowTarget ? -1 : currentBibleEditorTargetIndex();
+  const targetItem = targetIndex >= 0 ? mediaQueue[targetIndex] : null;
+  const source = scripturePresentationSource(bibleDesignerState, {
+    item: targetItem,
+    scheduleIndex: targetIndex,
+  });
+  const stateOwnsTarget =
+    !["live", "taking"].includes(scripturePresentation.state.status) ||
+    scripturePresentation.state.source?.id === source.id;
+  const targetIsLive = showNowTarget || isBibleEditorTargetLiveItem();
   bibleDesignerState.lowerThirdSegmentIndex = nextIndex;
   if (nextSlideId) bibleDesignerState.currentLowerThirdSlideId = nextSlideId;
-  scripturePresentation.dispatch({
-    type: "LOWER_THIRD_CUED",
-    sourceId: scripturePresentation.state.source?.id,
-    slideId: nextSlideId,
+  if (stateOwnsTarget) {
+    if (scripturePresentation.state.source?.id !== source.id) {
+      scripturePresentation.dispatch({
+        type: "SOURCE_PREVIEWED",
+        source,
+        cursor: scriptureCursorFromPresentation(audienceMessage.resolvedPresentation),
+      });
+    }
+    scripturePresentation.dispatch({
+      type: "LOWER_THIRD_CUED",
+      sourceId: source.id,
+      slideId: nextSlideId,
+    });
+  }
+  if (audienceSlideChanged) {
+    bibleDesignerState.currentSlideId = containingAudienceSlide.slideId;
+    const audienceCursor = scriptureCursorForSlide(
+      containingAudienceSlide,
+      audienceSlides,
+    );
+    if (stateOwnsTarget) {
+      scripturePresentation.dispatch({
+        type: "CURSOR_CHANGED",
+        sourceId: source.id,
+        cursor: audienceCursor,
+        lowerThirdSlideId: nextSlideId,
+      });
+    }
+  }
+  const updatedAudienceMessage = buildBibleTextMessage(bibleDesignerState, {
+    look: SCRIPTURE_LOOK_FULLSCREEN,
   });
+  renderBibleSlideNavigator(
+    bibleDesignerState,
+    updatedAudienceMessage.resolvedPresentation,
+  );
   applyBiblePreview(bibleDesignerState, { show: false });
   persistBibleLowerThirdCueState();
+  if (audienceSlideChanged && targetIsLive && stateOwnsTarget) {
+    const expectedRevision = scripturePresentation.state.revision;
+    void syncLiveBibleAudienceForLowerThirdCue(expectedRevision).catch((error) =>
+      console.error("Failed to align audience Scripture with lower-third cue:", error),
+    );
+  }
   return true;
 }
 
@@ -8513,6 +8616,16 @@ function hasLowerThirdOutputSelected() {
   return selectedDisplayValueFromSelect("lowerThirdDspSelct") !== null;
 }
 
+function isPresentationActiveForBibleLowerThird() {
+  return Boolean(
+    isQueuePresentationActive() ||
+      isActiveMediaWindow() ||
+      isLocalAppWindowPresentationActive() ||
+      isPlaying ||
+      bibleLowerThirdOutputActive,
+  );
+}
+
 async function waitForBibleLowerThirdFonts(entry = bibleDesignerState) {
   const outputSize = selectedBiblePreviewOutputSize("lowerThirdDspSelct");
   const themedFont = appliedPresentationTheme
@@ -8585,6 +8698,15 @@ async function showCuedBibleLowerThird() {
   if (!hasLowerThirdOutputSelected()) {
     showGnomeToast("Choose a lower-third output display");
     return false;
+  }
+  if (!isPresentationActiveForBibleLowerThird()) {
+    if (!hasAudienceOutputSelected()) {
+      showGnomeToast("Choose an audience output display");
+      return false;
+    }
+    const started = await showBibleTextNow();
+    if (started) showGnomeToast("Audience and lower third shown");
+    return started;
   }
   await syncBibleStateFromControls();
   const resolvedEntry = await bibleEntryWithLookupText(bibleDesignerState);
@@ -20157,8 +20279,25 @@ function installBibleMediaControls() {
   const lowerThirdCueList = document.getElementById("bibleLowerThirdCueList");
   lowerThirdCueList?.addEventListener("click", (event) => {
     const row = event.target.closest?.("[data-cue-index]");
-    if (!row) return;
+    if (!row || event.detail > 1) return;
     void setBibleLowerThirdSegmentIndex(Number(row.dataset.cueIndex)).catch(console.error);
+  });
+  lowerThirdCueList?.addEventListener("dblclick", (event) => {
+    const row = event.target.closest?.("[data-cue-index]");
+    if (!row) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void (async () => {
+      await setBibleLowerThirdSegmentIndex(Number(row.dataset.cueIndex));
+      if (!isPresentationActiveForBibleLowerThird()) {
+        showGnomeToast("Lower third cued; start presenting or use Show to take it live");
+        return;
+      }
+      await showCuedBibleLowerThird();
+    })().catch((error) => {
+      console.error("Failed to show double-clicked Bible lower third:", error);
+      showGnomeToast("Failed to show lower third");
+    });
   });
   lowerThirdCueList?.addEventListener("keydown", (event) => {
     const resolvedMessage = buildBibleTextMessage(bibleDesignerState, {
