@@ -24,16 +24,23 @@
         }
 
         .about-content {
+            box-sizing: border-box;
+            width: 100%;
+            height: calc(100% - 57px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
             text-align: center;
-            padding: var(--adw-spacing);
-            background: var(--adw-card-bg);
-            border-radius: var(--adw-radius-lg);
+            padding: 28px 40px 24px;
+            overflow-y: auto;
+            background: var(--window-bg-color);
         }
 
         .about-logo {
             width: 96px;
             height: 96px;
-            margin-bottom: var(--spacing-m);
+            flex: 0 0 auto;
+            margin-bottom: var(--spacing-s);
             user-select: none;
             pointer-events: none;
         }
@@ -45,20 +52,33 @@
         }
 
         .about-version {
+            margin-top: var(--spacing-xxs);
             font-size: 14px;
-            color: var(--adw-text-muted);
+            color: var(--text-color-secondary);
         }
 
         .about-section {
-            margin-top: var(--spacing-m);
+            width: min(100%, 360px);
+            margin-top: var(--spacing-l);
             font-size: 14px;
+            line-height: 1.4;
             color: var(--adw-text);
         }
 
+        .about-section p {
+            margin: 0;
+        }
+
         .about-grid {
-            margin-top: var(--spacing-m);
+            width: min(100%, 360px);
+            margin-top: var(--spacing-l);
             font-size: 13px;
-            color: var(--adw-text-muted);
+            line-height: 1.4;
+            color: var(--text-color-secondary);
+        }
+
+        .about-row + .about-row {
+            margin-top: var(--spacing-s);
         }
 
         .about-link {
