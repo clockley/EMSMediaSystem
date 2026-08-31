@@ -4,9 +4,9 @@ import { readFile } from "node:fs/promises";
 import * as esbuild from "esbuild";
 
 test("renderer entry stays a thin static import of the composition module", async () => {
-  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const source = await readFile(new URL("../src/control-window/app.js", import.meta.url), "utf8");
   const lines = source.split(/\r?\n/).length;
-  assert.ok(lines <= 30, `src/app.js should remain a bootstrap entry, found ${lines} lines`);
+  assert.ok(lines <= 30, `src/control-window/app.js should remain a bootstrap entry, found ${lines} lines`);
   assert.match(source, /import\s+["']\.\/app-renderer\.mjs["']/);
   assert.doesNotMatch(source, /\bimport\s*\(/);
 });
@@ -14,7 +14,7 @@ test("renderer entry stays a thin static import of the composition module", asyn
 test("renderer bundle is one IIFE with no lazy chunks", async () => {
   const result = await esbuild.build({
     absWorkingDir: new URL("..", import.meta.url).pathname,
-    entryPoints: ["src/app.js"],
+    entryPoints: ["src/control-window/app.js"],
     bundle: true,
     format: "iife",
     platform: "browser",
@@ -49,7 +49,7 @@ test("feature modules do not import each other", async () => {
     "app-workspace-shell.mjs",
   ];
   const sources = await Promise.all(
-    files.map((name) => readFile(new URL(`../src/${name}`, import.meta.url), "utf8")),
+    files.map((name) => readFile(new URL(`../src/control-window/${name}`, import.meta.url), "utf8")),
   );
   for (let i = 0; i < files.length; i += 1) {
     for (const other of files.filter((_, j) => j !== i)) {
@@ -184,7 +184,7 @@ const FEATURE_MODULE_FILES = [
 ];
 
 test("feature modules import renderer bindings they use", async () => {
-  const renderer = await readFile(new URL("../src/app-renderer.mjs", import.meta.url), "utf8");
+  const renderer = await readFile(new URL("../src/control-window/app-renderer.mjs", import.meta.url), "utf8");
   const rendererNames = new Set([
     ...[...renderer.matchAll(/^(?:async function|function|let|const|var) (\w+)/gm)].map((match) => match[1]),
     ...[...renderer.matchAll(/^\s+([A-Z][A-Z0-9_]{2,})\s*=/gm)].map((match) => match[1]),
@@ -197,7 +197,7 @@ test("feature modules import renderer bindings they use", async () => {
     }
   }
   for (const file of FEATURE_MODULE_FILES) {
-    const source = await readFile(new URL(`../src/${file}`, import.meta.url), "utf8");
+    const source = await readFile(new URL(`../src/control-window/${file}`, import.meta.url), "utf8");
     const imported = importedNames(source);
     const local = localDeclarationNames(source);
     const used = collectIdentifiers(source);

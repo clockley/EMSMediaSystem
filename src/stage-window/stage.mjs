@@ -2,8 +2,8 @@ import {
   applyOutputCommand,
   createCompositorState,
   outputAcknowledgement,
-} from "./output-compositor.min.mjs";
-import { resolveAlertTokens } from "./alert-tokens.min.mjs";
+} from "../shared/output-compositor.min.mjs";
+import { resolveAlertTokens } from "../shared/alert-tokens.min.mjs";
 
 const api = window.stageOutput;
 let state = createCompositorState("stage", api.sessionId);

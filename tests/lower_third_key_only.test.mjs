@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { lowerThirdKeyOnlyMessage } from "../src/app-media-utils.mjs";
+import { lowerThirdKeyOnlyMessage } from "../src/shared/app-media-utils.mjs";
 
 test("unsupported schedule items leave only the lower-third key color", () => {
   const message = lowerThirdKeyOnlyMessage({

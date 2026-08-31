@@ -311,9 +311,7 @@ async function loadPptxPreview(filePath, opts = {}) {
   } else if (!globalThis.process.env) {
     globalThis.process.env = {};
   }
-  const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
-    "../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js"
-  );
+  const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import("../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js");
   if (!isCurrentPptxPreviewRequest(requestToken)) return;
   const container = document.getElementById("pptxPreviewContainer");
   if (!container) return;

@@ -6,7 +6,7 @@ import {
   resolvedNavigation,
   stableSerialize,
   stableValueHash,
-} from "../src/resolved-presentation.mjs";
+} from "../src/shared/resolved-presentation.mjs";
 
 test("resolved presentation contract exposes stable target and navigation state", () => {
   const slides = [

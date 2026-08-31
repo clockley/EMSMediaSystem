@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { commandsForAlert, normalizeAlert } from "../src/alert-routing.mjs";
-import { applyOutputCommand, createCompositorState, createOutputCommand } from "../src/output-compositor.mjs";
+import { commandsForAlert, normalizeAlert } from "../src/shared/alert-routing.mjs";
+import { applyOutputCommand, createCompositorState, createOutputCommand } from "../src/shared/output-compositor.mjs";
 
 const command = (overrides = {}) => createOutputCommand({
   commandId: "cmd-1", sessionId: "session-1", revision: 1,

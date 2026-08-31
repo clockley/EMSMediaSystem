@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { advanceAlertState, clearAlert, createAlertState, showAlert } from "../src/alert-state.mjs";
-import { commandForShortcut, LIVE_COMMANDS } from "../src/alert-shortcuts.mjs";
-import { createOutputStatus, mergeOutputStatus } from "../src/output-status.mjs";
-import { createBackgroundState, revertLiveBackground, setLiveBackground } from "../src/live-background.mjs";
-import { normalizeAlertTemplate, resolveAlertTokens } from "../src/alert-tokens.mjs";
-import { addNurseryAlert, createNurseryAlertsState, expireNurseryAlerts, removeNurseryAlert } from "../src/nursery-alerts.mjs";
-import { DEFAULT_TICKER_SPEED_PX_PER_SECOND, tickerDurationSeconds, tickerPhaseDelaySeconds } from "../src/alert-motion.mjs";
+import { advanceAlertState, clearAlert, createAlertState, showAlert } from "../src/shared/alert-state.mjs";
+import { commandForShortcut, LIVE_COMMANDS } from "../src/shared/alert-shortcuts.mjs";
+import { createOutputStatus, mergeOutputStatus } from "../src/shared/output-status.mjs";
+import { createBackgroundState, revertLiveBackground, setLiveBackground } from "../src/shared/live-background.mjs";
+import { normalizeAlertTemplate, resolveAlertTokens } from "../src/shared/alert-tokens.mjs";
+import { addNurseryAlert, createNurseryAlertsState, expireNurseryAlerts, removeNurseryAlert } from "../src/shared/nursery-alerts.mjs";
+import { DEFAULT_TICKER_SPEED_PX_PER_SECOND, tickerDurationSeconds, tickerPhaseDelaySeconds } from "../src/shared/alert-motion.mjs";
 
 test("high-priority alerts replace normal alerts and repeats expire deterministically", () => {
   let state = showAlert(createAlertState(), { message: "Normal", durationMs: 100 }, 0);

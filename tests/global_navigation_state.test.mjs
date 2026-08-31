@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   NAVIGATION_STATES,
   createNavigationStateMachine,
-} from "../src/global-navigation-state.mjs";
+} from "../src/shared/global-navigation-state.mjs";
 
 test("global navigation has one authoritative state", () => {
   const machine = createNavigationStateMachine();

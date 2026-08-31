@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "fs/promises";
 import { randomUUID } from "crypto";
 import path from "path";
-import { isValidMediaFileHash } from "./media-file-hash.min.mjs";
+import { isValidMediaFileHash } from "../shared/media-file-hash.min.mjs";
 
 export const STAGING_INDEX_FILENAME = "staging-index.json";
 export const STAGING_INDEX_SCHEMA_VERSION = 1;

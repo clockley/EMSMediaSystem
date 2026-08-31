@@ -16,7 +16,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 import { contextBridge, ipcRenderer, webUtils } from "electron/renderer";
-import { FadeOut, attachCubicWaveShaper } from "./audioFx.min.mjs";
+import { FadeOut, attachCubicWaveShaper } from "../shared/audioFx.min.mjs";
 
 let isInitialized = false;
 let initPromise = null;

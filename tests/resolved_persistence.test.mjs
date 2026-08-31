@@ -7,7 +7,7 @@ import {
   cleanupExtractedProjectMedia,
   loadEmprojSnapshot,
   saveEmprojSnapshot,
-} from "../src/emproj.mjs";
+} from "../src/main-process/emproj.mjs";
 
 test("project round-trip preserves resolved slide identity and manual breaks", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ems-resolved-persistence-"));

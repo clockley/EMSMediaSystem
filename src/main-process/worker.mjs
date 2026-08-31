@@ -23,7 +23,7 @@ import {
   storedFileHashFromRecord,
   baselineFileHashFields,
   MEDIA_FILE_HASH_ALG,
-} from "./media-file-hash.min.mjs";
+} from "../shared/media-file-hash.min.mjs";
 
 const activeTasks = new Map(); // taskId -> cancelFlag { canceled: false }
 

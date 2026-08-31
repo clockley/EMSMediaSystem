@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { EMS_SAFE_DEFAULT_THEME, resolveThemeForTarget, themeRevision } from "../src/theme-resolver.mjs";
-import { validateTheme } from "../src/theme-normalize.mjs";
-import { legacyStyleToThemeOverrides } from "../src/theme-legacy-adapter.mjs";
-import { createProjectThemeSnapshot, resolveProjectTheme } from "../src/theme-project.mjs";
-import { lowerThirdThemeFieldsFromStyle } from "../src/lower-third-theme.mjs";
+import { EMS_SAFE_DEFAULT_THEME, resolveThemeForTarget, themeRevision } from "../src/shared/theme-resolver.mjs";
+import { validateTheme } from "../src/shared/theme-normalize.mjs";
+import { legacyStyleToThemeOverrides } from "../src/shared/theme-legacy-adapter.mjs";
+import { createProjectThemeSnapshot, resolveProjectTheme } from "../src/shared/theme-project.mjs";
+import { lowerThirdThemeFieldsFromStyle } from "../src/shared/lower-third-theme.mjs";
 import {
   messageFromResolvedPresentation,
   resolvedAudienceBackgroundFields,
   resolvedFontFamilyFields,
-} from "../src/theme-render-message.mjs";
+} from "../src/shared/theme-render-message.mjs";
 
 const theme = { schema: "ems.theme.v1", id: "test", name: "Test", tokens: { fontFamily: "Inter", textColor: "#eeeeee" }, profiles: { song: { audience: { typography: { fontSize: 70 } } }, scripture: {}, text: {} }, assets: [] };
 

@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   applyOperatorSelectionContrast,
   operatorSelectionContrast,
-} from "../src/operator-selection-contrast.mjs";
+} from "../src/shared/operator-selection-contrast.mjs";
 
 test("operator selection differs from light body text on a dark background", () => {
   const result = operatorSelectionContrast({

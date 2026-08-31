@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { PIDController } from "../src/app-controls-utils.mjs";
+import { PIDController } from "../src/shared/app-controls-utils.mjs";
 
 function playingVideo(overrides = {}) {
   return {

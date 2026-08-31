@@ -1,28 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { applyOutputCommand, createCompositorState, createOutputCommand } from "../src/output-compositor.mjs";
+import { applyOutputCommand, createCompositorState, createOutputCommand } from "../src/shared/output-compositor.mjs";
 
 async function readRendererSources() {
   const sources = await Promise.all(
     [
-      "../src/app.js",
-      "../src/app-renderer.mjs",
-      "../src/app-song-slides-workspace.mjs",
-      "../src/app-bible-workspace.mjs",
-      "../src/app-confidence-monitor.mjs",
-      "../src/app-network-preview.mjs",
-      "../src/app-preview-controller.mjs",
-      "../src/app-project-session.mjs",
-      "../src/app-schedule-controller.mjs",
-      "../src/app-presentation-playback.mjs",
-      "../src/app-live-outputs.mjs",
-      "../src/app-logo-hold.mjs",
-      "../src/app-media-loop.mjs",
-      "../src/app-preview-surfaces.mjs",
-      "../src/app-operator-chrome.mjs",
-      "../src/app-media-runtime.mjs",
-      "../src/app-workspace-shell.mjs",
+      "../src/control-window/app.js",
+      "../src/control-window/app-renderer.mjs",
+      "../src/control-window/app-song-slides-workspace.mjs",
+      "../src/control-window/app-bible-workspace.mjs",
+      "../src/control-window/app-confidence-monitor.mjs",
+      "../src/control-window/app-network-preview.mjs",
+      "../src/control-window/app-preview-controller.mjs",
+      "../src/control-window/app-project-session.mjs",
+      "../src/control-window/app-schedule-controller.mjs",
+      "../src/control-window/app-presentation-playback.mjs",
+      "../src/control-window/app-live-outputs.mjs",
+      "../src/control-window/app-logo-hold.mjs",
+      "../src/control-window/app-media-loop.mjs",
+      "../src/control-window/app-preview-surfaces.mjs",
+      "../src/control-window/app-operator-chrome.mjs",
+      "../src/control-window/app-media-runtime.mjs",
+      "../src/control-window/app-workspace-shell.mjs",
     ].map((path) => readFile(new URL(path, import.meta.url), "utf8")),
   );
   return sources.join("\n");
@@ -64,14 +64,14 @@ test("background switches without replacing resolved text content", () => {
 });
 
 test("audience renderer declares fixed background, content, alert, and hold slots", async () => {
-  const html = await readFile(new URL("../src/media.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../src/media-window/media.html", import.meta.url), "utf8");
   const positions = ["liveBackgroundLayer", "textCanvas", "audienceAlertLayer", "outputHoldOverlay"].map((id) => html.indexOf(`id="${id}"`));
   assert.ok(positions.every((position) => position >= 0));
   assert.deepEqual([...positions].sort((a, b) => a - b), positions);
 });
 
 test("alert-only audience output is transparent with corner nursery and dark-red ticker styling", async () => {
-  const html = await readFile(new URL("../src/media.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../src/media-window/media.html", import.meta.url), "utf8");
   assert.match(html, /is-transparent-output/);
   assert.match(html, /id="audienceNurseryLayer"/);
   assert.match(html, /top:\s*4vh;\s*right:\s*3vw/);
@@ -83,7 +83,7 @@ test("alert-only audience output is transparent with corner nursery and dark-red
 });
 
 test("audience window lifecycle preserves alerts across content boundaries", async () => {
-  const main = await readFile(new URL("../src/main.mjs", import.meta.url), "utf8");
+  const main = await readFile(new URL("../src/main-process/main.mjs", import.meta.url), "utf8");
   assert.match(main, /__alertOverlayOnly=true/);
   assert.match(main, /transparent:\s*true/);
   assert.match(main, /if \(hasActiveAlerts\(\)\)[\s\S]*replaceContentWindowWithAlertOverlay\(\)/);
@@ -97,7 +97,7 @@ test("audience window lifecycle preserves alerts across content boundaries", asy
 });
 
 test("rerouting the same audience alert preserves its ticker animation phase", async () => {
-  const media = await readFile(new URL("../src/media.mjs", import.meta.url), "utf8");
+  const media = await readFile(new URL("../src/media-window/media.mjs", import.meta.url), "utf8");
   assert.match(media, /activeAudienceTickerId === tickerId/);
   assert.match(media, /Keep it intact[\s\S]*content\/transparent-base change/);
   assert.match(media, /tickerPhaseDelaySeconds/);
@@ -106,15 +106,15 @@ test("rerouting the same audience alert preserves its ticker animation phase", a
 
 test("content transitions are suppressed when a live alert owns the audience timeline", async () => {
   const [main, media] = await Promise.all([
-    readFile(new URL("../src/main.mjs", import.meta.url), "utf8"),
-    readFile(new URL("../src/media.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/main-process/main.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/media-window/media.mjs", import.meta.url), "utf8"),
   ]);
   assert.match(main, /hasActiveAlerts\(\) \? \["__disable-content-transitions=true"\]/);
   assert.match(media, /if \(disableContentTransitions\)[\s\S]*clearSlideTransition/);
 });
 
 test("operator controls expose background and text color pickers for both alert types", async () => {
-  const html = await readFile(new URL("../src/index.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../src/control-window/index.html", import.meta.url), "utf8");
   for (const id of [
     "nurseryAlertBackgroundColor",
     "nurseryAlertTextColor",
@@ -127,7 +127,7 @@ test("operator controls expose background and text color pickers for both alert 
 });
 
 test("alerts dialog separates its two operator tasks and uses progressive disclosure", async () => {
-  const html = await readFile(new URL("../src/index.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../src/control-window/index.html", import.meta.url), "utf8");
   assert.equal((html.match(/role="tab"/g) || []).length, 2);
   for (const page of ["nursery", "message"]) {
     assert.match(html, new RegExp(`data-live-layer-page="${page}"`));
@@ -143,7 +143,7 @@ test("alerts dialog separates its two operator tasks and uses progressive disclo
 test("independent live-background controls and IPC are not exposed", async () => {
   const [app, main] = await Promise.all([
     readRendererSources(),
-    readFile(new URL("../src/main.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/main-process/main.mjs", import.meta.url), "utf8"),
   ]);
   assert.doesNotMatch(app, /background:(set|clear|revert)/);
   assert.doesNotMatch(main, /ipcMain\.handle\("background:(set|clear|revert)"/);
@@ -162,7 +162,7 @@ test("message picker offers ready-to-use text and persists a bounded recent list
 });
 
 test("operator shell omits the audience, lower-third, and stage output-status strip", async () => {
-  const html = await readFile(new URL("../src/index.html", import.meta.url), "utf8");
+  const html = await readFile(new URL("../src/control-window/index.html", import.meta.url), "utf8");
   assert.doesNotMatch(html, /id="outputStatusStrip"/);
   assert.doesNotMatch(html, /data-output-role=/);
 });

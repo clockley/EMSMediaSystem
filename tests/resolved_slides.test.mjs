@@ -1,34 +1,34 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { resolveSongArrangement } from "../src/song-arrangement.mjs";
-import { chunkSongSection } from "../src/song-chunking.mjs";
+import { resolveSongArrangement } from "../src/shared/song-arrangement.mjs";
+import { chunkSongSection } from "../src/shared/song-chunking.mjs";
 import {
   clearResolvedSongCache,
   resolveSongSlides,
   resolvedSongCacheStats,
-} from "../src/song-slides.mjs";
+} from "../src/shared/song-slides.mjs";
 import {
   clearResolvedScriptureCache,
   resolveScriptureSlides,
-} from "../src/scripture-slides.mjs";
+} from "../src/shared/scripture-slides.mjs";
 import {
   renderScriptureForTarget,
   renderSongForTarget,
-} from "../src/theme-render-message.mjs";
+} from "../src/shared/theme-render-message.mjs";
 import {
   resolvedTextBounds,
   themeTextSafeMargins,
   waitForTextFonts,
-} from "../src/text-measure.mjs";
+} from "../src/shared/text-measure.mjs";
 import {
   normalizeToSongAST,
   songRenderFromItem,
-} from "../src/app-song-utils.mjs";
+} from "../src/shared/app-song-utils.mjs";
 import {
   deckToTransientSong,
   songAstToDeck,
-} from "../src/app-slide-utils.mjs";
+} from "../src/shared/app-slide-utils.mjs";
 
 const readFixture = async (name) =>
   JSON.parse(

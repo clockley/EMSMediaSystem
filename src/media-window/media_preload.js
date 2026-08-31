@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 const { contextBridge, ipcRenderer } = require("electron/renderer");
 
-const audioFxPromise = import(`./audioFx.min.mjs`);
+const audioFxPromise = import(`../shared/audioFx.min.mjs`);
 let timeRemainingPort = null;
 const TIME_REMAINING_PAYLOAD = [0, 0, 0, ""];
 const TIME_REMAINING_PAYLOAD_NO_FILE = [0, 0, 0];

@@ -55,13 +55,31 @@ function readIfExists(filePath) {
   }
 }
 
+function collectJsFiles(dir, acc = []) {
+  if (!fs.existsSync(dir)) return acc;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectJsFiles(fullPath, acc);
+      continue;
+    }
+    if (/\.(mjs|js)$/i.test(entry.name) && !/\.min\./i.test(entry.name)) {
+      acc.push(fullPath);
+    }
+  }
+  return acc;
+}
+
 function resolveScriptPath(src, htmlFile) {
   if (!src || /^https?:\/\//i.test(src)) return null;
   const withoutQuery = src.split(/[?#]/, 1)[0];
   const sourceName = withoutQuery.replace(/\.min\.(m?js)$/i, ".$1");
+  const baseName = path.basename(sourceName);
   const candidates = [
     path.resolve(path.dirname(htmlFile), sourceName),
-    path.resolve("src", path.basename(sourceName)),
+    path.resolve("src/control-window", baseName),
+    path.resolve("src/shared", baseName),
+    path.resolve("src", baseName),
     path.resolve(sourceName),
   ];
   return candidates.find((candidate) => fs.existsSync(candidate)) || null;
@@ -76,14 +94,27 @@ function collectContent(html, htmlFile) {
   }
 
   if (path.basename(htmlFile) === "index.html") {
-    for (const file of fs.readdirSync("src")) {
-      if (/\.(mjs|js)$/i.test(file) && !/\.min\./i.test(file)) {
-        chunks.push(readIfExists(path.join("src", file)));
-      }
+    for (const file of [
+      ...collectJsFiles("src/control-window"),
+      ...collectJsFiles("src/shared"),
+    ]) {
+      chunks.push(readIfExists(file));
     }
   }
 
   return chunks.join("\n");
+}
+
+function rewriteRepoRelativeAssets(text, outFile) {
+  const htmlDir = path.dirname(path.resolve(outFile));
+  const fontsRel = path.relative(htmlDir, path.resolve("fonts")).split(path.sep).join("/");
+  const nodeModulesRel = path
+    .relative(htmlDir, path.resolve("node_modules"))
+    .split(path.sep)
+    .join("/");
+  return text
+    .replace(/(?:\.\.\/)+fonts\//g, `${fontsRel}/`)
+    .replace(/(?:\.\.\/)+node_modules\//g, `${nodeModulesRel}/`);
 }
 
 function collectTokens(content) {
@@ -194,7 +225,10 @@ function applyHtmlTemplateVariables(html) {
   const css = readIfExists(cssPath);
   const content = collectContent(html, htmlPath);
   const prunedCss = pruneCss(css, content);
-  const withCss = applyHtmlTemplateVariables(inlineCss(html, prunedCss));
+  const withCss = rewriteRepoRelativeAssets(
+    applyHtmlTemplateVariables(inlineCss(html, prunedCss)),
+    outPath,
+  );
   const minified = await minifyHtml(withCss, {
     collapseWhitespace: true,
     minifyCss: false,

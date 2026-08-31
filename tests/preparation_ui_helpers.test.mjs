@@ -9,7 +9,7 @@ import {
   resolvedSlideMarkers,
   resetManualBreaks,
   setManualBreakAfter,
-} from "../src/preparation-ui-helpers.mjs";
+} from "../src/shared/preparation-ui-helpers.mjs";
 
 test("resolved song slides stay grouped by repeated sequence entry", () => {
   const groups = groupResolvedSongSlides(

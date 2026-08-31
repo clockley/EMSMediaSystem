@@ -51,10 +51,10 @@ import {
   slideTransitionOverrideSnapshot,
   songUriPrefix,
   isSongPath,
-} from "./app-media-utils.mjs";
-import { createOutputCommand } from "./output-compositor.mjs";
-import { commandForShortcut, LIVE_COMMANDS } from "./alert-shortcuts.mjs";
-import { stageContentFromPresentation } from "./stage-content.mjs";
+} from "../shared/app-media-utils.mjs";
+import { createOutputCommand } from "../shared/output-compositor.mjs";
+import { commandForShortcut, LIVE_COMMANDS } from "../shared/alert-shortcuts.mjs";
+import { stageContentFromPresentation } from "../shared/stage-content.mjs";
 import {
   firstPlayableScheduleIndex,
   isEmbeddedScheduleItem,
@@ -62,32 +62,32 @@ import {
   isScheduleItemVisible,
   nextPlayableScheduleIndex,
   previousPlayableScheduleIndex,
-} from "./schedule-item-availability.mjs";
+} from "../shared/schedule-item-availability.mjs";
 import {
   NAVIGATION_STATES,
   createNavigationStateMachine,
-} from "./global-navigation-state.mjs";
+} from "../shared/global-navigation-state.mjs";
 import {
   SCRIPTURE_FOLLOW_MODE,
   createScripturePresentationMachine,
   resolveScriptureSlideForCursor,
   scriptureCursorForSlide,
-} from "./scripture-presentation-state.mjs";
+} from "../shared/scripture-presentation-state.mjs";
 import {
   waitForLoadedMetadata,
   waitForMetadata as waitForMediaMetadata,
-} from "./app-media-loading-utils.mjs";
+} from "../shared/app-media-loading-utils.mjs";
 import {
   normalizeScriptureReference,
   parseScriptureReference,
-} from "./app-bible-reference-utils.mjs";
-import { applyOperatorSelectionContrast } from "./operator-selection-contrast.mjs";
+} from "../shared/app-bible-reference-utils.mjs";
+import { applyOperatorSelectionContrast } from "../shared/operator-selection-contrast.mjs";
 import {
   bindTransportTimeDisplay,
   getHostnameOrBasename,
   paintTransportTimeDisplay,
   PIDController,
-} from "./app-controls-utils.mjs";
+} from "../shared/app-controls-utils.mjs";
 import {
   clampPptxSlideIndex as clampPptxSlideIndexValue,
   enforcePptxCoverFit,
@@ -98,7 +98,7 @@ import {
   getPptxRenderedSlideElement,
   isSavedPptxSlideIndex,
   waitForNextFrame,
-} from "./app-pptx-utils.mjs";
+} from "../shared/app-pptx-utils.mjs";
 import {
   PREVIEW_STASH_ID,
   TAB_PANEL_MEDIA_ID,
@@ -108,7 +108,7 @@ import {
   generateNetworkItemDialogHTML,
   generateStreamsPanelHTML,
   queueTypeIconMarkup,
-} from "./app-ui-templates.mjs";
+} from "../shared/app-ui-templates.mjs";
 import {
   SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE,
   SCRIPTURE_AUTOSIZE_FIT,
@@ -156,12 +156,12 @@ import {
   syncBiblePreviewOutputScale,
   syncLowerThirdFeatureAvailability as syncBuiltInLowerThirdFeatureAvailability,
   waitForScriptureFonts,
-} from "./app-bible-scripture-render.mjs";
-import { waitForTextFonts } from "./text-measure.mjs";
+} from "../shared/app-bible-scripture-render.mjs";
+import { waitForTextFonts } from "../shared/text-measure.mjs";
 import {
   installLowerThirdPreviewScaleObserver,
   renderLowerThirdPreview,
-} from "./lower-third-preview.mjs";
+} from "../shared/lower-third-preview.mjs";
 import {
   configureCountdown,
   handleTimeMessage,
@@ -170,14 +170,14 @@ import {
   resetCountdownSync,
   restoreCountdownForLiveMedia,
   updateTimestamp,
-} from "./app-countdown.mjs";
+} from "../shared/app-countdown.mjs";
 import {
   configureToasts,
   invalidateQueueUndoToastAfterMutation,
   resetPreviewWarningState,
   showGnomeToast,
   showPreviewWarningToast,
-} from "./app-toasts.mjs";
+} from "../shared/app-toasts.mjs";
 import {
   applyOutputHoldPreferences,
   configureOutputHold,
@@ -192,14 +192,14 @@ import {
   toggleBlackScreen,
   toggleLogoHold,
   updateOutputHoldButtonStates,
-} from "./app-output-hold.mjs";
-import { resolveThemeForTarget } from "./theme-resolver.mjs";
-import { itemThemeForRole, normalizeItemTheme, setItemThemeRole } from "./theme-item-overrides.mjs";
+} from "../shared/app-output-hold.mjs";
+import { resolveThemeForTarget } from "../shared/theme-resolver.mjs";
+import { itemThemeForRole, normalizeItemTheme, setItemThemeRole } from "../shared/theme-item-overrides.mjs";
 import {
   resolvedAudienceBackgroundFields,
   resolvedFontFamilyFields,
   renderScriptureForTarget,
-} from "./theme-render-message.mjs";
+} from "../shared/theme-render-message.mjs";
 import {
   DEFAULT_SONG_RENDER,
   arrangementSequenceEntries,
@@ -217,7 +217,7 @@ import {
   songQueuePath,
   songRenderStateFromDefaultRender,
   songRenderFromItem,
-} from "./app-song-utils.mjs";
+} from "../shared/app-song-utils.mjs";
 import {
   EMS_SLIDE_DECK_SCHEMA_ID,
   DEFAULT_DECK_THEME,
@@ -245,7 +245,7 @@ import {
   setPagePrimaryText,
   songAstToDeck,
   textToSegmentsBlocks,
-} from "./app-slide-utils.mjs";
+} from "../shared/app-slide-utils.mjs";
 import {
   SONG_FOLDER_UNFILED,
   addDeckPage,

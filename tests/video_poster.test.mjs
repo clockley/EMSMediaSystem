@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   generateVideoPoster,
   videoPosterSidecar,
-} from "../src/video-poster.mjs";
+} from "../src/main-process/video-poster.mjs";
 
 test("video poster is disabled without spawning a sidecar on unsupported platforms", async () => {
   const result = await generateVideoPoster("/tmp/example.mp4", {

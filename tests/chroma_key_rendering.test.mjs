@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const mediaHtmlPath = new URL("../src/media.html", import.meta.url);
-const mediaModulePath = new URL("../src/media.mjs", import.meta.url);
+const mediaHtmlPath = new URL("../src/media-window/media.html", import.meta.url);
+const mediaModulePath = new URL("../src/media-window/media.mjs", import.meta.url);
 
 test("lower-third chroma text is alpha-hardened and outlined before compositing", async () => {
   const html = await readFile(mediaHtmlPath, "utf8");

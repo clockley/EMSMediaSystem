@@ -1,4 +1,4 @@
-import { EMS_RESOLVED_PRESENTATION_SCHEMA_ID } from "./schemas/ems-resolved-presentation.types.mjs";
+import { EMS_RESOLVED_PRESENTATION_SCHEMA_ID } from "../schemas/ems-resolved-presentation.types.mjs";
 
 export const RESOLVED_LAYOUT_ALGORITHM_VERSION = 1;
 export const DEFAULT_RESOLVED_OUTPUT_SIZE = Object.freeze({ width: 1920, height: 1080 });

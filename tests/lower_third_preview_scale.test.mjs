@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import {
   applyLowerThirdPreviewScale,
   lowerThirdPreviewMarkup,
-} from "../src/lower-third-preview.mjs";
+} from "../src/shared/lower-third-preview.mjs";
 
 test("shared lower-third markup provides stable component slots", () => {
   const markup = lowerThirdPreviewMarkup({

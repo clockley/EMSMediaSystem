@@ -9,7 +9,7 @@ pipeline can render deck pages without code duplication. The bridge is
 schema-conformant ems.song.v1 where each deck page becomes one section.
 */
 
-import { EMS_SLIDE_DECK_SCHEMA_ID } from "./schemas/ems-slide.types.mjs";
+import { EMS_SLIDE_DECK_SCHEMA_ID } from "../schemas/ems-slide.types.mjs";
 import { normalizeToSongAST } from "./app-song-utils.mjs";
 
 export { EMS_SLIDE_DECK_SCHEMA_ID };
@@ -646,7 +646,7 @@ export function deckPagesToSongSections(deck) {
  * Convert a deck into a schema-conformant ems.song.v1, mapping one section
  * per page. This lets the existing song presentation pipeline render decks.
  *
- * @param {import("./schemas/ems-slide.types.mjs").EmsSlideDeck} deck
+ * @param {import("../schemas/ems-slide.types.mjs").EmsSlideDeck} deck
  * @returns {object} ems.song.v1 song
  */
 export function deckToTransientSong(deck) {

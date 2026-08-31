@@ -11,7 +11,7 @@ import {
   setSongPlayOrderEntryEnabled,
   synchronizeSongQueueNavigationState,
   withSongPlayOrder,
-} from "../src/song-play-order-editor.mjs";
+} from "../src/shared/song-play-order-editor.mjs";
 
 const original = [
   { id: "verse_first", sectionId: "verse", enabled: true },

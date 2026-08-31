@@ -6,7 +6,7 @@ import {
   createScripturePresentationMachine,
   resolveScriptureSlideForCursor,
   scriptureCursorForSlide,
-} from "../src/scripture-presentation-state.mjs";
+} from "../src/shared/scripture-presentation-state.mjs";
 
 const source = { id: "schedule:item-7", origin: "schedule", scheduleIndex: 7 };
 const audienceSlides = [

@@ -17,8 +17,8 @@ import {
   baselineFileHashFields,
   hashMediaFile,
   storedFileHashFromRecord,
-} from "./media-file-hash.mjs";
-import { normalizeToSongAST } from "./app-song-utils.mjs";
+} from "../shared/media-file-hash.mjs";
+import { normalizeToSongAST } from "../shared/app-song-utils.mjs";
 import yauzl from "yauzl";
 import yazl from "yazl";
 

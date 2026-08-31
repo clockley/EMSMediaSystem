@@ -15,11 +15,11 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { getPptxPdfjsConfig } from "./app-pptx-utils.min.mjs";
+import { getPptxPdfjsConfig } from "../shared/app-pptx-utils.min.mjs";
 import {
   boxFitsMeasurement,
   findLargestFittingFontSize,
-} from "./text-measure.mjs";
+} from "../shared/text-measure.mjs";
 
 const {
   ipcRenderer,
@@ -43,9 +43,9 @@ import {
   applyOutputCommand,
   createCompositorState,
   outputAcknowledgement,
-} from "./output-compositor.min.mjs";
-import { resolveAlertTokens } from "./alert-tokens.min.mjs";
-import { tickerDurationSeconds, tickerPhaseDelaySeconds } from "./alert-motion.min.mjs";
+} from "../shared/output-compositor.min.mjs";
+import { resolveAlertTokens } from "../shared/alert-tokens.min.mjs";
+import { tickerDurationSeconds, tickerPhaseDelaySeconds } from "../shared/alert-motion.min.mjs";
 let hlsInstance = null;
 let dashPlayer = null;
 let previewRtcPeer = null;
@@ -631,7 +631,7 @@ const HLS_PRESENTATION_CONFIG = {
 
 async function createStreamingHls() {
   const { default: Hls } = await import(
-    "../../node_modules/hls.js/dist/hls.mjs",
+    "../../../node_modules/hls.js/dist/hls.mjs",
   );
   return new Hls(HLS_PRESENTATION_CONFIG);
 }
@@ -865,9 +865,7 @@ async function activatePptxTarget(data) {
   const pptxCanvas = document.getElementById("pptxCanvas");
   pptxCanvas.style.display = "flex";
   pptxCanvas.innerHTML = "";
-  const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
-    "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js"
-  );
+  const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import("../../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js");
   const arrayBuffer = await ipcRenderer.invoke(
     "read-file-as-arraybuffer",
     mediaFile
@@ -964,9 +962,7 @@ async function startLiveStreamPlayback(url) {
       video.src = ytResolved.url;
     } else if (ytResolved.type === "dash") {
       installLiveStreamStatusHandlers(video);
-      const { MediaPlayer } = await import(
-        "../../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
-      );
+      const { MediaPlayer } = await import("../../../node_modules/dashjs/dist/modern/esm/dash.all.min.js");
       dashPlayer = MediaPlayer().create();
       configureDashAggressiveBuffer(dashPlayer);
       dashManifestObjectUrl = URL.createObjectURL(
@@ -3217,9 +3213,7 @@ async function loadMedia() {
     video.removeAttribute("src");
     video.load();
     if (pptxCanvas) pptxCanvas.style.display = "flex";
-    const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import(
-      "../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js"
-    );
+    const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import("../../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js");
     const arrayBuffer = await ipcRenderer.invoke(
       "read-file-as-arraybuffer",
       mediaFile

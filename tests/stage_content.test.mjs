@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { stageContentFromPresentation, stageSlideText } from "../src/stage-content.mjs";
+import { stageContentFromPresentation, stageSlideText } from "../src/shared/stage-content.mjs";
 
 test("stage next uses the following resolved slide", () => {
   const content = stageContentFromPresentation(

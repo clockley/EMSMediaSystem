@@ -1,5 +1,5 @@
 import { deepFreeze, mergeThemeValues, normalizeProfile, normalizeTheme } from "./theme-normalize.mjs";
-import { THEME_CONTENT_KINDS, THEME_OUTPUT_ROLES } from "./schemas/ems-theme.types.mjs";
+import { THEME_CONTENT_KINDS, THEME_OUTPUT_ROLES } from "../schemas/ems-theme.types.mjs";
 
 export const RESOLVED_THEME_VERSION = 1;
 export const EMS_SAFE_DEFAULT_THEME = deepFreeze(normalizeTheme({

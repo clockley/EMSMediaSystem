@@ -7,13 +7,13 @@ import {
   normalizeSlideDeck,
   pageRenderOverrides,
   songAstToDeck,
-} from "../src/app-slide-utils.mjs";
+} from "../src/shared/app-slide-utils.mjs";
 import {
   normalizeToSongAST,
   reconcileSongPlayOrder,
   resolvedSongPresentation,
   songAstToSearchText,
-} from "../src/app-song-utils.mjs";
+} from "../src/shared/app-song-utils.mjs";
 
 test("page background color remains more specific than the deck theme", () => {
   const deck = normalizeSlideDeck({

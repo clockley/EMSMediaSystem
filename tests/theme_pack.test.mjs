@@ -3,9 +3,9 @@ import test from "node:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { ThemeLibrary } from "../src/theme-manager.mjs";
-import { importThemeAsset } from "../src/theme-assets.mjs";
-import { exportThemePack, importThemePack, inspectThemePack, THEME_PACK_SCHEMA } from "../src/theme-pack.mjs";
+import { ThemeLibrary } from "../src/shared/theme-manager.mjs";
+import { importThemeAsset } from "../src/shared/theme-assets.mjs";
+import { exportThemePack, importThemePack, inspectThemePack, THEME_PACK_SCHEMA } from "../src/shared/theme-pack.mjs";
 
 test(".emtheme round trip includes verified assets and handles ID collisions", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ems-theme-pack-test-"));

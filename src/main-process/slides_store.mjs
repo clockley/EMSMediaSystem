@@ -6,7 +6,7 @@ as a single JSON file in `<userData>/decks/<id>.ems-slide.json`. A lightweight
 in-memory index is rebuilt by scanning the directory on demand.
 
 This module is loaded by the Electron main process and is not exposed to
-renderers directly — `src/main.mjs` registers `slides:*` IPC handlers that
+renderers directly — `src/main-process/main.mjs` registers `slides:*` IPC handlers that
 call into it.
 */
 

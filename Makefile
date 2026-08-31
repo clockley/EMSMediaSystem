@@ -78,8 +78,8 @@ else
 endif
 
 JS_FILES := $(patsubst ./%,%,$(JS_FILES))
-JS_FILES := $(filter-out src/app.js src/Bible.mjs src/wasm_exec.js,$(JS_FILES))
-APP_BUNDLE_SRC = src/app.js
+JS_FILES := $(filter-out src/control-window/app.js src/Bible.mjs src/wasm_exec.js,$(JS_FILES))
+APP_BUNDLE_SRC = src/control-window/app.js
 APP_BUNDLE_OUT = $(DERIVED_DIR)/src/app.min.js
 BIBLE_RPC_ROOT = sidecars/bible-rpc
 MEDIA_WATCHER_ROOT = sidecars/media-watcher
@@ -447,7 +447,7 @@ js-minify: $(MINIFIED_JS_FILES)
 	@echo "$(COLOR_GREEN)$(TICK) Minified all JS/MJS files$(COLOR_RESET)"
 
 # Pattern rule to minify .js files
-$(APP_BUNDLE_OUT): $(APP_BUNDLE_SRC) src/app-renderer.mjs src/app-song-slides-workspace.mjs src/app-bible-workspace.mjs src/app-confidence-monitor.mjs src/app-network-preview.mjs src/app-preview-controller.mjs src/app-project-session.mjs src/app-schedule-controller.mjs src/app-presentation-playback.mjs src/app-live-outputs.mjs src/app-logo-hold.mjs src/app-media-loop.mjs src/app-preview-surfaces.mjs src/app-operator-chrome.mjs src/app-media-runtime.mjs src/app-workspace-shell.mjs src/app-media-utils.mjs src/app-bible-reference-utils.mjs src/app-bible-scripture-render.mjs src/scripture-presentation-state.mjs src/lower-third-theme.mjs src/app-countdown.mjs src/app-pptx-utils.mjs src/app-controls-utils.mjs src/app-media-loading-utils.mjs src/app-toasts.mjs src/app-output-hold.mjs src/app-ui-templates.mjs src/app-song-utils.mjs src/app-slide-utils.mjs src/output-compositor.mjs src/output-roles.mjs src/global-navigation-state.mjs src/schemas/ems-slide.types.mjs Makefile | $(DERIVED_DIR)
+$(APP_BUNDLE_OUT): $(APP_BUNDLE_SRC) src/control-window/app-renderer.mjs src/control-window/app-song-slides-workspace.mjs src/control-window/app-bible-workspace.mjs src/control-window/app-confidence-monitor.mjs src/control-window/app-network-preview.mjs src/control-window/app-preview-controller.mjs src/control-window/app-project-session.mjs src/control-window/app-schedule-controller.mjs src/control-window/app-presentation-playback.mjs src/control-window/app-live-outputs.mjs src/control-window/app-logo-hold.mjs src/control-window/app-media-loop.mjs src/control-window/app-preview-surfaces.mjs src/control-window/app-operator-chrome.mjs src/control-window/app-media-runtime.mjs src/control-window/app-workspace-shell.mjs src/shared/app-media-utils.mjs src/shared/app-bible-reference-utils.mjs src/shared/app-bible-scripture-render.mjs src/shared/scripture-presentation-state.mjs src/shared/lower-third-theme.mjs src/shared/app-countdown.mjs src/shared/app-pptx-utils.mjs src/shared/app-controls-utils.mjs src/shared/app-media-loading-utils.mjs src/shared/app-toasts.mjs src/shared/app-output-hold.mjs src/shared/app-ui-templates.mjs src/shared/app-song-utils.mjs src/shared/app-slide-utils.mjs src/shared/output-compositor.mjs src/shared/output-roles.mjs src/shared/global-navigation-state.mjs src/schemas/ems-slide.types.mjs Makefile | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 else

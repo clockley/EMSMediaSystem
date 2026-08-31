@@ -8,7 +8,7 @@ import {
   isScheduleItemVisible,
   nextPlayableScheduleIndex,
   previousPlayableScheduleIndex,
-} from "../src/schedule-item-availability.mjs";
+} from "../src/shared/schedule-item-availability.mjs";
 
 const song = { type: "song", path: "song://1", name: "Song" };
 const bible = { type: "bible", path: "bible://KJV:John%203:16", name: "John 3:16" };

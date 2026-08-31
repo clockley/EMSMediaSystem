@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { itemThemeForRole, normalizeItemTheme, setItemThemeRole } from "../src/theme-item-overrides.mjs";
+import { itemThemeForRole, normalizeItemTheme, setItemThemeRole } from "../src/shared/theme-item-overrides.mjs";
 
 const theme = {
   schema: "ems.theme.v1", id: "warm", name: "Warm", tokens: {}, profiles: {

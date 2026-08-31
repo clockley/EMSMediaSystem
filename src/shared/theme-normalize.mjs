@@ -1,4 +1,4 @@
-import { THEME_CONTENT_KINDS, THEME_OUTPUT_ROLES, THEME_SCHEMA } from "./schemas/ems-theme.types.mjs";
+import { THEME_CONTENT_KINDS, THEME_OUTPUT_ROLES, THEME_SCHEMA } from "../schemas/ems-theme.types.mjs";
 
 const PLAIN_OBJECT = Object.getPrototypeOf({});
 export const isPlainObject = value => value !== null && typeof value === "object" && Object.getPrototypeOf(value) === PLAIN_OBJECT;

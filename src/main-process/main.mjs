@@ -49,15 +49,15 @@ import {
   hashMediaFile,
   MEDIA_FILE_HASH_ALG,
   storedFileHashFromRecord,
-} from "./media-file-hash.min.mjs";
+} from "../shared/media-file-hash.min.mjs";
 import { BibleRpcClient } from "./bible_rpc_client.min.mjs";
 import { SongsRpcClient } from "./songs_rpc_client.min.mjs";
 import { AtemService } from "./atem_service.min.mjs";
 import { SlidesStore } from "./slides_store.min.mjs";
-import { ThemeLibrary } from "./theme-manager.min.mjs";
-import { EMS_SAFE_DEFAULT_THEME } from "./theme-resolver.min.mjs";
-import { exportThemePack, importThemePack } from "./theme-pack.min.mjs";
-import { importThemeAsset, resolveManagedThemeAsset } from "./theme-assets.min.mjs";
+import { ThemeLibrary } from "../shared/theme-manager.min.mjs";
+import { EMS_SAFE_DEFAULT_THEME } from "../shared/theme-resolver.min.mjs";
+import { exportThemePack, importThemePack } from "../shared/theme-pack.min.mjs";
+import { importThemeAsset, resolveManagedThemeAsset } from "../shared/theme-assets.min.mjs";
 import settings from "./settings.min.mjs";
 import {
   loadEmprojSnapshot,
@@ -67,7 +67,7 @@ import {
 } from "./emproj.min.mjs";
 import { MediaWatcher } from "./media-watcher.min.mjs";
 import { generateVideoPoster } from "./video-poster.min.mjs";
-import { createOutputCommand, validateOutputCommand } from "./output-compositor.min.mjs";
+import { createOutputCommand, validateOutputCommand } from "../shared/output-compositor.min.mjs";
 import {
   advanceAlertState,
   createAlertState,
@@ -76,27 +76,29 @@ import {
   prioritizeAlert,
   removeAlert,
   showAlert,
-} from "./alert-state.min.mjs";
+} from "../shared/alert-state.min.mjs";
 import {
   addNurseryAlert,
   createNurseryAlertsState,
   expireNurseryAlerts,
   nextNurseryDeadline,
   removeNurseryAlert,
-} from "./nursery-alerts.min.mjs";
+} from "../shared/nursery-alerts.min.mjs";
 import {
   clearLiveBackground,
   createBackgroundState,
   revertLiveBackground,
   setLiveBackground,
-} from "./live-background.min.mjs";
-import { createOutputStatus, mergeOutputStatus } from "./output-status.min.mjs";
+} from "../shared/live-background.min.mjs";
+import { createOutputStatus, mergeOutputStatus } from "../shared/output-status.min.mjs";
 import {
   StagingIndex,
   normalizeProjectGuid,
   normalizeSnapshotId,
   snapshotIdFromStagedFilename,
 } from "./staging-index.min.mjs";
+const derivedSrcDir = path.dirname(import.meta.dirname);
+const derivedRoot = path.dirname(derivedSrcDir);
 let sessionID = 0;
 let innertubePromise = null;
 const youtubePathNTransformCache = new Map();
@@ -134,16 +136,16 @@ const TIME_REMAINING_PORT_CHANNEL = "timeRemaining-port";
 let pendingProjectOpenPath = null;
 const bibleRpcClient = new BibleRpcClient({
   app,
-  devRoot: path.dirname(import.meta.dirname),
+  devRoot: derivedRoot,
 });
 const songsRpcClient = new SongsRpcClient({
   app,
-  devRoot: path.dirname(import.meta.dirname),
+  devRoot: derivedRoot,
 });
 // Internal capability for action plugins. Intentionally not exposed through renderer IPC.
 const atemService = new AtemService({
   app,
-  devRoot: path.dirname(import.meta.dirname),
+  devRoot: derivedRoot,
 });
 const slidesStore = new SlidesStore({
   userDataPath: app.getPath("userData"),
@@ -290,7 +292,7 @@ let windowBounds = measurePerformance("Getting window bounds", getWindowBounds);
 let win = null;
 const mediaWatcher = new MediaWatcher({
   app,
-  devRoot: path.dirname(import.meta.dirname),
+  devRoot: derivedRoot,
   sendToRenderer(channel, payload) {
     if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
       win.webContents.send(channel, payload);
@@ -299,7 +301,7 @@ const mediaWatcher = new MediaWatcher({
 });
 const videoPosterOptions = {
   app,
-  devRoot: path.dirname(import.meta.dirname),
+  devRoot: derivedRoot,
 };
 
 function isProjectFilePath(filePath) {
@@ -458,7 +460,7 @@ function createWindow() {
     "Loading index.prod.html",
     win.loadFile.bind(
       win,
-      `${path.dirname(import.meta.dirname)}/src/index.prod.html`,
+      `${derivedRoot}/src/control-window/index.prod.html`,
     ),
   ).catch((error) => {
     if (app.isQuitting || !gotSingleInstanceLock) return;
@@ -749,7 +751,7 @@ async function ensureAlertOverlayWindow() {
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
-      preload: `${import.meta.dirname}/media_preload.min.js`,
+      preload: path.join(derivedSrcDir, "media-window", "media_preload.min.js"),
       additionalArguments: ["__alertOverlayOnly=true", String(Date.now() / 1000)],
     },
   }, selection);
@@ -840,7 +842,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       transparent: true,
       fullscreen: true,
       frame: false,
-      icon: `${import.meta.dirname}/icon.png`,
+      icon: `${derivedSrcDir}/icon.png`,
       ...fullscreenWindowBoundsForDisplay(targetSelection.display),
       webPreferences: {
         ...incomingPrefs,
@@ -860,7 +862,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     audienceHealth = "starting";
     applyMediaWindowPresentationMode(createdMediaWindow);
     //mediaWindow.openDevTools()
-    await createdMediaWindow.loadFile("derived/src/media.prod.html");
+    await createdMediaWindow.loadFile("derived/src/media-window/media.prod.html");
     installTimeRemainingMessagePort();
     createdMediaWindow.on("closed", () => {
       const closedId = createdMediaWindow.id;
@@ -923,7 +925,7 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
       fullscreen: true,
       frame: false,
       skipTaskbar: true,
-      icon: `${import.meta.dirname}/icon.png`,
+      icon: `${derivedSrcDir}/icon.png`,
       ...fullscreenWindowBoundsForDisplay(targetSelection.display),
       webPreferences: {
         ...incomingPrefs,
@@ -932,7 +934,7 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
     });
     lowerThirdWindow = createdLowerThirdWindow;
     createdLowerThirdWindow.setIgnoreMouseEvents(true);
-    await createdLowerThirdWindow.loadFile("derived/src/media.prod.html");
+    await createdLowerThirdWindow.loadFile("derived/src/media-window/media.prod.html");
     createdLowerThirdWindow.on("closed", () => {
       if (lowerThirdWindow === createdLowerThirdWindow) {
         lowerThirdWindow = null;
@@ -1186,18 +1188,18 @@ async function handleCreateStageWindow(_event, displayIndex) {
       frame: false,
       skipTaskbar: true,
       alwaysOnTop: true,
-      icon: `${import.meta.dirname}/icon.png`,
+      icon: `${derivedSrcDir}/icon.png`,
       webPreferences: {
         contextIsolation: true,
         sandbox: true,
-        preload: `${import.meta.dirname}/stage_preload.min.js`,
+        preload: path.join(derivedSrcDir, "stage-window", "stage_preload.min.js"),
         additionalArguments: [`__stage-session=${stageSessionId}`],
       },
     });
     stageWindow = created;
     stageHealth = "ok";
     created.setAlwaysOnTop(true, "screen-saver");
-    await created.loadFile("derived/src/stage.prod.html");
+    await created.loadFile("derived/src/stage-window/stage.prod.html");
     await settings.set(STAGE_DISPLAY_KEY, targetSelection.value);
     created.on("closed", () => {
       if (stageWindow === created) stageWindow = null;
@@ -2141,12 +2143,12 @@ function createHelpWindow() {
       sandbox: false,
       navigateOnDragDrop: false,
       spellcheck: false,
-      preload: `${path.dirname(import.meta.dirname)}/src/help_preload.min.mjs`,
+      preload: path.join(derivedSrcDir, "dialogs", "help_preload.min.mjs"),
       devTools: false,
     },
   });
 
-  helpWindow.loadFile("derived/src/help.prod.html");
+  helpWindow.loadFile("derived/src/dialogs/help.prod.html");
 
   helpWindow.on("move", checkHelpWindowState);
   helpWindow.on("resize", checkHelpWindowState);
@@ -2187,7 +2189,7 @@ function createAboutWindow(parentWindow) {
     },
   });
 
-  aboutWindow.loadFile("derived/src/about.prod.html");
+  aboutWindow.loadFile("derived/src/dialogs/about.prod.html");
 
   // Position it centered relative to parent
   aboutWindow.once("ready-to-show", () => {
@@ -2255,7 +2257,7 @@ function createPreferencesWindow(parentWindow) {
       navigateOnDragDrop: false,
       spellcheck: false,
       devTools: isDevMode,
-      preload: path.join(import.meta.dirname, "preferences_dialog_preload.min.mjs"),
+      preload: path.join(derivedSrcDir, "dialogs", "preferences_dialog_preload.min.mjs"),
     },
   });
 
@@ -2272,7 +2274,7 @@ function createPreferencesWindow(parentWindow) {
     }
   });
 
-  preferencesWindow.loadFile("derived/src/preferences_dialog.prod.html");
+  preferencesWindow.loadFile("derived/src/dialogs/preferences_dialog.prod.html");
 
   preferencesWindow.once("ready-to-show", () => {
     if (!preferencesWindow || preferencesWindow.isDestroyed()) return;
@@ -2339,14 +2341,14 @@ function createThemeManagerWindow(parentWindow, requestedContext = {}) {
       sandbox: false,
       spellcheck: false,
       devTools: isDevMode,
-      preload: path.join(import.meta.dirname, "theme_manager_preload.min.mjs"),
+      preload: path.join(derivedSrcDir, "dialogs", "theme_manager_preload.min.mjs"),
     },
   });
   themeManagerWindow.once("closed", () => { themeManagerWindow = null; });
   ipcMain.once(THEME_MANAGER_CLOSE_CHANNEL, () => {
     if (themeManagerWindow && !themeManagerWindow.isDestroyed()) themeManagerWindow.close();
   });
-  themeManagerWindow.loadFile("derived/src/theme_manager.prod.html", {
+  themeManagerWindow.loadFile("derived/src/dialogs/theme_manager.prod.html", {
     query: {
       contentKind: context.contentKind,
       outputRole: context.outputRole,
@@ -2452,7 +2454,8 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
         spellcheck: false,
         devTools: isDevMode,
         preload: path.join(
-          import.meta.dirname,
+          derivedSrcDir,
+          "dialogs",
           "queue_switch_dialog_preload.min.mjs",
         ),
       },
@@ -2468,7 +2471,7 @@ function createQueueSwitchDialogWindow(parentWindow, message) {
       finish(false);
     });
 
-    queueSwitchDialogWindow.loadFile("derived/src/queue_switch_dialog.prod.html");
+    queueSwitchDialogWindow.loadFile("derived/src/dialogs/queue_switch_dialog.prod.html");
 
     queueSwitchDialogWindow.webContents.once("did-finish-load", () => {
       if (
@@ -5117,7 +5120,7 @@ function createPreflightDialogWindow(parentWindow, payload) {
         navigateOnDragDrop: false,
         spellcheck: false,
         devTools: isDevMode,
-        preload: path.join(import.meta.dirname, "preflight_dialog_preload.min.mjs"),
+        preload: path.join(derivedSrcDir, "dialogs", "preflight_dialog_preload.min.mjs"),
       },
     });
 
@@ -5133,7 +5136,7 @@ function createPreflightDialogWindow(parentWindow, payload) {
       finish();
     });
 
-    preflightDialogWindow.loadFile("derived/src/preflight_dialog.prod.html");
+    preflightDialogWindow.loadFile("derived/src/dialogs/preflight_dialog.prod.html");
 
     preflightDialogWindow.webContents.once("did-finish-load", () => {
       if (!preflightDialogWindow || preflightDialogWindow.isDestroyed()) {
@@ -5867,7 +5870,7 @@ const mainWindowOptions = {
   y: windowBounds ? windowBounds.y : 0,
   minWidth: 960,
   minHeight: 548,
-  icon: `${import.meta.dirname}/icon.png`,
+  icon: `${derivedSrcDir}/icon.png`,
   paintWhenInitiallyHidden: true,
   show: false,
   webPreferences: {
@@ -5879,7 +5882,7 @@ const mainWindowOptions = {
     backgroundThrottling: false,
     experimentalFeatures: true,
     autoplayPolicy: "no-user-gesture-required",
-    preload: `${path.dirname(import.meta.dirname)}/src/app_preload.min.mjs`,
+    preload: path.join(derivedSrcDir, "control-window", "app_preload.min.mjs"),
     devTools: isDevMode,
   },
 };

@@ -865,7 +865,7 @@ function installNetworkPreviewStatusHandlers(mediaEl, resources = {}, token = ne
 }
 
 async function createNetworkPreviewHls() {
-  const { default: Hls } = await import("../node_modules/hls.js/dist/hls.mjs");
+  const { default: Hls } = await import("../../node_modules/hls.js/dist/hls.mjs");
   return new Hls({
     lowLatencyMode: false,
     backBufferLength: 180,
@@ -959,9 +959,7 @@ async function attachNetworkMediaSourceToElement(targetEl, sourcePath, options =
     resources.hlsInstance.loadSource(youtubeResolved.url);
     resources.hlsInstance.attachMedia(targetEl);
   } else if (youtubeResolved?.type === "dash") {
-    const { MediaPlayer } = await import(
-      "../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
-    );
+    const { MediaPlayer } = await import("../../node_modules/dashjs/dist/modern/esm/dash.all.min.js");
     if (cancelIfStale()) return resources;
     resources.dashPlayer = MediaPlayer().create();
     resources.dashManifestObjectUrl = URL.createObjectURL(
@@ -979,9 +977,7 @@ async function attachNetworkMediaSourceToElement(targetEl, sourcePath, options =
     resources.hlsInstance.loadSource(directUrl);
     resources.hlsInstance.attachMedia(targetEl);
   } else if (isDashNetworkSource(directUrl)) {
-    const { MediaPlayer } = await import(
-      "../node_modules/dashjs/dist/modern/esm/dash.all.min.js"
-    );
+    const { MediaPlayer } = await import("../../node_modules/dashjs/dist/modern/esm/dash.all.min.js");
     if (cancelIfStale()) return resources;
     resources.dashPlayer = MediaPlayer().create();
     configureNetworkPreviewDashPlayer(resources.dashPlayer);
