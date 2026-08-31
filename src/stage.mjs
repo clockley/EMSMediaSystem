@@ -3,6 +3,7 @@ import {
   createCompositorState,
   outputAcknowledgement,
 } from "./output-compositor.min.mjs";
+import { resolveAlertTokens } from "./alert-tokens.min.mjs";
 
 const api = window.stageOutput;
 let state = createCompositorState("stage", api.sessionId);
@@ -17,7 +18,7 @@ function renderOverlay(id, titleId, textId, payload) {
   if (!element) return;
   element.hidden = !payload;
   setText(titleId, payload?.title);
-  setText(textId, payload?.message);
+  setText(textId, resolveAlertTokens(payload?.message, payload?.tokenDefinitions, Date.now()));
 }
 
 function render() {
@@ -28,7 +29,9 @@ function render() {
   setText("stageCurrent", content.current || "Waiting for live content");
   setText("stageNext", content.next || "—");
   setText("stageServiceItem", widgets.serviceItem || content.serviceItem || "");
+  setText("stageSectionLabel", widgets.sectionLabel || content.sectionLabel || "");
   setText("stageNotes", widgets.notes || content.notes || "");
+  setText("stageCountdown", widgets.countdown || widgets.mediaRemaining || content.countdown || "");
   renderOverlay("stageAlert", "stageAlertTitle", "stageAlertMessage", state.layers.alert);
   renderOverlay("stagePrivateMessage", "stagePrivateTitle", "stagePrivateText", state.layers.privateMessage);
   document.getElementById("stageFault").hidden = !state.layers.fault;
@@ -51,4 +54,7 @@ api.onCommand((command) => {
 
 updateClock();
 setInterval(updateClock, 1000);
+setInterval(() => {
+  if (state.layers.alert || state.layers.privateMessage) render();
+}, 1000);
 api.ready();

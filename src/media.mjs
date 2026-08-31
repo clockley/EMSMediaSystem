@@ -31,6 +31,7 @@ const {
 const sendTimeRemainingTick =
   timeRemaining?.sendTick ||
   (() => false);
+const disableContentTransitions = argv.includes("__disable-content-transitions=true");
 let video = null;
 /**
  * Live-stream player handles are hoisted to module scope so that slipstream
@@ -38,6 +39,13 @@ let video = null;
  * this, an hls.js / dash.js instance created in loadMedia would keep feeding
  * the shared <video> element after we slipstream to a different media type.
  */
+import {
+  applyOutputCommand,
+  createCompositorState,
+  outputAcknowledgement,
+} from "./output-compositor.min.mjs";
+import { resolveAlertTokens } from "./alert-tokens.min.mjs";
+import { tickerDurationSeconds, tickerPhaseDelaySeconds } from "./alert-motion.min.mjs";
 let hlsInstance = null;
 let dashPlayer = null;
 let previewRtcPeer = null;
@@ -137,6 +145,10 @@ function normalizeSlideTransition(transition = {}) {
 
 function applySlideTransition(el, transition) {
   if (!el) return;
+  if (disableContentTransitions) {
+    clearSlideTransition(el);
+    return;
+  }
   const normalized = normalizeSlideTransition(transition);
   if (normalized.effect === SLIDE_TRANSITION_NONE || normalized.durationMs <= 0) {
     return;
@@ -1491,6 +1503,170 @@ function installOutputHoldHandlers() {
 }
 installOutputHoldHandlers();
 
+const audienceSessionId =
+  argv.find((arg) => String(arg).startsWith("__audience-session="))?.split("=")[1] || "";
+let audienceCompositorState = createCompositorState("audience", audienceSessionId);
+let activeAudienceTickerId = "";
+
+function audienceTickerId(messageAlert) {
+  return String(messageAlert?.id || messageAlert?.message || "");
+}
+
+function updateAudienceTickerMotion(layer, text, messageAlert) {
+  const tickerId = audienceTickerId(messageAlert);
+  if (!messageAlert || !tickerId) {
+    layer.classList.remove("is-scrolling");
+    layer.style.removeProperty("--audience-alert-scroll-duration");
+    layer.style.removeProperty("--audience-alert-scroll-delay");
+    activeAudienceTickerId = "";
+    return;
+  }
+  const shouldScroll = text.scrollWidth > text.clientWidth;
+  if (!shouldScroll) {
+    layer.classList.remove("is-scrolling");
+    layer.style.removeProperty("--audience-alert-scroll-duration");
+    layer.style.removeProperty("--audience-alert-scroll-delay");
+    activeAudienceTickerId = "";
+    return;
+  }
+  // Reapplying the scrolling class restarts the CSS animation. Keep it intact
+  // when the same alert is re-routed during a content/transparent-base change.
+  if (activeAudienceTickerId === tickerId && layer.classList.contains("is-scrolling")) return;
+  const duration = tickerDurationSeconds({
+    viewportWidth: window.innerWidth,
+    textWidth: text.scrollWidth,
+  });
+  layer.style.setProperty("--audience-alert-scroll-duration", `${duration.toFixed(2)}s`);
+  const phaseDelay = tickerPhaseDelaySeconds({ shownAt: messageAlert.shownAt, duration });
+  layer.style.setProperty("--audience-alert-scroll-delay", `${phaseDelay.toFixed(2)}s`);
+  layer.classList.remove("is-scrolling");
+  void text.offsetWidth;
+  layer.classList.add("is-scrolling");
+  activeAudienceTickerId = tickerId;
+}
+
+function renderAudienceAlert(payload) {
+  const layer = document.getElementById("audienceAlertLayer");
+  const nurseryLayer = document.getElementById("audienceNurseryLayer");
+  if (!layer) return;
+  const messageAlert = payload?.schema === "ems.alert-layer.v1" ? payload.messageAlert : payload;
+  const nurseryAlerts = payload?.schema === "ems.alert-layer.v1" ? payload.nurseryAlerts || [] : [];
+  layer.hidden = !messageAlert;
+  layer.style.backgroundColor = messageAlert?.backgroundColor || "#7a1010";
+  layer.style.color = messageAlert?.textColor || "#ffffff";
+  const identifier = document.getElementById("audienceAlertIdentifier");
+  const text = document.getElementById("audienceAlertText");
+  if (identifier) {
+    identifier.textContent = messageAlert?.title || "";
+    identifier.hidden = !identifier.textContent;
+  }
+  if (text) {
+    text.textContent = resolveAlertTokens(messageAlert?.message, messageAlert?.tokenDefinitions, Date.now());
+    const scheduledTickerId = audienceTickerId(messageAlert);
+    requestAnimationFrame(() => {
+      const currentPayload = audienceCompositorState.layers.alert;
+      const currentMessage = currentPayload?.schema === "ems.alert-layer.v1"
+        ? currentPayload.messageAlert
+        : currentPayload;
+      if (audienceTickerId(currentMessage) !== scheduledTickerId) return;
+      updateAudienceTickerMotion(layer, text, messageAlert);
+    });
+  }
+  if (nurseryLayer) {
+    nurseryLayer.replaceChildren();
+    nurseryLayer.hidden = nurseryAlerts.length === 0;
+    for (const nursery of nurseryAlerts) {
+      const chip = document.createElement("span");
+      chip.className = "audience-nursery-chip";
+      chip.textContent = nursery.identifier;
+      chip.style.backgroundColor = nursery.backgroundColor || "#7a1010";
+      chip.style.color = nursery.textColor || "#ffffff";
+      nurseryLayer.appendChild(chip);
+    }
+  }
+}
+
+function renderLiveBackground(payload) {
+  const layer = document.getElementById("liveBackgroundLayer");
+  const image = document.getElementById("liveBackgroundImage");
+  const backgroundVideo = document.getElementById("liveBackgroundVideo");
+  if (!layer || !image || !backgroundVideo) return;
+  layer.classList.remove("is-visible");
+  layer.classList.toggle("is-cut", payload?.transition === "cut");
+  layer.style.transitionDuration = `${Math.max(0, Number(payload?.durationMs) || 0)}ms`;
+  image.hidden = true;
+  backgroundVideo.hidden = true;
+  backgroundVideo.pause();
+  backgroundVideo.removeAttribute("src");
+  image.removeAttribute("src");
+  if (!payload?.sourceUrl) {
+    layer.hidden = true;
+    document.body.classList.remove("has-live-background");
+    return;
+  }
+  const target = payload.kind === "image" ? image : backgroundVideo;
+  target.style.objectFit = payload.fit === "contain" ? "contain" : "cover";
+  target.src = payload.sourceUrl;
+  target.hidden = false;
+  if (target === backgroundVideo) {
+    backgroundVideo.muted = true;
+    backgroundVideo.loop = true;
+    void backgroundVideo.play().catch((error) => {
+      ipcRenderer.send("media-window-error", `Live background playback failed: ${error?.message || error}`);
+    });
+  }
+  layer.hidden = false;
+  document.body.classList.add("has-live-background");
+  requestAnimationFrame(() => layer.classList.add("is-visible"));
+}
+
+function renderAudienceLayer(layer) {
+  if (layer === "base") {
+    document.body.classList.toggle("is-transparent-output", audienceCompositorState.layers.base?.transparent === true);
+  }
+  if (layer === "media") renderLiveBackground(audienceCompositorState.layers.media);
+  if (layer === "alert") renderAudienceAlert(audienceCompositorState.layers.alert);
+  if (layer === "hold") {
+    applyOutputHold(audienceCompositorState.layers.hold || { mode: "none", transitionDurationMs: 350 });
+  }
+  if (layer === "clearText") {
+    const textCanvas = document.getElementById("textCanvas");
+    if (textCanvas) textCanvas.style.visibility = audienceCompositorState.layers.clearText ? "hidden" : "";
+  }
+}
+
+ipcRenderer.on("audience-output-command", (_event, command) => {
+  try {
+    const result = applyOutputCommand(audienceCompositorState, command);
+    audienceCompositorState = result.state;
+    if (result.applied) renderAudienceLayer(command.layer);
+    ipcRenderer.send("audience-output-ack", outputAcknowledgement(command, result.applied, result.applied ? "" : result.reason));
+  } catch (error) {
+    ipcRenderer.send("audience-output-ack", outputAcknowledgement(command, false, error?.message || error));
+  }
+});
+
+ipcRenderer.on("audience-enter-alert-only", () => {
+  document.body.classList.add("is-transparent-output");
+  if (video) {
+    video.pause();
+    video.muted = true;
+    video.removeAttribute("src");
+    video.load();
+  }
+});
+
+setInterval(() => {
+  const payload = audienceCompositorState.layers.alert;
+  const message = payload?.schema === "ems.alert-layer.v1" ? payload.messageAlert : payload;
+  if (message && /\{\{/.test(message.message || "")) renderAudienceAlert(payload);
+}, 1000);
+
+window.addEventListener("resize", () => {
+  const payload = audienceCompositorState.layers.alert;
+  if (payload) renderAudienceAlert(payload);
+});
+
 function installICPHandlers() {
   if (ipcHandlersInstalled) return;
   ipcHandlersInstalled = true;
@@ -1844,7 +2020,7 @@ function applyLowerThirdBarBackground(box, message = {}) {
   // live-update paths retain legacy flat plate fields from the Bible designer;
   // without this guard those stale values can keep a black plate on the real
   // output even though Theme Manager and the operator preview show it disabled.
-  const backingPlateDisabled = message.resolvedTheme?.backdrop?.enabled === false;
+  const backingPlateDisabled = !lowerThirdBackingPlateIsEnabled(message);
   const barColor = backingPlateDisabled
     ? "transparent"
     : message.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND;
@@ -1978,6 +2154,20 @@ function applyScriptureRenderVariables(el, message) {
     "--scripture-lower-third-font-size",
     `${lowerThirdFontSize}px`,
   );
+  // Chroma output geometry stays on whole device-independent pixels. This
+  // avoids adding a second fractional resampling pass around text baselines.
+  el.style.setProperty(
+    "--lower-third-body-line-height",
+    `${snapToDevicePixel(lowerThirdFontSize * 1.18)}px`,
+  );
+  el.style.setProperty(
+    "--lower-third-reference-margin",
+    `${snapToDevicePixel(lowerThirdFontSize * 0.4)}px`,
+  );
+  el.style.setProperty(
+    "--lower-third-attribution-margin",
+    `${snapToDevicePixel(lowerThirdFontSize * 0.15)}px`,
+  );
   el.style.setProperty(
     "--scripture-lower-third-backdrop",
     message.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
@@ -2012,6 +2202,56 @@ function applyScriptureRenderVariables(el, message) {
     look === SCRIPTURE_LOOK_LOWER_THIRD
       ? resolveLowerThirdFontFamily(message)
       : message.fontFamily || SCRIPTURE_FONT_FAMILY;
+}
+
+function snapToDevicePixel(value) {
+  const scale = Number(window.devicePixelRatio) || 1;
+  return Math.round(value * scale) / scale;
+}
+
+function lowerThirdBackingPlateIsEnabled(message = {}) {
+  if (message.clearLowerThird === true) return false;
+  if (typeof message.lowerThirdBackingPlateEnabled === "boolean") {
+    return message.lowerThirdBackingPlateEnabled;
+  }
+  if (typeof message.resolvedTheme?.backdrop?.enabled === "boolean") {
+    return message.resolvedTheme.backdrop.enabled;
+  }
+  if (message.lowerThirdBarBackgroundImage || message.lowerThirdBarBackgroundVideo) {
+    return true;
+  }
+  const color = String(
+    message.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+  ).trim();
+  if (!color || color.toLowerCase() === "transparent") return false;
+  const rgba = color.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)$/i);
+  return !rgba || Number(rgba[1]) > 0;
+}
+
+function applyLowerThirdChromaPolicy(textContent, enabled, message = {}) {
+  if (!textContent) return;
+  textContent.classList.toggle("chroma-edge-optimized", enabled);
+  const opaquePlate = enabled && lowerThirdBackingPlateIsEnabled(message);
+  textContent.classList.toggle("chroma-edge-no-plate", enabled && !opaquePlate);
+  textContent.classList.toggle("chroma-edge-opaque-plate", opaquePlate);
+  if (!enabled) {
+    textContent.style.removeProperty("--lower-third-side-padding");
+    textContent.style.removeProperty("--lower-third-bottom-padding");
+    return;
+  }
+  textContent.style.setProperty(
+    "--lower-third-side-padding",
+    `${snapToDevicePixel(window.innerWidth * 0.04)}px`,
+  );
+  textContent.style.setProperty(
+    "--lower-third-bottom-padding",
+    `${snapToDevicePixel(window.innerHeight * 0.08)}px`,
+  );
+  const morphology = document.querySelector("#ems-chroma-text-edge feMorphology");
+  if (morphology) {
+    const scale = Number(window.devicePixelRatio) || 1;
+    morphology.setAttribute("radius", String(0.75 / scale));
+  }
 }
 
 function scriptureReferenceSizeForBody(bodyFontSize, baseReferenceSize, baseBodySize) {
@@ -2163,6 +2403,11 @@ function refitCurrentTextPresentation() {
   if (!textPresentationState.lastMessage) return;
   const textContent = document.getElementById("textContent");
   if (!textContent) return;
+  applyLowerThirdChromaPolicy(
+    textContent,
+    isLowerThirdOutput || textPresentationState.lastMessage?.outputRole === "lower-third",
+    textPresentationState.lastMessage,
+  );
   const objectBodies = textContent.querySelectorAll(
     ".slide-text-output-object__body[data-fit-base-size]",
   );
@@ -2642,6 +2887,7 @@ function applyTextMessage(message) {
       : DEFAULT_TEXT_PRESENTATION;
 
   const lowerThirdOutput = isLowerThirdOutput || safeMessage.outputRole === "lower-third";
+  applyLowerThirdChromaPolicy(textContent, lowerThirdOutput, safeMessage);
   const explicitLowerThirdClear = lowerThirdOutput && (
     message == null || message?.clearLowerThird === true
   );
@@ -3048,6 +3294,7 @@ async function loadMedia() {
 
 async function bootstrapMediaWindow() {
   await waitForDomReady();
+  ipcRenderer.send("audience-output-ready");
   video = window.api?.video ?? document.getElementById("bigPlayer");
   if (!video) {
     throw new Error("Projection media element #bigPlayer was not found.");
@@ -3058,6 +3305,12 @@ async function bootstrapMediaWindow() {
     const detail = err?.message || "unknown media element error";
     reportProjectionError("Projection media playback failed", `${detail}${code}`);
   });
+  if (argv.includes("__alertOverlayOnly=true")) {
+    document.body.classList.add("is-transparent-output");
+    video.hidden = true;
+    return;
+  }
+  if (disableContentTransitions) document.body.classList.add("disable-content-transitions");
   await loadMedia();
 }
 

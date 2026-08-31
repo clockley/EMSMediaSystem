@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("themeManager", Object.freeze({
   delete: id => ipcRenderer.invoke("themes:delete", id),
   importPack: () => ipcRenderer.invoke("themes:import"),
   exportPack: id => ipcRenderer.invoke("themes:export", id),
+  chooseBackgroundAsset: id => ipcRenderer.invoke("themes:chooseBackgroundAsset", id),
   onOpenContext: callback => {
     const listener = (_event, context) => callback(context);
     ipcRenderer.on("theme-manager-open-context", listener);

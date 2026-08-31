@@ -1,4 +1,9 @@
 import { createOutputCommand } from "./output-compositor.mjs";
+import {
+  DEFAULT_ALERT_BACKGROUND_COLOR,
+  DEFAULT_ALERT_TEXT_COLOR,
+  normalizeAlertColor,
+} from "./alert-colors.mjs";
 
 const ALERT_KINDS = new Set(["nursery", "general", "privateStage"]);
 const PRIORITIES = new Set(["normal", "high"]);
@@ -15,11 +20,18 @@ export function normalizeAlert(input = {}) {
     schema: "ems.alert.v1",
     id: String(input.id || "").trim(),
     kind,
-    title: String(input.title || (privateStage ? "Stage message" : "Notice")).trim().slice(0, 100),
+    identifier: String(input.identifier || "").trim().slice(0, 50),
+    title: String(input.title ?? (privateStage ? "Stage message" : "")).trim().slice(0, 100),
     message,
+    backgroundColor: normalizeAlertColor(input.backgroundColor, DEFAULT_ALERT_BACKGROUND_COLOR),
+    textColor: normalizeAlertColor(input.textColor, DEFAULT_ALERT_TEXT_COLOR),
     priority: PRIORITIES.has(input.priority) ? input.priority : "normal",
-    mode: "static",
+    mode: ["scroll", "scroll-needed"].includes(input.mode) ? input.mode : "static",
     durationMs: Math.max(0, Math.min(300000, Number(input.durationMs) || 0)),
+    dismissAtCountdownEnd: input.dismissAtCountdownEnd === true,
+    tokenDefinitions: input.tokenDefinitions && typeof input.tokenDefinitions === "object"
+      ? structuredClone(input.tokenDefinitions)
+      : {},
     routes: privateStage
       ? { audience: false, stage: true }
       : { audience: input.routes?.audience !== false, stage: input.routes?.stage === true },

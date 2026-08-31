@@ -162,6 +162,7 @@ export function getBibleDesignerStyle() {
   );
   return {
     fontFamily: fontInput?.value || bibleDesignerState.fontFamily,
+    fontFamilyOverride: bibleDesignerState.fontFamilyOverride === true,
     fontSize,
     autosizeMode: normalizeScriptureAutosizeMode(
       autosizeModeInput?.value || bibleDesignerState.autosizeMode,
@@ -179,6 +180,7 @@ export function getBibleDesignerStyle() {
       lowerThirdChromaKeyInput?.value || bibleDesignerState.lowerThirdChromaKeyColor,
     lowerThirdFontFamily:
       lowerThirdFontInput?.value || bibleDesignerState.lowerThirdFontFamily || "",
+    lowerThirdFontFamilyOverride: bibleDesignerState.lowerThirdFontFamilyOverride === true,
     lowerThirdFontSize: Number.isFinite(Number.parseInt(lowerThirdFontSizeInput?.value, 10))
       ? Number.parseInt(lowerThirdFontSizeInput?.value, 10)
       : bibleDesignerState.lowerThirdFontSize,
@@ -194,6 +196,9 @@ export function bibleStyleSnapshot(entry = {}) {
   const style = {};
   if (typeof entry.fontFamily === "string" && entry.fontFamily.trim()) {
     style.fontFamily = entry.fontFamily;
+  }
+  if (entry.fontFamilyOverride === true) {
+    style.fontFamilyOverride = true;
   }
   if (Number.isFinite(entry.fontSize)) {
     style.fontSize = entry.fontSize;
@@ -227,6 +232,9 @@ export function bibleStyleSnapshot(entry = {}) {
   }
   if (typeof entry.lowerThirdFontFamily === "string" && entry.lowerThirdFontFamily) {
     style.lowerThirdFontFamily = entry.lowerThirdFontFamily;
+  }
+  if (entry.lowerThirdFontFamilyOverride === true) {
+    style.lowerThirdFontFamilyOverride = true;
   }
   if (Number.isFinite(entry.lowerThirdFontSize)) {
     style.lowerThirdFontSize = entry.lowerThirdFontSize;

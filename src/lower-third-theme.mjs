@@ -50,6 +50,31 @@ export function lowerThirdBarBackgroundIsVideo(path = "") {
   return LOWER_THIRD_BAR_VIDEO_RE.test(String(path || ""));
 }
 
+function lowerThirdColorIsTransparent(value) {
+  const color = String(value || "").trim().toLowerCase();
+  if (color === "transparent" || /^#[0-9a-f]{6}00$/.test(color)) return true;
+  const rgba = color.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)$/i);
+  return Boolean(rgba && Number(rgba[1]) === 0);
+}
+
+export function lowerThirdBackingPlateEnabledFromStyle(style = {}) {
+  if (typeof style.lowerThirdBackingPlateEnabled === "boolean") {
+    return style.lowerThirdBackingPlateEnabled;
+  }
+  const resolved = style.resolvedTheme && typeof style.resolvedTheme === "object"
+    ? style.resolvedTheme
+    : style.themeId && style.typography
+      ? style
+      : null;
+  if (resolved && typeof resolved.backdrop?.enabled === "boolean") {
+    return resolved.backdrop.enabled;
+  }
+  if (style.lowerThirdBarBackgroundPath || style.lowerThirdBarBackgroundImage || style.lowerThirdBarBackgroundVideo) {
+    return true;
+  }
+  return !lowerThirdColorIsTransparent(style.lowerThirdBarBackgroundColor);
+}
+
 export function lowerThirdThemeFieldsFromStyle(style = {}, derivedFontSize) {
   const resolved = style.resolvedTheme && typeof style.resolvedTheme === "object"
     ? style.resolvedTheme
@@ -59,11 +84,16 @@ export function lowerThirdThemeFieldsFromStyle(style = {}, derivedFontSize) {
   if (resolved) {
     const backdrop = resolved.backdrop || {};
     const backdropBackground = backdrop.background || {};
-    const backdropEnabled = backdrop.enabled !== false;
+    const backdropEnabled = lowerThirdBackingPlateEnabledFromStyle(style);
+    const hasFontOverride =
+      style.lowerThirdFontFamilyOverride === true || style.fontFamilyOverride === true;
     return {
-      lowerThirdFontFamily: resolveLowerThirdFontFamily({
-        lowerThirdFontFamily: resolved.typography?.fontFamily,
-      }),
+      lowerThirdBackingPlateEnabled: backdropEnabled,
+      lowerThirdFontFamily: hasFontOverride
+        ? resolveLowerThirdFontFamily(style)
+        : resolveLowerThirdFontFamily({
+            lowerThirdFontFamily: resolved.typography?.fontFamily,
+          }),
       lowerThirdFontSize: normalizeLowerThirdFontSize(resolved.typography?.fontSize),
       lowerThirdColor: resolved.typography?.color || "#ffffff",
       lowerThirdBarBackgroundColor:
@@ -78,14 +108,17 @@ export function lowerThirdThemeFieldsFromStyle(style = {}, derivedFontSize) {
         resolved.key?.chromaColor || resolved.canvas?.background?.color || "#00ff00",
     };
   }
+  const backdropEnabled = lowerThirdBackingPlateEnabledFromStyle(style);
   return {
+    lowerThirdBackingPlateEnabled: backdropEnabled,
     lowerThirdFontFamily: resolveLowerThirdFontFamily(style),
     lowerThirdFontSize: resolveLowerThirdFontSize(style, derivedFontSize),
     lowerThirdColor: style.lowerThirdColor || "#ffffff",
-    lowerThirdBarBackgroundColor:
-      style.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
+    lowerThirdBarBackgroundColor: backdropEnabled
+      ? style.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND
+      : "transparent",
     lowerThirdBarBackgroundPath:
-      typeof style.lowerThirdBarBackgroundPath === "string"
+      backdropEnabled && typeof style.lowerThirdBarBackgroundPath === "string"
         ? style.lowerThirdBarBackgroundPath
         : "",
     lowerThirdChromaKeyColor: style.lowerThirdChromaKeyColor || "#00ff00",
@@ -106,9 +139,12 @@ export function lowerThirdBarMediaUrls(themeFields, pathToMediaUrl) {
 
 export function applyLowerThirdBarBackground(box, message = {}) {
   if (!box) return;
-  const barColor = message.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND;
-  const barImage = message.lowerThirdBarBackgroundImage || "";
-  const barVideo = message.lowerThirdBarBackgroundVideo || "";
+  const backingPlateEnabled = lowerThirdBackingPlateEnabledFromStyle(message);
+  const barColor = backingPlateEnabled
+    ? message.lowerThirdBarBackgroundColor || SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND
+    : "transparent";
+  const barImage = backingPlateEnabled ? message.lowerThirdBarBackgroundImage || "" : "";
+  const barVideo = backingPlateEnabled ? message.lowerThirdBarBackgroundVideo || "" : "";
 
   box.style.backgroundColor = barColor;
 

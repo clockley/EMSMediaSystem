@@ -123,6 +123,9 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 5h17v12h-17zM9 20h6M12 17v3"/></svg><span>Slides</span>
       </button>
       <span class="global-navigation__spacer"></span>
+      <button id="openLiveLayersBtn" class="global-navigation__item" type="button" title="Nursery and message alerts (F8)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4zM7 9h10M7 13h6"/></svg><span>Alerts</span><span id="alertNavStatus" class="global-navigation__status" aria-label="No live alert"></span>
+      </button>
       <button id="openStageControlsBtn" class="global-navigation__item" type="button" title="Stage output and private messages (Experimental)">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v12H4zM8 21h8M12 17v4M8 10h8M8 13h5"/></svg><span>Stage</span><span id="stageNavStatus" class="global-navigation__status" aria-label="Stage output closed"></span>
       </button>
@@ -146,6 +149,60 @@
           <div class="stage-controls__row"><label for="stageDisplaySelect">Stage display</label><select id="stageDisplaySelect"><option value="">No Stage Output</option></select></div>
           <div class="stage-controls__row"><label for="stageProfileSelect">Layout</label><select id="stageProfileSelect"><option value="current-next">Current + Next</option><option value="current-only">Current Only</option><option value="notes">Notes</option><option value="clock">Clock</option></select></div>
           <div class="stage-message-card"><label for="stageMessageText">Private message</label><textarea id="stageMessageText" rows="4" maxlength="500" placeholder="Message visible only on the stage display"></textarea><p>Private messages are never sent to the audience output.</p><div class="stage-message-card__actions"><button id="clearStageMessageBtn" type="button" title="Clear private stage message (Ctrl+Shift+F8)">Clear</button><button id="showStageMessageBtn" class="suggested-action" type="button" title="Show private stage message (Ctrl+F8 while this window is open)">Show on Stage</button></div></div>
+        </div>
+      </section>
+    </div>
+    <div id="liveLayersBackdrop" class="stage-controls-backdrop" hidden>
+      <section id="liveLayersControls" class="stage-controls live-layers-controls" role="dialog" aria-modal="true" aria-labelledby="liveLayersTitle">
+        <header class="stage-controls__header"><div><h2 id="liveLayersTitle">Alerts</h2><p>Show a nursery identifier or audience message.</p></div><button id="closeLiveLayersBtn" class="stage-controls__close" type="button" aria-label="Close Alerts">×</button></header>
+        <div class="live-layers-switcher" role="tablist" aria-label="Live output type">
+          <button id="liveLayersNurseryTab" type="button" role="tab" aria-selected="true" aria-controls="liveLayersNurseryPage" data-live-layer-tab="nursery">Nursery</button>
+          <button id="liveLayersMessageTab" type="button" role="tab" aria-selected="false" aria-controls="liveLayersMessagePage" data-live-layer-tab="message" tabindex="-1">Message</button>
+        </div>
+        <div class="stage-controls__body">
+          <section id="liveLayersNurseryPage" class="live-layers-page" role="tabpanel" aria-labelledby="liveLayersNurseryTab" data-live-layer-page="nursery">
+            <div class="stage-message-card" aria-labelledby="nurseryAlertTitle">
+              <div class="live-layer-heading"><strong id="nurseryAlertTitle">Call a parent</strong><p>The identifier appears in the top-right corner until you remove it.</p></div>
+              <label class="live-layer-primary-field" for="nurseryAlertIdentifier">Child or parent identifier</label>
+              <div class="nursery-alert-entry"><input id="nurseryAlertIdentifier" maxlength="50" placeholder="For example, Child 42"><button id="addNurseryAlertBtn" class="suggested-action" type="button" disabled>Show</button></div>
+              <details class="alert-message-options"><summary>Appearance</summary><div class="alert-color-fields"><label>Background <input id="nurseryAlertBackgroundColor" type="color" value="#7a1010"></label><label>Text <input id="nurseryAlertTextColor" type="color" value="#ffffff"></label></div></details>
+            </div>
+            <div class="live-layer-active-group"><strong>On screen</strong><div id="nurseryAlertList" class="alert-queue-list" aria-live="polite"></div></div>
+          </section>
+          <section id="liveLayersMessagePage" class="live-layers-page" role="tabpanel" aria-labelledby="liveLayersMessageTab" data-live-layer-page="message" hidden>
+            <div class="stage-message-card" aria-labelledby="alertComposerTitle">
+              <div class="live-layer-heading"><strong id="alertComposerTitle">Show a message</strong><p>The message appears in a banner along the bottom of the audience screen.</p></div>
+              <label class="quick-message-picker" for="quickAlertMessageSelect">Start with
+                <select id="quickAlertMessageSelect"><option value="">Choose a common or recent message…</option></select>
+              </label>
+              <label class="live-layer-primary-field" for="alertMessageText">Message</label>
+              <textarea id="alertMessageText" rows="4" maxlength="1000" placeholder="For example, your car lights are on"></textarea>
+              <details class="alert-message-options">
+                <summary>Timing and output</summary>
+                <div class="live-layer-fields">
+                  <label>Hide after<select id="alertDurationSeconds"><option value="0">I stop it</option><option value="10">10 seconds</option><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option></select></label>
+                  <label>Show on<select id="alertRouteSelect"><option value="audience">Audience</option><option value="both">Audience and Stage</option><option value="stage">Stage only</option></select></label>
+                  <label>Order<select id="alertPrioritySelect"><option value="normal">After current message</option><option value="high">Show immediately</option></select></label>
+                  <label>Repeat<select id="alertRepeatCount"><option value="1">Once</option><option value="2">Twice</option><option value="3">Three times</option></select></label>
+                </div>
+              </details>
+              <details class="alert-message-options">
+                <summary>Insert dynamic text</summary>
+                <div class="alert-token-tools">
+                  <button id="insertAlertClockTokenBtn" type="button">Insert Current Time</button>
+                  <label for="alertCountdownTarget">Countdown ending at</label>
+                  <div><input id="alertCountdownTarget" type="datetime-local"><button id="insertAlertCountdownTokenBtn" type="button">Insert Countdown</button></div>
+                  <label class="alert-token-dismiss"><input id="alertDismissAtCountdownEnd" type="checkbox"> Remove alert when countdown reaches zero</label>
+                </div>
+              </details>
+              <details class="alert-message-options">
+                <summary>Appearance</summary>
+                <div class="alert-color-fields"><label>Background <input id="messageAlertBackgroundColor" type="color" value="#7a1010"></label><label>Text <input id="messageAlertTextColor" type="color" value="#ffffff"></label></div>
+              </details>
+              <div class="stage-message-card__actions"><button id="clearAudienceAlertBtn" type="button" disabled>Stop Current</button><button id="showAudienceAlertBtn" class="suggested-action" type="button" disabled>Show Message</button></div>
+            </div>
+            <div class="live-layer-active-group"><strong>Messages</strong><p>The first message is live. Others wait in order.</p><div id="messageAlertQueue" class="alert-queue-list" aria-live="polite"></div></div>
+          </section>
         </div>
       </section>
     </div>

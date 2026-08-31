@@ -89,6 +89,32 @@ test("page background overrides the resolved theme in preview and audience messa
   assert.equal(presentation.message.backgroundPath, "");
 });
 
+test("a song editor font override survives resolved theme styling", () => {
+  const song = deckToTransientSong(normalizeSlideDeck({
+    schema: "ems.slideDeck.v1",
+    id: "font_override_render",
+    title: "Font Override Render",
+    documentType: "song",
+    type: "song",
+    theme: { fontFamily: "Editor Sans", fontFamilyOverride: true },
+    pages: [{ id: "verse_1", label: "Verse 1", objects: [] }],
+  }));
+  song.defaultRender.fontFamilyOverride = true;
+  const presentation = resolvedSongPresentation({
+    songSnapshot: song,
+    render: {
+      currentSectionId: "verse_1",
+      fontFamily: "Editor Sans",
+      fontFamilyOverride: true,
+    },
+    resolvedTheme: {
+      canvas: { background: { type: "color", color: "#000000" } },
+      typography: { fontFamily: "Theme Sans" },
+    },
+  });
+  assert.equal(presentation.message.fontFamily, "Editor Sans");
+});
+
 test("song deck conversion preserves repeated stanza play order", () => {
   const song = {
     schema: "ems.song.v1",

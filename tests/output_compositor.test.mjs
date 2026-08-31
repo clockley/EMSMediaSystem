@@ -34,3 +34,9 @@ test("clear commands remove only their addressed layer", () => {
   assert.equal(cleared.state.layers.privateMessage, null);
   assert.equal(cleared.state.revisions.privateMessage, 2);
 });
+
+test("nursery alerts preserve identifiers and scrolling mode", () => {
+  const alert = normalizeAlert({ kind: "nursery", identifier: "Child 42", message: "Please report", mode: "scroll" });
+  assert.equal(alert.identifier, "Child 42");
+  assert.equal(alert.mode, "scroll");
+});

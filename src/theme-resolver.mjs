@@ -12,7 +12,7 @@ export const EMS_SAFE_DEFAULT_THEME = deepFreeze(normalizeTheme({
 }));
 
 const stable = value => Array.isArray(value) ? value.map(stable) : value && typeof value === "object"
-  ? Object.fromEntries(Object.keys(value).sort().map(key => [key, stable(value[key])])) : value;
+  ? Object.fromEntries(Object.keys(value).filter(key => key !== "assetUrl").sort().map(key => [key, stable(value[key])])) : value;
 // Browser-safe deterministic revision. Asset integrity continues to use SHA-256;
 // this identifier only invalidates renderer caches and aids diagnostics.
 export function themeRevision(theme) {
@@ -53,5 +53,10 @@ export function resolveThemeForTarget({ theme = EMS_SAFE_DEFAULT_THEME, contentK
   for (const override of [projectOverrides, itemOverrides, objectOverrides, liveOverrides]) profile = mergeThemeValues(profile, override);
   profile = normalizeProfile(profile);
   const selected = chain.at(-1) || EMS_SAFE_DEFAULT_THEME;
+  const background = profile.canvas?.background;
+  if (background?.assetId && (background.type === "image" || background.type === "video")) {
+    const asset = selected.assets?.find(candidate => candidate.id === background.assetId);
+    if (asset?.assetUrl) background.assetUrl = asset.assetUrl;
+  }
   return deepFreeze({ ...profile, themeId: selected.id, themeRevision: themeRevision(selected), resolvedThemeVersion: RESOLVED_THEME_VERSION, contentKind, outputRole, outputSize: { width: Math.max(1, Math.round(Number(outputSize.width) || 1920)), height: Math.max(1, Math.round(Number(outputSize.height) || 1080)) }, assets: selected.assets });
 }

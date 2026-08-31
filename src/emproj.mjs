@@ -1212,6 +1212,10 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
     outputsJson.outputHold && typeof outputsJson.outputHold === "object"
       ? outputsJson.outputHold
       : null;
+  const projectOutputs =
+    outputsJson.configuration && typeof outputsJson.configuration === "object"
+      ? outputsJson.configuration
+      : undefined;
   let projectOutputHold = null;
   if (outputHoldConfig) {
     const logoAssetId =
@@ -1443,6 +1447,7 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
         ? queueJson.projectThemes
         : undefined,
     projectOutputHold: projectOutputHold || undefined,
+    projectOutputs,
     mediaQueue,
   };
 }
@@ -2043,6 +2048,9 @@ async function saveEmprojSnapshotUnlocked(
   }
   const outputsJson = {
     outputs: [],
+    ...(snapshot?.projectOutputs && typeof snapshot.projectOutputs === "object"
+      ? { configuration: snapshot.projectOutputs }
+      : {}),
     ...(outputHoldExport ? { outputHold: outputHoldExport } : {}),
   };
   const diagnosticsJson = {

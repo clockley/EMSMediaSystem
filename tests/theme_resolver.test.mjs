@@ -5,6 +5,11 @@ import { validateTheme } from "../src/theme-normalize.mjs";
 import { legacyStyleToThemeOverrides } from "../src/theme-legacy-adapter.mjs";
 import { createProjectThemeSnapshot, resolveProjectTheme } from "../src/theme-project.mjs";
 import { lowerThirdThemeFieldsFromStyle } from "../src/lower-third-theme.mjs";
+import {
+  messageFromResolvedPresentation,
+  resolvedAudienceBackgroundFields,
+  resolvedFontFamilyFields,
+} from "../src/theme-render-message.mjs";
 
 const theme = { schema: "ems.theme.v1", id: "test", name: "Test", tokens: { fontFamily: "Inter", textColor: "#eeeeee" }, profiles: { song: { audience: { typography: { fontSize: 70 } } }, scripture: {}, text: {} }, assets: [] };
 
@@ -27,6 +32,10 @@ test("base inheritance detects cycles", () => {
 
 test("validation, stable revisions, legacy mapping, and embedded snapshots", () => {
   assert.equal(validateTheme(theme).valid, true); assert.equal(themeRevision(theme), themeRevision({ ...theme }));
+  assert.equal(
+    themeRevision({ ...theme, assets: [{ id: "photo", assetUrl: "file:///first/photo.png" }] }),
+    themeRevision({ ...theme, assets: [{ id: "photo", assetUrl: "file:///second/photo.png" }] }),
+  );
   assert.equal(legacyStyleToThemeOverrides({ lowerThirdFontSize: 44 }, "lowerThird").typography.fontSize, 44);
   const packaged = createProjectThemeSnapshot([theme], { song: "test" });
   const embedded = resolveProjectTheme(packaged, "test", { ...theme, name: "Changed" });
@@ -38,6 +47,21 @@ test("lower-third compatibility utility accepts resolved themes", () => {
   const fields = lowerThirdThemeFieldsFromStyle({ resolvedTheme });
   assert.equal(fields.lowerThirdFontFamily, "Inter");
   assert.equal(fields.lowerThirdChromaKeyColor, "#00ff00");
+});
+
+test("lower-third compatibility enrichment preserves an explicit editor font", () => {
+  const resolvedTheme = resolveThemeForTarget({
+    theme,
+    contentKind: "scripture",
+    outputRole: "lowerThird",
+  });
+  const fields = lowerThirdThemeFieldsFromStyle({
+    resolvedTheme,
+    fontFamily: "Audience Sans",
+    lowerThirdFontFamily: "Lower Third Sans",
+    lowerThirdFontFamilyOverride: true,
+  });
+  assert.equal(fields.lowerThirdFontFamily, "Lower Third Sans");
 });
 
 test("lower-third compatibility utility honors a disabled backing plate", () => {
@@ -65,4 +89,124 @@ test("lower-third compatibility utility honors a disabled backing plate", () => 
 
   assert.equal(fields.lowerThirdBarBackgroundColor, "transparent");
   assert.equal(fields.lowerThirdBarBackgroundPath, "");
+  assert.equal(fields.lowerThirdBackingPlateEnabled, false);
+});
+
+test("legacy lower-third no-backing state does not get forced back on", () => {
+  const fields = lowerThirdThemeFieldsFromStyle({
+    lowerThirdBarBackgroundColor: "transparent",
+    lowerThirdBarBackgroundPath: "stale-plate.png",
+    lowerThirdBackingPlateEnabled: false,
+  });
+  const overrides = legacyStyleToThemeOverrides({
+    lowerThirdBarBackgroundColor: "transparent",
+    lowerThirdBarBackgroundPath: "stale-plate.png",
+    lowerThirdBackingPlateEnabled: false,
+  }, "lowerThird");
+
+  assert.equal(fields.lowerThirdBackingPlateEnabled, false);
+  assert.equal(fields.lowerThirdBarBackgroundColor, "transparent");
+  assert.equal(fields.lowerThirdBarBackgroundPath, "");
+  assert.equal(overrides.backdrop.enabled, false);
+});
+
+test("audience theme graphics resolve managed assets and allow per-item replacement", () => {
+  const graphicTheme = {
+    ...theme,
+    assets: [{
+      id: "background_photo",
+      type: "image",
+      path: "assets/background.png",
+      assetUrl: "file:///managed/background.png",
+    }],
+    profiles: {
+      ...theme.profiles,
+      song: {
+        ...theme.profiles.song,
+        audience: {
+          canvas: {
+            background: {
+              type: "image",
+              color: "#000000",
+              assetId: "background_photo",
+              path: "assets/background.png",
+            },
+          },
+        },
+      },
+    },
+  };
+  const themed = resolveThemeForTarget({
+    theme: graphicTheme,
+    contentKind: "song",
+    outputRole: "audience",
+  });
+  const overridden = resolveThemeForTarget({
+    theme: graphicTheme,
+    contentKind: "song",
+    outputRole: "audience",
+    itemOverrides: {
+      canvas: {
+        background: {
+          type: "image",
+          color: "#000000",
+          assetId: null,
+          path: "/project/item-background.jpg",
+        },
+      },
+    },
+  });
+
+  assert.equal(themed.canvas.background.assetUrl, "file:///managed/background.png");
+  assert.equal(overridden.canvas.background.path, "/project/item-background.jpg");
+  assert.equal(overridden.canvas.background.assetUrl, undefined);
+
+  const themeFields = resolvedAudienceBackgroundFields({}, themed);
+  const itemFields = resolvedAudienceBackgroundFields({
+    backgroundColor: "#111111",
+    backgroundPath: "/project/item-background.jpg",
+    backgroundImage: "file:///project/item-background.jpg",
+    resolvedTheme: themed,
+  }, themed);
+  assert.equal(themeFields.backgroundImage, "file:///managed/background.png");
+  assert.equal(itemFields.backgroundImage, "file:///project/item-background.jpg");
+  assert.equal(itemFields.backgroundPath, "/project/item-background.jpg");
+});
+
+test("an editor font overrides the theme only when marked as a local override", () => {
+  const resolved = { typography: { fontFamily: "Theme Sans" } };
+  assert.deepEqual(
+    resolvedFontFamilyFields({ fontFamily: "Editor Sans", fontFamilyOverride: true }, resolved),
+    { fontFamily: "Editor Sans" },
+  );
+  assert.deepEqual(
+    resolvedFontFamilyFields({ fontFamily: "Editor Sans" }, resolved),
+    { fontFamily: "Theme Sans" },
+  );
+  assert.deepEqual(
+    resolvedFontFamilyFields({
+      fontFamily: "Body Sans",
+      lowerThirdFontFamily: "Lower Sans",
+      lowerThirdFontFamilyOverride: true,
+    }, resolved, { lowerThird: true }),
+    { fontFamily: "Lower Sans", lowerThirdFontFamily: "Lower Sans" },
+  );
+});
+
+test("resolved lower-third messages retain the editor font override", () => {
+  const resolvedTheme = { typography: { fontFamily: "Theme Sans" } };
+  const message = messageFromResolvedPresentation({
+    target: { outputRole: "lowerThird" },
+    activeSlide: { bodyText: "Lower third" },
+    resolvedTheme,
+  }, {
+    style: {
+      fontFamily: "Body Sans",
+      lowerThirdFontFamily: "Lower Sans",
+      lowerThirdFontFamilyOverride: true,
+    },
+    resolvedTheme,
+  });
+  assert.equal(message.fontFamily, "Lower Sans");
+  assert.equal(message.fontFamilyOverride, true);
 });

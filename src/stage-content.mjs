@@ -52,6 +52,14 @@ export function stageContentFromPresentation(
   return {
     current: current || fallbackCurrentLabel(type),
     next,
+    sectionLabel: String(
+      slides[activeIndex]?.sectionLabel ||
+      slides[activeIndex]?.sectionName ||
+      slides[activeIndex]?.sectionId ||
+      message.sectionLabel ||
+      "",
+    ).trim(),
+    notes: String(slides[activeIndex]?.notes || message.notes || "").trim(),
     serviceItem: String(
       message.title || message.referenceText || message.reference || "",
     ).trim(),

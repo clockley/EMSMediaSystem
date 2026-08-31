@@ -719,6 +719,7 @@ function songDefaultRenderToDeckTheme(defaultRender = {}) {
   return {
     ...DEFAULT_DECK_THEME,
     ...(render.fontFamily ? { fontFamily: render.fontFamily } : {}),
+    ...(render.fontFamilyOverride === true ? { fontFamilyOverride: true } : {}),
     ...(Number.isFinite(fontSize) && fontSize > 0 ? { fontSize } : {}),
     ...(Number.isFinite(minFontSize) && minFontSize > 0 ? { minFontSize } : {}),
     ...(render.autosizeMode ? { autosizeMode: render.autosizeMode } : {}),
@@ -959,6 +960,7 @@ export function deckDefaultRender(deck) {
     backgroundPath: theme.backgroundPath || "",
     color: theme.textColor || DEFAULT_DECK_THEME.textColor,
     fontFamily: theme.fontFamily || DEFAULT_DECK_THEME.fontFamily,
+    fontFamilyOverride: theme.fontFamilyOverride === true,
     fontSize: Number.isFinite(theme.fontSize) ? theme.fontSize : DEFAULT_DECK_THEME.fontSize,
     autosizeMode: theme.autosizeMode || "fit",
     minFontSize: Number.isFinite(theme.minFontSize) ? theme.minFontSize : DEFAULT_DECK_THEME.minFontSize,

@@ -128,6 +128,10 @@ export function generateMediaFormHTML() {
             <video id="confidenceLowerThirdPreview" class="confidence-monitor__video" autoplay muted playsinline></video>
             <span class="confidence-monitor__label">Lower Third</span>
           </section>
+          <section id="confidenceStagePage" class="confidence-monitor__page" aria-label="Stage output" hidden>
+            <video id="confidenceStagePreview" class="confidence-monitor__video" autoplay muted playsinline></video>
+            <span class="confidence-monitor__label">Stage</span>
+          </section>
         </div>
         <div id="confidenceMonitorControls" class="confidence-monitor__controls" aria-label="Confidence monitor pages" hidden>
           <button type="button" id="confidenceMonitorPrevious" class="confidence-monitor__arrow confidence-monitor__arrow--previous" aria-label="Previous output">

@@ -99,7 +99,18 @@ function updateDirtyState() {
 function fillEditor() {
   if (!draft) return; const target = ensureProfile($("tmKind").value, outputRole);
   $("tmTitle").textContent = draft.name; $("tmName").value = draft.name || "";
-  $("tmFont").value = target.typography.fontFamily || draft.tokens?.fontFamily || "Adwaita Sans";
+  const fontFamily = target.typography.fontFamily || draft.tokens?.fontFamily || "'Adwaita Sans'";
+  const normalizedFontFamily = fontFamily.replace(/^['\"]|['\"]$/g, "");
+  let matchingFontOption = [...$("tmFont").options].find(
+    option => option.value.replace(/^['\"]|['\"]$/g, "") === normalizedFontFamily,
+  );
+  if (!matchingFontOption) {
+    const option = document.createElement("option");
+    option.value = fontFamily; option.textContent = normalizedFontFamily;
+    $("tmFont").appendChild(option);
+    matchingFontOption = option;
+  }
+  $("tmFont").value = matchingFontOption.value;
   $("tmFontSize").value = Number(target.typography.fontSize) || (outputRole === "lowerThird" ? 52 : 64);
   $("tmTextColor").value = color(target.typography.color || draft.tokens?.textColor, "#ffffff");
   $("tmAlign").value = ["left", "center", "right"].includes(target.typography.align) ? target.typography.align : "center";
@@ -109,6 +120,14 @@ function fillEditor() {
       : target.canvas.background.color,
     outputRole === "lowerThird" ? "#00ff00" : "#000000",
   );
+  const background = target.canvas.background || {};
+  const backgroundAsset = draft.assets?.find(asset => asset.id === background.assetId);
+  $("tmBackgroundAssetRow").hidden = outputRole !== "audience" || applyContext.scope === "item";
+  $("tmBackgroundAssetLabel").textContent = background.type === "image"
+    ? backgroundAsset?.name || "Selected graphic"
+    : "None";
+  $("tmChooseBackground").disabled = isBuiltIn();
+  $("tmClearBackground").disabled = background.type !== "image";
   $("tmSafeMargin").value = Math.round((Number(target.canvas.safeMargins.left) || .06) * 100);
   $("tmBackdrop").checked = target.backdrop.enabled === true;
   $("tmBackdropColor").value = color(target.backdrop.background.color, "#101010");
@@ -130,11 +149,10 @@ function readEditor() {
     target.typography.fontSize = Math.max(8, Math.min(400, Number($("tmFontSize").value) || 64));
     target.typography.color = $("tmTextColor").value;
     target.typography.align = $("tmAlign").value;
-    target.canvas.background = {
-      ...target.canvas.background,
-      type: "color",
-      color: $("tmBackground").value,
-    };
+    const existingBackground = target.canvas.background || {};
+    target.canvas.background = outputRole === "audience" && existingBackground.type === "image"
+      ? { ...existingBackground, color: $("tmBackground").value }
+      : { type: "color", color: $("tmBackground").value, assetId: null };
     if (outputRole === "lowerThird") {
       target.key = {
         ...(target.key || {}),
@@ -160,7 +178,15 @@ function readEditor() {
 function renderPreview() {
   const target = profile(); if (!target) return;
   const preview = $("tmPreview"); const frame = $("tmPreviewFrame"); const plate = $("tmPreviewBackdrop"); const text = $("tmPreviewText");
-  preview.style.background = target.canvas?.background?.color || (outputRole === "lowerThird" ? "#00ff00" : "#000000");
+  const background = target.canvas?.background || {};
+  const backgroundAsset = draft.assets?.find(asset => asset.id === background.assetId);
+  const backgroundUrl = background.assetUrl || backgroundAsset?.assetUrl || "";
+  preview.style.backgroundColor = background.color || (outputRole === "lowerThird" ? "#00ff00" : "#000000");
+  preview.style.backgroundImage = outputRole === "audience" && background.type === "image" && backgroundUrl
+    ? `url(${JSON.stringify(backgroundUrl)})`
+    : "none";
+  preview.style.backgroundSize = background.fit || "cover";
+  preview.style.backgroundPosition = background.position || "center";
   const margins = target.canvas?.safeMargins || {}; const left = (Number(margins.left) || .06) * 100; const right = (Number(margins.right) || .06) * 100;
   if (outputRole === "lowerThird") { frame.style.cssText = `left:${left}%;right:${right}%;bottom:8%;height:24%;justify-content:flex-start;text-align:${target.typography?.align || "left"}`; text.innerHTML = "Amazing grace, how sweet the sound"; $("tmPreviewReference").textContent = "Sample Song"; }
   else { frame.style.cssText = `left:${left}%;right:${right}%;top:${(Number(margins.top)||.06)*100}%;bottom:${(Number(margins.bottom)||.06)*100}%;text-align:${target.typography?.align || "center"}`; text.innerHTML = $("tmKind").value === "scripture" ? "The light shines in the darkness" : $("tmKind").value === "text" ? "Welcome to today’s service" : "Amazing grace<br>How sweet the sound"; $("tmPreviewReference").textContent = $("tmKind").value === "scripture" ? "John 1:5" : "Sample Song · Verse 1"; }
@@ -169,6 +195,42 @@ function renderPreview() {
   plate.style.color = target.typography?.color || "#ffffff"; plate.style.fontFamily = target.typography?.fontFamily || draft.tokens?.fontFamily || "sans-serif";
   plate.style.fontSize = `${Math.max(12, (Number(target.typography?.fontSize) || 64) * .34)}px`; plate.style.fontWeight = target.typography?.fontWeight || 700;
   plate.style.textAlign = target.typography?.align || "center";
+}
+
+async function chooseAudienceBackground() {
+  if (!draft || outputRole !== "audience" || applyContext.scope === "item") return;
+  readEditor();
+  const result = await api.chooseBackgroundAsset(draft.id);
+  if (result?.canceled || !result?.asset) return;
+  draft.assets ||= [];
+  draft.assets = [...draft.assets.filter(asset => asset.id !== result.asset.id), result.asset];
+  for (const kind of ["song", "scripture", "text"]) {
+    const target = ensureProfile(kind, "audience");
+    target.canvas.background = {
+      type: "image",
+      color: $("tmBackground").value,
+      assetId: result.asset.id,
+      path: result.asset.path,
+      fit: "cover",
+      position: "center",
+    };
+  }
+  draft.updatedAt = new Date().toISOString();
+  fillEditor();
+}
+
+function clearAudienceBackground() {
+  if (!draft || outputRole !== "audience") return;
+  for (const kind of ["song", "scripture", "text"]) {
+    const target = ensureProfile(kind, "audience");
+    target.canvas.background = {
+      type: "color",
+      color: $("tmBackground").value,
+      assetId: null,
+    };
+  }
+  draft.updatedAt = new Date().toISOString();
+  fillEditor();
 }
 
 function selectTheme(id) {
@@ -262,6 +324,12 @@ function wire() {
   $("tmApply").addEventListener("click", () => void apply()); $("tmRevert").addEventListener("click", () => { draft = copy(original); fillEditor(); renderList(); setStatus("Changes reverted."); });
   $("tmUseDefault").addEventListener("click", () => void useProjectDefault());
   $("tmDuplicate").addEventListener("click", () => void duplicate());
+  $("tmChooseBackground").addEventListener("click", () => {
+    void chooseAudienceBackground().catch(error => {
+      setStatus(error.message || "Could not add the background graphic.", true);
+    });
+  });
+  $("tmClearBackground").addEventListener("click", clearAudienceBackground);
   $("tmMenuButton").addEventListener("click", event => { event.stopPropagation(); toggleMenu(); });
   $("tmMenu").addEventListener("click", event => { if (event.target.closest("button")) closeMenu(); });
   document.addEventListener("click", event => { if (!event.target.closest(".tm-menu-wrap")) closeMenu(); });

@@ -53,6 +53,7 @@ import {
   isSongPath,
 } from "./app-media-utils.mjs";
 import { createOutputCommand } from "./output-compositor.mjs";
+import { commandForShortcut, LIVE_COMMANDS } from "./alert-shortcuts.mjs";
 import { stageContentFromPresentation } from "./stage-content.mjs";
 import {
   firstPlayableScheduleIndex,
@@ -195,6 +196,8 @@ import {
 import { resolveThemeForTarget } from "./theme-resolver.mjs";
 import { itemThemeForRole, normalizeItemTheme, setItemThemeRole } from "./theme-item-overrides.mjs";
 import {
+  resolvedAudienceBackgroundFields,
+  resolvedFontFamilyFields,
   renderScriptureForTarget,
 } from "./theme-render-message.mjs";
 import {
@@ -260,6 +263,20 @@ let getPathForFile;
 let stageSessionIdCache = "";
 const stageLayerRevisions = new Map();
 let stageContentCache = { current: "Waiting for live content", next: "", profile: "current-next" };
+let latestOutputStatus = null;
+let currentAlertsSnapshot = { alert: null, queue: [], nurseryAlerts: [] };
+let activeLiveLayersPage = "nursery";
+let recentAlertMessages = [];
+let alertTokenDefinitionsDraft = {};
+const READY_ALERT_MESSAGES = Object.freeze([
+  "The service will begin shortly.",
+  "Please silence your mobile devices.",
+  "Your vehicle lights are on.",
+  "Please move your vehicle.",
+  "Please check in at the information desk.",
+]);
+let lastStageCountdownSecond = -1;
+let projectStageConfig = { display: "", profile: "current-next" };
 const navigationState = createNavigationStateMachine(NAVIGATION_STATES.MEDIA);
 let navigationStateBeforeStage = NAVIGATION_STATES.MEDIA;
 let navigationStateBeforeSettings = NAVIGATION_STATES.MEDIA;
@@ -408,6 +425,8 @@ let streamRendererPreviewStartPromise = null;
 let streamRendererPreviewQualityMode = null;
 let lowerThirdRendererPreviewStream = null;
 let lowerThirdRendererPreviewStartPromise = null;
+let stageRendererPreviewStream = null;
+let stageRendererPreviewStartPromise = null;
 let displayMediaCaptureRequestChain = Promise.resolve();
 let networkPreviewHlsInstance = null;
 let networkPreviewDashPlayer = null;
@@ -656,6 +675,7 @@ const bibleDesignerState = {
   verse: 0,
   verseEnd: 0,
   fontFamily: SCRIPTURE_FONT_FAMILY,
+  fontFamilyOverride: false,
   fontSize: SCRIPTURE_BODY_FONT_SIZE,
   autosizeMode: SCRIPTURE_DEFAULT_AUTOSIZE_MODE,
   minFontSize: SCRIPTURE_MIN_BODY_FONT_SIZE,
@@ -666,6 +686,7 @@ const bibleDesignerState = {
   lowerThirdColor: SCRIPTURE_LOWER_THIRD_TEXT_COLOR,
   lowerThirdChromaKeyColor: SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
   lowerThirdFontFamily: "",
+  lowerThirdFontFamilyOverride: false,
   lowerThirdFontSize: SCRIPTURE_LOWER_THIRD_DEFAULT_FONT_SIZE,
   lowerThirdBarBackgroundColor: SCRIPTURE_LOWER_THIRD_BAR_BACKGROUND,
   lowerThirdBarBackgroundPath: "",
@@ -6111,6 +6132,7 @@ function collapseBibleDisplayLineWhitespace(text) {
 function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
   const style = {
     fontFamily: entry.fontFamily || bibleDesignerState.fontFamily,
+    fontFamilyOverride: entry.fontFamilyOverride === true,
     fontSize: Number.isFinite(entry.fontSize) ? entry.fontSize : bibleDesignerState.fontSize,
     autosizeMode: normalizeScriptureAutosizeMode(
       entry.autosizeMode || bibleDesignerState.autosizeMode,
@@ -6141,6 +6163,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
       SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
     lowerThirdFontFamily:
       entry.lowerThirdFontFamily || bibleDesignerState.lowerThirdFontFamily || "",
+    lowerThirdFontFamilyOverride: entry.lowerThirdFontFamilyOverride === true,
     lowerThirdFontSize: Number.isFinite(entry.lowerThirdFontSize)
       ? entry.lowerThirdFontSize
       : bibleDesignerState.lowerThirdFontSize,
@@ -6222,6 +6245,9 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
         style: lowerThirdTypography,
         typography: {
           ...(resolvedTheme?.typography || lowerThirdTypography),
+          ...(style.lowerThirdFontFamilyOverride
+            ? { fontFamily: lowerThirdTypography.fontFamily }
+            : {}),
           maxLines: 2,
         },
         forceAutoSplit: true,
@@ -6247,6 +6273,9 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
       lowerThirdSegmentIndex: resolvedSegmentIndex,
       lowerThirdSegmentCount: resolvedSegments.length,
       color: message.color,
+      fontFamilyOverride: style.lowerThirdFontFamilyOverride,
+      lowerThirdFontFamilyOverride: style.lowerThirdFontFamilyOverride,
+      lowerThirdFontFamily: style.lowerThirdFontFamily || style.fontFamily,
       backgroundColor: message.backgroundColor,
       chromaKeyColor: message.chromaKeyColor,
       backgroundPath: "",
@@ -6282,12 +6311,17 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
       outputSize,
       activeSlideId: opts.activeSlideId || entry.currentSlideId,
       style,
+      typography: style.fontFamilyOverride
+        ? { ...(resolvedTheme?.typography || style), fontFamily: style.fontFamily }
+        : undefined,
     },
     resolvedTheme,
   );
   const audienceResult = {
     ...message,
     ...resolved.message,
+    fontFamilyOverride: style.fontFamilyOverride,
+    fontFamily: style.fontFamilyOverride ? style.fontFamily : resolved.message.fontFamily,
     color: message.color,
     backgroundColor: message.backgroundColor,
     backgroundPath: message.backgroundPath,
@@ -6466,6 +6500,7 @@ async function sendStageLayer(layer, payload = {}, type = "layer.set") {
 }
 
 function updateStageStatusUi(status) {
+  latestOutputStatus = status || latestOutputStatus;
   const stage = status?.stage || {};
   if (status?.sessionId) stageSessionIdCache = status.sessionId;
   const open = stage.window === "open";
@@ -6477,6 +6512,339 @@ function updateStageStatusUi(status) {
   const dot = document.getElementById("stageNavStatus");
   dot?.classList.toggle("is-open", open);
   dot?.setAttribute("aria-label", text);
+  const alertDot = document.getElementById("alertNavStatus");
+  const alertLive = status?.audience?.alert === "live" || status?.stage?.alert === "live";
+  alertDot?.classList.toggle("is-live", alertLive);
+  alertDot?.setAttribute("aria-label", alertLive ? "Alert live" : "No live alert");
+  void syncStageRendererPreviewCapture().catch(() => {});
+}
+
+function audienceAlertDraft() {
+  const route = document.getElementById("alertRouteSelect")?.value || "audience";
+  const countdownValue = document.getElementById("alertCountdownTarget")?.value || "";
+  const countdownTarget = Date.parse(countdownValue);
+  const tokenDefinitions = structuredClone(alertTokenDefinitionsDraft);
+  if (Number.isFinite(countdownTarget)) {
+    tokenDefinitions.countdown = {
+      type: "countdown",
+      target: new Date(countdownTarget).toISOString(),
+      allowOverrun: false,
+    };
+  }
+  return {
+    id: globalThis.crypto?.randomUUID?.() || `alert-${Date.now()}`,
+    kind: "general",
+    title: "",
+    message: document.getElementById("alertMessageText")?.value?.trim() || "",
+    backgroundColor: document.getElementById("messageAlertBackgroundColor")?.value || "#7a1010",
+    textColor: document.getElementById("messageAlertTextColor")?.value || "#ffffff",
+    mode: "scroll-needed",
+    priority: document.getElementById("alertPrioritySelect")?.value || "normal",
+    durationMs: Math.max(0, Number(document.getElementById("alertDurationSeconds")?.value) || 0) * 1000,
+    dismissAtCountdownEnd: document.getElementById("alertDismissAtCountdownEnd")?.checked === true,
+    repeatCount: Math.max(1, Number(document.getElementById("alertRepeatCount")?.value) || 1),
+    routes: { audience: route !== "stage", stage: route === "stage" || route === "both" },
+    tokenDefinitions,
+  };
+}
+
+function updateAlertsSnapshot(result) {
+  if (!result) return;
+  currentAlertsSnapshot = {
+    alert: result.alert || null,
+    queue: Array.isArray(result.queue) ? result.queue : [],
+    nurseryAlerts: Array.isArray(result.nurseryAlerts) ? result.nurseryAlerts : [],
+  };
+  updateStageStatusUi(result.status);
+  renderAlertLists();
+  updateAlertComposerActions();
+  syncConfidenceMonitorCarousel();
+  syncStreamRendererPreviewCapture();
+}
+
+function alertQueueRow(alert, live = false, nursery = false) {
+  const row = document.createElement("div");
+  row.className = `alert-queue-row${live ? " is-live" : ""}`;
+  const label = document.createElement("span");
+  label.textContent = nursery ? alert.identifier : `${live ? "Live · " : "Queued · "}${alert.message}`;
+  row.appendChild(label);
+  if (!nursery && !live) {
+    const priority = document.createElement("button");
+    priority.type = "button";
+    priority.textContent = "Show Now";
+    priority.addEventListener("click", async () => updateAlertsSnapshot(await invoke("alerts:prioritize", alert.id)));
+    row.appendChild(priority);
+  }
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = live ? "Stop" : "Remove";
+  remove.setAttribute("aria-label", `Remove ${nursery ? "nursery alert" : "message alert"}`);
+  remove.addEventListener("click", async () => {
+    const channel = nursery ? "nursery-alerts:remove" : "alerts:remove";
+    updateAlertsSnapshot(await invoke(channel, alert.id));
+  });
+  row.appendChild(remove);
+  return row;
+}
+
+function renderAlertLists() {
+  const nurseryList = document.getElementById("nurseryAlertList");
+  const nurseryRows = currentAlertsSnapshot.nurseryAlerts.map((alert) => alertQueueRow(alert, true, true));
+  if (nurseryList) {
+    if (nurseryRows.length) nurseryList.replaceChildren(...nurseryRows);
+    else {
+      const empty = document.createElement("p");
+      empty.className = "live-layer-empty-state";
+      empty.textContent = "No nursery alerts are on screen.";
+      nurseryList.replaceChildren(empty);
+    }
+  }
+  const messageList = document.getElementById("messageAlertQueue");
+  const rows = [
+    ...(currentAlertsSnapshot.alert ? [alertQueueRow(currentAlertsSnapshot.alert, true)] : []),
+    ...currentAlertsSnapshot.queue.map((alert) => alertQueueRow(alert)),
+  ];
+  if (messageList) {
+    if (rows.length) messageList.replaceChildren(...rows);
+    else {
+      const empty = document.createElement("p");
+      empty.className = "live-layer-empty-state";
+      empty.textContent = "No messages are live or waiting.";
+      messageList.replaceChildren(empty);
+    }
+  }
+}
+
+function updateAlertComposerActions() {
+  const nurseryReady = Boolean(document.getElementById("nurseryAlertIdentifier")?.value?.trim());
+  const messageReady = Boolean(document.getElementById("alertMessageText")?.value?.trim());
+  const nurseryButton = document.getElementById("addNurseryAlertBtn");
+  const messageButton = document.getElementById("showAudienceAlertBtn");
+  const stopButton = document.getElementById("clearAudienceAlertBtn");
+  if (nurseryButton) nurseryButton.disabled = !nurseryReady;
+  if (messageButton) messageButton.disabled = !messageReady;
+  if (stopButton) stopButton.disabled = !currentAlertsSnapshot.alert;
+}
+
+async function addNurseryAlertFromDraft() {
+  const input = document.getElementById("nurseryAlertIdentifier");
+  const identifier = input?.value?.trim() || "";
+  if (!identifier) {
+    showGnomeToast("Enter a nursery identifier");
+    input?.focus();
+    return;
+  }
+  const result = await invoke("alerts:show", {
+    kind: "nursery",
+    identifier,
+    backgroundColor: document.getElementById("nurseryAlertBackgroundColor")?.value || "#7a1010",
+    textColor: document.getElementById("nurseryAlertTextColor")?.value || "#ffffff",
+    durationMs: 0,
+    routes: { audience: true, stage: false },
+  });
+  if (input) input.value = "";
+  updateAlertsSnapshot(result);
+  updateAlertComposerActions();
+}
+
+async function showAudienceAlert() {
+  const alert = audienceAlertDraft();
+  if (!alert.message) {
+    showGnomeToast("Enter an alert message");
+    document.getElementById("alertMessageText")?.focus();
+    return false;
+  }
+  if (
+    /\{\{\s*countdown(?:\s*|:[^}]+)\}\}/i.test(alert.message) &&
+    !Number.isFinite(Date.parse(alert.tokenDefinitions?.countdown?.target || "")) &&
+    !/\{\{\s*countdown:[^}]+\}\}/i.test(alert.message)
+  ) {
+    showGnomeToast("Choose when the countdown should end");
+    const target = document.getElementById("alertCountdownTarget");
+    target?.closest("details")?.setAttribute("open", "");
+    target?.focus();
+    return false;
+  }
+  if (
+    alert.dismissAtCountdownEnd &&
+    !Number.isFinite(Date.parse(alert.tokenDefinitions?.countdown?.target || ""))
+  ) {
+    showGnomeToast("Choose when the countdown should end");
+    const target = document.getElementById("alertCountdownTarget");
+    target?.closest("details")?.setAttribute("open", "");
+    target?.focus();
+    return false;
+  }
+  const result = await invoke("alerts:show", alert);
+  updateAlertsSnapshot(result);
+  await rememberRecentAlertMessage(
+    alert.message,
+    alert.tokenDefinitions,
+    alert.dismissAtCountdownEnd,
+  );
+  showGnomeToast(alert.routes.audience ? "Message alert added" : "Foldback message added");
+  return true;
+}
+
+function appendQuickMessageGroup(select, label, messages) {
+  if (!messages.length) return;
+  const group = document.createElement("optgroup");
+  group.label = label;
+  for (const item of messages) {
+    const message = typeof item === "string" ? item : item.message;
+    if (!message) continue;
+    const option = document.createElement("option");
+    option.value = message;
+    option.textContent = message;
+    option.dataset.tokenDefinitions = JSON.stringify(
+      typeof item === "object" && item.tokenDefinitions ? item.tokenDefinitions : {},
+    );
+    option.dataset.dismissAtCountdownEnd = String(
+      typeof item === "object" && item.dismissAtCountdownEnd === true,
+    );
+    group.appendChild(option);
+  }
+  select.appendChild(group);
+}
+
+function renderQuickAlertMessages() {
+  const select = document.getElementById("quickAlertMessageSelect");
+  if (!select) return;
+  select.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Choose a common or recent message…";
+  select.appendChild(placeholder);
+  appendQuickMessageGroup(select, "Ready to use", READY_ALERT_MESSAGES);
+  appendQuickMessageGroup(select, "Recently used", recentAlertMessages);
+  select.value = "";
+}
+
+async function rememberRecentAlertMessage(
+  message,
+  tokenDefinitions = {},
+  dismissAtCountdownEnd = false,
+) {
+  const normalized = String(message || "").trim();
+  if (!normalized) return;
+  const recentEntry = {
+    message: normalized,
+    tokenDefinitions: structuredClone(tokenDefinitions),
+    dismissAtCountdownEnd: dismissAtCountdownEnd === true,
+  };
+  recentAlertMessages = [
+    recentEntry,
+    ...recentAlertMessages.filter((item) =>
+      String(typeof item === "string" ? item : item.message || "").toLocaleLowerCase() !==
+      normalized.toLocaleLowerCase()),
+  ].slice(0, 8);
+  renderQuickAlertMessages();
+  await invoke("set-setting", "recentAlertMessages", recentAlertMessages).catch(() => {});
+}
+
+function useQuickAlertMessage() {
+  const select = document.getElementById("quickAlertMessageSelect");
+  const input = document.getElementById("alertMessageText");
+  if (!select?.value || !input) return;
+  input.value = select.value;
+  try {
+    alertTokenDefinitionsDraft = JSON.parse(
+      select.selectedOptions[0]?.dataset.tokenDefinitions || "{}",
+    );
+  } catch {
+    alertTokenDefinitionsDraft = {};
+  }
+  const countdownTarget = alertTokenDefinitionsDraft.countdown?.target;
+  const countdownInput = document.getElementById("alertCountdownTarget");
+  const dismissInput = document.getElementById("alertDismissAtCountdownEnd");
+  if (dismissInput) {
+    dismissInput.checked =
+      select.selectedOptions[0]?.dataset.dismissAtCountdownEnd === "true";
+  }
+  if (countdownInput && Number.isFinite(Date.parse(countdownTarget || ""))) {
+    const local = new Date(countdownTarget);
+    const localOffset = local.getTimezoneOffset() * 60000;
+    countdownInput.value = new Date(local.getTime() - localOffset).toISOString().slice(0, 16);
+  } else if (countdownInput) {
+    countdownInput.value = "";
+  }
+  select.value = "";
+  updateAlertComposerActions();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+function insertAlertToken(token) {
+  const input = document.getElementById("alertMessageText");
+  if (!input) return;
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  input.setRangeText(token, start, end, "end");
+  updateAlertComposerActions();
+  input.focus();
+}
+
+async function clearAudienceAlert() {
+  const result = await invoke("alerts:clear");
+  updateAlertsSnapshot(result);
+  showGnomeToast(result?.alert ? "Next queued alert shown" : "Alert cleared");
+  return true;
+}
+
+const LIVE_LAYER_PAGE_ORDER = ["nursery", "message"];
+
+function selectLiveLayersPage(page, { focus = false } = {}) {
+  const selected = LIVE_LAYER_PAGE_ORDER.includes(page) ? page : "nursery";
+  activeLiveLayersPage = selected;
+  for (const tab of document.querySelectorAll("[data-live-layer-tab]")) {
+    const active = tab.dataset.liveLayerTab === selected;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  }
+  for (const panel of document.querySelectorAll("[data-live-layer-page]")) {
+    panel.hidden = panel.dataset.liveLayerPage !== selected;
+  }
+  if (focus) {
+    const focusTarget = selected === "nursery"
+      ? document.getElementById("nurseryAlertIdentifier")
+      : document.getElementById("alertMessageText");
+    focusTarget?.focus();
+  }
+}
+
+function handleLiveLayersTabKeydown(event) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const current = LIVE_LAYER_PAGE_ORDER.indexOf(event.currentTarget.dataset.liveLayerTab);
+  const next = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? LIVE_LAYER_PAGE_ORDER.length - 1
+      : (current + (event.key === "ArrowRight" ? 1 : -1) + LIVE_LAYER_PAGE_ORDER.length) % LIVE_LAYER_PAGE_ORDER.length;
+  selectLiveLayersPage(LIVE_LAYER_PAGE_ORDER[next], { focus: false });
+  document.querySelector(`[data-live-layer-tab="${LIVE_LAYER_PAGE_ORDER[next]}"]`)?.focus();
+}
+
+async function openLiveLayers(page = activeLiveLayersPage) {
+  document.getElementById("liveLayersBackdrop")?.removeAttribute("hidden");
+  selectLiveLayersPage(page);
+  const [alerts, recentMessages] = await Promise.all([
+    invoke("alerts:get").catch(() => null),
+    invoke("get-setting", "recentAlertMessages").catch(() => []),
+  ]);
+  recentAlertMessages = Array.isArray(recentMessages)
+    ? recentMessages.filter((item) =>
+      (typeof item === "string" && item.trim()) ||
+      (item && typeof item.message === "string" && item.message.trim())).slice(0, 8)
+    : [];
+  renderQuickAlertMessages();
+  updateAlertsSnapshot(alerts);
+  updateAlertComposerActions();
+  selectLiveLayersPage(page, { focus: true });
+}
+
+function closeLiveLayers() {
+  document.getElementById("liveLayersBackdrop")?.setAttribute("hidden", "");
 }
 
 async function populateStageDisplaySelect() {
@@ -6490,7 +6858,7 @@ async function populateStageDisplaySelect() {
     option.textContent = display.label;
     select.appendChild(option);
   }
-  select.value = result.defaultStageDisplayIndex || "";
+  select.value = projectStageConfig.display || result.defaultStageDisplayIndex || "";
 }
 
 async function ensureStageOutput() {
@@ -8906,6 +9274,7 @@ async function clearLiveText() {
   }
   if (changed) {
     liveTextClearActive = !restoringText;
+    send("set-audience-clear-state", liveTextClearActive);
     showGnomeToast(restoringText ? "Live text restored" : "Live text cleared");
   } else {
     showGnomeToast(restoringText ? "Could not restore live text" : "Could not clear live text");
@@ -9860,6 +10229,7 @@ async function applyBibleFontToAllProjectText() {
     projectScriptureOverrides.fontFamily = style.fontFamily;
   }
   bibleDesignerState.fontFamily = style.fontFamily;
+  bibleDesignerState.fontFamilyOverride = true;
   bibleStyleDirtyState.fontFamily = false;
 
   let changedCount = 0;
@@ -9869,6 +10239,7 @@ async function applyBibleFontToAllProjectText() {
     item.bible = {
       ...(entry || item.bible || {}),
       fontFamily: style.fontFamily,
+      fontFamilyOverride: true,
     };
     if (entry?.reference) {
       item.path = bibleQueuePath(entry.reference, entry.version);
@@ -9941,6 +10312,7 @@ function bibleCurrentStylePayload() {
   const style = getBibleDesignerStyle();
   return {
     fontFamily: style.fontFamily,
+    fontFamilyOverride: style.fontFamilyOverride === true,
     fontSize: style.fontSize,
     autosizeMode: style.autosizeMode,
     minFontSize: style.minFontSize,
@@ -9951,6 +10323,7 @@ function bibleCurrentStylePayload() {
     lowerThirdColor: style.lowerThirdColor,
     lowerThirdChromaKeyColor: style.lowerThirdChromaKeyColor,
     lowerThirdFontFamily: style.lowerThirdFontFamily,
+    lowerThirdFontFamilyOverride: style.lowerThirdFontFamilyOverride === true,
     lowerThirdFontSize: style.lowerThirdFontSize,
     lowerThirdBarBackgroundColor: style.lowerThirdBarBackgroundColor,
     lowerThirdBarBackgroundPath: style.lowerThirdBarBackgroundPath,
@@ -11428,6 +11801,7 @@ function definedSongQueueRenderValues(render = {}) {
     "backgroundPath",
     "color",
     "fontFamily",
+    "fontFamilyOverride",
     "fontSize",
     "autosizeMode",
     "minFontSize",
@@ -19430,6 +19804,36 @@ function installBibleMediaControls() {
   });
   document.getElementById("openMediaWorkspaceBtn")?.addEventListener("click", showMediaWorkspace);
   document.getElementById("openStageControlsBtn")?.addEventListener("click", () => void openStageControls());
+  document.getElementById("openLiveLayersBtn")?.addEventListener("click", () => void openLiveLayers());
+  document.getElementById("closeLiveLayersBtn")?.addEventListener("click", closeLiveLayers);
+  document.getElementById("liveLayersBackdrop")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeLiveLayers();
+  });
+  for (const tab of document.querySelectorAll("[data-live-layer-tab]")) {
+    tab.addEventListener("click", () => selectLiveLayersPage(tab.dataset.liveLayerTab, { focus: true }));
+    tab.addEventListener("keydown", handleLiveLayersTabKeydown);
+  }
+  document.getElementById("showAudienceAlertBtn")?.addEventListener("click", () => void showAudienceAlert());
+  document.getElementById("clearAudienceAlertBtn")?.addEventListener("click", () => void clearAudienceAlert());
+  document.getElementById("addNurseryAlertBtn")?.addEventListener("click", () => void addNurseryAlertFromDraft());
+  document.getElementById("alertMessageText")?.addEventListener("input", updateAlertComposerActions);
+  document.getElementById("quickAlertMessageSelect")?.addEventListener("change", useQuickAlertMessage);
+  document.getElementById("insertAlertClockTokenBtn")?.addEventListener("click", () => insertAlertToken("{{clock}}"));
+  document.getElementById("insertAlertCountdownTokenBtn")?.addEventListener("click", () => {
+    if (!document.getElementById("alertCountdownTarget")?.value) {
+      showGnomeToast("Choose when the countdown should end");
+      document.getElementById("alertCountdownTarget")?.focus();
+      return;
+    }
+    insertAlertToken("{{countdown}}");
+  });
+  document.getElementById("nurseryAlertIdentifier")?.addEventListener("input", updateAlertComposerActions);
+  document.getElementById("nurseryAlertIdentifier")?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void addNurseryAlertFromDraft();
+    }
+  });
   document.getElementById("openSettingsBtn")?.addEventListener("click", openSettingsControls);
   document.getElementById("closeStageControlsBtn")?.addEventListener("click", closeStageControls);
   document.getElementById("stageControlsBackdrop")?.addEventListener("click", (event) => {
@@ -19440,12 +19844,16 @@ function installBibleMediaControls() {
     if (event.target === event.currentTarget) closeSettingsControls();
   });
   document.getElementById("stageDisplaySelect")?.addEventListener("change", (event) => {
+    projectStageConfig.display = event.target.value || "";
     send("set-stage-display-index", event.target.value || "");
     if (event.target.value) void ensureStageOutput();
+    scheduleAutosaveProjectState();
   });
   document.getElementById("stageProfileSelect")?.addEventListener("change", async (event) => {
     stageContentCache.profile = event.target.value;
+    projectStageConfig.profile = event.target.value;
     if (await ensureStageOutput()) await sendStageLayer("content", stageContentCache);
+    scheduleAutosaveProjectState();
   });
   document.getElementById("showStageMessageBtn")?.addEventListener("click", () => void showPrivateStageMessage());
   document.getElementById("clearStageMessageBtn")?.addEventListener("click", () => void clearPrivateStageMessage());
@@ -19464,17 +19872,16 @@ function installBibleMediaControls() {
       closeStageControls();
       return;
     }
-    if (event.repeat || event.key !== "F8" || !event.ctrlKey) return;
+    if (event.key === "Escape" && !document.getElementById("liveLayersBackdrop")?.hidden) {
+      event.preventDefault();
+      closeLiveLayers();
+      return;
+    }
+    if (event.key !== "F8") return;
+    const command = commandForShortcut(event);
+    if (!command) return;
     event.preventDefault();
-    if (event.shiftKey) {
-      void clearPrivateStageMessage();
-      return;
-    }
-    if (document.getElementById("stageControlsBackdrop")?.hidden) {
-      void openStageControls();
-      return;
-    }
-    void showPrivateStageMessage();
+    void executeLiveCommand(command);
   });
   void invoke("get-output-status").then(updateStageStatusUi).catch(() => {});
   renderGlobalNavigationState(navigationState.state);
@@ -19568,7 +19975,11 @@ function installBibleMediaControls() {
   document.getElementById("slidesDeckFontFamily")?.addEventListener("change", (e) => {
     if (!currentDeck) return;
     recordSlideUndoForMutation("Change deck font");
-    currentDeck.theme = { ...(currentDeck.theme || {}), fontFamily: e.target.value };
+    currentDeck.theme = {
+      ...(currentDeck.theme || {}),
+      fontFamily: e.target.value,
+      fontFamilyOverride: true,
+    };
     for (const page of currentDeck.pages || []) for (const obj of page.objects || []) if (obj.kind === "text") obj.style = { ...(obj.style || {}), fontFamily: e.target.value };
     setDeckDirty(true);
     renderSlideCanvas();
@@ -20066,7 +20477,13 @@ function installBibleMediaControls() {
           : { fontFamily: event.currentTarget.value };
       if (scope === "allSlides") {
         currentSongRenderState = readSongEditorRenderState();
+        if (controlId === "songEditorFontInput") {
+          currentSongRenderState.fontFamilyOverride = true;
+        }
         syncCurrentWorkspaceSongDefaultRender();
+      }
+      if (controlId === "songEditorFontInput") {
+        currentSongRenderState.fontFamilyOverride = true;
       }
       applySongEditorTextStyle(style, scope);
     } else {
@@ -20340,7 +20757,10 @@ function installBibleMediaControls() {
     const control = document.getElementById(id);
     const handleBibleStyleChange = () => {
       void (async () => {
-        if (id === "bibleFontInput") bibleStyleDirtyState.fontFamily = true;
+        if (id === "bibleFontInput") {
+          bibleStyleDirtyState.fontFamily = true;
+          bibleDesignerState.fontFamilyOverride = true;
+        }
         if (id === "bibleFontSizeInput") bibleStyleDirtyState.fontSize = true;
         if (id === "bibleAutosizeModeInput") bibleStyleDirtyState.autosizeMode = true;
         if (id === "bibleMinFontSizeInput") bibleStyleDirtyState.minFontSize = true;
@@ -20350,7 +20770,10 @@ function installBibleMediaControls() {
         if (id === "bibleLowerThirdBarBackgroundColorInput") {
           bibleStyleDirtyState.lowerThirdBarBackgroundColor = true;
         }
-        if (id === "bibleLowerThirdFontInput") bibleStyleDirtyState.lowerThirdFontFamily = true;
+        if (id === "bibleLowerThirdFontInput") {
+          bibleStyleDirtyState.lowerThirdFontFamily = true;
+          bibleDesignerState.lowerThirdFontFamilyOverride = true;
+        }
         if (id === "bibleLowerThirdFontSizeInput") bibleStyleDirtyState.lowerThirdFontSize = true;
         if (id === "bibleLowerThirdChromaKeyInput") {
           bibleStyleDirtyState.lowerThirdChromaKeyColor = true;
@@ -20586,6 +21009,19 @@ function buildProjectOutputHoldSnapshot() {
   };
 }
 
+function buildProjectOutputsSnapshot() {
+  projectStageConfig = {
+    display: document.getElementById("stageDisplaySelect")?.value || projectStageConfig.display || "",
+    profile: document.getElementById("stageProfileSelect")?.value || projectStageConfig.profile || "current-next",
+  };
+  return {
+    schema: "ems.project-outputs.v1",
+    stage: {
+      ...projectStageConfig,
+    },
+  };
+}
+
 function buildProjectStateSnapshot(opts = {}) {
   const projectGuid = normalizeProjectGuid(opts.projectGuid) || currentProjectGuid;
   const projectCreated =
@@ -20606,6 +21042,7 @@ function buildProjectStateSnapshot(opts = {}) {
     projectScriptureText: projectScriptureTextFromOverrides(projectScriptureOverrides),
     projectThemes: projectThemeDefaults,
     projectOutputHold: buildProjectOutputHoldSnapshot(),
+    projectOutputs: buildProjectOutputsSnapshot(),
     currentMode,
     currentQueueIndex,
     previewCueIndex,
@@ -20689,6 +21126,21 @@ function applyProjectStateSnapshot(state, opts = {}) {
   }
   if (state.projectOutputHold && typeof state.projectOutputHold === "object") {
     applyOutputHoldPreferences(normalizeOutputHoldPreferences(state.projectOutputHold));
+  }
+  if (state.projectOutputs?.stage) {
+    const profile = ["current-only", "current-next", "notes", "clock"].includes(state.projectOutputs.stage.profile)
+      ? state.projectOutputs.stage.profile
+      : "current-next";
+    stageContentCache.profile = profile;
+    projectStageConfig = {
+      display: String(state.projectOutputs.stage.display || ""),
+      profile,
+    };
+    const profileSelect = document.getElementById("stageProfileSelect");
+    if (profileSelect) profileSelect.value = profile;
+    const displaySelect = document.getElementById("stageDisplaySelect");
+    if (displaySelect && projectStageConfig.display) displaySelect.value = projectStageConfig.display;
+    if (projectStageConfig.display) send("set-stage-display-index", projectStageConfig.display);
   }
   bibleStyleDirtyState.fontFamily = false;
   bibleStyleDirtyState.fontSize = false;
@@ -26662,6 +27114,7 @@ function handleWindowMax(event, isMaximized) {
 function liveThemeFields(resolved) {
   const typography = resolved.typography || {};
   const background = resolved.canvas?.background || {};
+  const backgroundMedia = background.assetUrl || background.url || background.path || "";
   const textFrame = resolved.textFrame || {};
   return {
     fontFamily: typography.fontFamily,
@@ -26671,7 +27124,9 @@ function liveThemeFields(resolved) {
     lineHeight: typography.lineHeight,
     color: typography.color,
     backgroundColor: background.color,
-    backgroundPath: background.assetUrl || background.path || "",
+    backgroundPath: backgroundMedia,
+    backgroundImage: background.type === "image" ? backgroundMedia : "",
+    backgroundVideo: background.type === "video" ? backgroundMedia : "",
     textBoxPosition: Number.isFinite(textFrame.x)
       ? {
           left: `${textFrame.x * 100}%`,
@@ -26693,9 +27148,12 @@ function liveThemeFields(resolved) {
 
 function themedAudienceMessage(message, resolved) {
   if (!message) return null;
+  const fields = liveThemeFields(resolved);
   return {
     ...message,
-    ...liveThemeFields(resolved),
+    ...fields,
+    ...resolvedFontFamilyFields(message, resolved),
+    ...resolvedAudienceBackgroundFields(message, resolved),
     referenceText: resolved.reference?.visible === false ? "" : message.referenceText,
     attributionText: resolved.attribution?.visible === false ? "" : message.attributionText,
     copyrightText: resolved.copyright?.visible === false ? "" : message.copyrightText,
@@ -26713,13 +27171,14 @@ function themedLowerThirdMessage(message, resolved) {
   return enrichLowerThirdPresentationMessage({
     ...message,
     ...fields,
-    lowerThirdFontFamily: resolved.typography?.fontFamily,
+    ...resolvedFontFamilyFields(message, resolved, { lowerThird: true }),
     lowerThirdFontSize: resolved.typography?.fontSize,
     lowerThirdColor: resolved.typography?.color,
     lowerThirdBarBackgroundColor:
       resolved.backdrop?.enabled === false ? "transparent" : backdrop.color || "#101010",
     lowerThirdBarBackgroundPath:
       resolved.backdrop?.enabled === false ? "" : backdrop.assetUrl || backdrop.path || "",
+    lowerThirdBackingPlateEnabled: resolved.backdrop?.enabled !== false,
     lowerThirdChromaKeyColor: chroma,
     backgroundColor: chroma,
     chromaKeyColor: chroma,
@@ -26764,13 +27223,17 @@ async function applyThemeToLivePresentation(theme) {
   if (hasLiveAudienceTextPresentation("song") && lastAudienceSongTextMessage) {
     const resolved = resolveThemeForTarget({ theme, contentKind: "song", outputRole: "audience", outputSize: size });
     const message = themedAudienceMessage(lastAudienceSongTextMessage, resolved);
-    currentSongRenderState = mergeSongRenderState(currentSongRenderState, liveThemeFields(resolved));
+    const themeFields = liveThemeFields(resolved);
+    if (currentSongRenderState.fontFamilyOverride) delete themeFields.fontFamily;
+    currentSongRenderState = mergeSongRenderState(currentSongRenderState, themeFields);
     sendAudienceTextMessage("song", message);
   }
   if (hasLiveAudienceTextPresentation("bible") && lastAudienceBibleTextMessage) {
     const resolved = resolveThemeForTarget({ theme, contentKind: "scripture", outputRole: "audience", outputSize: size });
     const message = themedAudienceMessage(lastAudienceBibleTextMessage, resolved);
-    Object.assign(bibleDesignerState, liveThemeFields(resolved));
+    const themeFields = liveThemeFields(resolved);
+    if (bibleDesignerState.fontFamilyOverride) delete themeFields.fontFamily;
+    Object.assign(bibleDesignerState, themeFields);
     sendAudienceTextMessage("bible", message);
     applyBiblePreview(bibleDesignerState);
   }
@@ -26778,11 +27241,17 @@ async function applyThemeToLivePresentation(theme) {
     const resolved = resolveThemeForTarget({ theme, contentKind: "scripture", outputRole: "lowerThird", outputSize: size });
     const message = themedLowerThirdMessage(lastLowerThirdBibleTextMessage, resolved);
     Object.assign(bibleDesignerState, {
-      lowerThirdFontFamily: resolved.typography?.fontFamily,
+      ...(!bibleDesignerState.lowerThirdFontFamilyOverride
+        ? { lowerThirdFontFamily: resolved.typography?.fontFamily }
+        : {}),
       lowerThirdFontSize: resolved.typography?.fontSize,
       lowerThirdColor: resolved.typography?.color,
       lowerThirdChromaKeyColor: resolved.key?.chromaColor,
-      lowerThirdBarBackgroundColor: resolved.backdrop?.background?.color,
+      lowerThirdBackingPlateEnabled: resolved.backdrop?.enabled !== false,
+      lowerThirdBarBackgroundColor:
+        resolved.backdrop?.enabled === false
+          ? "transparent"
+          : resolved.backdrop?.background?.color,
     });
     sendBibleLowerThirdTextMessage({
       ...message,
@@ -26810,7 +27279,21 @@ async function applyThemeToLivePresentation(theme) {
 }
 
 function installIPCHandler() {
-  timeRemaining?.onTick?.(handleTimeMessage);
+  timeRemaining?.onTick?.((duration, currentTime, timestamp, mediaPath) => {
+    handleTimeMessage(duration, currentTime, timestamp, mediaPath);
+    const remaining = Math.max(0, Math.ceil((Number(duration) || 0) - (Number(currentTime) || 0)));
+    if (remaining === lastStageCountdownSecond) return;
+    lastStageCountdownSecond = remaining;
+    const hours = Math.floor(remaining / 3600);
+    const minutes = Math.floor((remaining % 3600) / 60);
+    const seconds = remaining % 60;
+    const countdown = `${hours ? `${hours}:` : ""}${String(minutes).padStart(hours ? 2 : 1, "0")}:${String(seconds).padStart(2, "0")}`;
+    void sendStageLayer("widgets", {
+      serviceItem: stageContentCache.serviceItem || "",
+      mediaRemaining: countdown,
+      countdown,
+    }).catch(() => {});
+  });
   on("preferences-updated", (_event, prefs) => {
     applyOutputHoldPreferences(prefs);
     applyLowerThirdOutputPreferences(prefs);
@@ -28114,21 +28597,71 @@ function getLowerThirdConfidenceMonitorElement() {
   return document.getElementById("confidenceLowerThirdPreview");
 }
 
+function getStageConfidenceMonitorElement() {
+  return document.getElementById("confidenceStagePreview");
+}
+
 let confidenceMonitorPage = "audience";
 let confidenceMonitorPopoutActive = false;
 let confidenceMonitorPipTransfer = false;
 
+function audienceAlertActiveForConfidence() {
+  const liveAlert = currentAlertsSnapshot.alert;
+  const audienceMessageActive = Boolean(
+    liveAlert && liveAlert.routes?.audience !== false,
+  );
+  return Boolean(
+    currentAlertsSnapshot.nurseryAlerts.length ||
+      audienceMessageActive ||
+      latestOutputStatus?.audience?.alert === "live"
+  );
+}
+
+function activeAlertConfidencePage() {
+  const liveAlert = currentAlertsSnapshot.alert;
+  if (
+    currentAlertsSnapshot.nurseryAlerts.length ||
+    (liveAlert && liveAlert.routes?.audience !== false) ||
+    latestOutputStatus?.audience?.alert === "live"
+  ) {
+    return "audience";
+  }
+  if (
+    liveAlert?.routes?.stage ||
+    latestOutputStatus?.stage?.alert === "live"
+  ) {
+    return "stage";
+  }
+  return null;
+}
+
+function audienceOutputAvailableForConfidence() {
+  return Boolean(
+    isActiveMediaWindow() ||
+      (audienceAlertActiveForConfidence() &&
+        latestOutputStatus?.audience?.window === "open")
+  );
+}
+
 function activeConfidenceMonitorPages() {
+  const alertPage = activeAlertConfidencePage();
+  if (alertPage === "audience" && audienceOutputAvailableForConfidence()) {
+    return ["audience"];
+  }
+  if (alertPage === "stage" && latestOutputStatus?.stage?.window === "open") {
+    return ["stage"];
+  }
   const pages = [];
-  if (isActiveMediaWindow()) pages.push("audience");
+  if (audienceOutputAvailableForConfidence()) pages.push("audience");
   if (bibleLowerThirdOutputActive && lastLowerThirdBibleTextMessage) pages.push("lower-third");
+  if (latestOutputStatus?.stage?.window === "open") pages.push("stage");
   return pages;
 }
 
 function currentConfidenceMonitorVideo() {
-  return confidenceMonitorPage === "lower-third"
-    ? getLowerThirdConfidenceMonitorElement()
-    : getConfidenceMonitorElement();
+  if (confidenceMonitorPage === "lower-third") return getLowerThirdConfidenceMonitorElement();
+  if (confidenceMonitorPage === "stage") return getStageConfidenceMonitorElement();
+  return getConfidenceMonitorElement();
 }
 
 function nativePictureInPictureAvailable() {
@@ -28140,7 +28673,7 @@ function nativePictureInPictureAvailable() {
 }
 
 function confidenceMonitorPipPageLabel(page) {
-  return page === "lower-third" ? "Lower Third" : "Audience";
+  return page === "lower-third" ? "Lower Third" : page === "stage" ? "Stage" : "Audience";
 }
 
 function setMediaSessionAction(action, handler) {
@@ -28217,6 +28750,11 @@ function syncConfidenceCaptureQualityForPopout() {
     track
       ?.applyConstraints?.(rendererCaptureVideoConstraints(activeRendererCaptureQualityMode()))
       .catch(() => {});
+  }
+  const stageStream = stageRendererPreviewStream;
+  if (stageStream) {
+    const [track] = stageStream.getVideoTracks();
+    track?.applyConstraints?.(rendererCaptureVideoConstraints(activeRendererCaptureQualityMode())).catch(() => {});
   }
 }
 
@@ -28299,9 +28837,11 @@ function setConfidenceMonitorPage(page) {
   const idle = document.getElementById("confidenceMonitorIdle");
   const audience = document.getElementById("confidenceAudiencePage");
   const lowerThird = document.getElementById("confidenceLowerThirdPage");
+  const stage = document.getElementById("confidenceStagePage");
   if (idle) idle.hidden = pages.length > 0;
   if (audience) audience.hidden = !pages.includes("audience") || confidenceMonitorPage !== "audience";
   if (lowerThird) lowerThird.hidden = !pages.includes("lower-third") || confidenceMonitorPage !== "lower-third";
+  if (stage) stage.hidden = !pages.includes("stage") || confidenceMonitorPage !== "stage";
   document.querySelectorAll(".confidence-monitor__dot").forEach((dot) => {
     dot.setAttribute("aria-current", dot.dataset.page === confidenceMonitorPage ? "true" : "false");
   });
@@ -28337,7 +28877,7 @@ function syncConfidenceMonitorCarousel() {
       dot.type = "button";
       dot.className = "confidence-monitor__dot";
       dot.dataset.page = page;
-      dot.setAttribute("aria-label", page === "audience" ? "Show audience output" : "Show lower third output");
+      dot.setAttribute("aria-label", `Show ${page === "lower-third" ? "lower third" : page} output`);
       dot.addEventListener("click", () => setConfidenceMonitorPage(page));
       dots.append(dot);
     });
@@ -28567,7 +29107,7 @@ function hideRendererCaptureElement(el) {
 
 function syncRendererCaptureSinks(stream = streamRendererPreviewStream) {
   const activeEls = new Set(
-    stream && isActiveMediaWindow()
+    stream && audienceOutputAvailableForConfidence()
       ? activeMediaRendererCaptureElements()
       : [],
   );
@@ -28634,7 +29174,10 @@ async function startStreamRendererPreviewCapture() {
   streamRendererPreviewStartPromise = (async () => {
     const qualityMode = activeRendererCaptureQualityMode();
     const stream = await captureElectronPresentationWindow("media");
-    if (!mediaRendererCaptureAllowedForCurrentMode() || !isActiveMediaWindow()) {
+    if (
+      !mediaRendererCaptureAllowedForCurrentMode() ||
+      !audienceOutputAvailableForConfidence()
+    ) {
       stream.getTracks().forEach((track) => track.stop());
       return;
     }
@@ -28717,13 +29260,66 @@ function syncLowerThirdRendererPreviewCapture() {
   void startLowerThirdRendererPreviewCapture();
 }
 
+function stopStageRendererPreviewCapture() {
+  const stream = stageRendererPreviewStream;
+  stageRendererPreviewStream = null;
+  stageRendererPreviewStartPromise = null;
+  if (stream) stream.getTracks().forEach((track) => track.stop());
+  hideRendererCaptureElement(getStageConfidenceMonitorElement());
+  syncConfidenceMonitorCarousel();
+}
+
+async function syncStageRendererPreviewCapture() {
+  if (latestOutputStatus?.stage?.window !== "open" || currentMode !== MEDIAPLAYER) {
+    stopStageRendererPreviewCapture();
+    return;
+  }
+  if (!getStageConfidenceMonitorElement() || !navigator.mediaDevices?.getDisplayMedia) return;
+  const available = await invoke("media-window-capture-available", "stage").catch(() => false);
+  if (!available) {
+    stopStageRendererPreviewCapture();
+    return;
+  }
+  if (stageRendererPreviewStream?.getVideoTracks().some((track) => track.readyState === "live")) {
+    prepareRendererCaptureElement(getStageConfidenceMonitorElement(), stageRendererPreviewStream);
+    syncConfidenceMonitorCarousel();
+    return;
+  }
+  if (stageRendererPreviewStartPromise) return stageRendererPreviewStartPromise;
+  stageRendererPreviewStartPromise = (async () => {
+    const stream = await captureElectronPresentationWindow("stage");
+    if (latestOutputStatus?.stage?.window !== "open") {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    disableCapturedAudioTracks(stream);
+    stageRendererPreviewStream = stream;
+    const [track] = stream.getVideoTracks();
+    track?.applyConstraints?.(rendererCaptureVideoConstraints(activeRendererCaptureQualityMode())).catch(() => {});
+    track?.addEventListener("ended", stopStageRendererPreviewCapture, { once: true });
+    prepareRendererCaptureElement(getStageConfidenceMonitorElement(), stream);
+    syncConfidenceMonitorCarousel();
+  })();
+  try {
+    await stageRendererPreviewStartPromise;
+  } catch (error) {
+    console.error("Failed to capture stage renderer preview:", error);
+    stopStageRendererPreviewCapture();
+  } finally {
+    stageRendererPreviewStartPromise = null;
+  }
+}
+
 function syncStreamRendererPreviewCapture() {
   if (networkPreviewUsesRendererCapture()) {
     stopStreamRendererPreviewCapture();
     syncNetworkPreviewMirrorCapture();
     return;
   }
-  if (!mediaRendererCaptureAllowedForCurrentMode() || !isActiveMediaWindow()) {
+  if (
+    !mediaRendererCaptureAllowedForCurrentMode() ||
+    !audienceOutputAvailableForConfidence()
+  ) {
     stopStreamRendererPreviewCapture();
     return;
   }
@@ -29145,6 +29741,14 @@ function restoreMediaFile() {
 }
 
 function shortcutHandler(event) {
+  const target = event.target;
+  const editing = target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+  const liveCommand = editing || event.key === "F8" ? null : commandForShortcut(event);
+  if (liveCommand) {
+    event.preventDefault();
+    void executeLiveCommand(liveCommand);
+    return;
+  }
   if (handleOutputHoldShortcut(event)) return;
   if (event.key === "F1" || event.code === "F1") {
     invoke("open-help-window");
@@ -29180,6 +29784,44 @@ function shortcutHandler(event) {
       close();
     }
   }
+}
+
+async function executeLiveCommand(command) {
+  if (command === LIVE_COMMANDS.ALERT_SHOW) {
+    if (document.getElementById("liveLayersBackdrop")?.hidden) await openLiveLayers("message");
+    else if (activeLiveLayersPage !== "message") selectLiveLayersPage("message", { focus: true });
+    else await showAudienceAlert();
+    return;
+  }
+  if (command === LIVE_COMMANDS.ALERT_CLEAR) return clearAudienceAlert();
+  if (command === LIVE_COMMANDS.STAGE_SHOW) {
+    if (document.getElementById("stageControlsBackdrop")?.hidden) return openStageControls();
+    return showPrivateStageMessage();
+  }
+  if (command === LIVE_COMMANDS.STAGE_CLEAR) return clearPrivateStageMessage();
+  if (command === LIVE_COMMANDS.CLEAR) return clearLiveText();
+  if (command === LIVE_COMMANDS.BLACK) return toggleBlackScreen();
+  if (command === LIVE_COMMANDS.LOGO) return toggleLogoHold();
+  if (command === LIVE_COMMANDS.GO_LIVE) {
+    const cue = currentPreviewCue();
+    if (cue && queueIndexInRange(cue.index)) return takeQueueItemLive(cue.index, cue.startTime || 0);
+    return playMedia();
+  }
+  const direction = command === LIVE_COMMANDS.NEXT ? 1 : command === LIVE_COMMANDS.PREVIOUS ? -1 : 0;
+  if (!direction) return;
+  const textButton = activeMediaWindowContentType === "song"
+    ? document.getElementById(direction > 0 ? "songNextSecBtn" : "songPrevSecBtn")
+    : activeMediaWindowContentType === "bible"
+      ? document.getElementById(direction > 0 ? "bibleNextSlideBtn" : "biblePrevSlideBtn")
+      : null;
+  if (textButton && !textButton.disabled) {
+    textButton.click();
+    return;
+  }
+  const index = direction > 0
+    ? nextPlayableQueueIndexAfter(currentQueueIndex)
+    : previousPlayableQueueIndexBefore(currentQueueIndex);
+  if (index >= 0) return takeQueueItemLive(index, 0);
 }
 
 function modeSwitchHandler(event) {
@@ -29270,7 +29912,7 @@ function installEvents() {
     { passive: true },
   );
 
-  document.addEventListener("keydown", shortcutHandler, { passive: true });
+  document.addEventListener("keydown", shortcutHandler);
   document
     .querySelector("form")
     ?.addEventListener("change", modeSwitchHandler, { passive: true });
@@ -30402,6 +31044,7 @@ async function createMediaWindow(options) {
       : isImgFile
       ? "image"
       : "video";
+  send("set-output-content-status", activeMediaWindowContentType);
   if (networkPreviewUsesRendererCapture()) {
     resetNetworkPreviewTransportState(mediaFile || projectionMediaFile);
   }

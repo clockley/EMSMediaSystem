@@ -23,6 +23,10 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
       bindings: { song: "warm", scripture: "warm", text: "warm", lowerThird: "warm" },
       snapshots: { warm: { theme: { schema: "ems.theme.v1", id: "warm", name: "Warm", tokens: {}, profiles: {}, assets: [] } } },
     },
+    projectOutputs: {
+      schema: "ems.project-outputs.v1",
+      stage: { display: "display:123", profile: "current-next" },
+    },
     mediaQueue: [
       {
         path: "song://fixture_long_song",
@@ -96,6 +100,7 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
     assert.equal(loadedSong.itemTheme.themeId, "warm");
     assert.equal(loadedSong.itemTheme.overrides.audience.typography.fontSize, 72);
     assert.equal(loadedSong.itemTheme.editorMaterialized, true);
+    assert.deepEqual(loaded.projectOutputs, snapshot.projectOutputs);
   } finally {
     if (loaded) await cleanupExtractedProjectMedia(loaded);
     await rm(root, { recursive: true, force: true });

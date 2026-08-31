@@ -43,7 +43,7 @@ import {
 import { randomUUID } from "crypto";
 import { isIP } from "net";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import {
   baselineFileHashFields,
   hashMediaFile,
@@ -57,6 +57,7 @@ import { SlidesStore } from "./slides_store.min.mjs";
 import { ThemeLibrary } from "./theme-manager.min.mjs";
 import { EMS_SAFE_DEFAULT_THEME } from "./theme-resolver.min.mjs";
 import { exportThemePack, importThemePack } from "./theme-pack.min.mjs";
+import { importThemeAsset, resolveManagedThemeAsset } from "./theme-assets.min.mjs";
 import settings from "./settings.min.mjs";
 import {
   loadEmprojSnapshot,
@@ -66,7 +67,30 @@ import {
 } from "./emproj.min.mjs";
 import { MediaWatcher } from "./media-watcher.min.mjs";
 import { generateVideoPoster } from "./video-poster.min.mjs";
-import { validateOutputCommand } from "./output-compositor.min.mjs";
+import { createOutputCommand, validateOutputCommand } from "./output-compositor.min.mjs";
+import {
+  advanceAlertState,
+  createAlertState,
+  dismissLiveAlert,
+  nextAlertDeadline,
+  prioritizeAlert,
+  removeAlert,
+  showAlert,
+} from "./alert-state.min.mjs";
+import {
+  addNurseryAlert,
+  createNurseryAlertsState,
+  expireNurseryAlerts,
+  nextNurseryDeadline,
+  removeNurseryAlert,
+} from "./nursery-alerts.min.mjs";
+import {
+  clearLiveBackground,
+  createBackgroundState,
+  revertLiveBackground,
+  setLiveBackground,
+} from "./live-background.min.mjs";
+import { createOutputStatus, mergeOutputStatus } from "./output-status.min.mjs";
 import {
   StagingIndex,
   normalizeProjectGuid,
@@ -143,7 +167,31 @@ async function setActiveThemeId(id) {
 async function resolveThemeRecordById(id) {
   if (id === EMS_SAFE_DEFAULT_THEME.id) return EMS_SAFE_DEFAULT_THEME;
   await readyThemeLibrary();
-  return themeLibrary.get(id);
+  return hydrateThemeAssetUrls(await themeLibrary.get(id));
+}
+
+function stripThemeRuntimeAssetUrls(theme) {
+  const copy = structuredClone(theme);
+  for (const asset of copy.assets || []) delete asset.assetUrl;
+  for (const profiles of Object.values(copy.profiles || {})) {
+    for (const profile of Object.values(profiles || {})) {
+      if (profile?.canvas?.background) delete profile.canvas.background.assetUrl;
+    }
+  }
+  return copy;
+}
+
+async function hydrateThemeAssetUrls(theme) {
+  if (!theme || theme.id === EMS_SAFE_DEFAULT_THEME.id) return theme;
+  const copy = structuredClone(theme);
+  const themeDir = themeLibrary.themeDir(copy.id);
+  copy.assets = await Promise.all((copy.assets || []).map(async asset => {
+    const managedPath = await resolveManagedThemeAsset(themeDir, asset);
+    return managedPath
+      ? { ...asset, assetUrl: pathToFileURL(managedPath).href }
+      : { ...asset };
+  }));
+  return copy;
 }
 
 async function broadcastThemeApplied(theme) {
@@ -220,10 +268,23 @@ function getPreferencesWindowBounds() {
 let mediaWindow = null;
 let lowerThirdWindow = null;
 let stageWindow = null;
+let audienceSessionId = randomUUID();
+const audienceLayerCommands = new Map();
+let audienceHealth = "inactive";
 let stageWindowCreatePromise = null;
 let stageSessionId = randomUUID();
 const stageLayerCommands = new Map();
 let stageHealth = "inactive";
+let audienceContentKind = "none";
+let audienceHoldMode = "none";
+let audienceHoldPayload = null;
+let audienceWindowOverlayOnly = false;
+let suppressNextMediaClosedNotification = false;
+let alertState = createAlertState();
+let nurseryAlertsState = createNurseryAlertsState();
+let alertTimer = null;
+let backgroundState = createBackgroundState();
+const outputLayerRevisions = new Map();
 let mediaWindowCreatePromise = null;
 let windowBounds = measurePerformance("Getting window bounds", getWindowBounds);
 let win = null;
@@ -484,6 +545,10 @@ async function setSetting(_event, setting, value) {
 }
 
 function handleCloseMediaWindow(event, id) {
+  if (hasActiveAlerts() && mediaWindow && !mediaWindow.isDestroyed()) {
+    void replaceContentWindowWithAlertOverlay();
+    return;
+  }
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     mediaWindow.close();
   }
@@ -508,14 +573,24 @@ function isLowerThirdWindowCapturable() {
   );
 }
 
+function isStageWindowCapturable() {
+  return Boolean(stageWindow && !stageWindow.isDestroyed() && !stageWindow.webContents.isDestroyed());
+}
+
 let displayMediaCaptureTarget = "media";
 
 function handleMediaWindowCaptureAvailable(_event, target = "media") {
-  return target === "lower-third" ? isLowerThirdWindowCapturable() : isMediaWindowCapturable();
+  if (target === "lower-third") return isLowerThirdWindowCapturable();
+  if (target === "stage") return isStageWindowCapturable();
+  return isMediaWindowCapturable();
 }
 
 function handleMediaWindowDisplayMediaRequest(request, callback) {
-  const targetWindow = displayMediaCaptureTarget === "lower-third" ? lowerThirdWindow : mediaWindow;
+  const targetWindow = displayMediaCaptureTarget === "lower-third"
+    ? lowerThirdWindow
+    : displayMediaCaptureTarget === "stage"
+      ? stageWindow
+      : mediaWindow;
   displayMediaCaptureTarget = "media";
   if (!request.videoRequested || !targetWindow || targetWindow.isDestroyed() || targetWindow.webContents.isDestroyed()) {
     callback({});
@@ -528,7 +603,7 @@ function handleMediaWindowDisplayMediaRequest(request, callback) {
 }
 
 function handleSetDisplayMediaCaptureTarget(_event, target) {
-  displayMediaCaptureTarget = target === "lower-third" ? "lower-third" : "media";
+  displayMediaCaptureTarget = target === "lower-third" || target === "stage" ? target : "media";
   return true;
 }
 
@@ -536,6 +611,10 @@ async function handleCloseMediaWindowNow() {
   if (!mediaWindow || mediaWindow.isDestroyed()) {
     youtubeLiveSessionActive = false;
     return false;
+  }
+
+  if (hasActiveAlerts()) {
+    return replaceContentWindowWithAlertOverlay();
   }
 
   const windowToClose = mediaWindow;
@@ -638,10 +717,70 @@ function fullscreenWindowBoundsForDisplay(display) {
 function applyMediaWindowPresentationMode(targetWindow) {
   // Keep an opaque native surface behind renderer transitions so Windows never
   // composites the desktop through a fading or not-yet-painted media frame.
-  targetWindow.setBackgroundColor(MEDIA_WINDOW_BACKGROUND_COLOR);
+  targetWindow.setBackgroundColor(audienceContentKind === "none" ? "#00000000" : MEDIA_WINDOW_BACKGROUND_COLOR);
   targetWindow.setFullScreen(true);
   targetWindow.setAlwaysOnTop(true, "screen-saver");
   targetWindow.setIgnoreMouseEvents(false);
+}
+
+function hasActiveAlerts() {
+  return Boolean(alertState.live || nurseryAlertsState.alerts.length);
+}
+
+function setAudienceWindowTransparent(transparent) {
+  if (!mediaWindow || mediaWindow.isDestroyed()) return;
+  mediaWindow.setBackgroundColor(transparent ? "#00000000" : MEDIA_WINDOW_BACKGROUND_COLOR);
+  sendOutputLayer("audience", "base", { transparent: transparent === true });
+}
+
+async function ensureAlertOverlayWindow() {
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+    if (audienceContentKind === "none") setAudienceWindowTransparent(true);
+    return true;
+  }
+  const selection = settings.getSync("lastDisplayIndex") || "";
+  if (!resolveDisplaySelection(selection)) {
+    throw new Error("Choose an Audience Output display in Settings before showing an alert");
+  }
+  const id = await handleCreateMediaWindow(null, {
+    transparent: true,
+    backgroundColor: "#00000000",
+    show: true,
+    webPreferences: {
+      contextIsolation: true,
+      sandbox: true,
+      preload: `${import.meta.dirname}/media_preload.min.js`,
+      additionalArguments: ["__alertOverlayOnly=true", String(Date.now() / 1000)],
+    },
+  }, selection);
+  audienceContentKind = "none";
+  if (id) setAudienceWindowTransparent(true);
+  return Boolean(id);
+}
+
+async function replaceContentWindowWithAlertOverlay() {
+  if (!mediaWindow || mediaWindow.isDestroyed()) return ensureAlertOverlayWindow();
+  if (audienceWindowOverlayOnly) {
+    setAudienceWindowTransparent(true);
+    return true;
+  }
+  const contentWindow = mediaWindow;
+  const closedId = contentWindow.id;
+  audienceContentKind = "none";
+  youtubeLiveSessionActive = false;
+  audienceWindowOverlayOnly = true;
+  if (!contentWindow.webContents.isDestroyed()) {
+    contentWindow.webContents.send("audience-enter-alert-only");
+  }
+  setAudienceWindowTransparent(true);
+  if (win && !win.isDestroyed()) win.webContents.send("media-window-closed", closedId);
+  publishOutputStatus();
+  return true;
+}
+
+function closeUnusedAlertOverlayWindow() {
+  if (audienceContentKind !== "none" || hasActiveAlerts() || backgroundState.current) return;
+  if (mediaWindow && !mediaWindow.isDestroyed()) mediaWindow.close();
 }
 
 function boundsPayload(bounds) {
@@ -660,16 +799,29 @@ function handleGetMediaWindowBounds() {
 }
 
 async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
-  if (mediaWindow && !mediaWindow.isDestroyed()) {
-    const targetSelection = resolveDisplaySelection(displayIndex);
-    if (!targetSelection) return null;
-    mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
-    applyMediaWindowPresentationMode(mediaWindow);
-    installTimeRemainingMessagePort();
-    return mediaWindow.id;
+  if (mediaWindowCreatePromise) {
+    await mediaWindowCreatePromise;
+    return handleCreateMediaWindow(event, windowOptions, displayIndex);
   }
-  if (mediaWindowCreatePromise) return mediaWindowCreatePromise;
-
+  const requestedOverlayOnly = windowOptions?.webPreferences?.additionalArguments?.includes("__alertOverlayOnly=true") === true;
+  if (mediaWindow && !mediaWindow.isDestroyed()) {
+    if (audienceWindowOverlayOnly && !requestedOverlayOnly) {
+      const overlayWindow = mediaWindow;
+      suppressNextMediaClosedNotification = true;
+      await new Promise((resolve) => {
+        overlayWindow.once("closed", resolve);
+        overlayWindow.close();
+      });
+    } else {
+      const targetSelection = resolveDisplaySelection(displayIndex);
+      if (!targetSelection) return null;
+      mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
+      applyMediaWindowPresentationMode(mediaWindow);
+      installTimeRemainingMessagePort();
+      publishOutputStatus();
+      return mediaWindow.id;
+    }
+  }
   mediaWindowCreatePromise = measurePerformance("Creating media window", async () => {
     const targetSelection = resolveDisplaySelection(displayIndex);
     if (!targetSelection) return null;
@@ -677,11 +829,15 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     const { webPreferences: incomingPrefs = {}, ...restWindowOptions } =
       windowOptions;
 
+    audienceSessionId = randomUUID();
+    audienceLayerCommands.clear();
+    outputLayerRevisions.delete("audience:alert");
+    outputLayerRevisions.delete("audience:media");
     const finalWindowOptions = {
       ...restWindowOptions,
       backgroundThrottling: false,
-      backgroundColor: MEDIA_WINDOW_BACKGROUND_COLOR,
-      transparent: false,
+      backgroundColor: audienceContentKind === "none" ? "#00000000" : MEDIA_WINDOW_BACKGROUND_COLOR,
+      transparent: true,
       fullscreen: true,
       frame: false,
       icon: `${import.meta.dirname}/icon.png`,
@@ -689,11 +845,19 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       webPreferences: {
         ...incomingPrefs,
         session: mediaPresentationSession,
+        additionalArguments: [
+          ...(Array.isArray(incomingPrefs.additionalArguments) ? incomingPrefs.additionalArguments : []),
+          `__audience-session=${audienceSessionId}`,
+          ...(hasActiveAlerts() ? ["__disable-content-transitions=true"] : []),
+        ],
       },
     };
 
     const createdMediaWindow = new BrowserWindow(finalWindowOptions);
+    const createdAsOverlayOnly = requestedOverlayOnly;
     mediaWindow = createdMediaWindow;
+    audienceWindowOverlayOnly = createdAsOverlayOnly;
+    audienceHealth = "starting";
     applyMediaWindowPresentationMode(createdMediaWindow);
     //mediaWindow.openDevTools()
     await createdMediaWindow.loadFile("derived/src/media.prod.html");
@@ -703,10 +867,15 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       const wasActiveMediaWindow = mediaWindow === createdMediaWindow;
       if (wasActiveMediaWindow) {
         mediaWindow = null;
+        audienceHealth = "inactive";
+        audienceContentKind = "none";
         stopMediaPlaybackPowerHint();
-        if (win && !win.isDestroyed()) {
+        if (!createdAsOverlayOnly && !audienceWindowOverlayOnly && !suppressNextMediaClosedNotification && win && !win.isDestroyed()) {
           win.webContents.send("media-window-closed", closedId);
         }
+        suppressNextMediaClosedNotification = false;
+        audienceWindowOverlayOnly = false;
+        publishOutputStatus();
       }
     });
 
@@ -714,6 +883,8 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     settings.set("lastDisplayIndex", targetSelection.value).catch((error) => {
       console.error("Error saving display preference:", error);
     });
+
+    publishOutputStatus();
 
     return createdMediaWindow.id;
   });
@@ -777,24 +948,214 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
   });
 }
 
-function stageOutputStatus() {
-  return {
-    schema: "ems.output-status.v1",
-    sessionId: stageSessionId,
+function currentOutputStatus() {
+  return mergeOutputStatus(createOutputStatus(stageSessionId), {
+    audience: {
+      window: mediaWindow && !mediaWindow.isDestroyed() ? "open" : "closed",
+      display: settings.getSync("lastDisplayIndex") || "",
+      content: audienceContentKind,
+      hold: audienceHoldMode,
+      text: audienceLayerCommands.has("clearText") ? "clear" : "visible",
+      alert: audienceLayerCommands.has("alert")
+        ? mediaWindow && !mediaWindow.isDestroyed() ? "live" : "pending"
+        : "clear",
+      background: backgroundState.current?.name || "none",
+      health: mediaWindow && !mediaWindow.isDestroyed() ? audienceHealth : "inactive",
+    },
+    lowerThird: {
+      window: lowerThirdWindow && !lowerThirdWindow.isDestroyed() ? "open" : "closed",
+      display: settings.getSync("lastLowerThirdDisplayIndex") || "",
+      content: lowerThirdWindow && !lowerThirdWindow.isDestroyed() ? audienceContentKind : "none",
+      health: lowerThirdWindow && !lowerThirdWindow.isDestroyed() ? "ok" : "inactive",
+    },
     stage: {
       window: stageWindow && !stageWindow.isDestroyed() ? "open" : "closed",
       display: settings.getSync(STAGE_DISPLAY_KEY) || "",
       profile: stageLayerCommands.get("content")?.payload?.profile || "current-next",
       privateMessage: stageLayerCommands.has("privateMessage") ? "live" : "clear",
+      alert: stageLayerCommands.has("alert")
+        ? stageWindow && !stageWindow.isDestroyed() ? "live" : "pending"
+        : "clear",
       health: stageWindow && !stageWindow.isDestroyed() ? stageHealth : "inactive",
     },
-  };
+  });
 }
 
-function publishStageOutputStatus() {
+function publishOutputStatus() {
   if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-    win.webContents.send("output-status", stageOutputStatus());
+    win.webContents.send("output-status", currentOutputStatus());
   }
+}
+
+function nextOutputLayerRevision(role, layer) {
+  const key = `${role}:${layer}`;
+  const revision = (outputLayerRevisions.get(key) || 0) + 1;
+  outputLayerRevisions.set(key, revision);
+  return revision;
+}
+
+function outputSessionForRole(role) {
+  return role === "stage" ? stageSessionId : audienceSessionId;
+}
+
+function outputCommandsForRole(role) {
+  return role === "stage" ? stageLayerCommands : audienceLayerCommands;
+}
+
+function outputWindowForRole(role) {
+  return role === "stage" ? stageWindow : mediaWindow;
+}
+
+function sendOutputLayer(role, layer, payload = null) {
+  const command = createOutputCommand({
+    commandId: randomUUID(),
+    sessionId: outputSessionForRole(role),
+    revision: nextOutputLayerRevision(role, layer),
+    targetRole: role,
+    type: payload === null ? "layer.clear" : "layer.set",
+    layer,
+    payload: payload || {},
+  });
+  const commands = outputCommandsForRole(role);
+  if (payload === null) commands.delete(layer);
+  else commands.set(layer, command);
+  const target = outputWindowForRole(role);
+  if (target && !target.isDestroyed() && !target.webContents.isDestroyed()) {
+    target.webContents.send(`${role}-output-command`, command);
+  }
+  publishOutputStatus();
+  return command;
+}
+
+function routeLiveAlert() {
+  const live = alertState.live;
+  const audiencePayload = nurseryAlertsState.alerts.length || live?.routes?.audience
+    ? {
+        schema: "ems.alert-layer.v1",
+        nurseryAlerts: nurseryAlertsState.alerts,
+        messageAlert: live?.routes?.audience ? live : null,
+      }
+    : null;
+  sendOutputLayer("audience", "alert", audiencePayload);
+  sendOutputLayer("stage", "alert", live?.routes?.stage ? live : null);
+  scheduleAlertDeadline();
+}
+
+function scheduleAlertDeadline() {
+  if (alertTimer) clearTimeout(alertTimer);
+  alertTimer = null;
+  const deadlines = [nextAlertDeadline(alertState), nextNurseryDeadline(nurseryAlertsState)].filter(Number.isFinite);
+  const deadline = deadlines.length ? Math.min(...deadlines) : null;
+  if (!deadline) return;
+  alertTimer = setTimeout(() => {
+    alertTimer = null;
+    const now = Date.now();
+    const advanced = advanceAlertState(alertState, now);
+    const nurseryAdvanced = expireNurseryAlerts(nurseryAlertsState, now);
+    if (advanced !== alertState || nurseryAdvanced !== nurseryAlertsState) {
+      alertState = advanced;
+      nurseryAlertsState = nurseryAdvanced;
+      routeLiveAlert();
+      closeUnusedAlertOverlayWindow();
+    } else {
+      scheduleAlertDeadline();
+    }
+  }, Math.min(2147483647, Math.max(0, deadline - Date.now())));
+}
+
+function assertControlSender(event) {
+  if (!win || event.sender !== win.webContents) {
+    throw new TypeError("Output commands are accepted only from the control window");
+  }
+}
+
+async function handleShowAlert(event, input) {
+  assertControlSender(event);
+  const nextAlertState = input?.kind === "nursery"
+    ? null
+    : showAlert(alertState, input, Date.now());
+  const nextNurseryState = input?.kind === "nursery"
+    ? addNurseryAlert(nurseryAlertsState, input, Date.now())
+    : null;
+  await ensureAlertOverlayWindow();
+  if (nextNurseryState) nurseryAlertsState = nextNurseryState;
+  else alertState = nextAlertState;
+  routeLiveAlert();
+  return { alert: alertState.live, queue: alertState.queue, nurseryAlerts: nurseryAlertsState.alerts, status: currentOutputStatus() };
+}
+
+function handleClearAlert(event) {
+  assertControlSender(event);
+  alertState = dismissLiveAlert(alertState, Date.now());
+  routeLiveAlert();
+  closeUnusedAlertOverlayWindow();
+  return { alert: alertState.live, queue: alertState.queue, nurseryAlerts: nurseryAlertsState.alerts, status: currentOutputStatus() };
+}
+
+function handleRemoveAlert(event, id) {
+  assertControlSender(event);
+  alertState = removeAlert(alertState, String(id || ""), Date.now());
+  routeLiveAlert();
+  closeUnusedAlertOverlayWindow();
+  return { alert: alertState.live, queue: alertState.queue, nurseryAlerts: nurseryAlertsState.alerts, status: currentOutputStatus() };
+}
+
+function handlePrioritizeAlert(event, id) {
+  assertControlSender(event);
+  alertState = prioritizeAlert(alertState, String(id || ""), Date.now());
+  routeLiveAlert();
+  return { alert: alertState.live, queue: alertState.queue, nurseryAlerts: nurseryAlertsState.alerts, status: currentOutputStatus() };
+}
+
+function handleRemoveNurseryAlert(event, id) {
+  assertControlSender(event);
+  nurseryAlertsState = removeNurseryAlert(nurseryAlertsState, String(id || ""));
+  routeLiveAlert();
+  closeUnusedAlertOverlayWindow();
+  return { alert: alertState.live, queue: alertState.queue, nurseryAlerts: nurseryAlertsState.alerts, status: currentOutputStatus() };
+}
+
+function handleGetAlerts(event) {
+  assertControlSender(event);
+  return { alert: alertState.live, queue: alertState.queue, nurseryAlerts: nurseryAlertsState.alerts, status: currentOutputStatus() };
+}
+
+async function handleSetLiveBackground(event, input) {
+  assertControlSender(event);
+  const candidate = setLiveBackground(backgroundState, input);
+  const source = candidate.current.source;
+  if (!/^(https?:|rtsp:|rtmp:)/i.test(source)) {
+    const info = await stat(source).catch(() => null);
+    if (!info?.isFile()) throw new Error(`Background media is missing: ${source}`);
+  }
+  backgroundState = candidate;
+  const payload = {
+    ...backgroundState.current,
+    sourceUrl: /^(https?:|rtsp:|rtmp:)/i.test(source) ? source : pathToFileURL(source).href,
+  };
+  sendOutputLayer("audience", "media", payload);
+  return { background: backgroundState.current, status: currentOutputStatus() };
+}
+
+function applyBackgroundState() {
+  const current = backgroundState.current;
+  sendOutputLayer("audience", "media", current ? {
+    ...current,
+    sourceUrl: /^(https?:|rtsp:|rtmp:)/i.test(current.source) ? current.source : pathToFileURL(current.source).href,
+  } : null);
+  return { background: current, status: currentOutputStatus() };
+}
+
+function handleClearLiveBackground(event) {
+  assertControlSender(event);
+  backgroundState = clearLiveBackground(backgroundState);
+  return applyBackgroundState();
+}
+
+function handleRevertLiveBackground(event) {
+  assertControlSender(event);
+  backgroundState = revertLiveBackground(backgroundState);
+  return applyBackgroundState();
 }
 
 async function handleCreateStageWindow(_event, displayIndex) {
@@ -804,11 +1165,18 @@ async function handleCreateStageWindow(_event, displayIndex) {
     stageWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
     stageWindow.setFullScreen(true);
     await settings.set(STAGE_DISPLAY_KEY, targetSelection.value);
-    publishStageOutputStatus();
+    publishOutputStatus();
     return { id: stageWindow.id, sessionId: stageSessionId };
   }
   if (stageWindowCreatePromise) return stageWindowCreatePromise;
+  const restorableStageLayers = [...stageLayerCommands.entries()]
+    .filter(([layer]) => layer === "content" || layer === "widgets")
+    .map(([layer, command]) => [layer, command.payload]);
   stageSessionId = randomUUID();
+  stageLayerCommands.clear();
+  for (const key of outputLayerRevisions.keys()) {
+    if (key.startsWith("stage:")) outputLayerRevisions.delete(key);
+  }
   stageWindowCreatePromise = (async () => {
     const created = new BrowserWindow({
       ...fullscreenWindowBoundsForDisplay(targetSelection.display),
@@ -836,9 +1204,13 @@ async function handleCreateStageWindow(_event, displayIndex) {
       stageHealth = "inactive";
       stageLayerCommands.delete("privateMessage");
       stageLayerCommands.delete("alert");
-      publishStageOutputStatus();
+      publishOutputStatus();
     });
-    publishStageOutputStatus();
+    for (const [layer, payload] of restorableStageLayers) {
+      sendOutputLayer("stage", layer, payload);
+    }
+    if (alertState.live?.routes?.stage) sendOutputLayer("stage", "alert", alertState.live);
+    publishOutputStatus();
     return { id: created.id, sessionId: stageSessionId };
   })();
   try {
@@ -866,11 +1238,11 @@ function handleStageOutputCommand(event, command) {
     if (command.layer === "privateMessage" || command.layer === "alert") {
       stageLayerCommands.delete(command.layer);
     }
-    publishStageOutputStatus();
+    publishOutputStatus();
     return { delivered: false, reason: "stage-closed" };
   }
   stageWindow.webContents.send("stage-output-command", command);
-  publishStageOutputStatus();
+  publishOutputStatus();
   return { delivered: true };
 }
 
@@ -884,7 +1256,7 @@ function handleSetStageDisplayIndex(_event, selection) {
       stageWindow.setFullScreen(true);
     }
   }
-  publishStageOutputStatus();
+  publishOutputStatus();
 }
 
 async function clearLowerThirdRendererNow(payload = {}) {
@@ -924,6 +1296,15 @@ async function handleDisplayChange() {
     // Never fail a disconnected confidence display over to the audience or
     // primary monitor: close it and require an explicit operator selection.
     if (!stageDisplayStillConnected) stageWindow.close();
+  }
+
+  if (!stageWindow || stageWindow.isDestroyed()) {
+    const savedStageDisplay = settings.getSync(STAGE_DISPLAY_KEY) || "";
+    if (savedStageDisplay && resolveDisplaySelection(savedStageDisplay)) {
+      void handleCreateStageWindow(null, savedStageDisplay).catch((error) => {
+        console.error("Failed to reconnect stage output:", error);
+      });
+    }
   }
 
   if (mediaWindow && !mediaWindow.isDestroyed()) {
@@ -4967,11 +5348,17 @@ function setIPC() {
     if (mediaWindow && !mediaWindow.isDestroyed()) {
       mediaWindow.webContents.send("update-text", message);
     }
+    audienceContentKind = message?.contentKind || message?.type || audienceContentKind || "text";
+    sendOutputLayer("audience", "content", {
+      kind: audienceContentKind,
+      slideId: message?.resolvedPresentation?.navigation?.activeSlideId || message?.slideId || null,
+    });
+    publishOutputStatus();
   });
   ipcMain.on("set-output-hold", (_event, payload) => {
-    if (mediaWindow && !mediaWindow.isDestroyed()) {
-      mediaWindow.webContents.send("set-output-hold", payload);
-    }
+    audienceHoldMode = ["black", "logo"].includes(payload?.mode) ? payload.mode : "none";
+    audienceHoldPayload = audienceHoldMode === "none" ? null : payload;
+    sendOutputLayer("audience", "hold", audienceHoldPayload);
   });
   ipcMain.on("update-lower-third-text", (_event, message) => {
     if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
@@ -5005,7 +5392,42 @@ function setIPC() {
   ipcMain.handle("create-lower-third-window", handleCreateLowerThirdWindow);
   ipcMain.handle("create-stage-window", handleCreateStageWindow);
   ipcMain.handle("stage-output-command", handleStageOutputCommand);
-  ipcMain.handle("get-output-status", () => stageOutputStatus());
+  ipcMain.handle("get-output-status", () => currentOutputStatus());
+  ipcMain.handle("alerts:show", handleShowAlert);
+  ipcMain.handle("alerts:clear", handleClearAlert);
+  ipcMain.handle("alerts:get", handleGetAlerts);
+  ipcMain.handle("alerts:remove", handleRemoveAlert);
+  ipcMain.handle("alerts:prioritize", handlePrioritizeAlert);
+  ipcMain.handle("nursery-alerts:remove", handleRemoveNurseryAlert);
+  // The generic compositor media layer and background state handlers remain
+  // available for future output features, but no independent live-background
+  // controls or renderer-callable IPC endpoints are exposed.
+  ipcMain.on("set-output-content-status", (event, kind) => {
+    assertControlSender(event);
+    audienceContentKind = String(kind || "none");
+    sendOutputLayer("audience", "content", audienceContentKind === "none" ? null : { kind: audienceContentKind });
+    setAudienceWindowTransparent(audienceContentKind === "none");
+    if (audienceContentKind === "none") closeUnusedAlertOverlayWindow();
+    publishOutputStatus();
+  });
+  ipcMain.on("set-audience-clear-state", (event, active) => {
+    assertControlSender(event);
+    sendOutputLayer("audience", "clearText", active === true ? { active: true } : null);
+  });
+  ipcMain.on("audience-output-ready", (event) => {
+    if (!mediaWindow || event.sender !== mediaWindow.webContents) return;
+    audienceHealth = "ok";
+    setAudienceWindowTransparent(audienceContentKind === "none");
+    if (backgroundState.current) applyBackgroundState();
+    routeLiveAlert();
+    if (audienceHoldPayload) sendOutputLayer("audience", "hold", audienceHoldPayload);
+    publishOutputStatus();
+  });
+  ipcMain.on("audience-output-ack", (event, acknowledgement) => {
+    if (!mediaWindow || event.sender !== mediaWindow.webContents) return;
+    audienceHealth = acknowledgement?.applied === false ? "degraded" : "ok";
+    publishOutputStatus();
+  });
   ipcMain.on("set-stage-display-index", handleSetStageDisplayIndex);
   ipcMain.on("stage-output-ready", (event) => {
     if (!stageWindow || event.sender !== stageWindow.webContents) return;
@@ -5013,12 +5435,12 @@ function setIPC() {
     for (const command of stageLayerCommands.values()) {
       stageWindow.webContents.send("stage-output-command", command);
     }
-    publishStageOutputStatus();
+    publishOutputStatus();
   });
   ipcMain.on("stage-output-ack", (event, acknowledgement) => {
     if (!stageWindow || event.sender !== stageWindow.webContents) return;
     stageHealth = acknowledgement?.applied === false ? "degraded" : "ok";
-    publishStageOutputStatus();
+    publishOutputStatus();
     if (win && !win.isDestroyed()) win.webContents.send("stage-output-ack", acknowledgement);
   });
   ipcMain.handle("close-lower-third-window-now", handleCloseLowerThirdWindowNow);
@@ -5075,7 +5497,7 @@ function setIPC() {
   ipcMain.handle("themes:list", async () => {
     await readyThemeLibrary();
     const userThemes = await Promise.all((await themeLibrary.list()).map(async item => ({
-      ...item, source: "user", theme: await themeLibrary.get(item.id),
+      ...item, source: "user", theme: await resolveThemeRecordById(item.id),
     })));
     const themes = [{ id: EMS_SAFE_DEFAULT_THEME.id, name: EMS_SAFE_DEFAULT_THEME.name, description: "Built-in fallback theme", source: "built-in", revision: "built-in", theme: EMS_SAFE_DEFAULT_THEME }, ...userThemes];
     return { themes, activeThemeId: getActiveThemeId() };
@@ -5083,8 +5505,31 @@ function setIPC() {
   ipcMain.handle("themes:save", async (_event, theme) => {
     await readyThemeLibrary();
     if (theme?.id === EMS_SAFE_DEFAULT_THEME.id) throw new Error("Built-in themes cannot be modified");
-    const saved = await themeLibrary.save(theme);
-    return { ...saved, source: "user" };
+    const saved = await themeLibrary.save(stripThemeRuntimeAssetUrls(theme));
+    return { ...saved, theme: await hydrateThemeAssetUrls(saved.theme), source: "user" };
+  });
+  ipcMain.handle("themes:chooseBackgroundAsset", async (event, id) => {
+    await readyThemeLibrary();
+    if (id === EMS_SAFE_DEFAULT_THEME.id) {
+      throw new Error("Duplicate the built-in theme before adding a background graphic");
+    }
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const selected = await dialog.showOpenDialog(parent, {
+      title: "Choose Audience Background Graphic",
+      properties: ["openFile"],
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"] }],
+    });
+    if (selected.canceled || !selected.filePaths?.[0]) return { canceled: true };
+    const asset = await importThemeAsset(
+      selected.filePaths[0],
+      path.join(themeLibrary.themeDir(id), "assets"),
+      { type: "image" },
+    );
+    const managedPath = await resolveManagedThemeAsset(themeLibrary.themeDir(id), asset);
+    return {
+      canceled: false,
+      asset: { ...asset, assetUrl: managedPath ? pathToFileURL(managedPath).href : "" },
+    };
   });
   // Saving a draft only persists edits. Applying is a separate, always-available
   // action so the operator can re-select the built-in default (or any theme

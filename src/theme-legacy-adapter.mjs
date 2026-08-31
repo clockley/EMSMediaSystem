@@ -1,10 +1,20 @@
 const compact = value => Object.fromEntries(Object.entries(value).filter(([, child]) => child !== undefined));
 
+const legacyLowerThirdBackdropEnabled = style => {
+  if (typeof style.lowerThirdBackingPlateEnabled === "boolean") {
+    return style.lowerThirdBackingPlateEnabled;
+  }
+  const color = String(style.lowerThirdBarBackgroundColor || "").trim().toLowerCase();
+  if (color === "transparent" || /^#[0-9a-f]{6}00$/.test(color)) return false;
+  const rgba = color.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\s*\)$/i);
+  return !(rgba && Number(rgba[1]) === 0);
+};
+
 export function legacyStyleToThemeOverrides(style = {}, outputRole = "audience") {
   if (outputRole === "lowerThird") return compact({
     typography: compact({ fontFamily: style.lowerThirdFontFamily || style.fontFamily, fontSize: style.lowerThirdFontSize, color: style.lowerThirdColor || style.color }),
     canvas: { background: compact({ type: "color", color: style.lowerThirdChromaKeyColor }) },
-    backdrop: compact({ enabled: true, background: compact({ type: style.lowerThirdBarBackgroundPath ? "image" : "color", color: style.lowerThirdBarBackgroundColor, path: style.lowerThirdBarBackgroundPath }) }),
+    backdrop: compact({ enabled: legacyLowerThirdBackdropEnabled(style), background: compact({ type: style.lowerThirdBarBackgroundPath ? "image" : "color", color: style.lowerThirdBarBackgroundColor, path: style.lowerThirdBarBackgroundPath }) }),
     key: compact({ mode: "chroma", chromaColor: style.lowerThirdChromaKeyColor }),
   });
   return compact({

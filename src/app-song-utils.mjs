@@ -477,6 +477,7 @@ export function songDefaultRenderFromRender(render = {}) {
     },
     textColor: style.color || DEFAULT_SONG_RENDER.color,
     fontFamily: style.fontFamily || DEFAULT_SONG_RENDER.fontFamily,
+    fontFamilyOverride: render.fontFamilyOverride === true,
     fontSize: Number.isFinite(style.fontSize) ? style.fontSize : DEFAULT_SONG_RENDER.fontSize,
     autosizeMode: style.autosizeMode || DEFAULT_SONG_RENDER.autosizeMode,
     minFontSize: Number.isFinite(style.minFontSize)
@@ -498,6 +499,7 @@ export function songRenderStateFromDefaultRender(defaultRender = {}) {
     backgroundPath: defaultRender.background?.path || defaultRender.backgroundPath || "",
     color: defaultRender.textColor || defaultRender.color,
     fontFamily: defaultRender.fontFamily,
+    fontFamilyOverride: defaultRender.fontFamilyOverride === true,
     fontSize: Number.isFinite(fontSize) && fontSize > 0 ? fontSize : undefined,
     autosizeMode: defaultRender.autosizeMode,
     minFontSize: Number.isFinite(minFontSize) && minFontSize > 0 ? minFontSize : undefined,
@@ -522,6 +524,8 @@ export function songRenderFromItem(item) {
       backgroundPath: render.backgroundPath || snapshotStyle.backgroundPath || "",
       color: render.color || snapshotStyle.color || DEFAULT_SONG_RENDER.color,
       fontFamily: render.fontFamily || snapshotStyle.fontFamily || DEFAULT_SONG_RENDER.fontFamily,
+      fontFamilyOverride:
+        render.fontFamilyOverride === true || snapshotStyle.fontFamilyOverride === true,
       fontSize: Number.isFinite(render.fontSize)
         ? render.fontSize
         : snapshotStyle.fontSize,
@@ -634,6 +638,7 @@ function buildResolvedSongUnitTextMessage({
     copyrightText,
     version: "",
     fontFamily: style.fontFamily || SCRIPTURE_FONT_FAMILY,
+    fontFamilyOverride: style.fontFamilyOverride === true,
     fontSize: normalizeScriptureFontSize(
       resolvedUnit?.layout?.resolvedFontSize ?? style.fontSize,
       SCRIPTURE_BODY_FONT_SIZE,
@@ -681,7 +686,10 @@ function applyResolvedThemeToSongMessage(message, resolvedTheme) {
     (backgroundPath ? pathToMediaUrl(backgroundPath) : "");
   return {
     ...message,
-    fontFamily: typography.fontFamily || message.fontFamily,
+    fontFamily:
+      (message.fontFamilyOverride ? message.fontFamily : "") ||
+      typography.fontFamily ||
+      message.fontFamily,
     preferredFontSize: typography.fontSize || message.preferredFontSize,
     minFontSize: typography.minFontSize || message.minFontSize,
     fontWeight: typography.fontWeight || message.fontWeight,
@@ -819,6 +827,7 @@ export function queueEntryFromSong({
       backgroundPath: render.backgroundPath,
       color: render.color,
       fontFamily: render.fontFamily,
+      fontFamilyOverride: render.fontFamilyOverride === true,
       fontSize: render.fontSize,
       autosizeMode: render.autosizeMode,
       minFontSize: render.minFontSize,
@@ -853,7 +862,9 @@ export function resolvedSongPresentation(item) {
     : { ...song, playOrder: entries };
   const resolved = resolveSongSlides(resolutionSong, {
     render,
-    typography: item?.resolvedTheme?.typography || render,
+    typography: render.fontFamilyOverride
+      ? { ...(item?.resolvedTheme?.typography || {}), fontFamily: render.fontFamily }
+      : item?.resolvedTheme?.typography || render,
     resolvedTheme: item?.resolvedTheme || null,
     chunking: item?.chunking,
     currentSectionId: render.currentSectionId || item?.render?.currentSectionId,

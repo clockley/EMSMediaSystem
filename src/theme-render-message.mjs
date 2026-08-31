@@ -23,6 +23,45 @@ function resolvedBackground(resolvedTheme = {}, fallback = {}) {
   };
 }
 
+export function resolvedAudienceBackgroundFields(message = {}, resolvedTheme = {}) {
+  const background = resolvedTheme.canvas?.background || {};
+  const themeMedia = background.assetUrl || background.url || background.path || "";
+  const messageMedia = message.backgroundImage || message.backgroundVideo || "";
+  const previousBackground = message.resolvedTheme?.canvas?.background || {};
+  const previousThemeMedia =
+    previousBackground.assetUrl || previousBackground.url || previousBackground.path || "";
+  const hasItemMediaOverride = Boolean(messageMedia) && messageMedia !== previousThemeMedia;
+  if (hasItemMediaOverride) {
+    return {
+      backgroundColor: message.backgroundColor || background.color || "#000000",
+      backgroundPath: message.backgroundPath || messageMedia,
+      backgroundImage: message.backgroundImage || "",
+      backgroundVideo: message.backgroundVideo || "",
+    };
+  }
+  return {
+    backgroundColor: background.color || message.backgroundColor || "#000000",
+    backgroundPath: themeMedia,
+    backgroundImage: background.type === "image" ? themeMedia : "",
+    backgroundVideo: background.type === "video" ? themeMedia : "",
+  };
+}
+
+export function resolvedFontFamilyFields(message = {}, resolvedTheme = {}, { lowerThird = false } = {}) {
+  const localFontFamily = lowerThird
+    ? message.lowerThirdFontFamily || message.fontFamily
+    : message.fontFamily;
+  const hasLocalOverride = lowerThird
+    ? message.lowerThirdFontFamilyOverride === true || message.fontFamilyOverride === true
+    : message.fontFamilyOverride === true;
+  const fontFamily = hasLocalOverride && localFontFamily
+    ? localFontFamily
+    : resolvedTheme.typography?.fontFamily || localFontFamily || "'CMG Sans'";
+  return lowerThird
+    ? { fontFamily, lowerThirdFontFamily: fontFamily }
+    : { fontFamily };
+}
+
 function resolvedDisplayText(value) {
   if (typeof value === "string") return value;
   if (!value || typeof value !== "object") return "";
@@ -44,6 +83,12 @@ export function messageFromResolvedPresentation(
   const typography = resolvedTheme?.typography || style;
   const outputRole = presentation?.target?.outputRole || "audience";
   const lowerThird = outputRole === "lowerThird" || outputRole === "lower-third";
+  const localFontFamily = lowerThird
+    ? style.lowerThirdFontFamily || style.fontFamily
+    : style.fontFamily;
+  const localFontOverride = lowerThird
+    ? style.lowerThirdFontFamilyOverride === true || style.fontFamilyOverride === true
+    : style.fontFamilyOverride === true;
   const message = {
     type: "ems-resolved-slide",
     schema: presentation?.schema,
@@ -62,7 +107,12 @@ export function messageFromResolvedPresentation(
     referenceText: resolvedDisplayText(unit?.referenceText),
     attributionText: resolvedDisplayText(unit?.attributionText),
     copyrightText: resolvedDisplayText(unit?.copyrightText),
-    fontFamily: typography.fontFamily || style.fontFamily || "'CMG Sans'",
+    fontFamily:
+      (localFontOverride ? localFontFamily : "") ||
+      typography.fontFamily ||
+      localFontFamily ||
+      "'CMG Sans'",
+    fontFamilyOverride: localFontOverride,
     fontSize:
       unit?.layout?.resolvedFontSize ||
       typography.fontSize ||

@@ -1,8 +1,9 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "fs/promises";
+import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import { normalizeTheme } from "./theme-normalize.mjs";
 import { themeRevision } from "./theme-resolver.mjs";
+import { resolveManagedThemeAsset } from "./theme-assets.mjs";
 
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const safeId = id => {
@@ -27,7 +28,16 @@ export class ThemeLibrary {
     await this.rebuildIndex(); return { theme: normalized, revision: themeRevision(normalized) };
   }
   async duplicate(id, { id: newId = `theme_${randomUUID().replace(/-/g, "")}`, name } = {}) {
-    const source = await this.get(id); return this.save({ ...source, id: newId, name: name || `${source.name} Copy`, baseThemeId: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    const source = await this.get(id);
+    const saved = await this.save({ ...source, id: newId, name: name || `${source.name} Copy`, baseThemeId: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    for (const asset of source.assets || []) {
+      const sourcePath = await resolveManagedThemeAsset(this.themeDir(id), asset);
+      if (!sourcePath) continue;
+      const destination = path.join(this.themeDir(newId), asset.path);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await copyFile(sourcePath, destination);
+    }
+    return saved;
   }
   async delete(id) { await rm(this.themeDir(id), { recursive: true, force: true }); return this.rebuildIndex(); }
   async rebuildIndex() {

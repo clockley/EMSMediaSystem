@@ -229,6 +229,62 @@
             overflow: hidden;
             background: black;
         }
+        html:has(body.is-transparent-output), body.is-transparent-output { background: transparent !important; }
+        body.is-transparent-output > #bigPlayer,
+        body.is-transparent-output > #pptxCanvas,
+        body.is-transparent-output > #textCanvas,
+        body.is-transparent-output > #streamStatusOverlay { visibility: hidden !important; }
+
+        #liveBackgroundLayer {
+            position: fixed;
+            inset: 0;
+            z-index: 1;
+            overflow: hidden;
+            background: #000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 350ms ease;
+        }
+
+        #liveBackgroundLayer.is-visible { opacity: 1; }
+        #liveBackgroundLayer.is-cut { transition-duration: 0ms; }
+        #liveBackgroundLayer[hidden] { display: none; }
+        #liveBackgroundLayer img, #liveBackgroundLayer video { width: 100%; height: 100%; object-fit: cover; }
+        body.has-live-background #textCanvas { background-color: transparent !important; background-image: none !important; }
+        body > #bigPlayer { position: fixed; inset: 0; z-index: 2; }
+
+        #audienceAlertLayer {
+            position: fixed;
+            z-index: 20;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            gap: clamp(18px, 2vw, 36px);
+            min-height: 10vh;
+            padding: clamp(20px, 2.4vw, 46px);
+            box-sizing: border-box;
+            overflow: hidden;
+            border: 0;
+            border-radius: 0;
+            background: #7a1010;
+            color: #fff;
+            box-shadow: 0 -6px 24px #0008;
+            font-family: 'CMG Sans';
+        }
+        #audienceAlertLayer[hidden] { display: none; }
+        #audienceAlertIdentifier { flex: none; font-size: clamp(24px, 3vw, 58px); font-weight: 900; }
+        #audienceAlertText { flex: 1 1 auto; min-width: 0; overflow: visible; white-space: nowrap; font-size: clamp(24px, 3vw, 58px); font-weight: 700; line-height: 1.15; }
+        #audienceAlertLayer.is-scrolling #audienceAlertText { animation: audience-alert-scroll var(--audience-alert-scroll-duration, 20s) linear infinite; animation-delay: var(--audience-alert-scroll-delay, 0s); }
+        @keyframes audience-alert-scroll { from { transform: translateX(100vw); } to { transform: translateX(-100%); } }
+        body.disable-content-transitions #bigPlayer,
+        body.disable-content-transitions #pptxCanvas,
+        body.disable-content-transitions #textCanvas,
+        body.disable-content-transitions .ems-slide-transition { transition: none !important; }
+        #audienceNurseryLayer { position: fixed; z-index: 21; top: 4vh; right: 3vw; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; max-width: 42vw; pointer-events: none; }
+        #audienceNurseryLayer[hidden] { display: none; }
+        .audience-nursery-chip { padding: .35em .65em; border-radius: .35em; background: #7a1010; color: #fff; font: 800 clamp(22px, 2.4vw, 46px)/1.1 'CMG Sans'; box-shadow: 0 3px 14px #0008; }
 
         video {
             width: 100vw;
@@ -468,11 +524,16 @@
         }
 
         .scripture-render--lower-third {
+            --lower-third-side-padding: 77px;
+            --lower-third-bottom-padding: 86px;
+            --lower-third-body-line-height: 61px;
+            --lower-third-reference-margin: 21px;
+            --lower-third-attribution-margin: 8px;
             display: flex;
             align-items: flex-end;
             justify-content: center;
             text-align: left;
-            padding: 0 4% 8%;
+            padding: 0 var(--lower-third-side-padding) var(--lower-third-bottom-padding);
         }
 
         .scripture-render--lower-third .scripture-render__box {
@@ -505,22 +566,40 @@
 
         .scripture-render--lower-third .scripture-render__body {
             font-size: var(--scripture-lower-third-font-size);
-            line-height: 1.18;
+            line-height: var(--lower-third-body-line-height);
             text-shadow: none;
-            max-height: 2.36em;
-            min-height: 2.36em;
+            max-height: calc(var(--lower-third-body-line-height) * 2);
+            min-height: calc(var(--lower-third-body-line-height) * 2);
             overflow: hidden;
         }
 
         .scripture-render--lower-third .scripture-render__reference {
             font-size: clamp(14px, calc(var(--scripture-lower-third-font-size) * 0.4), 20px);
-            margin-top: 0.4em;
+            margin-top: var(--lower-third-reference-margin);
             text-shadow: none;
         }
 
         .scripture-render--lower-third .scripture-render__attribution {
             font-size: clamp(12px, calc(var(--scripture-lower-third-font-size) * 0.24), 18px);
-            margin-top: 0.38em;
+            margin-top: var(--lower-third-attribution-margin);
+            text-shadow: none;
+        }
+
+        /*
+         * Chroma output is deliberately filtered as a transparent foreground
+         * layer. The SVG filter steepens (but does not binarize) glyph alpha,
+         * grows the original mask by roughly one physical pixel, and fills the
+         * resulting boundary with neutral charcoal before Chromium composites
+         * the layer over the key color.
+         */
+        .chroma-edge-optimized.chroma-edge-no-plate.scripture-render--lower-third .scripture-render__body,
+        .chroma-edge-optimized.chroma-edge-no-plate.scripture-render--lower-third .scripture-render__reference,
+        .chroma-edge-optimized.chroma-edge-no-plate.scripture-render--lower-third .scripture-render__attribution,
+        .chroma-edge-optimized.chroma-edge-opaque-plate.scripture-render--lower-third .scripture-render__box {
+            filter: url(#ems-chroma-text-edge);
+            isolation: isolate;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: geometricPrecision;
         }
 
         .ems-slide-transition {
@@ -666,6 +745,30 @@
 </head>
 
 <body>
+    <div id="liveBackgroundLayer" hidden aria-hidden="true">
+        <img id="liveBackgroundImage" hidden alt="" />
+        <video id="liveBackgroundVideo" hidden muted loop playsinline></video>
+    </div>
+    <svg width="0" height="0" aria-hidden="true" focusable="false"
+         style="position:absolute;overflow:hidden;pointer-events:none">
+        <defs>
+            <filter id="ems-chroma-text-edge" x="-5%" y="-15%" width="110%" height="130%"
+                    color-interpolation-filters="sRGB">
+                <!-- 0,15,50,105,180,235,255 -> 0,0,25,100,220,255,255 -->
+                <feComponentTransfer in="SourceGraphic" result="hardened-text">
+                    <feFuncA type="table" tableValues="0 0 .042 .084 .152 .232 .312 .392 .486 .580 .675 .769 .863 .900 .938 .975 1 1"/>
+                </feComponentTransfer>
+                <feMorphology in="SourceAlpha" operator="dilate" radius="0.75" result="expanded-alpha"/>
+                <feComposite in="expanded-alpha" in2="SourceAlpha" operator="out" result="outline-alpha"/>
+                <feFlood flood-color="#101010" flood-opacity="0.95" result="outline-color"/>
+                <feComposite in="outline-color" in2="outline-alpha" operator="in" result="neutral-outline"/>
+                <feMerge>
+                    <feMergeNode in="neutral-outline"/>
+                    <feMergeNode in="hardened-text"/>
+                </feMerge>
+            </filter>
+        </defs>
+    </svg>
     <video id="bigPlayer"></video>
     <div id="streamStatusOverlay" hidden>
         <div class="stream-status-spinner" aria-hidden="true"></div>
@@ -686,6 +789,11 @@
             </div>
         </div>
     </div>
+    <section id="audienceAlertLayer" hidden aria-live="assertive">
+        <strong id="audienceAlertIdentifier"></strong>
+        <span id="audienceAlertText"></span>
+    </section>
+    <aside id="audienceNurseryLayer" hidden aria-live="polite" aria-label="Nursery alerts"></aside>
     <div id="outputHoldOverlay" class="output-hold-overlay" hidden aria-hidden="true">
         <img id="outputHoldLogoImage" class="output-hold-overlay__logo" hidden alt="" />
         <video id="outputHoldLogoVideo" class="output-hold-overlay__logo" hidden muted loop playsinline></video>
