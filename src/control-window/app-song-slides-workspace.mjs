@@ -1446,8 +1446,12 @@ function renderSongEditorSlideList() {
     item.addEventListener("click", () => {
       selectSongEditorSlide(i);
     });
-    item.addEventListener("dblclick", () => {
-      const newLabel = prompt("Enter section label (e.g. Verse 1, Chorus):", section.label);
+    item.addEventListener("dblclick", async () => {
+      const newLabel = await showRendererPrompt(
+        "Enter section label (e.g. Verse 1, Chorus):",
+        section.label,
+        { title: "Rename section", confirmLabel: "Rename" },
+      );
       if (newLabel !== null) {
         const trimmed = newLabel.trim();
         if (trimmed) {
@@ -3955,9 +3959,14 @@ function redoSlideEdit() {
   return true;
 }
 
-function renameCurrentDeck() {
+async function renameCurrentDeck() {
   if (!currentDeck) return;
-  const nextTitle = (window.prompt("Deck name", currentDeck.title || "Untitled Deck") || "").trim();
+  const nextTitle = (
+    await showRendererPrompt("Deck name", currentDeck.title || "Untitled Deck", {
+      title: "Rename deck",
+      confirmLabel: "Rename",
+    }) || ""
+  ).trim();
   if (!nextTitle || nextTitle === currentDeck.title) return;
   recordSlideUndoCheckpoint("Rename deck");
   currentDeck.title = nextTitle;
@@ -4115,7 +4124,15 @@ function syncSlidesDeckFolderSelect() {
 }
 
 async function activateDeckFromLibrary(deckId) {
-  if (deckDirty && currentDeck && !confirm("Discard unsaved changes to current deck?")) return;
+  if (
+    deckDirty &&
+    currentDeck &&
+    !(await showRendererConfirm("Discard unsaved changes to the current deck?", {
+      title: "Discard changes?",
+      confirmLabel: "Discard",
+      type: "warning",
+    }))
+  ) return;
   try {
     const deck = await slidesAPI.get(deckId);
     if (!deck) {
@@ -4160,8 +4177,16 @@ function loadDeckIntoWorkspace(deck, opts = {}) {
   queueAllSlideThumbnailRenders(250);
 }
 
-function createNewDeck() {
-  if (deckDirty && currentDeck && !confirm("Discard unsaved changes to current deck?")) return;
+async function createNewDeck() {
+  if (
+    deckDirty &&
+    currentDeck &&
+    !(await showRendererConfirm("Discard unsaved changes to the current deck?", {
+      title: "Discard changes?",
+      confirmLabel: "Discard",
+      type: "warning",
+    }))
+  ) return;
   clearSlideThumbnailState();
   clearSlideUndoHistory();
   const deck = createBlankDeck({ folderId: currentDeckFolderFilter || null });
@@ -4291,7 +4316,11 @@ function resetCurrentSongToThemeDefault() {
 
 async function deleteCurrentDeck() {
   if (!currentDeck) return;
-  if (!confirm(`Delete "${currentDeck.title || "Untitled Deck"}"?`)) return;
+  if (!(await showRendererConfirm(`Delete "${currentDeck.title || "Untitled Deck"}"?`, {
+    title: "Delete deck?",
+    confirmLabel: "Delete",
+    type: "warning",
+  }))) return;
   if (currentDeckIsSongDocument()) {
     try {
       await songsAPI.delete(currentDeck.id);
@@ -4328,7 +4357,13 @@ async function deleteCurrentDeck() {
 
 async function duplicateCurrentDeck() {
   if (!currentDeck) return;
-  if (deckDirty && !confirm("Save changes before duplicating? Duplicating will save first.")) return;
+  if (
+    deckDirty &&
+    !(await showRendererConfirm("Save changes before duplicating? Duplicating will save first.", {
+      title: "Save before duplicating?",
+      confirmLabel: "Save and duplicate",
+    }))
+  ) return;
   if (deckDirty) await saveCurrentDeck();
   try {
     const copy = await slidesAPI.duplicate(currentDeck.id, {});
@@ -7569,7 +7604,11 @@ async function saveSongEditor() {
     await loadSongIntoWorkspace(saved || songDeck, { render: currentSongRenderState });
   } catch (err) {
     console.error("Failed to save song:", err);
-    alert(`Failed to save song: ${err.message}`);
+    await showRendererAlert("Failed to save song", {
+      title: "Save failed",
+      detail: err.message || String(err),
+      type: "error",
+    });
   }
 }
 
@@ -7678,7 +7717,15 @@ async function deleteSongFromLibrary(songId = currentWorkspaceSong?.id) {
   const title = currentWorkspaceSong?.id === id
     ? currentWorkspaceSong.title
     : id;
-  const accepted = window.confirm(`Delete "${title}" from the song library? Scheduled project copies will not be removed.`);
+  const accepted = await showRendererConfirm(
+    `Delete "${title}" from the song library?`,
+    {
+      title: "Delete song?",
+      detail: "Scheduled project copies will not be removed.",
+      confirmLabel: "Delete",
+      type: "warning",
+    },
+  );
   if (!accepted) return false;
 
   try {
@@ -8383,6 +8430,9 @@ import {
   setItemThemeRole,
   setSharedRendererState,
   showGnomeToast,
+  showRendererAlert,
+  showRendererConfirm,
+  showRendererPrompt,
   showSlidesWorkspace,
   showSongsWorkspace,
   slideTransitionPayloadForQueueItem,

@@ -62,6 +62,30 @@ test("feature modules do not import each other", async () => {
   }
 });
 
+test("renderer decisions never use event-loop-blocking browser dialogs", async () => {
+  const rendererFiles = [
+    "app-renderer.mjs",
+    "app-media-loop.mjs",
+    "app-bible-workspace.mjs",
+    "app-song-slides-workspace.mjs",
+    "app-workspace-shell.mjs",
+  ];
+  const [rendererSources, main] = await Promise.all([
+    Promise.all(
+      rendererFiles.map((name) =>
+        readFile(new URL(`../src/control-window/${name}`, import.meta.url), "utf8"),
+      ),
+    ).then((sources) => sources.join("\n")),
+    readFile(new URL("../src/main-process/main.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.doesNotMatch(rendererSources, /\b(?:window\.)?(?:alert|confirm|prompt)\s*\(/);
+  assert.match(rendererSources, /invoke\("show-renderer-message-box"/);
+  assert.match(rendererSources, /dialogElement\.showModal\(\)/);
+  assert.match(main, /ipcMain\.handle\("show-renderer-message-box", handleShowRendererMessageBox\)/);
+  assert.match(main, /await dialog\.showMessageBox\(win,/);
+  assert.doesNotMatch(main, /showMessageBoxSync/);
+});
+
 function importedNames(source) {
   const names = new Set();
   for (const block of source.matchAll(/import\s+\{([\s\S]*?)\}\s+from\s+["'][^"']+["']/g)) {

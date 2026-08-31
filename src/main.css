@@ -3024,6 +3024,68 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     background: var(--window-bg-color);
 }
 
+.renderer-prompt-dialog {
+    background: var(--window-bg-color);
+}
+
+.renderer-prompt-dialog__form {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 24px;
+}
+
+.renderer-prompt-dialog__form h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.renderer-prompt-dialog__label {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 14px;
+}
+
+.renderer-prompt-dialog__input {
+    min-height: 38px;
+    box-sizing: border-box;
+    border: 1px solid var(--border-color);
+    border-radius: var(--adw-radius-sm);
+    padding: 8px 10px;
+    background: var(--view-bg-color);
+    color: var(--view-fg-color);
+    font: inherit;
+}
+
+.renderer-prompt-dialog__input:focus {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 1px;
+}
+
+.renderer-prompt-dialog__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.renderer-prompt-dialog__actions button {
+    min-height: 34px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--adw-radius-sm);
+    padding: 6px 14px;
+    background: var(--view-bg-color);
+    color: var(--view-fg-color);
+    font: inherit;
+}
+
+.renderer-prompt-dialog__actions .suggested-action {
+    border-color: var(--accent-bg-color);
+    background: var(--accent-bg-color);
+    color: #fff;
+    font-weight: 700;
+}
+
 .network-item-dialog__group {
     display: flex;
     flex-direction: column;

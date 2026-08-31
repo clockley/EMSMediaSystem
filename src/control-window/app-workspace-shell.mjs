@@ -138,6 +138,7 @@ import {
   restoreBibleVersionFromSettings,
   saveBibleTextLayoutDefaults,
   saveCurrentDeck,
+  showRendererPrompt,
   saveMediaFile,
   saveSongEditor,
   saveSongToSchedule,
@@ -937,9 +938,16 @@ function installBibleMediaControls() {
   });
   void invoke("get-output-status").then(updateStageStatusUi).catch(() => {});
   renderGlobalNavigationState(navigationState.state);
-  document.getElementById("newDeckBtn")?.addEventListener("click", () => createNewDeck());
+  document.getElementById("newDeckBtn")?.addEventListener("click", () => {
+    void createNewDeck().catch(console.error);
+  });
   document.getElementById("newDeckFolderBtn")?.addEventListener("click", async () => {
-    const name = (window.prompt("New deck folder name") || "").trim();
+    const name = (
+      await showRendererPrompt("New deck folder name", "", {
+        title: "Create deck folder",
+        confirmLabel: "Create",
+      }) || ""
+    ).trim();
     if (!name) return;
     try {
       await slidesAPI.createFolder(name);
@@ -967,7 +975,9 @@ function installBibleMediaControls() {
   document.getElementById("slidesAddScheduleBtn")?.addEventListener("click", () => {
     scheduleCurrentDeck();
   });
-  document.getElementById("slidesWorkspaceTitleButton")?.addEventListener("click", () => renameCurrentDeck());
+  document.getElementById("slidesWorkspaceTitleButton")?.addEventListener("click", () => {
+    void renameCurrentDeck().catch(console.error);
+  });
   document.getElementById("slidesAddPageBtn")?.addEventListener("click", () => addDeckPage());
   document.getElementById("slidesDuplicatePageBtn")?.addEventListener("click", () => duplicateDeckPage());
   document.getElementById("slidesDeletePageBtn")?.addEventListener("click", () => deleteDeckPage());

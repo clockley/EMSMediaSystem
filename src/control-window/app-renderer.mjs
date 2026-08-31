@@ -200,6 +200,78 @@ import {
   resolvedFontFamilyFields,
   renderScriptureForTarget,
 } from "../shared/theme-render-message.mjs";
+
+async function showRendererConfirm(message, options = {}) {
+  const result = await invoke("show-renderer-message-box", {
+    type: options.type || "question",
+    title: options.title || "Confirm action",
+    message: String(message || "Are you sure?"),
+    detail: options.detail || "",
+    buttons: [options.cancelLabel || "Cancel", options.confirmLabel || "Continue"],
+    defaultId: options.defaultId === 1 ? 1 : 0,
+    cancelId: 0,
+  });
+  return result?.response === 1;
+}
+
+async function showRendererAlert(message, options = {}) {
+  await invoke("show-renderer-message-box", {
+    type: options.type || "info",
+    title: options.title || "EMS Media System",
+    message: String(message || "EMS Media System"),
+    detail: options.detail || "",
+    buttons: [options.buttonLabel || "OK"],
+    defaultId: 0,
+    cancelId: 0,
+  });
+}
+
+function showRendererPrompt(message, initialValue = "", options = {}) {
+  return new Promise((resolve) => {
+    const dialogElement = document.createElement("dialog");
+    dialogElement.className = "adw-dialog renderer-prompt-dialog";
+    dialogElement.setAttribute("aria-label", options.title || "Enter text");
+
+    const form = document.createElement("form");
+    form.method = "dialog";
+    form.className = "renderer-prompt-dialog__form";
+    const title = document.createElement("h2");
+    title.textContent = options.title || "Enter text";
+    const label = document.createElement("label");
+    label.className = "renderer-prompt-dialog__label";
+    label.textContent = String(message || "Enter a value");
+    const input = document.createElement("input");
+    input.className = "renderer-prompt-dialog__input";
+    input.type = "text";
+    input.value = String(initialValue || "");
+    input.maxLength = Number.isInteger(options.maxLength) ? options.maxLength : 200;
+    input.required = options.required !== false;
+    label.appendChild(input);
+    const actions = document.createElement("div");
+    actions.className = "renderer-prompt-dialog__actions";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = options.cancelLabel || "Cancel";
+    cancel.addEventListener("click", () => dialogElement.close("cancel"));
+    const accept = document.createElement("button");
+    accept.type = "submit";
+    accept.value = "accept";
+    accept.className = "suggested-action";
+    accept.textContent = options.confirmLabel || "Save";
+    actions.append(cancel, accept);
+    form.append(title, label, actions);
+    dialogElement.appendChild(form);
+    document.body.appendChild(dialogElement);
+    dialogElement.addEventListener("close", () => {
+      const value = dialogElement.returnValue === "accept" ? input.value : null;
+      dialogElement.remove();
+      resolve(value);
+    }, { once: true });
+    dialogElement.showModal();
+    input.focus();
+    input.select();
+  });
+}
 import {
   DEFAULT_SONG_RENDER,
   arrangementSequenceEntries,
@@ -2907,7 +2979,7 @@ function shouldConfirmLiveSwitch(targetItem) {
   return true;
 }
 
-function confirmLiveSwitchAccepted(targetItem) {
+async function confirmLiveSwitchAccepted(targetItem) {
   if (!shouldConfirmLiveSwitch(targetItem)) return true;
 
   const liveItem = currentLiveQueueItemForSwitchPrompt();
@@ -2919,10 +2991,10 @@ function confirmLiveSwitchAccepted(targetItem) {
   const targetLabel = targetItem?.name || "the selected item";
   const message = `Switch the live presentation from "${liveLabel}" to "${targetLabel}"?`;
 
-  // Temporary ship-safe fallback: the custom modal has intermittent mouse
-  // hit-testing issues in production, so use the platform-native confirm
-  // dialog until that path is fully debugged and restored.
-  return window.confirm(message);
+  return showRendererConfirm(message, {
+    title: "Switch live presentation?",
+    confirmLabel: "Switch",
+  });
 }
 
 async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
@@ -2955,7 +3027,7 @@ async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
     await onQueueItemActivate(index);
     return;
   }
-  if (!confirmLiveSwitchAccepted(item)) return;
+  if (!(await confirmLiveSwitchAccepted(item))) return;
 
   const itemStart =
     queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
@@ -4344,6 +4416,9 @@ export {
   setItemThemeRole,
   setSharedRendererState,
   showGnomeToast,
+  showRendererAlert,
+  showRendererConfirm,
+  showRendererPrompt,
   showSlidesWorkspace,
   showSongsWorkspace,
   slideTransitionPayloadForQueueItem,

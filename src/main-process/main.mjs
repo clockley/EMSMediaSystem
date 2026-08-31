@@ -5245,6 +5245,37 @@ async function handleSongsRPC(_event, method, params = []) {
   return songsRpcClient.call(method, params, { timeoutMs });
 }
 
+function boundedDialogText(value, maxLength) {
+  return typeof value === "string" ? value.slice(0, maxLength) : "";
+}
+
+async function handleShowRendererMessageBox(event, input = {}) {
+  if (!win || win.isDestroyed() || event.sender !== win.webContents) {
+    throw new TypeError("Renderer dialogs are accepted only from the control window");
+  }
+  const type = ["none", "info", "error", "question", "warning"].includes(input.type)
+    ? input.type
+    : "none";
+  const buttons = Array.isArray(input.buttons)
+    ? input.buttons.slice(0, 4).map((button) => boundedDialogText(button, 80)).filter(Boolean)
+    : [];
+  if (buttons.length === 0) buttons.push("OK");
+  const maxButtonIndex = buttons.length - 1;
+  const defaultId = Math.min(maxButtonIndex, Math.max(0, Number.parseInt(input.defaultId, 10) || 0));
+  const cancelId = Math.min(maxButtonIndex, Math.max(0, Number.parseInt(input.cancelId, 10) || 0));
+  const result = await dialog.showMessageBox(win, {
+    type,
+    title: boundedDialogText(input.title, 160) || "EMS Media System",
+    message: boundedDialogText(input.message, 2_000) || "EMS Media System",
+    detail: boundedDialogText(input.detail, 8_000),
+    buttons,
+    defaultId,
+    cancelId,
+    noLink: true,
+  });
+  return { response: result.response };
+}
+
 function setIPC() {
   ipcMain.handle("get-system-time", getSystemTIme);
   ipcMain.handle("get-platform", getPlatform);
@@ -5257,6 +5288,7 @@ function setIPC() {
   ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
   ipcMain.handle("show-import-song-dialog", handleShowImportSongDialog);
   ipcMain.handle("show-song-import-results-dialog", handleShowSongImportResultsDialog);
+  ipcMain.handle("show-renderer-message-box", handleShowRendererMessageBox);
   ipcMain.handle("get-songs-database-path", () => songsRpcClient.databasePath());
   ipcMain.handle("read-file-as-text", handleReadFileAsText);
   ipcMain.handle("show-open-project-dialog", handleShowOpenProjectDialog);

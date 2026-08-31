@@ -250,7 +250,7 @@ async function releaseOutputHoldsAndGoLiveQueueIndex(index, startTime = 0) {
   const isCurrentLiveItem =
     queueIndexIsCurrentLivePresentation(index) ||
     queueIndexMatchesCurrentLiveOutput(index);
-  if (!isCurrentLiveItem && !confirmLiveSwitchAccepted(item)) return;
+  if (!isCurrentLiveItem && !(await confirmLiveSwitchAccepted(item))) return;
 
   await releaseOutputHoldsForRecovery();
   setSelectedQueueAnchor(index);

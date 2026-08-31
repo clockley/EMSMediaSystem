@@ -68,6 +68,7 @@ import {
   setMediaLoopEnabled,
   setSharedRendererState,
   showGnomeToast,
+  showRendererConfirm,
   slipstreamQueueItemAtIndex,
   stampBaselineForQueueItems,
   video,
@@ -655,8 +656,12 @@ async function ensurePendingMediaUpdateApproved(index) {
   const item = mediaQueue[index];
   if (!queueItemNeedsPendingUpdateApproval(item)) return true;
   const name = item.name || item.path || "This media item";
-  const accepted = window.confirm(
+  const accepted = await showRendererConfirm(
     `${name} changed outside EMS. EMS cannot keep the old linked version pinned for this item on the current system.\n\nReload the changed file before taking it live?`,
+    {
+      title: "Media file changed",
+      confirmLabel: "Reload",
+    },
   );
   if (!accepted) return false;
   return approvePendingMediaUpdate(index);

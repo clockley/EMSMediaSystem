@@ -125,6 +125,7 @@ import {
   populateDisplaySelect,
   previewCueIndex,
   previewLoadToken,
+  showRendererConfirm,
   queueBasename,
   queueBiblePreviewMediaWindowSizeRefresh,
   queueIndexInRange,
@@ -2085,10 +2086,14 @@ async function presentBibleSelectionFromDoubleClick(verseNumber, fallbackText) {
 
   // Something other than a scripture is live: confirm before interrupting it.
   const liveLabel = currentLivePresentationLabel();
-  const accepted = window.confirm(
+  const accepted = await showRendererConfirm(
     liveLabel
       ? `Switch the live presentation from "${liveLabel}" to "${reference}"?`
       : `Switch the current presentation to "${reference}"?`,
+    {
+      title: "Switch live presentation?",
+      confirmLabel: "Switch",
+    },
   );
   if (!accepted) return;
   await showBibleTextNow();
