@@ -7373,14 +7373,10 @@ async function openSongEditor(song) {
     currentSongSectionId && findPage(songDeck, currentSongSectionId)
       ? currentSongSectionId
       : songDeck.pages?.[0]?.id || null;
-  document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
-  showSlidesWorkspace();
-  loadDeckIntoWorkspace(songDeck, {
-    pageId: currentSongSectionId,
-    documentType: SONG_DECK_DOCUMENT_TYPE,
-  });
-  return;
-
+  // Songs and decks share the slide-document backend, but the operator
+  // editors stay separate: songs use the lyric WYSIWYG drawer, decks use
+  // the object canvas in the Slides workspace.
+  showSongsWorkspace();
   const launcher = document.getElementById("songsLauncher");
   const slide = document.getElementById("songsPreviewSlide");
   if (launcher) launcher.hidden = true;
@@ -8265,9 +8261,10 @@ export {
 /*
  * Songs and slide-deck workspace implementation.
  *
- * This module intentionally keeps the two editors together: songs are edited
- * as slide decks and both features share the same rendering and navigation
- * state. The renderer entry point owns cross-feature presentation state.
+ * Songs and decks share the same document/store backend, but the operator
+ * UIs stay distinct: songs keep the lyric WYSIWYG drawer, decks keep the
+ * object canvas. The renderer entry point owns cross-feature presentation
+ * state.
  */
 
 import {

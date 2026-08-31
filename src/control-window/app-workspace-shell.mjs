@@ -13,9 +13,6 @@ the Free Software Foundation, either version 3 of the License, or
 
 import {
   NAVIGATION_STATES,
-  PPTX_SIDEBAR_DEFAULT_WIDTH,
-  PPTX_SIDEBAR_MAX_WIDTH,
-  PPTX_SIDEBAR_MIN_WIDTH,
   PREVIEW_SURFACE_BIBLE,
   PREVIEW_SURFACE_SLIDES,
   PREVIEW_SURFACE_SONGS,
@@ -221,11 +218,17 @@ const SONG_SIDEBAR_MIN_WIDTH = 220;
 
 const SONG_SIDEBAR_MAX_WIDTH = 560;
 
-const DECK_PAGES_DEFAULT_WIDTH = PPTX_SIDEBAR_DEFAULT_WIDTH;
+// Keep these values local to the workspace module. Importing the equivalent
+// PPTX constants from app-renderer creates a circular initialization edge:
+// this module is evaluated before app-renderer assigns those constants, so
+// the deck widths become undefined and the editor grid collapses to one
+// column (`--deck-pages-width: undefinedpx`). These are the values used by
+// the working monolithic editor in 6dce09d.
+const DECK_PAGES_DEFAULT_WIDTH = 168;
 
-const DECK_PAGES_MIN_WIDTH = PPTX_SIDEBAR_MIN_WIDTH;
+const DECK_PAGES_MIN_WIDTH = 128;
 
-const DECK_PAGES_MAX_WIDTH = PPTX_SIDEBAR_MAX_WIDTH;
+const DECK_PAGES_MAX_WIDTH = 360;
 
 function clampSongSidebarWidth(width) {
   if (!Number.isFinite(width)) return SONG_SIDEBAR_DEFAULT_WIDTH;

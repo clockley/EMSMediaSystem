@@ -209,3 +209,82 @@ test("feature modules import renderer bindings they use", async () => {
     assert.deepEqual(missing, [], `${file} uses renderer bindings without importing them`);
   }
 });
+
+test("song editor stays on the lyric WYSIWYG, not the slides canvas", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("async function openSongEditor(");
+  assert.ok(start >= 0, "openSongEditor should exist");
+  const nextFn = source.indexOf("\nasync function ", start + 1);
+  const end = nextFn >= 0 ? nextFn : source.length;
+  const openSongEditor = source.slice(start, end);
+  assert.match(openSongEditor, /showSongsWorkspace\(\)/);
+  assert.match(openSongEditor, /drawer\.removeAttribute\("hidden"\)/);
+  assert.doesNotMatch(openSongEditor, /showSlidesWorkspace\(\)/);
+  assert.doesNotMatch(openSongEditor, /loadDeckIntoWorkspace\(/);
+});
+
+test("native decks keep the PowerPoint-like slides workspace", async () => {
+  const workspaceSource = await readFile(
+    new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url),
+    "utf8",
+  );
+  const templatesSource = await readFile(
+    new URL("../src/shared/app-ui-templates.mjs", import.meta.url),
+    "utf8",
+  );
+  const shellSource = await readFile(
+    new URL("../src/control-window/app-workspace-shell.mjs", import.meta.url),
+    "utf8",
+  );
+
+  const start = workspaceSource.indexOf("async function openSlidesWorkspaceFromButton(");
+  assert.ok(start >= 0, "openSlidesWorkspaceFromButton should exist");
+  const nextFn = workspaceSource.indexOf("\nasync function ", start + 1);
+  const end = nextFn >= 0 ? nextFn : workspaceSource.length;
+  const openSlidesWorkspace = workspaceSource.slice(start, end);
+
+  assert.match(openSlidesWorkspace, /currentDeckDocumentType = "deck"/);
+  assert.match(openSlidesWorkspace, /showSlidesWorkspace\(\)/);
+  assert.match(openSlidesWorkspace, /renderSlideEditorState\(\)/);
+
+  for (const editorControl of [
+    'id="slidesWorkspace"',
+    'id="slidesPageList"',
+    'id="slidesCanvas"',
+    'id="slidesTemplateList"',
+    'id="slidesAddTextBoxBtn"',
+    'id="slidesAddImageBtn"',
+    'id="slidesSaveDeckBtn"',
+  ]) {
+    assert.match(
+      templatesSource,
+      new RegExp(editorControl),
+      `${editorControl} should remain in the native slide editor`,
+    );
+  }
+
+  const propertiesStart = templatesSource.indexOf(
+    '<aside class="slides-workspace__properties"',
+  );
+  assert.ok(propertiesStart >= 0, "the slide properties inspector should exist");
+  const propertiesEnd = templatesSource.indexOf("</aside>", propertiesStart);
+  assert.ok(propertiesEnd > propertiesStart, "the slide properties inspector should close");
+  const propertiesMarkup = templatesSource.slice(propertiesStart, propertiesEnd);
+  assert.match(
+    propertiesMarkup,
+    /id="slidesThemeEditorGroup"/,
+    "theme and text formatting must stay inside the right-side inspector",
+  );
+
+  assert.match(shellSource, /const DECK_PAGES_DEFAULT_WIDTH = 168/);
+  assert.match(shellSource, /const DECK_PAGES_MIN_WIDTH = 128/);
+  assert.match(shellSource, /const DECK_PAGES_MAX_WIDTH = 360/);
+  assert.doesNotMatch(
+    shellSource,
+    /const DECK_PAGES_(?:DEFAULT|MIN|MAX)_WIDTH = PPTX_SIDEBAR_/,
+    "deck layout must not capture uninitialized constants through the renderer cycle",
+  );
+});

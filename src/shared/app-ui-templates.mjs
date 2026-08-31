@@ -729,7 +729,6 @@ export function generateMediaFormHTML() {
                     </div>
                   </div>
                 </div>
-              </aside>
               <div class="boxed-list-group" id="slidesThemeEditorGroup">
                 <div class="boxed-list-title">Theme Style</div>
                 <div class="boxed-list">
@@ -766,6 +765,7 @@ export function generateMediaFormHTML() {
                 <div class="boxed-list-row"><label for="slidesDeckBackdropColor">Plate color</label><input type="color" id="slidesDeckBackdropColor" value="#101010"></div>
                 </div>
               </div>
+              </aside>
               <input type="file" id="slidesTextObjectBackgroundInput" accept="image/*,video/mp4,video/webm" hidden>
               <input type="file" id="slidesObjectImageInput" accept="image/*" hidden>
               <div id="slidesEditorContextMenu" class="song-editor-context-menu" style="display: none; position: fixed; z-index: 10000;"></div>
