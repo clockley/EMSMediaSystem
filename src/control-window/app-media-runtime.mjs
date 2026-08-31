@@ -2211,7 +2211,7 @@ async function createMediaWindow(options) {
         playbackTraceEnabled ? "__debug-playback" : "",
         birth,
       ],
-      preload: `${__dirname}/media_preload.min.js`,
+      preload: `${__dirname}/../media-window/media_preload.min.js`,
       devTools: false,
     },
   };

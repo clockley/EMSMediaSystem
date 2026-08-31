@@ -167,6 +167,12 @@ test("operator shell omits the audience, lower-third, and stage output-status st
   assert.doesNotMatch(html, /data-output-role=/);
 });
 
+test("audience window preload is loaded from the media-window folder", async () => {
+  const app = await readRendererSources();
+  assert.match(app, /\$\{__dirname\}\/\.\.\/media-window\/media_preload\.min\.js/);
+  assert.doesNotMatch(app, /\$\{__dirname\}\/media_preload\.min\.js/);
+});
+
 test("confidence monitor pins and captures the output carrying an active alert", async () => {
   const app = await readRendererSources();
   assert.match(app, /function activeAlertConfidencePage\(\)/);
