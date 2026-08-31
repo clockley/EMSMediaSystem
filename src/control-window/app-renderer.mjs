@@ -1767,10 +1767,6 @@ function mediaElementLoadedAudioOnly(mediaEl, filePath) {
   return videoTracks.length === 0;
 }
 
-function isConfidenceMonitorVideo(el) {
-  return el === getConfidenceMonitorElement() || el === getLowerThirdConfidenceMonitorElement();
-}
-
 function disableNativeVideoControls(el) {
   if (!el) return;
   el.controls = false;
@@ -1779,7 +1775,7 @@ function disableNativeVideoControls(el) {
     el.controlsList?.add("nodownload", "nofullscreen", "noremoteplayback");
   } catch {}
   try {
-    el.disablePictureInPicture = !isConfidenceMonitorVideo(el);
+    el.disablePictureInPicture = true;
   } catch {}
 }
 
@@ -4285,7 +4281,6 @@ export {
   isActiveMediaWindowCache,
   isBibleLowerThirdFeatureEnabled,
   isBiblePath,
-  isConfidenceMonitorVideo,
   isCurrentPreviewLoad,
   isPlaying,
   isQueueItemDeck,

@@ -184,3 +184,19 @@ test("confidence monitor pins and captures the output carrying an active alert",
     /!mediaRendererCaptureAllowedForCurrentMode\(\) \|\|[\s\S]*!audienceOutputAvailableForConfidence\(\)/,
   );
 });
+
+test("confidence monitor uses an EMS-owned always-on-top popout", async () => {
+  const [app, main] = await Promise.all([
+    readRendererSources(),
+    readFile(new URL("../src/main-process/main.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.match(app, /window\.open\([\s\S]*"ems-confidence-monitor"/);
+  assert.match(app, /document\.title = confidenceMonitorPopoutTitle\(\)/);
+  assert.match(app, /video\.disablePictureInPicture = true/);
+  assert.match(app, /previous\.addEventListener\("click", \(\) => stepConfidenceMonitorPage\(-1\)\)/);
+  assert.match(app, /next\.addEventListener\("click", \(\) => stepConfidenceMonitorPage\(1\)\)/);
+  assert.match(app, /activeConfidenceMonitorPages\(\)\.length >= 2/);
+  assert.match(main, /frameName !== "ems-confidence-monitor"/);
+  assert.match(main, /title: "EMS Confidence Monitor"/);
+  assert.match(main, /alwaysOnTop: true/);
+});

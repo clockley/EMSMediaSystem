@@ -188,7 +188,7 @@ function getStageConfidenceMonitorElement() {
 
 let confidenceMonitorPage = "audience";
 let confidenceMonitorPopoutActive = false;
-let confidenceMonitorPipTransfer = false;
+let confidenceMonitorPopoutWindow = null;
 
 function audienceAlertActiveForConfidence() {
   const liveAlert = currentAlertsSnapshot.alert;
@@ -249,45 +249,105 @@ function currentConfidenceMonitorVideo() {
   return getConfidenceMonitorElement();
 }
 
-function nativePictureInPictureAvailable() {
-  return Boolean(
-    document.pictureInPictureEnabled &&
-      typeof HTMLVideoElement !== "undefined" &&
-      HTMLVideoElement.prototype.requestPictureInPicture,
-  );
-}
-
 function confidenceMonitorPipPageLabel(page) {
   return page === "lower-third" ? "Lower Third" : page === "stage" ? "Stage" : "Audience";
 }
 
-function setMediaSessionAction(action, handler) {
-  try {
-    navigator.mediaSession?.setActionHandler(action, handler);
-  } catch {}
+function confidenceMonitorPopoutTitle() {
+  return `EMS Confidence Monitor — ${confidenceMonitorPipPageLabel(confidenceMonitorPage)}`;
 }
 
-function syncConfidenceMonitorPipMediaSession() {
-  const session = navigator.mediaSession;
-  if (!session) return;
-  const pipVideo = isConfidenceMonitorVideo(document.pictureInPictureElement)
-    ? document.pictureInPictureElement
-    : null;
-  if (!pipVideo) {
-    setMediaSessionAction("previoustrack", null);
-    setMediaSessionAction("nexttrack", null);
-    return;
-  }
+function handleConfidenceMonitorPopoutClosed() {
+  confidenceMonitorPopoutWindow = null;
+  if (!confidenceMonitorPopoutActive) return;
+  confidenceMonitorPopoutActive = false;
+  applyConfidenceMonitorOverlayPopout(false);
+  syncConfidenceCaptureQualityForPopout();
+  setConfidenceMonitorPopoutButtonState();
+}
+
+function buildConfidenceMonitorPopout(windowRef) {
+  const popoutDocument = windowRef.document;
+  popoutDocument.title = confidenceMonitorPopoutTitle();
+  const style = popoutDocument.createElement("style");
+  style.textContent = `
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #000; }
+    video { width: 100%; height: 100%; display: block; object-fit: contain; background: #000; }
+    button {
+      position: fixed; top: 50%; z-index: 2; width: 52px; height: 76px;
+      border: 1px solid rgba(255, 255, 255, .3); border-radius: 8px;
+      background: rgba(0, 0, 0, .58); color: #fff; font: 48px/1 system-ui, sans-serif;
+      cursor: pointer; transform: translateY(-50%); opacity: .72;
+    }
+    button:hover, button:focus-visible { opacity: 1; background: rgba(0, 0, 0, .8); }
+    button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+    button[hidden] { display: none; }
+    #emsConfidenceMonitorPrevious { left: 14px; }
+    #emsConfidenceMonitorNext { right: 14px; }
+  `;
+  const video = popoutDocument.createElement("video");
+  video.id = "emsConfidenceMonitorPopoutVideo";
+  video.autoplay = true;
+  video.muted = true;
+  video.defaultMuted = true;
+  video.playsInline = true;
+  video.disablePictureInPicture = true;
+  const previous = popoutDocument.createElement("button");
+  previous.id = "emsConfidenceMonitorPrevious";
+  previous.type = "button";
+  previous.textContent = "‹";
+  previous.setAttribute("aria-label", "Previous confidence display");
+  previous.title = "Previous confidence display";
+  previous.addEventListener("click", () => stepConfidenceMonitorPage(-1));
+  const next = popoutDocument.createElement("button");
+  next.id = "emsConfidenceMonitorNext";
+  next.type = "button";
+  next.textContent = "›";
+  next.setAttribute("aria-label", "Next confidence display");
+  next.title = "Next confidence display";
+  next.addEventListener("click", () => stepConfidenceMonitorPage(1));
+  popoutDocument.head.replaceChildren(style);
+  popoutDocument.body.replaceChildren(video, previous, next);
+  windowRef.addEventListener("pagehide", handleConfidenceMonitorPopoutClosed, { once: true });
+  return video;
+}
+
+function syncConfidenceMonitorPopoutWindow() {
+  const windowRef = confidenceMonitorPopoutWindow;
+  if (!windowRef || windowRef.closed) return false;
+  const sourceVideo = currentConfidenceMonitorVideo();
+  if (!sourceVideo?.srcObject) return false;
+  windowRef.document.title = confidenceMonitorPopoutTitle();
+  const popoutVideo =
+    windowRef.document.getElementById("emsConfidenceMonitorPopoutVideo") ||
+    buildConfidenceMonitorPopout(windowRef);
   const canStep = activeConfidenceMonitorPages().length >= 2;
-  try {
-    session.metadata = new MediaMetadata({
-      title: confidenceMonitorPipPageLabel(confidenceMonitorPage),
-      artist: "EMS Confidence Monitor",
-    });
-    session.playbackState = "playing";
-  } catch {}
-  setMediaSessionAction("previoustrack", canStep ? () => stepConfidenceMonitorPage(-1) : null);
-  setMediaSessionAction("nexttrack", canStep ? () => stepConfidenceMonitorPage(1) : null);
+  const previous = windowRef.document.getElementById("emsConfidenceMonitorPrevious");
+  const next = windowRef.document.getElementById("emsConfidenceMonitorNext");
+  if (previous) previous.hidden = !canStep;
+  if (next) next.hidden = !canStep;
+  if (popoutVideo.srcObject !== sourceVideo.srcObject) {
+    popoutVideo.srcObject = sourceVideo.srcObject;
+  }
+  void popoutVideo.play().catch(() => {});
+  return true;
+}
+
+function openConfidenceMonitorWindow() {
+  const existingWindow = confidenceMonitorPopoutWindow;
+  if (existingWindow && !existingWindow.closed) {
+    existingWindow.focus();
+    return syncConfidenceMonitorPopoutWindow();
+  }
+  const windowRef = window.open(
+    "about:blank",
+    "ems-confidence-monitor",
+    "popup,width=960,height=540",
+  );
+  if (!windowRef) return false;
+  confidenceMonitorPopoutWindow = windowRef;
+  buildConfidenceMonitorPopout(windowRef);
+  return syncConfidenceMonitorPopoutWindow();
 }
 
 function confidenceMonitorPopoutButtonLabels(active) {
@@ -343,65 +403,28 @@ function syncConfidenceCaptureQualityForPopout() {
   }
 }
 
-async function requestVideoPictureInPicture(video) {
-  if (!video || typeof video.requestPictureInPicture !== "function") {
-    throw new Error("Picture-in-Picture is not available");
-  }
-  video.disablePictureInPicture = false;
-  if (video.readyState < 2) {
-    await Promise.race([
-      new Promise((resolve) => video.addEventListener("loadeddata", resolve, { once: true })),
-      new Promise((resolve) => window.setTimeout(resolve, 400)),
-    ]);
-  }
-  return video.requestPictureInPicture();
-}
-
-async function syncConfidenceMonitorNativePip() {
-  if (!confidenceMonitorPopoutActive || !nativePictureInPictureAvailable()) return false;
-  const video = currentConfidenceMonitorVideo();
-  if (!video?.srcObject) return false;
-  if (document.pictureInPictureElement === video) return true;
-  if (document.pictureInPictureElement) {
-    confidenceMonitorPipTransfer = true;
-    try {
-      await document.exitPictureInPicture();
-    } catch {
-      /* continue and try the new video */
-    } finally {
-      confidenceMonitorPipTransfer = false;
-    }
-  }
-  await requestVideoPictureInPicture(video);
-  syncConfidenceMonitorPipMediaSession();
-  return document.pictureInPictureElement === video;
-}
-
 async function closeConfidenceMonitorPopout() {
   confidenceMonitorPopoutActive = false;
+  const popoutWindow = confidenceMonitorPopoutWindow;
+  confidenceMonitorPopoutWindow = null;
+  if (popoutWindow && !popoutWindow.closed) {
+    popoutWindow.close();
+  }
   if (document.pictureInPictureElement) {
     await document.exitPictureInPicture().catch(() => {});
   }
   applyConfidenceMonitorOverlayPopout(false);
   syncConfidenceCaptureQualityForPopout();
   setConfidenceMonitorPopoutButtonState();
-  syncConfidenceMonitorPipMediaSession();
 }
 
 async function openConfidenceMonitorPopout() {
-  const video = currentConfidenceMonitorVideo();
   confidenceMonitorPopoutActive = true;
-  if (nativePictureInPictureAvailable() && video?.srcObject) {
-    try {
-      if (await syncConfidenceMonitorNativePip()) {
-        applyConfidenceMonitorOverlayPopout(false);
-        syncConfidenceCaptureQualityForPopout();
-        setConfidenceMonitorPopoutButtonState();
-        return;
-      }
-    } catch (error) {
-      console.error("Picture-in-Picture failed:", error);
-    }
+  if (openConfidenceMonitorWindow()) {
+    applyConfidenceMonitorOverlayPopout(false);
+    syncConfidenceCaptureQualityForPopout();
+    setConfidenceMonitorPopoutButtonState();
+    return;
   }
   applyConfidenceMonitorOverlayPopout(true);
   syncConfidenceCaptureQualityForPopout();
@@ -431,10 +454,9 @@ function setConfidenceMonitorPage(page) {
     dot.setAttribute("aria-current", dot.dataset.page === confidenceMonitorPage ? "true" : "false");
   });
   setConfidenceMonitorPopoutButtonState();
-  if (confidenceMonitorPopoutActive && nativePictureInPictureAvailable()) {
-    void syncConfidenceMonitorNativePip().catch(() => {});
+  if (confidenceMonitorPopoutActive && confidenceMonitorPopoutWindow) {
+    syncConfidenceMonitorPopoutWindow();
   }
-  syncConfidenceMonitorPipMediaSession();
 }
 
 function stepConfidenceMonitorPage(delta) {
@@ -470,6 +492,7 @@ function syncConfidenceMonitorCarousel() {
 
   applyConfidenceMonitorOverlayPopout(
     confidenceMonitorPopoutActive &&
+      !confidenceMonitorPopoutWindow &&
       document.pictureInPictureElement !== currentConfidenceMonitorVideo(),
   );
   setConfidenceMonitorPage(confidenceMonitorPage);
@@ -481,23 +504,6 @@ function syncConfidenceMonitorCarousel() {
     document.getElementById("confidenceMonitorPopout")?.addEventListener("click", () => {
       void toggleConfidenceMonitorPopout().catch(console.error);
     });
-    document.addEventListener("enterpictureinpicture", (event) => {
-      if (!isConfidenceMonitorVideo(event.target)) return;
-      confidenceMonitorPopoutActive = true;
-      applyConfidenceMonitorOverlayPopout(false);
-      syncConfidenceCaptureQualityForPopout();
-      setConfidenceMonitorPopoutButtonState();
-      syncConfidenceMonitorPipMediaSession();
-    }, true);
-    document.addEventListener("leavepictureinpicture", (event) => {
-      if (!isConfidenceMonitorVideo(event.target)) return;
-      if (confidenceMonitorPipTransfer || document.pictureInPictureElement) return;
-      confidenceMonitorPopoutActive = false;
-      applyConfidenceMonitorOverlayPopout(false);
-      syncConfidenceCaptureQualityForPopout();
-      setConfidenceMonitorPopoutButtonState();
-      syncConfidenceMonitorPipMediaSession();
-    }, true);
   }
 }
 
@@ -961,7 +967,6 @@ import {
   invoke,
   isActiveMediaWindow,
   isBiblePath,
-  isConfidenceMonitorVideo,
   isLiveStream,
   isSongPath,
   lastLowerThirdBibleTextMessage,
@@ -982,4 +987,3 @@ let lowerThirdRendererPreviewStartPromise = null;
 let stageRendererPreviewStream = null;
 let stageRendererPreviewStartPromise = null;
 let displayMediaCaptureRequestChain = Promise.resolve();
-

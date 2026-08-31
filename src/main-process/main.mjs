@@ -432,6 +432,24 @@ function createWindow() {
     "Creating BrowserWindow",
     () => new BrowserWindow(mainWindowOptions),
   );
+  win.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    if (url !== "about:blank" || frameName !== "ems-confidence-monitor") {
+      return { action: "deny" };
+    }
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        title: "EMS Confidence Monitor",
+        width: 960,
+        height: 540,
+        minWidth: 480,
+        minHeight: 270,
+        alwaysOnTop: true,
+        autoHideMenuBar: true,
+        backgroundColor: "#000000",
+      },
+    };
+  });
   win.webContents.on("will-navigate", (event, url) => {
     event.preventDefault();
   });
