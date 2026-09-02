@@ -46,7 +46,7 @@ function mediaLibraryWorkspaceMarkup() {
       </aside>
       <div class="media-library__content">
         <header class="media-library__header">
-          <button id="mediaLibraryBackBtn" class="media-library__icon-button media-library__back" type="button" aria-label="Back to Media sources" hidden>
+          <button id="mediaLibraryBackBtn" class="media-library__icon-button media-library__back" type="button" aria-label="Back to Media sources">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 3-5 5 5 5"/></svg>
           </button>
           <div class="media-library__title-block">
@@ -75,7 +75,7 @@ function mediaLibraryWorkspaceMarkup() {
           <button type="button" data-media-kind="audio" aria-pressed="false">Audio</button>
           <button type="button" data-media-kind="presentation" aria-pressed="false">Presentations</button>
         </div>
-        <nav id="mediaLibraryFolderBar" class="media-library__folder-bar" aria-label="Folders" hidden></nav>
+        <nav id="mediaLibraryFolderBar" class="media-library__folder-bar" aria-label="Location" hidden></nav>
         <div id="mediaLibraryDropTarget" class="media-library__drop-target" aria-hidden="true"><strong id="mediaLibraryDropTitle">Drop to keep in Media</strong><span id="mediaLibraryDropHint">Add files under Added Files, or add a folder as a source</span></div>
         <div id="mediaLibraryItems" class="media-library__items" role="listbox" aria-label="Media items" tabindex="0"></div>
         <div id="mediaLibraryEmpty" class="media-library__empty" role="status" hidden>
@@ -86,21 +86,19 @@ function mediaLibraryWorkspaceMarkup() {
         </div>
       </div>
       <aside id="mediaLibraryDetails" class="media-library__details" aria-label="Media preview" hidden>
-        <button id="mediaLibraryCloseDetails" class="media-library__icon-button" type="button" aria-label="Close preview">×</button>
+        <div class="media-library__inspect-bar">
+          <button id="mediaLibraryLeaveInspectBtn" class="media-library__icon-button media-library__inspect-back" type="button" aria-label="Back to files">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 3-5 5 5 5"/></svg>
+          </button>
+          <button id="mediaLibraryAddScheduleBtn" type="button" class="pill-button suggested-action">Add to Schedule</button>
+          <button id="mediaLibraryCloseDetails" class="media-library__icon-button" type="button" aria-label="Close preview">×</button>
+        </div>
         <div id="mediaLibraryPreview" class="media-library__preview"></div>
         <div id="mediaLibraryDetailsBody" class="media-library__details-body">
           <div class="media-library__details-copy">
             <h2 id="mediaLibraryDetailsName"></h2>
             <p id="mediaLibraryDetailsMeta"></p>
-            <p id="mediaLibraryDetailsStatus"></p>
           </div>
-          <div class="media-library__details-actions">
-            <button id="mediaLibraryAddScheduleBtn" type="button" class="pill-button suggested-action">Add to Schedule</button>
-            <button id="mediaLibraryKeepBtn" type="button" class="pill-button secondary" title="Save this one-off file under Added Files so it remains in Media" hidden>Keep in Media</button>
-            <button id="mediaLibraryOpenPropertiesBtn" type="button" class="pill-button secondary">Properties</button>
-            <button id="mediaLibraryRemoveItemBtn" type="button" class="pill-button destructive-action" hidden>Remove from Media</button>
-          </div>
-          <dl id="mediaLibraryProperties" class="media-library__properties" hidden></dl>
         </div>
       </aside>
       <div id="mediaLibraryLiveRegion" class="visually-hidden" aria-live="polite"></div>
