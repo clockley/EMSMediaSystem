@@ -427,57 +427,40 @@ function disposePptxViewerHost() {
 
 function ensurePptxPreviewShell(container) {
   let mainPane = document.getElementById("pptxMainSlidePane");
-  let thumbnailList = document.getElementById("pptxThumbnailList");
-  if (mainPane && thumbnailList) return { mainPane, thumbnailList };
+  let controls = document.getElementById("pptxSlideControls");
+  if (mainPane && controls) return { mainPane, controls };
 
   container.innerHTML = "";
-  restorePptxSidebarWidth(container);
-  const sidebar = document.createElement("aside");
-  sidebar.id = "pptxSlideNavigator";
-  sidebar.setAttribute("aria-label", "PowerPoint slide navigator");
-
-  const heading = document.createElement("div");
-  heading.className = "pptx-slide-navigator__heading";
-  heading.textContent = "Slides";
-
-  thumbnailList = document.createElement("div");
-  thumbnailList.id = "pptxThumbnailList";
-  thumbnailList.className = "pptx-thumbnail-list";
-  thumbnailList.setAttribute("role", "listbox");
-  thumbnailList.setAttribute("aria-label", "PowerPoint slides");
-
   mainPane = document.createElement("div");
   mainPane.id = "pptxMainSlidePane";
   mainPane.setAttribute("aria-label", "Selected PowerPoint slide");
-
-  const resizeHandle = document.createElement("div");
-  resizeHandle.id = "pptxSidebarResizeHandle";
-  resizeHandle.className = "pptx-sidebar-resize-handle";
-  resizeHandle.setAttribute("role", "separator");
-  resizeHandle.setAttribute("aria-label", "Resize slides pane");
-  resizeHandle.setAttribute("aria-orientation", "vertical");
-  resizeHandle.tabIndex = 0;
-
-  sidebar.appendChild(heading);
-  sidebar.appendChild(thumbnailList);
-  container.appendChild(sidebar);
-  container.appendChild(resizeHandle);
+  controls = document.createElement("div");
+  controls.id = "pptxSlideControls";
+  controls.className = "pptx-slide-controls";
+  controls.setAttribute("aria-label", "PowerPoint slide navigation");
+  controls.innerHTML = `
+    <button type="button" data-pptx-step="previous" aria-label="Previous slide" title="Previous slide">‹</button>
+    <span id="pptxSlidePosition" aria-live="polite">Slide 1</span>
+    <button type="button" data-pptx-step="next" aria-label="Next slide" title="Next slide">›</button>`;
+  controls.addEventListener("click", (event) => {
+    const direction = event.target.closest("[data-pptx-step]")?.dataset.pptxStep;
+    if (direction === "previous") void jumpToPptxSlide(pptxCurrentSlide - 1);
+    if (direction === "next") void jumpToPptxSlide(pptxCurrentSlide + 1);
+  });
   container.appendChild(mainPane);
-  bindPptxSidebarResize(container);
-  return { mainPane, thumbnailList };
+  container.appendChild(controls);
+  return { mainPane, controls };
 }
 
 function updatePptxNavigatorSelection() {
-  const thumbnailList = document.getElementById("pptxThumbnailList");
-  if (!thumbnailList) return;
-  thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
-    const isActive = Number(button.dataset.slideIndex) === pptxCurrentSlide;
-    button.classList.toggle("is-active", isActive);
-    button.setAttribute("aria-selected", isActive ? "true" : "false");
-    button.tabIndex = isActive ? 0 : -1;
-  });
-  const active = thumbnailList.querySelector(".pptx-thumbnail-button.is-active");
-  active?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  const controls = document.getElementById("pptxSlideControls");
+  if (!controls) return;
+  const previous = controls.querySelector("[data-pptx-step='previous']");
+  const next = controls.querySelector("[data-pptx-step='next']");
+  previous.disabled = pptxCurrentSlide <= 0;
+  next.disabled = pptxCurrentSlide >= pptxSlideCount - 1;
+  const position = document.getElementById("pptxSlidePosition");
+  if (position) position.textContent = `Slide ${pptxCurrentSlide + 1} of ${Math.max(1, pptxSlideCount)}`;
 }
 
 async function renderPptxThumbnail(index, button, opts = {}) {
@@ -572,73 +555,15 @@ function buildPptxNavigator() {
     container.dataset.stopMediaToggleBound = "1";
     container.addEventListener("click", (event) => event.stopPropagation());
     container.addEventListener("dblclick", (event) => event.stopPropagation());
+    container.tabIndex = 0;
+    container.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      void jumpToPptxSlide(pptxCurrentSlide + (event.key === "ArrowLeft" ? -1 : 1));
+    });
   }
-  const { thumbnailList } = ensurePptxPreviewShell(container);
+  ensurePptxPreviewShell(container);
   disposePptxThumbnails();
-  thumbnailList.innerHTML = "";
-
-  for (let i = 0; i < pptxSlideCount; i++) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "pptx-thumbnail-button";
-    button.dataset.slideIndex = String(i);
-    button.setAttribute("role", "option");
-    button.setAttribute("aria-label", `Go to slide ${i + 1}`);
-    button.innerHTML = `
-      <span class="pptx-thumbnail-number">${i + 1}</span>
-      <span class="pptx-thumbnail-viewport"></span>
-    `;
-    button.addEventListener("click", () => {
-      void jumpToPptxSlide(i);
-    });
-    button.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        const next = thumbnailList.querySelector(
-          `.pptx-thumbnail-button[data-slide-index="${Math.min(i + 1, pptxSlideCount - 1)}"]`,
-        );
-        next?.focus();
-      } else if (event.key === "ArrowUp") {
-        event.preventDefault();
-        const prev = thumbnailList.querySelector(
-          `.pptx-thumbnail-button[data-slide-index="${Math.max(i - 1, 0)}"]`,
-        );
-        prev?.focus();
-      } else if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        void jumpToPptxSlide(i);
-      }
-    });
-    thumbnailList.appendChild(button);
-  }
-
-  if ("IntersectionObserver" in window) {
-    pptxThumbnailObserver = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          const index = Number(entry.target.dataset.slideIndex);
-          if (!Number.isFinite(index)) return;
-          if (entry.isIntersecting) {
-            void renderPptxThumbnail(index, entry.target);
-          } else {
-            unmountPptxThumbnail(index, entry.target);
-          }
-        });
-      },
-      {
-        root: thumbnailList,
-        rootMargin: "240px 0px",
-      },
-    );
-    thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
-      pptxThumbnailObserver.observe(button);
-    });
-  } else {
-    thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
-      const index = Number(button.dataset.slideIndex);
-      if (Number.isFinite(index)) void renderPptxThumbnail(index, button);
-    });
-  }
   updatePptxNavigatorSelection();
 }
 

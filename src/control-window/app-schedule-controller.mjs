@@ -59,6 +59,7 @@ import {
   loadQueueItemIntoControlWindow,
   loadQueueItemIntoPreviewCue,
   manualBoundaryPauseIndex,
+  mediaLibraryItemIdFromDataTransfer,
   mediaQueue,
   nextPlayableQueueIndexAfter,
   onQueueItemActivate,
@@ -86,7 +87,9 @@ import {
   refreshLiveAudioControls,
   releaseOutputHoldsAndGoLiveQueueIndex,
   renderStateForLibrarySong,
+  recordScheduledMediaPaths,
   resetPreviewSurfaceToEmptyState,
+  resolveMediaLibraryDragItem,
   restoreCountdownForLiveMedia,
   saveMediaFile,
   schedulePptxThumbnailRefresh,
@@ -393,6 +396,10 @@ function ensureQueueDropIndicator(list) {
 function updateQueueDropIndicator(list, insertIndex) {
   const indicator = ensureQueueDropIndicator(list);
   const rows = [...list.querySelectorAll(".queue-item[data-queue-index]")];
+  const beforeItem = insertIndex >= 0 && insertIndex < mediaQueue.length ? mediaQueue[insertIndex] : null;
+  indicator.dataset.label = beforeItem?.name
+    ? `Add before “${beforeItem.name}”`
+    : "Add to end of Schedule";
   if (rows.length === 0) {
     indicator.style.top = "0px";
   } else {
@@ -631,6 +638,9 @@ function applyDroppedMediaPaths(paths, options = {}) {
   saveMediaFile();
   invoke("remember-media-folder", paths).catch((err) => {
     console.error("remember-media-folder failed:", err);
+  });
+  void recordScheduledMediaPaths(paths).catch((err) => {
+    console.error("Failed to record scheduled media in Recent:", err);
   });
 }
 
@@ -1022,10 +1032,11 @@ function installMediaQueueListDelegation() {
   list.addEventListener("dragover", (e) => {
     const hasInternalQueueDrag = queueDragFromIndex >= 0;
     const hasSongDrag = Boolean(songDragSongId);
+    const hasMediaLibraryDrag = Boolean(mediaLibraryItemIdFromDataTransfer(e.dataTransfer));
     const hasBibleVerseDrag =
       Boolean(bibleVerseDragPayload) ||
       dataTransferHasType(e.dataTransfer, BIBLE_VERSE_DRAG_MIME);
-    if ((hasSongDrag || hasBibleVerseDrag) && !hasInternalQueueDrag) {
+    if ((hasSongDrag || hasBibleVerseDrag || hasMediaLibraryDrag) && !hasInternalQueueDrag) {
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
       list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
@@ -1080,6 +1091,25 @@ function installMediaQueueListDelegation() {
     const hasInternalQueueDrag = queueDragFromIndex >= 0;
     const droppedSongId = songDragSongId;
     const droppedBibleVersePayload = bibleVerseDragPayloadFromDataTransfer(e.dataTransfer);
+    const droppedMediaLibraryItemId = mediaLibraryItemIdFromDataTransfer(e.dataTransfer);
+    if (droppedMediaLibraryItemId && !hasInternalQueueDrag) {
+      e.preventDefault();
+      e.stopPropagation();
+      hideQueueDropIndicator();
+      const insertIndex = queueDropInsertIndexFromEvent(list, e);
+      try {
+        const item = await resolveMediaLibraryDragItem(droppedMediaLibraryItemId);
+        if (!item?.localPath || item.availability !== "available") {
+          showGnomeToast("This media item is not available");
+          return;
+        }
+        applyDroppedMediaPaths([item.localPath], { insertIndex });
+      } catch (err) {
+        console.error("Failed to schedule Media item:", err);
+        showGnomeToast("Failed to add media to the schedule");
+      }
+      return;
+    }
     if (droppedSongId && !hasInternalQueueDrag) {
       e.preventDefault();
       e.stopPropagation();

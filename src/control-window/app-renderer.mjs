@@ -627,6 +627,15 @@ import {
   updateQueueSelectionVisual,
 } from "./app-schedule-controller.mjs";
 import {
+  configureMediaLibraryWorkspace,
+  hideMediaLibraryWorkspace,
+  mediaLibraryItemIdFromDataTransfer,
+  openMediaLibraryPicker,
+  recordScheduledMediaPaths,
+  resolveMediaLibraryDragItem,
+  showMediaLibraryWorkspace,
+} from "./app-media-library-workspace.mjs";
+import {
   advanceQueueAfterMediaWindowClosed,
   beginLiveMediaWindowEpoch,
   claimMediaWindowEnd,
@@ -904,6 +913,15 @@ function attachElectronBridge() {
   invoke = ipcRenderer.invoke;
   on = ipcRenderer.on;
   getPathForFile = webUtils.getPathForFile;
+
+  configureMediaLibraryWorkspace({
+    invoke,
+    on,
+    getPathForFile,
+    pathToMediaUrl,
+    addToSchedule: applyDroppedMediaPaths,
+    showToast: showGnomeToast,
+  });
 
   globalThis.invoke = invoke;
 }
@@ -4376,6 +4394,9 @@ export {
   mediaFile,
   mediaPlaybackEndedPending,
   mediaQueue,
+  hideMediaLibraryWorkspace,
+  mediaLibraryItemIdFromDataTransfer,
+  openMediaLibraryPicker,
   mergeSongRenderState,
   nextLowerThirdOutputUpdateToken,
   normalizeItemSlideTransitionOverride,
@@ -4405,6 +4426,8 @@ export {
   recoverOutputHoldsToSongSection,
   renderLowerThirdPreview,
   renderQueue,
+  recordScheduledMediaPaths,
+  resolveMediaLibraryDragItem,
   resolveThemeForTarget,
   resolvedSongPresentation,
   resolvedThemeForItem,
@@ -4416,6 +4439,7 @@ export {
   setItemThemeRole,
   setSharedRendererState,
   showGnomeToast,
+  showMediaLibraryWorkspace,
   showRendererAlert,
   showRendererConfirm,
   showRendererPrompt,

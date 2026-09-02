@@ -313,6 +313,11 @@ async function applyVideoPoster(mediaEl, sourcePath) {
 function updatePreviewEmptyState() {
   const overlay = document.getElementById("previewEmptyState");
   if (!overlay) return;
+  const mediaLibrary = document.getElementById("mediaLibraryWorkspace");
+  if (mediaLibrary && mediaLibrary.hidden === false) {
+    overlay.hidden = true;
+    return;
+  }
   if (currentMode !== MEDIAPLAYER) {
     overlay.hidden = true;
     return;

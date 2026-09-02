@@ -80,6 +80,7 @@ import {
   handleSongEditorMoveSectionUp,
   handleSongEditorSectionMetaChange,
   hideBibleReferenceSuggestions,
+  hideMediaLibraryWorkspace,
   importSongFromDialog,
   initSongEditorContextMenu,
   initSongEditorTextBoxDragAndDrop,
@@ -107,6 +108,7 @@ import {
   on,
   openBibleWorkspaceFromButton,
   openLiveLayers,
+  openMediaLibraryPicker,
   openSettingsControls,
   openSlidesWorkspaceFromButton,
   openSongEditor,
@@ -170,6 +172,7 @@ import {
   showCuedSongLowerThird,
   showCurrentDeckNow,
   showGnomeToast,
+  showMediaLibraryWorkspace,
   showPrivateStageMessage,
   showSongTextNow,
   slidesAPI,
@@ -465,8 +468,9 @@ function showMediaWorkspace() {
   hideBibleWorkspace();
   hideSongsWorkspace();
   hideSlidesWorkspace();
+  showMediaLibraryWorkspace();
   syncPreviewStackSurface();
-  document.getElementById("customControls")?.style.removeProperty("visibility");
+  document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   navigationState.transition(NAVIGATION_STATES.MEDIA);
 }
 
@@ -613,6 +617,7 @@ function showBibleWorkspace() {
   }
   const workspace = document.getElementById("bibleWorkspace");
   if (!workspace) return;
+  hideMediaLibraryWorkspace();
   hideSongsWorkspace();
   hideSlidesWorkspace();
   syncLowerThirdFeatureAvailability();
@@ -638,6 +643,7 @@ function hideBibleWorkspace() {
 function showSongsWorkspace() {
   const workspace = document.getElementById("songsWorkspace");
   if (!workspace) return;
+  hideMediaLibraryWorkspace();
   hideBibleWorkspace();
   hideSlidesWorkspace();
   syncLowerThirdFeatureAvailability();
@@ -681,6 +687,7 @@ function hideSongsWorkspace() {
 function showSlidesWorkspace() {
   const workspace = document.getElementById("slidesWorkspace");
   if (!workspace) return;
+  hideMediaLibraryWorkspace();
   hideBibleWorkspace();
   hideSongsWorkspace();
   workspace.hidden = false;
@@ -752,11 +759,16 @@ function isSongsWorkspaceVisible() {
   return document.getElementById("songsWorkspace")?.hidden === false;
 }
 
+function isMediaLibraryWorkspaceVisible() {
+  return document.getElementById("mediaLibraryWorkspace")?.hidden === false;
+}
+
 function isPreviewWorkspaceOverlayVisible() {
   return (
     isBibleWorkspaceVisible() ||
     isSongsWorkspaceVisible() ||
-    isSlidesWorkspaceVisible()
+    isSlidesWorkspaceVisible() ||
+    isMediaLibraryWorkspaceVisible()
   );
 }
 
@@ -1207,6 +1219,18 @@ function installBibleMediaControls() {
     renderSlideEditorState();
     e.target.value = "";
   });
+  document.getElementById("slidesPageMediaPickerBtn")?.addEventListener("click", async () => {
+    const page = currentPage();
+    if (!page) return;
+    const item = await openMediaLibraryPicker({ title: "Choose Slide Background", kinds: ["image", "video"] });
+    if (!item?.localPath) return;
+    recordSlideUndoCheckpoint("Set page background");
+    page.background = { type: item.kind, path: item.localPath, libraryItemId: item.id };
+    setDeckDirty(true);
+    renderSlideCanvas();
+    renderDeckPageStrip();
+    renderSlideEditorState();
+  });
   document.getElementById("slidesPageBackgroundClearBtn")?.addEventListener("click", () => {
     const page = currentPage();
     if (!page) return;
@@ -1498,6 +1522,24 @@ function installBibleMediaControls() {
       const section =
         enabledSongSections(currentWorkspaceSong).find((s) => s.id === currentSongSectionId) ||
         currentWorkspaceSong.sections?.[0];
+      if (section) {
+        renderSongSectionPreview(section);
+        void syncActiveScheduledSongPresentation().catch(console.error);
+      }
+    }
+  });
+
+  document.getElementById("songEditorMediaPickerBtn")?.addEventListener("click", async () => {
+    const item = await openMediaLibraryPicker({ title: "Choose Song Background", kinds: ["image", "video"] });
+    if (!item?.localPath) return;
+    currentSongRenderState.backgroundPath = item.localPath;
+    currentSongRenderState.backgroundLibraryItemId = item.id;
+    syncCurrentWorkspaceSongDefaultRender();
+    syncSongBackgroundLabel();
+    syncSongEditorWorkspaceStyles();
+    if (currentWorkspaceSong) {
+      const section = enabledSongSections(currentWorkspaceSong).find((entry) => entry.id === currentSongSectionId)
+        || currentWorkspaceSong.sections?.[0];
       if (section) {
         renderSongSectionPreview(section);
         void syncActiveScheduledSongPresentation().catch(console.error);

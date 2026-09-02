@@ -23,6 +23,90 @@ export const PREVIEW_STASH_ID = "previewStash";
 export const TAB_PANEL_MEDIA_ID = "tab-panel-media";
 export const TAB_PANEL_STREAMS_ID = "tab-panel-streams";
 
+function mediaLibraryWorkspaceMarkup() {
+  return `
+    <section id="mediaLibraryWorkspace" class="media-library" aria-label="Media" data-view="grid">
+      <aside id="mediaLibraryBrowsePane" class="media-library__browse" aria-label="Browse Media">
+        <div class="media-library__browse-header">
+          <strong>Browse</strong>
+        </div>
+        <nav id="mediaLibrarySmartViews" class="media-library__nav" aria-label="Library views">
+          <button type="button" class="is-active" data-media-source="all" aria-current="page">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
+            <span>All Items</span><small id="mediaLibraryAllCount"></small>
+          </button>
+          <button type="button" data-media-source="recent">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>
+            <span>Recent</span>
+          </button>
+        </nav>
+        <div class="media-library__source-heading"><span>Sources</span><button id="mediaLibraryAddSourceCompactBtn" type="button" aria-label="Add Media Folder" title="Add Media Folder">+</button></div>
+        <nav id="mediaLibrarySources" class="media-library__nav media-library__sources" aria-label="Media sources"></nav>
+        <div id="mediaLibraryIndexStatus" class="media-library__index-status" role="status" aria-live="polite"></div>
+      </aside>
+      <div class="media-library__content">
+        <header class="media-library__header">
+          <button id="mediaLibraryBackBtn" class="media-library__icon-button media-library__back" type="button" aria-label="Back to Media sources" hidden>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 3-5 5 5 5"/></svg>
+          </button>
+          <div class="media-library__title-block">
+            <h1 id="mediaLibraryTitle">Media</h1>
+            <span id="mediaLibraryResultSummary" aria-live="polite"></span>
+          </div>
+          <label class="media-library__search">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
+            <input id="mediaLibrarySearch" type="search" placeholder="Search Media" autocomplete="off" aria-label="Search Media">
+          </label>
+          <div class="media-library__view-controls" role="group" aria-label="View">
+            <button id="mediaLibraryGridBtn" type="button" class="is-active" aria-label="Grid view" aria-pressed="true">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5"/><rect x="9" y="2" width="5" height="5"/><rect x="2" y="9" width="5" height="5"/><rect x="9" y="9" width="5" height="5"/></svg>
+            </button>
+            <button id="mediaLibraryListBtn" type="button" aria-label="List view" aria-pressed="false">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3h9M5 8h9M5 13h9"/><circle cx="2.5" cy="3" r=".5"/><circle cx="2.5" cy="8" r=".5"/><circle cx="2.5" cy="13" r=".5"/></svg>
+            </button>
+          </div>
+          <button id="mediaLibraryCancelPickerBtn" class="pill-button secondary" type="button" hidden>Cancel</button>
+          <button id="mediaLibraryAddSourceBtn" class="pill-button suggested-action" type="button">Add Media Folder</button>
+        </header>
+        <div id="mediaLibraryFilters" class="media-library__filters" role="group" aria-label="Media type filters">
+          <button type="button" class="is-active" data-media-kind="" aria-pressed="true">All</button>
+          <button type="button" data-media-kind="image" aria-pressed="false">Images</button>
+          <button type="button" data-media-kind="video" aria-pressed="false">Video</button>
+          <button type="button" data-media-kind="audio" aria-pressed="false">Audio</button>
+          <button type="button" data-media-kind="presentation" aria-pressed="false">Presentations</button>
+        </div>
+        <nav id="mediaLibraryFolderBar" class="media-library__folder-bar" aria-label="Folders" hidden></nav>
+        <div id="mediaLibraryDropTarget" class="media-library__drop-target" aria-hidden="true"><strong id="mediaLibraryDropTitle">Drop to keep in Media</strong><span id="mediaLibraryDropHint">Add files under Added Files, or add a folder as a source</span></div>
+        <div id="mediaLibraryItems" class="media-library__items" role="listbox" aria-label="Media items" tabindex="0"></div>
+        <div id="mediaLibraryEmpty" class="media-library__empty" role="status" hidden>
+          <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 18a4 4 0 0 1 4-4h14l6 6h20a4 4 0 0 1 4 4v26H8z"/><path d="M24 35h16M32 27v16"/></svg>
+          <strong id="mediaLibraryEmptyTitle">Add your media folders</strong>
+          <span id="mediaLibraryEmptyDetail">Browse, preview, and schedule files without moving the originals.</span>
+          <button id="mediaLibraryEmptyAction" type="button" class="pill-button suggested-action">Add Media Folder</button>
+        </div>
+      </div>
+      <aside id="mediaLibraryDetails" class="media-library__details" aria-label="Media preview" hidden>
+        <button id="mediaLibraryCloseDetails" class="media-library__icon-button" type="button" aria-label="Close preview">×</button>
+        <div id="mediaLibraryPreview" class="media-library__preview"></div>
+        <div id="mediaLibraryDetailsBody" class="media-library__details-body">
+          <div class="media-library__details-copy">
+            <h2 id="mediaLibraryDetailsName"></h2>
+            <p id="mediaLibraryDetailsMeta"></p>
+            <p id="mediaLibraryDetailsStatus"></p>
+          </div>
+          <div class="media-library__details-actions">
+            <button id="mediaLibraryAddScheduleBtn" type="button" class="pill-button suggested-action">Add to Schedule</button>
+            <button id="mediaLibraryKeepBtn" type="button" class="pill-button secondary" title="Save this one-off file under Added Files so it remains in Media" hidden>Keep in Media</button>
+            <button id="mediaLibraryOpenPropertiesBtn" type="button" class="pill-button secondary">Properties</button>
+            <button id="mediaLibraryRemoveItemBtn" type="button" class="pill-button destructive-action" hidden>Remove from Media</button>
+          </div>
+          <dl id="mediaLibraryProperties" class="media-library__properties" hidden></dl>
+        </div>
+      </aside>
+      <div id="mediaLibraryLiveRegion" class="visually-hidden" aria-live="polite"></div>
+    </section>`;
+}
+
 export function generateDyneTabShellHTML() {
   return `<div id="${TAB_PANEL_MEDIA_ID}" class="tab-panel tab-panel--media"></div>`;
 }
@@ -150,6 +234,7 @@ export function generateMediaFormHTML() {
 
     <div class="video-wrapper">
       <div id="previewStack" class="preview-stack" data-active-surface="live">
+        ${mediaLibraryWorkspaceMarkup()}
         <video id="preview" disablePictureInPicture></video>
         <!--
           Dedicated cue scrub element. The main #preview element used to be
@@ -435,6 +520,7 @@ export function generateMediaFormHTML() {
                                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke-width="1.5"/><circle cx="5.5" cy="6.5" r="1.5" fill="currentColor" stroke="none"/><path d="M2 10l3-3 4 4 2-2 3 3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                 <input type="file" id="songEditorBackgroundInput" accept="image/*,video/mp4,video/webm,video/quicktime" aria-label="Song background image or video" style="opacity: 0; position: absolute; inset: 0; cursor: pointer; width: 100%; height: 100%;">
                               </button>
+                              <button type="button" id="songEditorMediaPickerBtn" class="pill-button secondary" title="Choose an indexed image or video from Media">Media…</button>
                               <button type="button" id="songEditorClearBackgroundBtn" class="songs-icon-btn" title="Clear Background Image" aria-label="Clear background image" style="width: 32px; height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-color); border-radius: 6px;">
                                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"><path d="M12 4L4 12M4 4l8 8" stroke-width="1.5" stroke-linecap="round"/></svg>
                               </button>
@@ -697,6 +783,7 @@ export function generateMediaFormHTML() {
                           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke-width="1.5"/><circle cx="5.5" cy="6.5" r="1.5" fill="currentColor" stroke="none"/><path d="M2 10l3-3 4 4 2-2 3 3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
                           <input type="file" id="slidesPageBackgroundInput" accept="image/*,video/mp4,video/webm" aria-label="Page background image or video" style="opacity:0;position:absolute;inset:0;cursor:pointer;width:100%;height:100%;">
                         </button>
+                        <button type="button" id="slidesPageMediaPickerBtn" class="pill-button secondary" title="Choose an indexed image or video from Media">Media…</button>
                         <span id="slidesPageBackgroundLabel" style="font-size:12px;color:var(--text-color-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;">None</span>
                         <button type="button" id="slidesPageBackgroundClearBtn" class="songs-icon-btn songs-icon-btn--small" title="Clear background">
                           <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>

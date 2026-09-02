@@ -66,6 +66,7 @@ import {
   readEmprojProjectGuid,
 } from "./emproj.min.mjs";
 import { MediaWatcher } from "./media-watcher.min.mjs";
+import { MediaLibraryRpcClient } from "./media-library-rpc-client.min.mjs";
 import { generateVideoPoster } from "./video-poster.min.mjs";
 import { createOutputCommand, validateOutputCommand } from "../shared/output-compositor.min.mjs";
 import {
@@ -294,6 +295,15 @@ const mediaWatcher = new MediaWatcher({
   app,
   devRoot: derivedRoot,
   sendToRenderer(channel, payload) {
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
+  },
+});
+const mediaLibrary = new MediaLibraryRpcClient({
+  app,
+  devRoot: derivedRoot,
+  notify(channel, payload) {
     if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
       win.webContents.send(channel, payload);
     }
@@ -3103,6 +3113,24 @@ async function handleShowMediaFilesDialog(event) {
   return { canceled: false, filePaths: result.filePaths };
 }
 
+async function handleShowMediaSourceDialog(event) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, source: null };
+  }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Add Media Folder",
+    defaultPath: await getInitialMediaFolder(),
+    properties: ["openDirectory"],
+  });
+  if (result.canceled || !result.filePaths?.length) {
+    return { canceled: true, source: null };
+  }
+  const source = await mediaLibrary.addSource(result.filePaths[0]);
+  await rememberMediaFolder(path.join(result.filePaths[0], "placeholder"));
+  return { canceled: false, source };
+}
+
 async function handleShowLogoFileDialog(event) {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   const parentWindow =
@@ -5286,6 +5314,21 @@ function setIPC() {
   ipcMain.handle("set-setting", setSetting);
   ipcMain.handle("get-all-displays", handleGetAllDisplays);
   ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
+  ipcMain.handle("media-library:snapshot", () => mediaLibrary.ready());
+  ipcMain.handle("media-library:changes", (_event, revision) => mediaLibrary.changesSince(revision));
+  ipcMain.handle("media-library:query", (_event, options) => mediaLibrary.query(options));
+  ipcMain.handle("media-library:get-item", (_event, itemId) => mediaLibrary.getItem(itemId));
+  ipcMain.handle("media-library:list-folders", (_event, sourceId, parentId) => mediaLibrary.listFolders(sourceId, parentId));
+  ipcMain.handle("media-library:add-source-dialog", handleShowMediaSourceDialog);
+  ipcMain.handle("media-library:add-source", (_event, folderPath) => mediaLibrary.addSource(folderPath));
+  ipcMain.handle("media-library:add-files", (_event, filePaths) => mediaLibrary.addFiles(filePaths));
+  ipcMain.handle("media-library:add-dropped-paths", (_event, paths) => mediaLibrary.addDroppedPaths(paths));
+  ipcMain.handle("media-library:remove-source", (_event, sourceId) => mediaLibrary.removeSource(sourceId));
+  ipcMain.handle("media-library:remove-added-items", (_event, itemIds) => mediaLibrary.removeAddedItems(itemIds));
+  ipcMain.handle("media-library:rescan", (_event, sourceId) =>
+    sourceId ? mediaLibrary.scanSource(sourceId) : mediaLibrary.refreshAll());
+  ipcMain.handle("media-library:record-activity", (_event, activity) => mediaLibrary.recordActivity(activity));
+  ipcMain.handle("media-library:thumbnail", (_event, request) => mediaLibrary.thumbnail(request));
   ipcMain.handle("show-import-song-dialog", handleShowImportSongDialog);
   ipcMain.handle("show-song-import-results-dialog", handleShowSongImportResultsDialog);
   ipcMain.handle("show-renderer-message-box", handleShowRendererMessageBox);
@@ -5730,6 +5773,7 @@ app.on("before-quit", (event) => {
   bibleRpcClient.stop();
   atemService.stop();
   mediaWatcher.closeAll();
+  mediaLibrary.close();
   const cleanupTasks = [cleanupMediaStagingDir()];
   if (activeProjectSnapshot) {
     const snapshotToClean = activeProjectSnapshot;

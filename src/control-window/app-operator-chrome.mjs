@@ -207,6 +207,7 @@ import {
   setSharedRendererState,
   showAudienceAlert,
   showGnomeToast,
+  showMediaLibraryWorkspace,
   showPrivateStageMessage,
   songLowerThirdState,
   stageContentCache,
@@ -1774,6 +1775,7 @@ function setSBFormMediaPlayer() {
   updateHeaderAddMediaButtonVisibility();
 
   ensureMediaPanelBuilt();
+  showMediaLibraryWorkspace();
 
   const streamsPanel = document.getElementById(TAB_PANEL_STREAMS_ID);
   const mediaPanel = document.getElementById(TAB_PANEL_MEDIA_ID);
@@ -2318,14 +2320,7 @@ async function loadOpMode(mode) {
           }
           return;
         }
-        const paths = await extractAndFilterDroppedMediaPaths(
-          event.dataTransfer,
-        );
-        if (paths.length > 0) {
-          applyDroppedMediaPaths(paths);
-        } else {
-          console.warn("No valid media files were dropped.");
-        }
+        showGnomeToast("Drop media on the Schedule to use it, or on Media to keep it");
       });
       on("app-close-autosave-requested", () => {
         void flushAutosaveOnClose()
