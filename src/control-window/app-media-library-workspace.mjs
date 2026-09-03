@@ -15,6 +15,8 @@ import {
 
 const LIBRARY_PREVIEW_PLAY_ICON = `<path d="M8 5v14l11-7z"/>`;
 const LIBRARY_PREVIEW_PAUSE_ICON = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
+const LIBRARY_PREVIEW_VOLUME_ICON = `<path d="M1 5h3l3-3v12L4 11H1z"/><path d="M9 7.5c.5 0 .5 1 0 1M10 6c1 0 1 4 0 4M12 4c2 0 2 8 0 8" fill="none" stroke="currentColor" stroke-width="1"/>`;
+const LIBRARY_PREVIEW_MUTE_ICON = `<path d="M1 5h3l3-3v12L4 11H1z"/><path d="M8 3l7 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>`;
 
 export const MEDIA_ITEM_DRAG_TYPE = "application/x-ems-media-library-item";
 let mediaLibraryDragItemId = "";
@@ -680,6 +682,21 @@ function isLibraryPreviewControlPointer(event) {
   return Boolean(event.target.closest?.(".media-library__preview-controls"));
 }
 
+function isLivePresentationActive() {
+  return Boolean(bridge?.isLivePresentationActive?.());
+}
+
+function applyDefaultLibraryPreviewAudibility(media) {
+  if (isLivePresentationActive()) {
+    media.muted = true;
+    media.volume = 0;
+    return true;
+  }
+  media.muted = false;
+  media.volume = 1;
+  return false;
+}
+
 function bindLibraryPreviewTransport(media, { audio = false } = {}) {
   const player = document.createElement("div");
   player.className = `media-library__preview-player${audio ? " media-library__preview-player--audio" : ""}`;
@@ -700,6 +717,10 @@ function bindLibraryPreviewTransport(media, { audio = false } = {}) {
     <span class="time-display" data-library-preview-current></span>
     <input type="range" min="0" max="100" value="0" step="0.1" class="timeline-slider" data-library-preview-timeline aria-label="Seek">
     <span class="time-display" data-library-preview-duration></span>
+    <button type="button" class="control-button" data-library-preview-mute aria-label="Mute">
+      <svg viewBox="0 0 16 16" data-library-preview-mute-icon>${LIBRARY_PREVIEW_VOLUME_ICON}</svg>
+    </button>
+    <input type="range" min="0" max="100" value="100" step="1" class="timeline-slider media-library__preview-volume" data-library-preview-volume aria-label="Volume">
   `;
   player.appendChild(overlay);
 
@@ -708,9 +729,14 @@ function bindLibraryPreviewTransport(media, { audio = false } = {}) {
   const currentEl = overlay.querySelector("[data-library-preview-current]");
   const durationEl = overlay.querySelector("[data-library-preview-duration]");
   const timeline = overlay.querySelector("[data-library-preview-timeline]");
+  const muteBtn = overlay.querySelector("[data-library-preview-mute]");
+  const muteIcon = overlay.querySelector("[data-library-preview-mute-icon]");
+  const volumeSlider = overlay.querySelector("[data-library-preview-volume]");
   bindTransportTimeDisplay(currentEl);
   bindTransportTimeDisplay(durationEl);
 
+  applyDefaultLibraryPreviewAudibility(media);
+  let lastAudibleVolume = media.muted || media.volume <= 0 ? 1 : media.volume;
   let dragging = false;
   const paint = () => {
     const duration = Number.isFinite(media.duration) && media.duration > 0 ? media.duration : 0;
@@ -723,12 +749,39 @@ function bindLibraryPreviewTransport(media, { audio = false } = {}) {
     }
     playIcon.innerHTML = media.paused ? LIBRARY_PREVIEW_PLAY_ICON : LIBRARY_PREVIEW_PAUSE_ICON;
     playBtn.setAttribute("aria-label", media.paused ? "Play" : "Pause");
+    const muted = media.muted || media.volume <= 0;
+    volumeSlider.value = String(Math.round((muted ? 0 : media.volume) * 100));
+    muteIcon.innerHTML = muted ? LIBRARY_PREVIEW_MUTE_ICON : LIBRARY_PREVIEW_VOLUME_ICON;
+    muteBtn.setAttribute("aria-label", muted ? "Unmute" : "Mute");
+    muteBtn.setAttribute("aria-pressed", String(muted));
   };
 
   playBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     if (media.paused) void media.play().catch(() => {});
     else media.pause();
+  });
+  muteBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const muted = media.muted || media.volume <= 0;
+    if (muted) {
+      media.muted = false;
+      media.volume = lastAudibleVolume > 0 ? lastAudibleVolume : 1;
+    } else {
+      lastAudibleVolume = media.volume > 0 ? media.volume : 1;
+      media.muted = true;
+      media.volume = 0;
+    }
+    paint();
+  });
+  volumeSlider.addEventListener("pointerdown", (event) => event.stopPropagation());
+  volumeSlider.addEventListener("input", (event) => {
+    event.stopPropagation();
+    const volume = Number(volumeSlider.value) / 100;
+    media.volume = volume;
+    media.muted = volume <= 0;
+    if (volume > 0) lastAudibleVolume = volume;
+    paint();
   });
   timeline.addEventListener("pointerdown", (event) => {
     event.stopPropagation();

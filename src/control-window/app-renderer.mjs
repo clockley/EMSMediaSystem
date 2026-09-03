@@ -925,6 +925,12 @@ function attachElectronBridge() {
     showToast: showGnomeToast,
     showMediaWorkspace,
     revealSchedulePreviewForLibraryPath,
+    isLivePresentationActive: () =>
+      Boolean(
+        isQueuePresentationActive() ||
+          isActiveMediaWindow() ||
+          isLocalAppWindowPresentationActive(),
+      ),
   });
 
   globalThis.invoke = invoke;

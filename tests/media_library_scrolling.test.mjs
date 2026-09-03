@@ -282,8 +282,13 @@ test("Media library mode disables the workspace scrubber", async () => {
   assert.match(workspace, /hideMediaLibraryCountdown\(\)/);
   assert.match(workspace, /video\.controls = false/);
   assert.match(workspace, /function bindLibraryPreviewTransport\(/);
+  assert.match(workspace, /function applyDefaultLibraryPreviewAudibility\(/);
+  assert.match(workspace, /isLivePresentationActive\(\)/);
+  assert.match(workspace, /data-library-preview-volume/);
   assert.doesNotMatch(workspace, /disableLibraryPreviewScrubber/);
   assert.match(css, /\.media-library__preview-controls \{/);
+  const renderer = await readFile(new URL("../src/control-window/app-renderer.mjs", import.meta.url), "utf8");
+  assert.match(renderer, /isLivePresentationActive:/);
   assert.match(chrome, /overlayBlocksTransport = isPreviewWorkspaceOverlayVisible\(\)/);
   assert.match(chrome, /!isPreviewWorkspaceOverlayVisible\(\)/);
   assert.match(css, /\.video-wrapper:has\(#mediaLibraryWorkspace:not\(\[hidden\]\)\) \.controls-overlay/);
