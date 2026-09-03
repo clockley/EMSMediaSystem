@@ -235,6 +235,7 @@ import {
   waitForScriptureFonts,
   waitForTextFonts,
 } from "./app-renderer.mjs";
+import { hideMediaLibraryWorkspaceForSchedulePreview } from "./app-media-library-workspace.mjs";
 
 function isAudioPreviewCueActive() {
   const cue = currentPreviewCue();
@@ -880,6 +881,8 @@ async function takeQueueItemLive(index, startTime = 0, opts = {}) {
   }
   if (!(await ensurePendingMediaUpdateApproved(index))) return;
   setSelectedQueueAnchor(index);
+  hideMediaLibraryWorkspaceForSchedulePreview();
+  syncPreviewStackSurface();
 
   const item = mediaQueue[index];
   const safeStart =
