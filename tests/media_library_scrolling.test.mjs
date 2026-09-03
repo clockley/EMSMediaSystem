@@ -143,11 +143,15 @@ test("clicking the Media preview fills the workspace and Back returns to the pic
   assert.match(template, /id="mediaLibraryLeaveInspectBtn"/);
   const inspectBar = template.slice(template.indexOf('class="media-library__inspect-bar"'), template.indexOf('id="mediaLibraryPreview"'));
   assert.match(inspectBar, /id="mediaLibraryLeaveInspectBtn"/);
+  assert.match(inspectBar, />Browse<\/span>/);
   assert.match(inspectBar, /id="mediaLibraryAddScheduleBtn"/);
   assert.ok(inspectBar.indexOf("mediaLibraryLeaveInspectBtn") < inspectBar.indexOf("mediaLibraryAddScheduleBtn"));
   assert.match(css, /\.media-library\.is-inspecting \{/);
   assert.match(css, /\.media-library\.is-inspecting \.media-library__content \{ display: none/);
-  assert.match(css, /\.media-library\.is-inspecting \.media-library__inspect-back/);
+  const inspectBackStart = css.indexOf(".media-library__inspect-back {");
+  const inspectBack = css.slice(inspectBackStart, css.indexOf("}", inspectBackStart) + 1);
+  assert.match(inspectBack, /display: inline-flex/);
+  assert.doesNotMatch(inspectBack, /display: none/);
   assert.doesNotMatch(css, /\.media-library\.is-medium \.media-library__details \{/);
   assert.doesNotMatch(css, /\.media-library\.is-narrow \.media-library__details \{/);
 });
@@ -267,18 +271,33 @@ test("Schedule selection pulses grey while Media library is open", async () => {
   assert.match(css, /@keyframes queue-selection-library-pulse/);
 });
 
-test("Media preview uses a GNOME back control and reuses the schedule player for the same file", async () => {
+test("Browse Media button in the headerbar opens the media library", async () => {
+  const html = await readFile(new URL("../src/control-window/index.html", import.meta.url), "utf8");
+  const template = await readFile(new URL("../src/shared/app-ui-templates.mjs", import.meta.url), "utf8");
   const workspace = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");
   const renderer = await readFile(new URL("../src/control-window/app-renderer.mjs", import.meta.url), "utf8");
-  const template = await readFile(new URL("../src/shared/app-ui-templates.mjs", import.meta.url), "utf8");
-  const css = await readFile(new URL("../src/main.css", import.meta.url), "utf8");
-  assert.match(template, /id="mediaLibraryReturnBtn"/);
-  assert.match(template, /aria-label="Back to Media"/);
+  const chrome = await readFile(new URL("../src/control-window/app-operator-chrome.mjs", import.meta.url), "utf8");
+  assert.match(html, /id="headerBrowseMediaButton"/);
+  assert.match(html, />Browse Media<\/span>/);
+  const browsePos = html.indexOf("headerBrowseMediaButton");
+  const addPos = html.indexOf("headerAddMediaButton");
+  assert.ok(browsePos < addPos, "Browse Media should appear before Add Media in headerbar");
+  assert.doesNotMatch(template, /id="mediaLibraryReturnBtn"/);
+  assert.doesNotMatch(template, /browseMediaLibraryBtn/);
+  assert.match(chrome, /installBrowseMediaLibraryButton/);
+  assert.match(chrome, /headerBrowseMediaButton/);
+  assert.match(chrome, /showMediaLibraryWorkspace\(\)/);
   assert.match(workspace, /function hideMediaLibraryWorkspaceForSchedulePreview\(/);
   assert.match(workspace, /revealSchedulePreviewForLibraryPath/);
-  assert.match(workspace, /bridge\.showMediaWorkspace/);
   assert.match(renderer, /function revealSchedulePreviewForLibraryPath\(/);
-  assert.match(css, /\.media-library__return \{/);
+});
+
+test("headerbar Add Media records files to Recent", async () => {
+  const chrome = await readFile(new URL("../src/control-window/app-operator-chrome.mjs", import.meta.url), "utf8");
+  const openStart = chrome.indexOf("async function openMediaFilesDialog()");
+  const openEnd = chrome.indexOf("\nfunction ", openStart + 10);
+  const fn = chrome.slice(openStart, openEnd);
+  assert.match(fn, /recordScheduledMediaPaths\(res\.filePaths\)/);
 });
 
 test("Media library mode disables the workspace scrubber", async () => {

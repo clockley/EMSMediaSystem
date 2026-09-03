@@ -176,6 +176,7 @@ import {
   queueSlipstreamTransitionInProgress,
   refreshNetworkPreviewTransportState,
   refreshPreviewControlsForCurrentMedia,
+  recordScheduledMediaPaths,
   relinkMissingFilesDialog,
   removeFileProtocol,
   renderQueue,
@@ -267,11 +268,13 @@ function installMediaOpenButton() {
 }
 
 function updateHeaderAddMediaButtonVisibility() {
-  const button = document.getElementById("headerAddMediaButton");
-  if (!button) return;
   const visible = currentMode === MEDIAPLAYER;
-  button.hidden = !visible;
-  button.setAttribute("aria-hidden", visible ? "false" : "true");
+  for (const id of ["headerAddMediaButton", "headerBrowseMediaButton"]) {
+    const button = document.getElementById(id);
+    if (!button) continue;
+    button.hidden = !visible;
+    button.setAttribute("aria-hidden", visible ? "false" : "true");
+  }
 }
 
 async function openMediaFilesDialog() {
@@ -281,9 +284,21 @@ async function openMediaFilesDialog() {
     if (!res || res.canceled || !res.filePaths?.length) return;
     enqueuePathsFromFilePicker(res.filePaths);
     saveMediaFile();
+    void recordScheduledMediaPaths(res.filePaths).catch((err) => {
+      console.error("Failed to record scheduled media in Recent:", err);
+    });
   } catch (err) {
     console.error(err);
   }
+}
+
+function installBrowseMediaLibraryButton() {
+  const button = document.getElementById("headerBrowseMediaButton");
+  if (!button || button.dataset.browseBound === "1") return;
+  button.dataset.browseBound = "1";
+  button.addEventListener("click", () => {
+    showMediaLibraryWorkspace();
+  });
 }
 
 function openSettingsControls() {
@@ -1827,6 +1842,7 @@ function setSBFormMediaPlayer() {
   installPreviewEventHandlers();
 
   installMediaOpenButton();
+  installBrowseMediaLibraryButton();
   installNetworkItemButton();
   installPreviewEmptyStateHandlers();
   installGlobalSlideTransitionControls();

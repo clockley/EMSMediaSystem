@@ -42,7 +42,6 @@ let presentationViewerHost = null;
 let presentationResizeObserver = null;
 let presentationSlideIndex = 0;
 let presentationSlideCount = 0;
-let returnToLibraryAfterPreview = false;
 let scrollRestoreToken = 0;
 const pendingPreviewActivityIds = new Set();
 const state = {
@@ -1324,9 +1323,6 @@ function bindEvents(workspace) {
   });
   element("mediaLibraryCloseDetails")?.addEventListener("click", closeDetails);
   element("mediaLibraryLeaveInspectBtn")?.addEventListener("click", leaveInspect);
-  element("mediaLibraryReturnBtn")?.addEventListener("click", () => {
-    bridge.showMediaWorkspace?.();
-  });
   element("mediaLibraryPreview")?.addEventListener("pointerdown", (event) => {
     const dragging = !isLibraryPreviewControlPointer(event);
     event.currentTarget.querySelectorAll("img, video, .media-library__preview-audio-icon").forEach((node) => {
@@ -1540,27 +1536,13 @@ export function installMediaLibraryWorkspace() {
   void refresh({ preserveScroll: false });
 }
 
-function syncMediaLibraryReturnButton() {
-  const button = element("mediaLibraryReturnBtn");
-  if (button) {
-    const libraryVisible = element("mediaLibraryWorkspace")?.hidden === false;
-    button.hidden = libraryVisible || !returnToLibraryAfterPreview;
-  }
-  syncScheduleSelectionForLibraryMode();
-}
-
 function syncScheduleSelectionForLibraryMode() {
   const libraryOpen = element("mediaLibraryWorkspace")?.hidden === false;
   document.querySelector(".queue-section")?.classList.toggle("is-media-library-open", Boolean(libraryOpen));
 }
 
-export function isMediaLibraryReturnable() {
-  return returnToLibraryAfterPreview;
-}
-
 export function hideMediaLibraryWorkspaceForSchedulePreview() {
-  const visible = element("mediaLibraryWorkspace")?.hidden === false;
-  hideMediaLibraryWorkspace({ returnable: visible || returnToLibraryAfterPreview });
+  hideMediaLibraryWorkspace();
 }
 
 function disableMediaWorkspaceScrubber() {
@@ -1581,11 +1563,10 @@ export function showMediaLibraryWorkspace() {
   const workspace = element("mediaLibraryWorkspace");
   if (!workspace) return;
   if (pickerRequest) finishPicker(null);
-  returnToLibraryAfterPreview = false;
   workspace.hidden = false;
   disableMediaWorkspaceScrubber();
   hideMediaLibraryCountdown();
-  syncMediaLibraryReturnButton();
+  syncScheduleSelectionForLibraryMode();
   element("previewEmptyState")?.setAttribute("hidden", "");
   element("mediaLibraryCancelPickerBtn")?.setAttribute("hidden", "");
   element("mediaLibraryFilters")?.querySelectorAll("[data-media-kind]").forEach((button) => { button.hidden = false; });
@@ -1595,16 +1576,15 @@ export function showMediaLibraryWorkspace() {
   scheduleRefresh(0);
 }
 
-export function hideMediaLibraryWorkspace({ returnable = false } = {}) {
+export function hideMediaLibraryWorkspace() {
   const workspace = element("mediaLibraryWorkspace");
   if (!workspace) return;
-  returnToLibraryAfterPreview = returnable === true;
   workspace.classList.remove("is-inspecting");
   workspace.hidden = true;
   hideMediaLibraryContextMenu();
   disposePresentationPreview();
   workspace.querySelectorAll("video, audio").forEach((media) => media.pause());
-  syncMediaLibraryReturnButton();
+  syncScheduleSelectionForLibraryMode();
 }
 
 function finishPicker(item) {

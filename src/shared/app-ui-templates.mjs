@@ -80,8 +80,9 @@ function mediaLibraryWorkspaceMarkup() {
       </div>
       <aside id="mediaLibraryDetails" class="media-library__details" aria-label="Media preview" hidden>
         <div class="media-library__inspect-bar">
-          <button id="mediaLibraryLeaveInspectBtn" class="media-library__icon-button media-library__inspect-back" type="button" aria-label="Back to files">
+          <button id="mediaLibraryLeaveInspectBtn" class="media-library__inspect-back" type="button" aria-label="Browse">
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 3-5 5 5 5"/></svg>
+            <span>Browse</span>
           </button>
           <button id="mediaLibraryAddScheduleBtn" type="button" class="pill-button suggested-action">Add to Schedule</button>
           <button id="mediaLibraryCloseDetails" class="media-library__icon-button" type="button" aria-label="Close preview">×</button>
@@ -225,10 +226,6 @@ export function generateMediaFormHTML() {
     <div class="video-wrapper">
       <div id="previewStack" class="preview-stack" data-active-surface="live">
         ${mediaLibraryWorkspaceMarkup()}
-        <button id="mediaLibraryReturnBtn" class="media-library__return" type="button" hidden aria-label="Back to Media">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 3-5 5 5 5"/></svg>
-          <span>Media</span>
-        </button>
         <video id="preview" disablePictureInPicture></video>
         <!--
           Dedicated cue scrub element. The main #preview element used to be
