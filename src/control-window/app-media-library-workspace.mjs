@@ -1,5 +1,9 @@
 import { MEDIA_AVAILABILITY } from "../shared/media-library-contract.mjs";
 import {
+  bindTransportTimeDisplay,
+  paintTransportTimeDisplay,
+} from "../shared/app-controls-utils.mjs";
+import {
   clampPptxSlideIndex,
   enforcePptxCoverFit,
   getElementContentSize,
@@ -8,6 +12,9 @@ import {
   getPptxRenderedSlideElement,
   waitForNextFrame,
 } from "../shared/app-pptx-utils.mjs";
+
+const LIBRARY_PREVIEW_PLAY_ICON = `<path d="M8 5v14l11-7z"/>`;
+const LIBRARY_PREVIEW_PAUSE_ICON = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
 
 export const MEDIA_ITEM_DRAG_TYPE = "application/x-ems-media-library-item";
 let mediaLibraryDragItemId = "";
@@ -669,14 +676,82 @@ function beginMediaLibraryItemDrag(event, item) {
   return true;
 }
 
-function isLibraryPreviewControlPointer(media, event) {
-  const rect = media.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return false;
-  if (media.tagName === "AUDIO") {
-    const x = (event.clientX - rect.left) / rect.width;
-    return x > 0.14 && x < 0.82;
+function isLibraryPreviewControlPointer(event) {
+  return Boolean(event.target.closest?.(".media-library__preview-controls"));
+}
+
+function bindLibraryPreviewTransport(media, { audio = false } = {}) {
+  const player = document.createElement("div");
+  player.className = `media-library__preview-player${audio ? " media-library__preview-player--audio" : ""}`;
+  if (audio) {
+    const icon = document.createElement("div");
+    icon.className = "media-library__preview-audio-icon";
+    icon.innerHTML = kindIcon("audio");
+    player.appendChild(icon);
   }
-  return event.clientY >= rect.bottom - 48;
+  player.appendChild(media);
+
+  const overlay = document.createElement("div");
+  overlay.className = "media-library__preview-controls";
+  overlay.innerHTML = `
+    <button type="button" class="control-button" data-library-preview-play aria-label="Play">
+      <svg viewBox="0 0 24 24">${LIBRARY_PREVIEW_PLAY_ICON}</svg>
+    </button>
+    <span class="time-display" data-library-preview-current></span>
+    <input type="range" min="0" max="100" value="0" step="0.1" class="timeline-slider" data-library-preview-timeline aria-label="Seek">
+    <span class="time-display" data-library-preview-duration></span>
+  `;
+  player.appendChild(overlay);
+
+  const playBtn = overlay.querySelector("[data-library-preview-play]");
+  const playIcon = playBtn.querySelector("svg");
+  const currentEl = overlay.querySelector("[data-library-preview-current]");
+  const durationEl = overlay.querySelector("[data-library-preview-duration]");
+  const timeline = overlay.querySelector("[data-library-preview-timeline]");
+  bindTransportTimeDisplay(currentEl);
+  bindTransportTimeDisplay(durationEl);
+
+  let dragging = false;
+  const paint = () => {
+    const duration = Number.isFinite(media.duration) && media.duration > 0 ? media.duration : 0;
+    const current = Number.isFinite(media.currentTime) ? media.currentTime : 0;
+    paintTransportTimeDisplay(currentEl, current);
+    paintTransportTimeDisplay(durationEl, duration);
+    if (!dragging) {
+      timeline.value = duration > 0 ? String((current / duration) * 100) : "0";
+      timeline.disabled = duration <= 0;
+    }
+    playIcon.innerHTML = media.paused ? LIBRARY_PREVIEW_PLAY_ICON : LIBRARY_PREVIEW_PAUSE_ICON;
+    playBtn.setAttribute("aria-label", media.paused ? "Play" : "Pause");
+  };
+
+  playBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (media.paused) void media.play().catch(() => {});
+    else media.pause();
+  });
+  timeline.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+    dragging = true;
+  });
+  timeline.addEventListener("input", () => {
+    const duration = media.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return;
+    media.currentTime = (Number(timeline.value) / 100) * duration;
+    paintTransportTimeDisplay(currentEl, media.currentTime);
+  });
+  timeline.addEventListener("change", () => {
+    dragging = false;
+    paint();
+  });
+  media.addEventListener("timeupdate", paint);
+  media.addEventListener("loadedmetadata", paint);
+  media.addEventListener("durationchange", paint);
+  media.addEventListener("play", paint);
+  media.addEventListener("pause", paint);
+  media.addEventListener("ended", paint);
+  paint();
+  return player;
 }
 
 function markPreviewMediaDraggable(media, item) {
@@ -700,19 +775,19 @@ function previewNode(item) {
   if (item.kind === "video") {
     const video = document.createElement("video");
     video.src = bridge.pathToMediaUrl(item.localPath, item.contentIdentity);
-    video.controls = true;
+    video.controls = false;
     video.preload = "metadata";
     video.disablePictureInPicture = true;
     markPreviewMediaDraggable(video, item);
-    return video;
+    return bindLibraryPreviewTransport(video);
   }
   if (item.kind === "audio") {
     const audio = document.createElement("audio");
     audio.src = bridge.pathToMediaUrl(item.localPath, item.contentIdentity);
-    audio.controls = true;
+    audio.controls = false;
     audio.preload = "metadata";
     markPreviewMediaDraggable(audio, item);
-    return audio;
+    return bindLibraryPreviewTransport(audio, { audio: true });
   }
   const wrapper = document.createElement("div");
   wrapper.innerHTML = kindIcon(item.kind);
@@ -1091,19 +1166,19 @@ function bindEvents(workspace) {
     bridge.showMediaWorkspace?.();
   });
   element("mediaLibraryPreview")?.addEventListener("pointerdown", (event) => {
-    const media = event.target.closest("video, audio");
-    if (!media || !element("mediaLibraryPreview")?.contains(media)) return;
-    media.draggable = !isLibraryPreviewControlPointer(media, event);
+    const media = event.currentTarget.querySelector("video, audio");
+    if (!media) return;
+    media.draggable = !isLibraryPreviewControlPointer(event);
   }, true);
   element("mediaLibraryPreview")?.addEventListener("dragstart", (event) => {
     const preview = element("mediaLibraryPreview");
-    const media = event.target.closest("img, video, audio");
+    const media = preview?.querySelector("img, video, audio");
     const item = selectedItem();
-    if (!preview || !canDragLibraryPreviewItem(item)) {
+    if (!preview || !canDragLibraryPreviewItem(item) || isLibraryPreviewControlPointer(event)) {
       event.preventDefault();
       return;
     }
-    if (event.target !== preview && !media) {
+    if (event.target !== preview && event.target !== media && !event.target.closest?.(".media-library__preview-player, .media-library__preview-audio-icon")) {
       event.preventDefault();
       return;
     }
@@ -1122,8 +1197,15 @@ function bindEvents(workspace) {
       mediaLibraryDragConsumedClick = false;
       return;
     }
-    if (isInspecting()) return;
-    if (event.target.closest(".media-library__presentation-controls, button, input, audio")) return;
+    if (event.target.closest(".media-library__preview-controls, .media-library__presentation-controls, button, input")) return;
+    if (isInspecting()) {
+      const media = event.currentTarget.querySelector("video, audio");
+      if (media) {
+        if (media.paused) void media.play().catch(() => {});
+        else media.pause();
+      }
+      return;
+    }
     enterInspect();
   });
   element("mediaLibraryCancelPickerBtn")?.addEventListener("click", () => finishPicker(null));
