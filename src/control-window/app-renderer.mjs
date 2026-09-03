@@ -629,6 +629,8 @@ import {
 import {
   configureMediaLibraryWorkspace,
   hideMediaLibraryWorkspace,
+  hideMediaLibraryWorkspaceForSchedulePreview,
+  mediaLibraryDragIsActive,
   mediaLibraryItemIdFromDataTransfer,
   openMediaLibraryPicker,
   recordScheduledMediaPaths,
@@ -921,6 +923,8 @@ function attachElectronBridge() {
     pathToMediaUrl,
     addToSchedule: applyDroppedMediaPaths,
     showToast: showGnomeToast,
+    showMediaWorkspace,
+    revealSchedulePreviewForLibraryPath,
   });
 
   globalThis.invoke = invoke;
@@ -3075,9 +3079,11 @@ async function onQueueItemActivate(index) {
     const activateIndex = index;
     const item = mediaQueue[activateIndex];
     await clearLowerThirdForUnsupportedMediaSource(item);
+    hideMediaLibraryWorkspaceForSchedulePreview();
     if (!isQueueItemBible(item)) hideBibleWorkspace();
     if (!isQueueItemSong(item) || isQueueItemDeck(item)) hideSongsWorkspace();
     if (!isQueueItemDeck(item)) hideSlidesWorkspace();
+    syncPreviewStackSurface();
     if (previewCueIndex >= 0) {
       clearPreviewCue();
     }
@@ -3097,7 +3103,25 @@ async function onQueueItemActivate(index) {
     return;
   }
 
+  hideMediaLibraryWorkspaceForSchedulePreview();
+  syncPreviewStackSurface();
   await loadQueueItemIntoPreviewCue(index);
+}
+
+function revealSchedulePreviewForLibraryPath(localPath) {
+  if (!localPath) return false;
+  const normalized = normalizeMediaPathForCompare(localPath);
+  if (!normalized) return false;
+  const candidates = [selectedQueueAnchorIndex, currentQueueIndex, previewCueIndex];
+  for (const index of candidates) {
+    if (!queueIndexInRange(index)) continue;
+    if (normalizeMediaPathForCompare(mediaQueue[index]?.path) !== normalized) continue;
+    hideMediaLibraryWorkspaceForSchedulePreview();
+    syncPreviewStackSurface();
+    void onQueueItemActivate(index);
+    return true;
+  }
+  return false;
 }
 
 async function pauseQueuePresentationAtBoundary(index) {
@@ -4395,6 +4419,7 @@ export {
   mediaPlaybackEndedPending,
   mediaQueue,
   hideMediaLibraryWorkspace,
+  mediaLibraryDragIsActive,
   mediaLibraryItemIdFromDataTransfer,
   openMediaLibraryPicker,
   mergeSongRenderState,

@@ -59,6 +59,7 @@ import {
   loadQueueItemIntoControlWindow,
   loadQueueItemIntoPreviewCue,
   manualBoundaryPauseIndex,
+  mediaLibraryDragIsActive,
   mediaLibraryItemIdFromDataTransfer,
   mediaQueue,
   nextPlayableQueueIndexAfter,
@@ -596,12 +597,13 @@ function enqueuePathsFromFilePicker(paths, options = {}) {
   );
   void (async () => {
     try {
-      if (
-        ((!isActiveMediaWindow() &&
-          !isLocalAppWindowPresentationActive()) ||
-          biblePresentationLive) &&
-        mediaQueue[firstNewIndex]
-      ) {
+        if (
+          !options.preserveWorkspace &&
+          ((!isActiveMediaWindow() &&
+            !isLocalAppWindowPresentationActive()) ||
+            biblePresentationLive) &&
+          mediaQueue[firstNewIndex]
+        ) {
         // The newly-added row is already painted as selected. Load it before
         // the slower integrity-baseline work so selection and preview cannot
         // visibly disagree while a large video is being inspected.
@@ -633,7 +635,7 @@ async function extractAndFilterDroppedMediaPaths(dataTransfer) {
 function applyDroppedMediaPaths(paths, options = {}) {
   if (!paths || paths.length === 0) return;
   if (currentMode !== MEDIAPLAYER) setSBFormMediaPlayer();
-  showMediaWorkspace();
+  if (!options.preserveWorkspace) showMediaWorkspace();
   enqueuePathsFromFilePicker(paths, options);
   saveMediaFile();
   invoke("remember-media-folder", paths).catch((err) => {
@@ -884,6 +886,7 @@ function installMediaQueueListDelegation() {
   const list = document.getElementById("mediaQueueList");
   if (!list || list.dataset.queueDelegation === "1") return;
   list.dataset.queueDelegation = "1";
+  const scheduleDropRoot = list.closest(".queue-section") || list;
   const queueRowActionSelector =
     "[data-queue-remove], [data-queue-reload-update], [data-queue-keep-update], [data-queue-apply-update]";
   list.addEventListener("contextmenu", (event) => {
@@ -1029,10 +1032,10 @@ function installMediaQueueListDelegation() {
     });
   });
 
-  list.addEventListener("dragover", (e) => {
+  scheduleDropRoot.addEventListener("dragover", (e) => {
     const hasInternalQueueDrag = queueDragFromIndex >= 0;
     const hasSongDrag = Boolean(songDragSongId);
-    const hasMediaLibraryDrag = Boolean(mediaLibraryItemIdFromDataTransfer(e.dataTransfer));
+    const hasMediaLibraryDrag = mediaLibraryDragIsActive(e.dataTransfer);
     const hasBibleVerseDrag =
       Boolean(bibleVerseDragPayload) ||
       dataTransferHasType(e.dataTransfer, BIBLE_VERSE_DRAG_MIME);
@@ -1068,10 +1071,10 @@ function installMediaQueueListDelegation() {
     row.classList.add("queue-item-drag-over");
   });
 
-  list.addEventListener("dragleave", (e) => {
+  scheduleDropRoot.addEventListener("dragleave", (e) => {
     if (
       queueDragFromIndex < 0 &&
-      (!e.relatedTarget || !list.contains(e.relatedTarget))
+      (!e.relatedTarget || !scheduleDropRoot.contains(e.relatedTarget))
     ) {
       hideQueueDropIndicator();
     }
@@ -1087,7 +1090,7 @@ function installMediaQueueListDelegation() {
     }
   });
 
-  list.addEventListener("drop", async (e) => {
+  scheduleDropRoot.addEventListener("drop", async (e) => {
     const hasInternalQueueDrag = queueDragFromIndex >= 0;
     const droppedSongId = songDragSongId;
     const droppedBibleVersePayload = bibleVerseDragPayloadFromDataTransfer(e.dataTransfer);
@@ -1103,7 +1106,7 @@ function installMediaQueueListDelegation() {
           showGnomeToast("This media item is not available");
           return;
         }
-        applyDroppedMediaPaths([item.localPath], { insertIndex });
+        applyDroppedMediaPaths([item.localPath], { insertIndex, preserveWorkspace: true });
       } catch (err) {
         console.error("Failed to schedule Media item:", err);
         showGnomeToast("Failed to add media to the schedule");

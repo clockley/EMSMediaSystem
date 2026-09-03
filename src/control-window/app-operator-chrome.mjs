@@ -466,6 +466,9 @@ function setupCustomMediaControls() {
     if (currentMode !== MEDIAPLAYER) {
       return false;
     }
+    if (isPreviewWorkspaceOverlayVisible()) {
+      return false;
+    }
     if (!overlay || overlay.style.display === "none") {
       return false;
     }
@@ -559,7 +562,9 @@ function setupCustomMediaControls() {
     return false;
   };
   const controlMediaTimelineSeekable = (mediaEl) =>
-    !controlMediaHidesTimeline(mediaEl) && controlMediaDuration(mediaEl) > 0;
+    !isPreviewWorkspaceOverlayVisible() &&
+    !controlMediaHidesTimeline(mediaEl) &&
+    controlMediaDuration(mediaEl) > 0;
   const setTimelineControlsHidden = (hidden) => {
     if (overlay) {
       overlay.dataset.timelineHidden = hidden ? "true" : "false";
@@ -618,11 +623,12 @@ function setupCustomMediaControls() {
     timeline.max = 100;
 
     const duration = controlMediaDuration(mediaEl);
+    const overlayBlocksTransport = isPreviewWorkspaceOverlayVisible();
     const hidesTimeline = controlMediaHidesTimeline(mediaEl);
-    const hasSeekableMedia = duration > 0 && !hidesTimeline;
+    const hasSeekableMedia = duration > 0 && !hidesTimeline && !overlayBlocksTransport;
     const currentTime = controlMediaCurrentTime(mediaEl);
 
-    setTimelineControlsHidden(hidesTimeline);
+    setTimelineControlsHidden(hidesTimeline || overlayBlocksTransport);
     timeline.value =
       hasSeekableMedia ? (currentTime / duration) * 100 : 0;
     timeline.disabled = !hasSeekableMedia;
@@ -634,14 +640,18 @@ function setupCustomMediaControls() {
     paintControlPlayPauseIcon(mediaEl);
 
     if (overlay) {
-      overlay.style.display = "";
-      overlay.style.visibility =
-        hasSeekableMedia ||
-        hidesTimeline ||
-        mediaIsNetworkTransport(mediaEl) ||
-        mediaIsNetworkCue(mediaEl)
-          ? "visible"
-          : "hidden";
+      if (overlayBlocksTransport) {
+        overlay.style.visibility = "hidden";
+      } else {
+        overlay.style.display = "";
+        overlay.style.visibility =
+          hasSeekableMedia ||
+          hidesTimeline ||
+          mediaIsNetworkTransport(mediaEl) ||
+          mediaIsNetworkCue(mediaEl)
+            ? "visible"
+            : "hidden";
+      }
     }
 
     updateLoopControlState();
@@ -2299,6 +2309,7 @@ async function loadOpMode(mode) {
       // media-type filtering / validation to the main process via IPC.
       document.addEventListener("dragover", (event) => event.preventDefault());
       document.addEventListener("dragstart", (event) => {
+        if (event.target.closest?.("[data-media-item-id], #mediaLibraryPreview")) return;
         if (event.target.tagName === "IMG" || event.target.tagName === "A") {
           event.preventDefault();
         }

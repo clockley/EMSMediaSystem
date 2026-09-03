@@ -471,6 +471,8 @@ function showMediaWorkspace() {
   showMediaLibraryWorkspace();
   syncPreviewStackSurface();
   document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+  setMediaCountdownOverlayVisible(false);
+  setMediaCountdownText("");
   navigationState.transition(NAVIGATION_STATES.MEDIA);
 }
 

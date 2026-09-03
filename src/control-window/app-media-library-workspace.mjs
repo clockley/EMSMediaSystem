@@ -9,7 +9,9 @@ import {
   waitForNextFrame,
 } from "../shared/app-pptx-utils.mjs";
 
-const MEDIA_ITEM_DRAG_TYPE = "application/x-ems-media-library-item";
+export const MEDIA_ITEM_DRAG_TYPE = "application/x-ems-media-library-item";
+let mediaLibraryDragItemId = "";
+let mediaLibraryDragConsumedClick = false;
 const PAGE_SIZE = 60;
 const MEDIA_LIBRARY_NARROW_MAX = 560;
 const MEDIA_LIBRARY_MEDIUM_MAX = 840;
@@ -17,7 +19,6 @@ const MEDIA_LIBRARY_MEDIUM_MAX = 840;
 let bridge = null;
 let installed = false;
 let refreshTimer = null;
-let dragDepth = 0;
 let pickerRequest = null;
 let posterObserver = null;
 let layoutObserver = null;
@@ -31,6 +32,7 @@ let presentationViewerHost = null;
 let presentationResizeObserver = null;
 let presentationSlideIndex = 0;
 let presentationSlideCount = 0;
+let returnToLibraryAfterPreview = false;
 let scrollRestoreToken = 0;
 const pendingPreviewActivityIds = new Set();
 const state = {
@@ -40,7 +42,6 @@ const state = {
   parentId: "",
   folders: [],
   query: "",
-  view: "grid",
   items: [],
   total: 0,
   hasMore: false,
@@ -325,11 +326,12 @@ function renderSources() {
     button.dataset.mediaSource = source.id;
     button.className = source.id === state.sourceId ? "is-active" : "";
     button.setAttribute("aria-current", source.id === state.sourceId ? "page" : "false");
-    button.innerHTML = `${sourceIcon(source)}<span></span><i class="media-library__source-status" data-status="${source.status}" title="${source.status}"></i>`;
+    button.innerHTML = `${sourceIcon(source)}<span></span><i class="media-library__source-status" data-status="${source.status}"></i>`;
     button.querySelector("span").textContent = source.displayName;
+    const statusLabel = source.status === "offline" ? "Offline" : source.status === "indexing" ? "Indexing" : "Ready";
     const status = button.querySelector(".media-library__source-status");
-    status.setAttribute("aria-label", `Source status: ${source.status}`);
-    status.textContent = source.status === "offline" ? "Offline" : source.status === "indexing" ? "Indexing" : "";
+    status.title = statusLabel;
+    status.setAttribute("aria-label", `Source status: ${statusLabel}`);
     row.appendChild(button);
     if (source.id !== "added-files") {
       const remove = document.createElement("button");
@@ -351,11 +353,13 @@ function renderSources() {
   element("mediaLibraryAllCount").textContent = state.snapshot.counts?.all ?? "";
   const indexing = state.snapshot.sources.filter((source) => source.status === "indexing");
   const offline = state.snapshot.sources.filter((source) => source.status === "offline");
-  element("mediaLibraryIndexStatus").textContent = indexing.length
+  const indexStatus = element("mediaLibraryIndexStatus");
+  indexStatus.textContent = indexing.length
     ? `Indexing ${indexing.map((source) => source.displayName).join(", ")}…`
     : offline.length
       ? `${offline.length} source${offline.length === 1 ? " is" : "s are"} offline`
       : "";
+  indexStatus.hidden = !indexStatus.textContent;
 }
 
 function folderPathSegments() {
@@ -626,18 +630,6 @@ function setKind(kind) {
   void runQuery();
 }
 
-function setView(view) {
-  state.view = view === "list" ? "list" : "grid";
-  element("mediaLibraryWorkspace").dataset.view = state.view;
-  for (const [id, value] of [["mediaLibraryGridBtn", "grid"], ["mediaLibraryListBtn", "list"]]) {
-    const button = element(id);
-    const active = state.view === value;
-    button?.classList.toggle("is-active", active);
-    button?.setAttribute("aria-pressed", String(active));
-  }
-  try { localStorage.setItem("emsMediaLibraryView", state.view); } catch {}
-}
-
 async function addSource() {
   try {
     const result = await bridge.invoke("media-library:add-source-dialog");
@@ -654,6 +646,44 @@ async function addSource() {
   }
 }
 
+function canDragLibraryPreviewItem(item) {
+  return Boolean(
+    item &&
+    item.availability === MEDIA_AVAILABILITY.available &&
+    item.localPath &&
+    (item.kind === "image" || item.kind === "video" || item.kind === "audio"),
+  );
+}
+
+function beginMediaLibraryItemDrag(event, item) {
+  if (!item || item.availability !== MEDIA_AVAILABILITY.available || !item.localPath || !event.dataTransfer) {
+    event.preventDefault();
+    return false;
+  }
+  mediaLibraryDragItemId = item.id;
+  mediaLibraryDragConsumedClick = true;
+  event.stopPropagation();
+  event.dataTransfer.effectAllowed = "copy";
+  event.dataTransfer.setData(MEDIA_ITEM_DRAG_TYPE, item.id);
+  event.dataTransfer.setData("text/plain", item.displayName);
+  return true;
+}
+
+function isLibraryPreviewControlPointer(media, event) {
+  const rect = media.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  if (media.tagName === "AUDIO") {
+    const x = (event.clientX - rect.left) / rect.width;
+    return x > 0.14 && x < 0.82;
+  }
+  return event.clientY >= rect.bottom - 48;
+}
+
+function markPreviewMediaDraggable(media, item) {
+  media.draggable = true;
+  media.dataset.mediaItemId = item.id;
+}
+
 function previewNode(item) {
   if (item.availability !== MEDIA_AVAILABILITY.available || !item.localPath) {
     const wrapper = document.createElement("div");
@@ -664,6 +694,7 @@ function previewNode(item) {
     const image = document.createElement("img");
     image.alt = `Preview of ${item.displayName}`;
     image.src = bridge.pathToMediaUrl(item.localPath, item.contentIdentity);
+    markPreviewMediaDraggable(image, item);
     return image;
   }
   if (item.kind === "video") {
@@ -672,6 +703,7 @@ function previewNode(item) {
     video.controls = true;
     video.preload = "metadata";
     video.disablePictureInPicture = true;
+    markPreviewMediaDraggable(video, item);
     return video;
   }
   if (item.kind === "audio") {
@@ -679,6 +711,7 @@ function previewNode(item) {
     audio.src = bridge.pathToMediaUrl(item.localPath, item.contentIdentity);
     audio.controls = true;
     audio.preload = "metadata";
+    markPreviewMediaDraggable(audio, item);
     return audio;
   }
   const wrapper = document.createElement("div");
@@ -852,6 +885,15 @@ function leaveInspect() {
 
 function showDetails(item, { focus = false, inspect = false } = {}) {
   if (!item) return;
+  if (mediaLibraryDragItemId) return;
+  if (item.localPath && bridge.revealSchedulePreviewForLibraryPath?.(item.localPath)) {
+    state.selectedId = item.id;
+    syncItemHighlights();
+    const details = element("mediaLibraryDetails");
+    if (details) details.hidden = true;
+    element("mediaLibraryWorkspace")?.classList.remove("is-inspecting");
+    return;
+  }
   const details = element("mediaLibraryDetails");
   const scrollAnchor = details?.hidden ? captureMediaScrollAnchor(item.id) : null;
   const selectionChanged = state.selectedId !== item.id;
@@ -867,14 +909,13 @@ function showDetails(item, { focus = false, inspect = false } = {}) {
   if (selectionChanged) resetDetailsScroll(details);
   const preview = element("mediaLibraryPreview");
   preview.replaceChildren(previewNode(item));
+  preview.draggable = canDragLibraryPreviewItem(item);
+  if (preview.draggable) preview.dataset.mediaItemId = item.id;
+  else delete preview.dataset.mediaItemId;
   if (item.kind === "presentation" && item.availability === MEDIA_AVAILABILITY.available && item.localPath) {
     void loadPresentationPreview(item, preview);
   }
   element("mediaLibraryDetailsName").textContent = item.displayName;
-  const detailsMeta = element("mediaLibraryDetailsMeta");
-  const meta = itemMeta(item);
-  detailsMeta.textContent = meta;
-  detailsMeta.hidden = !meta;
   const addButton = element("mediaLibraryAddScheduleBtn");
   addButton.disabled = item.availability !== MEDIA_AVAILABILITY.available;
   addButton.dataset.mediaItemId = item.id;
@@ -894,6 +935,10 @@ function closeDetails({ preserveScroll = true } = {}) {
   const details = element("mediaLibraryDetails");
   const preview = element("mediaLibraryPreview");
   preview?.querySelectorAll("video, audio").forEach((media) => media.pause());
+  if (preview) {
+    preview.draggable = false;
+    delete preview.dataset.mediaItemId;
+  }
   if (details) details.hidden = true;
   syncItemHighlights();
   restoreMediaScrollAnchorAfterLayout(scrollAnchor);
@@ -1011,26 +1056,6 @@ async function handlePreviewDrop(dataTransfer) {
   if (item) showDetails(item, { focus: true });
 }
 
-function updateDropHint(dataTransfer, target) {
-  const items = Array.from(dataTransfer?.items || []);
-  const entries = items.map((item) => item.webkitGetAsEntry?.()).filter(Boolean);
-  const folders = entries.filter((entry) => entry.isDirectory);
-  const files = entries.filter((entry) => entry.isFile);
-  const hint = element("mediaLibraryDropHint");
-  const title = element("mediaLibraryDropTitle");
-  if (!hint) return;
-  if (target?.closest?.("#mediaLibraryDetails")) {
-    title.textContent = "Drop to preview temporarily";
-    hint.textContent = "The Schedule and library will not change";
-    return;
-  }
-  title.textContent = "Drop to keep in Media";
-  if (folders.length === 1 && files.length === 0) hint.textContent = `Add “${folders[0].name}” as a source`;
-  else if (folders.length > 0) hint.textContent = `Add ${folders.length} folders as sources and keep supported files`;
-  else if (items.length === 1) hint.textContent = `Keep “${items[0].getAsFile?.()?.name || "this file"}” under Added Files`;
-  else hint.textContent = `Keep ${items.length || "these"} files under Added Files`;
-}
-
 function bindEvents(workspace) {
   workspace.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
@@ -1060,11 +1085,43 @@ function bindEvents(workspace) {
     closeDetails({ preserveScroll: false });
     workspace.classList.add("is-browsing");
   });
-  element("mediaLibraryGridBtn")?.addEventListener("click", () => setView("grid"));
-  element("mediaLibraryListBtn")?.addEventListener("click", () => setView("list"));
   element("mediaLibraryCloseDetails")?.addEventListener("click", closeDetails);
   element("mediaLibraryLeaveInspectBtn")?.addEventListener("click", leaveInspect);
+  element("mediaLibraryReturnBtn")?.addEventListener("click", () => {
+    bridge.showMediaWorkspace?.();
+  });
+  element("mediaLibraryPreview")?.addEventListener("pointerdown", (event) => {
+    const media = event.target.closest("video, audio");
+    if (!media || !element("mediaLibraryPreview")?.contains(media)) return;
+    media.draggable = !isLibraryPreviewControlPointer(media, event);
+  }, true);
+  element("mediaLibraryPreview")?.addEventListener("dragstart", (event) => {
+    const preview = element("mediaLibraryPreview");
+    const media = event.target.closest("img, video, audio");
+    const item = selectedItem();
+    if (!preview || !canDragLibraryPreviewItem(item)) {
+      event.preventDefault();
+      return;
+    }
+    if (event.target !== preview && !media) {
+      event.preventDefault();
+      return;
+    }
+    if (!beginMediaLibraryItemDrag(event, item)) return;
+    (media || preview).classList.add("is-dragging");
+  });
+  element("mediaLibraryPreview")?.addEventListener("dragend", () => {
+    mediaLibraryDragItemId = "";
+    element("mediaLibraryPreview")?.classList.remove("is-dragging");
+    element("mediaLibraryPreview")?.querySelectorAll(".is-dragging").forEach((media) => {
+      media.classList.remove("is-dragging");
+    });
+  });
   element("mediaLibraryPreview")?.addEventListener("click", (event) => {
+    if (mediaLibraryDragConsumedClick) {
+      mediaLibraryDragConsumedClick = false;
+      return;
+    }
     if (isInspecting()) return;
     if (event.target.closest(".media-library__presentation-controls, button, input, audio")) return;
     enterInspect();
@@ -1134,6 +1191,10 @@ function bindEvents(workspace) {
     }
     const itemButton = event.target.closest("[data-media-item-id]");
     if (itemButton && itemButton.closest("#mediaLibraryItems")) {
+      if (mediaLibraryDragConsumedClick) {
+        mediaLibraryDragConsumedClick = false;
+        return;
+      }
       state.highlightedIds.clear();
       showDetails(state.items.find((item) => item.id === itemButton.dataset.mediaItemId));
     }
@@ -1172,24 +1233,22 @@ function bindEvents(workspace) {
   element("mediaLibraryItems")?.addEventListener("dragstart", (event) => {
     const button = event.target.closest("[data-media-item-id]");
     const item = state.items.find((entry) => entry.id === button?.dataset.mediaItemId);
-    if (!item || !event.dataTransfer) return;
-    event.dataTransfer.effectAllowed = "copy";
-    event.dataTransfer.setData(MEDIA_ITEM_DRAG_TYPE, item.id);
-    event.dataTransfer.setData("text/plain", item.displayName);
+    if (!beginMediaLibraryItemDrag(event, item)) return;
+    button.classList.add("is-dragging");
   });
-  workspace.addEventListener("dragenter", (event) => {
-    if (!event.dataTransfer?.types || !Array.from(event.dataTransfer.types).includes("Files")) return;
-    event.preventDefault(); event.stopPropagation(); dragDepth += 1; workspace.classList.add("is-drop-target"); updateDropHint(event.dataTransfer, event.target);
+  element("mediaLibraryItems")?.addEventListener("dragend", () => {
+    mediaLibraryDragItemId = "";
+    element("mediaLibraryItems")?.querySelectorAll(".is-dragging").forEach((card) => {
+      card.classList.remove("is-dragging");
+    });
   });
   workspace.addEventListener("dragover", (event) => {
     if (!event.dataTransfer?.types || !Array.from(event.dataTransfer.types).includes("Files")) return;
-    event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "copy"; updateDropHint(event.dataTransfer, event.target);
-  });
-  workspace.addEventListener("dragleave", (event) => {
-    event.stopPropagation(); dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) workspace.classList.remove("is-drop-target");
+    event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "copy";
   });
   workspace.addEventListener("drop", (event) => {
-    event.preventDefault(); event.stopPropagation(); dragDepth = 0; workspace.classList.remove("is-drop-target");
+    event.preventDefault(); event.stopPropagation();
+    if (mediaLibraryDragIsActive(event.dataTransfer)) return;
     const operation = event.target.closest?.("#mediaLibraryDetails")
       ? handlePreviewDrop(event.dataTransfer)
       : handleExternalDrop(event.dataTransfer);
@@ -1205,8 +1264,6 @@ export function installMediaLibraryWorkspace() {
   const workspace = element("mediaLibraryWorkspace");
   if (!workspace || installed || !bridge) return;
   installed = true;
-  try { state.view = localStorage.getItem("emsMediaLibraryView") === "list" ? "list" : "grid"; } catch {}
-  setView(state.view);
   bindEvents(workspace);
   layoutObserver = new ResizeObserver(([entry]) => {
     syncMediaLibraryLayout(entry.contentRect.width);
@@ -1230,11 +1287,45 @@ export function installMediaLibraryWorkspace() {
   void refresh({ preserveScroll: false });
 }
 
+function syncMediaLibraryReturnButton() {
+  const button = element("mediaLibraryReturnBtn");
+  if (!button) return;
+  const libraryVisible = element("mediaLibraryWorkspace")?.hidden === false;
+  button.hidden = libraryVisible || !returnToLibraryAfterPreview;
+}
+
+export function isMediaLibraryReturnable() {
+  return returnToLibraryAfterPreview;
+}
+
+export function hideMediaLibraryWorkspaceForSchedulePreview() {
+  const visible = element("mediaLibraryWorkspace")?.hidden === false;
+  hideMediaLibraryWorkspace({ returnable: visible || returnToLibraryAfterPreview });
+}
+
+function disableMediaWorkspaceScrubber() {
+  document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
+  const timeline = document.getElementById("timeline");
+  if (timeline) timeline.disabled = true;
+}
+
+function hideMediaLibraryCountdown() {
+  const countdown = document.getElementById("mediaCntDn");
+  if (!countdown) return;
+  countdown.dataset.countdownAllowed = "false";
+  countdown.hidden = true;
+  countdown.classList.remove("is-active");
+}
+
 export function showMediaLibraryWorkspace() {
   const workspace = element("mediaLibraryWorkspace");
   if (!workspace) return;
   if (pickerRequest) finishPicker(null);
+  returnToLibraryAfterPreview = false;
   workspace.hidden = false;
+  disableMediaWorkspaceScrubber();
+  hideMediaLibraryCountdown();
+  syncMediaLibraryReturnButton();
   element("previewEmptyState")?.setAttribute("hidden", "");
   element("mediaLibraryCancelPickerBtn")?.setAttribute("hidden", "");
   element("mediaLibraryFilters")?.querySelectorAll("[data-media-kind]").forEach((button) => { button.hidden = false; });
@@ -1244,13 +1335,15 @@ export function showMediaLibraryWorkspace() {
   scheduleRefresh(0);
 }
 
-export function hideMediaLibraryWorkspace() {
+export function hideMediaLibraryWorkspace({ returnable = false } = {}) {
   const workspace = element("mediaLibraryWorkspace");
   if (!workspace) return;
+  returnToLibraryAfterPreview = returnable === true;
   workspace.classList.remove("is-inspecting");
   workspace.hidden = true;
   disposePresentationPreview();
   workspace.querySelectorAll("video, audio").forEach((media) => media.pause());
+  syncMediaLibraryReturnButton();
 }
 
 function finishPicker(item) {
@@ -1276,6 +1369,8 @@ export function openMediaLibraryPicker({ title = "Choose Media", kinds = ["image
     state.kind = "";
     const workspace = element("mediaLibraryWorkspace");
     workspace.hidden = false;
+    disableMediaWorkspaceScrubber();
+    hideMediaLibraryCountdown();
     workspace.classList.remove("is-browsing");
     element("mediaLibraryTitle").textContent = title;
     element("mediaLibraryCancelPickerBtn").hidden = false;
@@ -1289,8 +1384,13 @@ export function openMediaLibraryPicker({ title = "Choose Media", kinds = ["image
   });
 }
 
+export function mediaLibraryDragIsActive(dataTransfer) {
+  if (mediaLibraryDragItemId) return true;
+  return Boolean(dataTransfer?.types && Array.from(dataTransfer.types).includes(MEDIA_ITEM_DRAG_TYPE));
+}
+
 export function mediaLibraryItemIdFromDataTransfer(dataTransfer) {
-  return dataTransfer?.getData?.(MEDIA_ITEM_DRAG_TYPE) || "";
+  return mediaLibraryDragItemId || dataTransfer?.getData?.(MEDIA_ITEM_DRAG_TYPE) || "";
 }
 
 export async function resolveMediaLibraryDragItem(itemId) {

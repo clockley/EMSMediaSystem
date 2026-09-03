@@ -25,11 +25,8 @@ export const TAB_PANEL_STREAMS_ID = "tab-panel-streams";
 
 function mediaLibraryWorkspaceMarkup() {
   return `
-    <section id="mediaLibraryWorkspace" class="media-library" aria-label="Media" data-view="grid">
+    <section id="mediaLibraryWorkspace" class="media-library" aria-label="Media">
       <aside id="mediaLibraryBrowsePane" class="media-library__browse" aria-label="Browse Media">
-        <div class="media-library__browse-header">
-          <strong>Browse</strong>
-        </div>
         <nav id="mediaLibrarySmartViews" class="media-library__nav" aria-label="Library views">
           <button type="button" class="is-active" data-media-source="all" aria-current="page">
             <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
@@ -40,9 +37,14 @@ function mediaLibraryWorkspaceMarkup() {
             <span>Recent</span>
           </button>
         </nav>
-        <div class="media-library__source-heading"><span>Sources</span><button id="mediaLibraryAddSourceCompactBtn" type="button" aria-label="Add Media Folder" title="Add Media Folder">+</button></div>
+        <div class="media-library__source-heading">
+          <span>Sources</span>
+          <button id="mediaLibraryAddSourceCompactBtn" class="media-library__icon-button" type="button" aria-label="Add Media Folder" title="Add Media Folder">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+          </button>
+        </div>
         <nav id="mediaLibrarySources" class="media-library__nav media-library__sources" aria-label="Media sources"></nav>
-        <div id="mediaLibraryIndexStatus" class="media-library__index-status" role="status" aria-live="polite"></div>
+        <div id="mediaLibraryIndexStatus" class="media-library__index-status" role="status" aria-live="polite" hidden></div>
       </aside>
       <div class="media-library__content">
         <header class="media-library__header">
@@ -57,14 +59,6 @@ function mediaLibraryWorkspaceMarkup() {
             <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg>
             <input id="mediaLibrarySearch" type="search" placeholder="Search Media" autocomplete="off" aria-label="Search Media">
           </label>
-          <div class="media-library__view-controls" role="group" aria-label="View">
-            <button id="mediaLibraryGridBtn" type="button" class="is-active" aria-label="Grid view" aria-pressed="true">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5"/><rect x="9" y="2" width="5" height="5"/><rect x="2" y="9" width="5" height="5"/><rect x="9" y="9" width="5" height="5"/></svg>
-            </button>
-            <button id="mediaLibraryListBtn" type="button" aria-label="List view" aria-pressed="false">
-              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3h9M5 8h9M5 13h9"/><circle cx="2.5" cy="3" r=".5"/><circle cx="2.5" cy="8" r=".5"/><circle cx="2.5" cy="13" r=".5"/></svg>
-            </button>
-          </div>
           <button id="mediaLibraryCancelPickerBtn" class="pill-button secondary" type="button" hidden>Cancel</button>
           <button id="mediaLibraryAddSourceBtn" class="pill-button suggested-action" type="button">Add Media Folder</button>
         </header>
@@ -76,7 +70,6 @@ function mediaLibraryWorkspaceMarkup() {
           <button type="button" data-media-kind="presentation" aria-pressed="false">Presentations</button>
         </div>
         <nav id="mediaLibraryFolderBar" class="media-library__folder-bar" aria-label="Location" hidden></nav>
-        <div id="mediaLibraryDropTarget" class="media-library__drop-target" aria-hidden="true"><strong id="mediaLibraryDropTitle">Drop to keep in Media</strong><span id="mediaLibraryDropHint">Add files under Added Files, or add a folder as a source</span></div>
         <div id="mediaLibraryItems" class="media-library__items" role="listbox" aria-label="Media items" tabindex="0"></div>
         <div id="mediaLibraryEmpty" class="media-library__empty" role="status" hidden>
           <svg viewBox="0 0 64 64" aria-hidden="true"><path d="M8 18a4 4 0 0 1 4-4h14l6 6h20a4 4 0 0 1 4 4v26H8z"/><path d="M24 35h16M32 27v16"/></svg>
@@ -97,7 +90,6 @@ function mediaLibraryWorkspaceMarkup() {
         <div id="mediaLibraryDetailsBody" class="media-library__details-body">
           <div class="media-library__details-copy">
             <h2 id="mediaLibraryDetailsName"></h2>
-            <p id="mediaLibraryDetailsMeta"></p>
           </div>
         </div>
       </aside>
@@ -233,6 +225,10 @@ export function generateMediaFormHTML() {
     <div class="video-wrapper">
       <div id="previewStack" class="preview-stack" data-active-surface="live">
         ${mediaLibraryWorkspaceMarkup()}
+        <button id="mediaLibraryReturnBtn" class="media-library__return" type="button" hidden aria-label="Back to Media">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 3-5 5 5 5"/></svg>
+          <span>Media</span>
+        </button>
         <video id="preview" disablePictureInPicture></video>
         <!--
           Dedicated cue scrub element. The main #preview element used to be
