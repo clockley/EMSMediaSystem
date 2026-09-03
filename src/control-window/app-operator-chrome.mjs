@@ -80,6 +80,7 @@ import {
   handleMediaPreviewRtcSignal,
   handleMediaWindowClosed,
   handleMediaseek,
+  hideMediaLibraryWorkspace,
   handleOutputHoldShortcut,
   handlePlayPause,
   handlePlaybackState,
@@ -225,6 +226,7 @@ import {
   syncQueuePreviewMediaElements,
   syncShowNowBiblePresentation,
   syncSongLowerThirdForSection,
+  syncPreviewStackSurface,
   syncStreamRendererPreviewCapture,
   syncTrackedPreviewStartTime,
   takeQueueItemLive,
@@ -297,7 +299,12 @@ function installBrowseMediaLibraryButton() {
   if (!button || button.dataset.browseBound === "1") return;
   button.dataset.browseBound = "1";
   button.addEventListener("click", () => {
-    showMediaLibraryWorkspace();
+    if (isPreviewWorkspaceOverlayVisible() && document.getElementById("mediaLibraryWorkspace")?.hidden === false) {
+      hideMediaLibraryWorkspace();
+      syncPreviewStackSurface();
+    } else {
+      showMediaLibraryWorkspace();
+    }
   });
 }
 

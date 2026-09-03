@@ -271,7 +271,7 @@ test("Schedule selection pulses grey while Media library is open", async () => {
   assert.match(css, /@keyframes queue-selection-library-pulse/);
 });
 
-test("Browse Media button in the headerbar opens the media library", async () => {
+test("Browse Media button in the headerbar toggles the media library", async () => {
   const html = await readFile(new URL("../src/control-window/index.html", import.meta.url), "utf8");
   const template = await readFile(new URL("../src/shared/app-ui-templates.mjs", import.meta.url), "utf8");
   const workspace = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");
@@ -287,6 +287,9 @@ test("Browse Media button in the headerbar opens the media library", async () =>
   assert.match(chrome, /installBrowseMediaLibraryButton/);
   assert.match(chrome, /headerBrowseMediaButton/);
   assert.match(chrome, /showMediaLibraryWorkspace\(\)/);
+  assert.match(chrome, /hideMediaLibraryWorkspace\(\)/);
+  assert.match(workspace, /function syncBrowseMediaButton\(/);
+  assert.match(workspace, /libraryOpen \? "Preview" : "Browse Media"/);
   assert.match(workspace, /function hideMediaLibraryWorkspaceForSchedulePreview\(/);
   assert.match(workspace, /revealSchedulePreviewForLibraryPath/);
   assert.match(renderer, /function revealSchedulePreviewForLibraryPath\(/);

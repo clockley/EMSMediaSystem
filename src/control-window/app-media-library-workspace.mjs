@@ -1539,6 +1539,16 @@ export function installMediaLibraryWorkspace() {
 function syncScheduleSelectionForLibraryMode() {
   const libraryOpen = element("mediaLibraryWorkspace")?.hidden === false;
   document.querySelector(".queue-section")?.classList.toggle("is-media-library-open", Boolean(libraryOpen));
+  syncBrowseMediaButton(libraryOpen);
+}
+
+function syncBrowseMediaButton(libraryOpen) {
+  const button = document.getElementById("headerBrowseMediaButton");
+  if (!button) return;
+  const label = button.querySelector("span");
+  if (label) label.textContent = libraryOpen ? "Preview" : "Browse Media";
+  button.title = libraryOpen ? "Return to media preview" : "Browse media library";
+  button.setAttribute("aria-label", button.title);
 }
 
 export function hideMediaLibraryWorkspaceForSchedulePreview() {
