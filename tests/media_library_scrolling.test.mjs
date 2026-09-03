@@ -258,6 +258,15 @@ test("taking a schedule item live leaves Media browse and shows the presenting p
   assert.match(live, /syncPreviewStackSurface\(\)/);
 });
 
+test("Schedule selection pulses grey while Media library is open", async () => {
+  const workspace = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");
+  const css = await readFile(new URL("../src/main.css", import.meta.url), "utf8");
+  assert.match(workspace, /function syncScheduleSelectionForLibraryMode\(/);
+  assert.match(workspace, /is-media-library-open/);
+  assert.match(css, /\.queue-section\.is-media-library-open \.queue-item\.is-selected/);
+  assert.match(css, /@keyframes queue-selection-library-pulse/);
+});
+
 test("Media preview uses a GNOME back control and reuses the schedule player for the same file", async () => {
   const workspace = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");
   const renderer = await readFile(new URL("../src/control-window/app-renderer.mjs", import.meta.url), "utf8");
@@ -306,19 +315,46 @@ test("Schedule accepts drops from library cards, preview media, and the OS file 
   const workspace = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");
   const schedule = await readFile(new URL("../src/control-window/app-schedule-controller.mjs", import.meta.url), "utf8");
   const chrome = await readFile(new URL("../src/control-window/app-operator-chrome.mjs", import.meta.url), "utf8");
+  const css = await readFile(new URL("../src/main.css", import.meta.url), "utf8");
+  const previewDragStart = workspace.indexOf('element("mediaLibraryPreview")?.addEventListener("dragstart"');
+  const previewDragEnd = workspace.indexOf('element("mediaLibraryPreview")?.addEventListener("dragend"', previewDragStart);
+  const previewDrag = workspace.slice(previewDragStart, previewDragEnd);
   assert.match(workspace, /export const MEDIA_ITEM_DRAG_TYPE = "application\/x-ems-media-library-item"/);
   assert.match(workspace, /function beginMediaLibraryItemDrag\(/);
   assert.match(workspace, /function canDragLibraryPreviewItem\(/);
   assert.match(workspace, /function markPreviewMediaDraggable\(/);
+  assert.match(workspace, /function setLibraryPreviewDragImage\(/);
   assert.match(workspace, /isLibraryPreviewControlPointer/);
   assert.match(workspace, /mediaLibraryDragItemId = item.id/);
   assert.match(workspace, /event\.stopPropagation\(\)/);
   assert.match(workspace, /function mediaLibraryDragIsActive\(/);
   assert.match(workspace, /addEventListener\("dragstart"/);
+  assert.match(previewDrag, /closest\?\.\("img, video, \.media-library__preview-audio-icon"\)/);
+  assert.match(previewDrag, /setLibraryPreviewDragImage\(event, media\)/);
+  assert.doesNotMatch(previewDrag, /media-library__preview-player/);
+  assert.match(css, /\.media-library__preview \{[^}]*-webkit-user-drag: none/);
+  assert.match(css, /\.media-library__preview-player \{[^}]*-webkit-user-drag: none/);
   assert.match(schedule, /closest\("\.queue-section"\)/);
   assert.match(schedule, /mediaLibraryDragIsActive\(e\.dataTransfer\)/);
   assert.match(schedule, /resolveMediaLibraryDragItem\(droppedMediaLibraryItemId\)/);
   assert.match(schedule, /extractAndFilterDroppedMediaPaths\(e\.dataTransfer\)/);
   assert.match(schedule, /applyDroppedMediaPaths\(\[item\.localPath\], \{ insertIndex, preserveWorkspace: true \}\)/);
   assert.match(chrome, /#mediaLibraryPreview/);
+});
+
+test("Media files can be added to the Schedule from a context menu", async () => {
+  const workspace = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");
+  const css = await readFile(new URL("../src/main.css", import.meta.url), "utf8");
+  assert.match(workspace, /function showMediaLibraryContextMenu\(/);
+  assert.match(workspace, /function ensureMediaLibraryContextMenu\(/);
+  assert.match(workspace, /menu\.className = "song-context-menu"/);
+  assert.match(workspace, /Add to Schedule/);
+  assert.match(workspace, /pickerRequest \? "Choose" : "Add to Schedule"/);
+  assert.match(workspace, /addEventListener\("contextmenu"/);
+  assert.match(workspace, /closest\("#mediaLibraryItems \[data-media-item-id\]"\)/);
+  assert.match(workspace, /void addItemToSchedule\(item\)/);
+  assert.match(workspace, /window\.addEventListener\("resize", hideMediaLibraryContextMenu\)/);
+  assert.match(workspace, /window\.addEventListener\("scroll", hideMediaLibraryContextMenu, true\)/);
+  assert.match(css, /\.song-context-menu \{/);
+  assert.match(css, /\.song-context-menu button:disabled/);
 });

@@ -21,6 +21,7 @@ const LIBRARY_PREVIEW_MUTE_ICON = `<path d="M1 5h3l3-3v12L4 11H1z"/><path d="M8 
 export const MEDIA_ITEM_DRAG_TYPE = "application/x-ems-media-library-item";
 let mediaLibraryDragItemId = "";
 let mediaLibraryDragConsumedClick = false;
+let libraryPreviewDragGhost = null;
 const PAGE_SIZE = 60;
 const MEDIA_LIBRARY_NARROW_MAX = 560;
 const MEDIA_LIBRARY_MEDIUM_MAX = 840;
@@ -678,6 +679,41 @@ function beginMediaLibraryItemDrag(event, item) {
   return true;
 }
 
+function clearLibraryPreviewDragGhost() {
+  libraryPreviewDragGhost?.remove?.();
+  libraryPreviewDragGhost = null;
+}
+
+function setLibraryPreviewDragImage(event, source) {
+  if (!(source instanceof Element) || !event.dataTransfer) return;
+  const maxWidth = 176;
+  if (source instanceof HTMLVideoElement || source instanceof HTMLImageElement) {
+    const naturalWidth = source instanceof HTMLVideoElement
+      ? source.videoWidth || source.clientWidth
+      : source.naturalWidth || source.clientWidth;
+    const naturalHeight = source instanceof HTMLVideoElement
+      ? source.videoHeight || source.clientHeight
+      : source.naturalHeight || source.clientHeight;
+    if (naturalWidth && naturalHeight) {
+      const scale = Math.min(1, maxWidth / naturalWidth);
+      const width = Math.max(1, Math.round(naturalWidth * scale));
+      const height = Math.max(1, Math.round(naturalHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      canvas.className = "media-library__preview-drag-ghost";
+      try {
+        canvas.getContext("2d").drawImage(source, 0, 0, width, height);
+        clearLibraryPreviewDragGhost();
+        document.body.appendChild(canvas);
+        libraryPreviewDragGhost = canvas;
+        event.dataTransfer.setDragImage(canvas, Math.round(width / 2), Math.round(height / 2));
+        return;
+      } catch {}
+    }
+  }
+}
+
 function isLibraryPreviewControlPointer(event) {
   return Boolean(event.target.closest?.(".media-library__preview-controls"));
 }
@@ -839,8 +875,10 @@ function previewNode(item) {
     audio.src = bridge.pathToMediaUrl(item.localPath, item.contentIdentity);
     audio.controls = false;
     audio.preload = "metadata";
-    markPreviewMediaDraggable(audio, item);
-    return bindLibraryPreviewTransport(audio, { audio: true });
+    const player = bindLibraryPreviewTransport(audio, { audio: true });
+    const icon = player.querySelector(".media-library__preview-audio-icon");
+    if (icon) markPreviewMediaDraggable(icon, item);
+    return player;
   }
   const wrapper = document.createElement("div");
   wrapper.innerHTML = kindIcon(item.kind);
@@ -1037,9 +1075,8 @@ function showDetails(item, { focus = false, inspect = false } = {}) {
   if (selectionChanged) resetDetailsScroll(details);
   const preview = element("mediaLibraryPreview");
   preview.replaceChildren(previewNode(item));
-  preview.draggable = canDragLibraryPreviewItem(item);
-  if (preview.draggable) preview.dataset.mediaItemId = item.id;
-  else delete preview.dataset.mediaItemId;
+  preview.draggable = false;
+  delete preview.dataset.mediaItemId;
   if (item.kind === "presentation" && item.availability === MEDIA_AVAILABILITY.available && item.localPath) {
     void loadPresentationPreview(item, preview);
   }
@@ -1100,8 +1137,75 @@ function recordPreviewActivity(itemId) {
   });
 }
 
+function hideMediaLibraryContextMenu() {
+  document.getElementById("mediaLibraryContextMenu")?.setAttribute("hidden", "");
+}
+
+function ensureMediaLibraryContextMenu() {
+  let menu = document.getElementById("mediaLibraryContextMenu");
+  if (menu) return menu;
+
+  menu = document.createElement("div");
+  menu.id = "mediaLibraryContextMenu";
+  menu.className = "song-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-media-library-action="add-schedule">Add to Schedule</button>
+  `;
+
+  menu.addEventListener("pointerdown", (event) => event.stopPropagation());
+  menu.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const button = event.target.closest("[data-media-library-action]");
+    if (!button) return;
+    const item = menu._mediaItem;
+    hideMediaLibraryContextMenu();
+    if (button.getAttribute("data-media-library-action") !== "add-schedule") return;
+    if (item) void addItemToSchedule(item);
+  });
+
+  document.body.appendChild(menu);
+  if (document.body.dataset.mediaLibraryContextMenuBound !== "1") {
+    document.body.dataset.mediaLibraryContextMenuBound = "1";
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.target.closest?.("#mediaLibraryContextMenu")) return;
+        hideMediaLibraryContextMenu();
+      },
+      true,
+    );
+    window.addEventListener("resize", hideMediaLibraryContextMenu);
+    window.addEventListener("scroll", hideMediaLibraryContextMenu, true);
+  }
+  return menu;
+}
+
+function showMediaLibraryContextMenu(event, item) {
+  if (!item) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const menu = ensureMediaLibraryContextMenu();
+  menu._mediaItem = item;
+  const action = menu.querySelector("[data-media-library-action='add-schedule']");
+  if (action) {
+    action.disabled = item.availability !== MEDIA_AVAILABILITY.available || !item.localPath;
+    action.textContent = pickerRequest ? "Choose" : "Add to Schedule";
+  }
+  menu.hidden = false;
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(event.clientX, window.innerWidth - menuRect.width - 8));
+  const top = Math.max(8, Math.min(event.clientY, window.innerHeight - menuRect.height - 8));
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
 async function addItemToSchedule(item = selectedItem()) {
   if (!item || item.availability !== MEDIA_AVAILABILITY.available || !item.localPath) return;
+  hideMediaLibraryContextMenu();
   if (pickerRequest) {
     const request = pickerRequest;
     pickerRequest = null;
@@ -1187,6 +1291,11 @@ async function handlePreviewDrop(dataTransfer) {
 function bindEvents(workspace) {
   workspace.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    if (document.getElementById("mediaLibraryContextMenu")?.hidden === false) {
+      event.preventDefault();
+      hideMediaLibraryContextMenu();
+      return;
+    }
     if (pickerRequest) {
       event.preventDefault();
       finishPicker(null);
@@ -1219,27 +1328,25 @@ function bindEvents(workspace) {
     bridge.showMediaWorkspace?.();
   });
   element("mediaLibraryPreview")?.addEventListener("pointerdown", (event) => {
-    const media = event.currentTarget.querySelector("video, audio");
-    if (!media) return;
-    media.draggable = !isLibraryPreviewControlPointer(event);
+    const dragging = !isLibraryPreviewControlPointer(event);
+    event.currentTarget.querySelectorAll("img, video, .media-library__preview-audio-icon").forEach((node) => {
+      node.draggable = dragging;
+    });
   }, true);
   element("mediaLibraryPreview")?.addEventListener("dragstart", (event) => {
-    const preview = element("mediaLibraryPreview");
-    const media = preview?.querySelector("img, video, audio");
+    const media = event.target.closest?.("img, video, .media-library__preview-audio-icon");
     const item = selectedItem();
-    if (!preview || !canDragLibraryPreviewItem(item) || isLibraryPreviewControlPointer(event)) {
-      event.preventDefault();
-      return;
-    }
-    if (event.target !== preview && event.target !== media && !event.target.closest?.(".media-library__preview-player, .media-library__preview-audio-icon")) {
+    if (!media || !canDragLibraryPreviewItem(item) || isLibraryPreviewControlPointer(event)) {
       event.preventDefault();
       return;
     }
     if (!beginMediaLibraryItemDrag(event, item)) return;
-    (media || preview).classList.add("is-dragging");
+    setLibraryPreviewDragImage(event, media);
+    media.classList.add("is-dragging");
   });
   element("mediaLibraryPreview")?.addEventListener("dragend", () => {
     mediaLibraryDragItemId = "";
+    clearLibraryPreviewDragGhost();
     element("mediaLibraryPreview")?.classList.remove("is-dragging");
     element("mediaLibraryPreview")?.querySelectorAll(".is-dragging").forEach((media) => {
       media.classList.remove("is-dragging");
@@ -1365,6 +1472,17 @@ function bindEvents(workspace) {
       if (media) media.paused ? void media.play() : media.pause();
     }
   });
+  workspace.addEventListener("contextmenu", (event) => {
+    const card = event.target.closest("#mediaLibraryItems [data-media-item-id]");
+    if (card) {
+      const item = state.items.find((entry) => entry.id === card.dataset.mediaItemId);
+      showMediaLibraryContextMenu(event, item);
+      return;
+    }
+    if (event.target.closest("#mediaLibraryPreview") && selectedItem()) {
+      showMediaLibraryContextMenu(event, selectedItem());
+    }
+  });
   element("mediaLibraryItems")?.addEventListener("dragstart", (event) => {
     const button = event.target.closest("[data-media-item-id]");
     const item = state.items.find((entry) => entry.id === button?.dataset.mediaItemId);
@@ -1424,9 +1542,16 @@ export function installMediaLibraryWorkspace() {
 
 function syncMediaLibraryReturnButton() {
   const button = element("mediaLibraryReturnBtn");
-  if (!button) return;
-  const libraryVisible = element("mediaLibraryWorkspace")?.hidden === false;
-  button.hidden = libraryVisible || !returnToLibraryAfterPreview;
+  if (button) {
+    const libraryVisible = element("mediaLibraryWorkspace")?.hidden === false;
+    button.hidden = libraryVisible || !returnToLibraryAfterPreview;
+  }
+  syncScheduleSelectionForLibraryMode();
+}
+
+function syncScheduleSelectionForLibraryMode() {
+  const libraryOpen = element("mediaLibraryWorkspace")?.hidden === false;
+  document.querySelector(".queue-section")?.classList.toggle("is-media-library-open", Boolean(libraryOpen));
 }
 
 export function isMediaLibraryReturnable() {
@@ -1476,6 +1601,7 @@ export function hideMediaLibraryWorkspace({ returnable = false } = {}) {
   returnToLibraryAfterPreview = returnable === true;
   workspace.classList.remove("is-inspecting");
   workspace.hidden = true;
+  hideMediaLibraryContextMenu();
   disposePresentationPreview();
   workspace.querySelectorAll("video, audio").forEach((media) => media.pause());
   syncMediaLibraryReturnButton();
@@ -1485,11 +1611,13 @@ function finishPicker(item) {
   if (!pickerRequest) return;
   const request = pickerRequest;
   pickerRequest = null;
+  hideMediaLibraryContextMenu();
   element("mediaLibraryWorkspace").hidden = true;
   element("mediaLibraryCancelPickerBtn").hidden = true;
   element("mediaLibraryAddScheduleBtn").textContent = "Add to Schedule";
   element("mediaLibraryTitle").textContent = "Media";
   closeDetails({ preserveScroll: false });
+  syncScheduleSelectionForLibraryMode();
   request.resolve(item);
 }
 
@@ -1506,6 +1634,7 @@ export function openMediaLibraryPicker({ title = "Choose Media", kinds = ["image
     workspace.hidden = false;
     disableMediaWorkspaceScrubber();
     hideMediaLibraryCountdown();
+    syncScheduleSelectionForLibraryMode();
     workspace.classList.remove("is-browsing");
     element("mediaLibraryTitle").textContent = title;
     element("mediaLibraryCancelPickerBtn").hidden = false;
