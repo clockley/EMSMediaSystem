@@ -96,6 +96,7 @@ import {
   getPptxNaturalSlideSize,
   getPptxPdfjsConfig,
   getPptxRenderedSlideElement,
+  getPptxSlideElementFromHandle,
   isSavedPptxSlideIndex,
   waitForNextFrame,
 } from "../shared/app-pptx-utils.mjs";
@@ -1294,9 +1295,9 @@ let isQueuePlaying = false;
 let manualBoundaryPauseIndex = -1;
 let globalSlideTransitionState = { ...DEFAULT_SLIDE_TRANSITION };
 const PPTX_SIDEBAR_STORAGE_KEY = "ems.pptxSidebarWidth";
-const PPTX_SIDEBAR_DEFAULT_WIDTH = 168;
-const PPTX_SIDEBAR_MIN_WIDTH = 128;
-const PPTX_SIDEBAR_MAX_WIDTH = 360;
+const PPTX_SIDEBAR_DEFAULT_WIDTH = 320;
+const PPTX_SIDEBAR_MIN_WIDTH = 220;
+const PPTX_SIDEBAR_MAX_WIDTH = 560;
 /** True after natural playback end (signaled before media window closes). */
 let mediaPlaybackEndedPending = false;
 /**
@@ -4069,6 +4070,7 @@ export {
   getPptxNaturalSlideSize,
   getPptxPdfjsConfig,
   getPptxRenderedSlideElement,
+  getPptxSlideElementFromHandle,
   isImg,
   isQueueItemPptx,
   isSavedPptxSlideIndex,

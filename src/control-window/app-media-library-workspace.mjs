@@ -36,6 +36,8 @@ let activePosterJobs = 0;
 const posterQueue = [];
 const posterCache = new Map();
 let presentationPreviewToken = 0;
+let presentationSlideRenderToken = 0;
+let presentationOpenAbortController = null;
 let presentationViewer = null;
 let presentationSlideHandle = null;
 let presentationViewerHost = null;
@@ -886,10 +888,17 @@ function previewNode(item) {
 
 function disposePresentationPreview() {
   presentationPreviewToken += 1;
+  presentationSlideRenderToken += 1;
+  try { presentationOpenAbortController?.abort?.(); } catch {}
+  presentationOpenAbortController = null;
   presentationResizeObserver?.disconnect?.();
   presentationResizeObserver = null;
-  try { presentationSlideHandle?.dispose?.(); } catch {}
+  const handle = presentationSlideHandle;
   presentationSlideHandle = null;
+  try { handle?.dispose?.(); } catch {}
+  document
+    .querySelector(".media-library__presentation-viewport")
+    ?.replaceChildren();
   try { presentationViewer?.destroy?.(); } catch {}
   presentationViewer = null;
   presentationViewerHost?.remove?.();
@@ -934,6 +943,9 @@ function updatePresentationControls(shell) {
 
 async function renderPresentationSlide(shell, requestedIndex, token) {
   if (!presentationViewer || token !== presentationPreviewToken || !shell.isConnected) return;
+  const viewer = presentationViewer;
+  presentationSlideRenderToken += 1;
+  const slideRenderToken = presentationSlideRenderToken;
   presentationSlideIndex = clampPptxSlideIndex(requestedIndex, presentationSlideCount);
   const viewport = shell.querySelector(".media-library__presentation-viewport");
   try { presentationSlideHandle?.dispose?.(); } catch {}
@@ -943,10 +955,22 @@ async function renderPresentationSlide(shell, requestedIndex, token) {
   stage.className = "media-library__presentation-stage";
   stage.style.visibility = "hidden";
   viewport.appendChild(stage);
-  presentationSlideHandle = presentationViewer.renderSlideToContainer(presentationSlideIndex, stage, 1);
-  try { await presentationSlideHandle?.ready; } catch {}
+  const handle = viewer.renderSlideToContainer(presentationSlideIndex, stage, 1);
+  presentationSlideHandle = handle;
+  try { await handle?.ready; } catch {}
   await waitForNextFrame();
-  if (token !== presentationPreviewToken || !shell.isConnected) return;
+  if (
+    token !== presentationPreviewToken ||
+    slideRenderToken !== presentationSlideRenderToken ||
+    viewer !== presentationViewer ||
+    presentationSlideHandle !== handle ||
+    !shell.isConnected
+  ) {
+    if (presentationSlideHandle === handle) presentationSlideHandle = null;
+    try { handle?.dispose?.(); } catch {}
+    stage.remove();
+    return;
+  }
   fitPresentationSlide(viewport);
   stage.style.visibility = "";
   updatePresentationControls(shell);
@@ -977,6 +1001,9 @@ async function loadPresentationPreview(item, preview) {
     event.preventDefault();
     void renderPresentationSlide(shell, presentationSlideIndex + (event.key === "ArrowLeft" ? -1 : 1), token);
   });
+  let openingViewer = null;
+  let viewerHost = null;
+  let openAbortController = null;
   try {
     if (!globalThis.process) globalThis.process = { env: {} };
     else globalThis.process.env ||= {};
@@ -985,32 +1012,49 @@ async function loadPresentationPreview(item, preview) {
       bridge.invoke("read-file-as-arraybuffer", item.localPath),
     ]);
     if (token !== presentationPreviewToken || !shell.isConnected) return;
-    const viewerHost = document.createElement("div");
+    viewerHost = document.createElement("div");
     viewerHost.className = "media-library__presentation-renderer-host";
     viewerHost.setAttribute("aria-hidden", "true");
     document.body.appendChild(viewerHost);
     presentationViewerHost = viewerHost;
-    const openedViewer = await PptxViewer.open(arrayBuffer, viewerHost, {
+    openAbortController = new AbortController();
+    presentationOpenAbortController = openAbortController;
+    const viewerOptions = {
       zipLimits: RECOMMENDED_ZIP_LIMITS,
       fitMode: "contain",
       renderMode: "slide",
       pdfjs: getPptxPdfjsConfig(),
+    };
+    openingViewer = new PptxViewer(viewerHost, viewerOptions);
+    await openingViewer.open(arrayBuffer, {
+      renderMode: "slide",
+      signal: openAbortController.signal,
     });
     if (token !== presentationPreviewToken || !shell.isConnected) {
-      try { openedViewer?.destroy?.(); } catch {}
+      try { openingViewer?.destroy?.(); } catch {}
       viewerHost.remove();
       return;
     }
-    presentationViewer = openedViewer;
+    presentationViewer = openingViewer;
     presentationSlideCount = presentationViewer.slideCount ?? presentationViewer.slides?.length ?? 1;
     presentationResizeObserver = new ResizeObserver(() => fitPresentationSlide(shell.querySelector(".media-library__presentation-viewport")));
     presentationResizeObserver.observe(shell.querySelector(".media-library__presentation-viewport"));
     await renderPresentationSlide(shell, 0, token);
   } catch (error) {
-    if (token !== presentationPreviewToken || !shell.isConnected) return;
+    if (token !== presentationPreviewToken || !shell.isConnected) {
+      try { openingViewer?.destroy?.(); } catch {}
+      viewerHost?.remove?.();
+      return;
+    }
     console.error("Failed to preview PowerPoint presentation:", error);
+    try { openingViewer?.destroy?.(); } catch {}
+    disposePresentationPreview();
     shell.querySelector(".media-library__presentation-viewport").textContent = "This presentation could not be previewed.";
     shell.querySelector(".media-library__presentation-controls").hidden = true;
+  } finally {
+    if (presentationOpenAbortController === openAbortController) {
+      presentationOpenAbortController = null;
+    }
   }
 }
 

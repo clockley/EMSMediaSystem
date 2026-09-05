@@ -2441,8 +2441,7 @@ ul {
 }
 
 #pptxPreviewContainer {
-    --pptx-sidebar-width: 168px;
-    --pptx-sidebar-scale: clamp(0.82, calc(var(--pptx-sidebar-width) / 168px), 2.1);
+    --pptx-sidebar-width: 320px;
     position: absolute;
     inset: 0;
     width: 100%;
@@ -2456,7 +2455,8 @@ ul {
     gap: 0;
 }
 
-#pptxRendererHost {
+#pptxRendererHost,
+.pptx-renderer-host {
     position: fixed;
     left: -10000px;
     top: -10000px;
@@ -2472,12 +2472,14 @@ ul {
     flex: 0 0 var(--pptx-sidebar-width);
     display: flex;
     flex-direction: column;
-    gap: clamp(8px, calc(10px * var(--pptx-sidebar-scale)), 18px);
+    gap: 0;
     box-sizing: border-box;
-    padding: clamp(10px, calc(14px * var(--pptx-sidebar-scale)), 22px)
-        clamp(8px, calc(10px * var(--pptx-sidebar-scale)), 16px);
-    border-right: 1px solid color-mix(in srgb, #fff 12%, transparent);
-    background: color-mix(in srgb, #1b1b20 92%, #000);
+    padding: 0;
+    border-right: 1px solid var(--border-color);
+    background: var(--window-bg-color);
+    color: var(--window-fg-color);
+    overflow: hidden;
+    min-height: 0;
 }
 
 .pptx-sidebar-resize-handle {
@@ -2513,72 +2515,21 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     outline: none;
 }
 
-.pptx-slide-navigator__heading {
-    color: color-mix(in srgb, #fff 82%, transparent);
-    font-size: clamp(11px, calc(12px * var(--pptx-sidebar-scale)), 15px);
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-
-.pptx-thumbnail-list {
-    min-height: 0;
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    gap: clamp(8px, calc(10px * var(--pptx-sidebar-scale)), 18px);
-    overflow-y: auto;
-    padding: 2px 2px clamp(10px, calc(12px * var(--pptx-sidebar-scale)), 18px);
-    scrollbar-width: thin;
-}
-
 .pptx-thumbnail-button {
-    display: grid;
-    grid-template-columns: clamp(18px, calc(22px * var(--pptx-sidebar-scale)), 34px) minmax(0, 1fr);
-    gap: clamp(6px, calc(8px * var(--pptx-sidebar-scale)), 14px);
-    align-items: center;
     width: 100%;
-    min-height: clamp(60px, calc(68px * var(--pptx-sidebar-scale)), 136px);
-    padding: clamp(5px, calc(6px * var(--pptx-sidebar-scale)), 12px);
-    border: 2px solid transparent;
-    border-radius: clamp(8px, calc(10px * var(--pptx-sidebar-scale)), 16px);
-    color: color-mix(in srgb, #fff 78%, transparent);
-    background: color-mix(in srgb, #fff 7%, transparent);
-    cursor: pointer;
-}
-
-.pptx-thumbnail-button:hover {
-    background: color-mix(in srgb, #fff 11%, transparent);
+    min-height: 0;
+    color: inherit;
+    font: inherit;
 }
 
 .pptx-thumbnail-button:focus-visible {
-    outline: 2px solid var(--accent-color, #3584e4);
+    outline: 2px solid var(--accent-bg-color, #3584e4);
     outline-offset: 2px;
-}
-
-.pptx-thumbnail-button.is-active {
-    border-color: var(--accent-color, #3584e4);
-    background: color-mix(in srgb, var(--accent-color, #3584e4) 28%, #fff 6%);
-    color: #fff;
-}
-
-.pptx-thumbnail-number {
-    font-size: clamp(11px, calc(12px * var(--pptx-sidebar-scale)), 16px);
-    font-weight: 700;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
 }
 
 .pptx-thumbnail-viewport {
     width: 100%;
-    aspect-ratio: 16 / 9;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-    border-radius: clamp(5px, calc(5px * var(--pptx-sidebar-scale)), 10px);
-    background: #050505;
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 12%, transparent);
+    height: 100%;
 }
 
 .pptx-thumbnail-stage {
@@ -2653,24 +2604,8 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 @media (max-width: 760px) {
-    #pptxSlideNavigator {
-        width: 112px;
-        flex-basis: 112px;
-        padding: 10px 6px;
-    }
-
     .pptx-sidebar-resize-handle {
         flex-basis: 10px;
-    }
-
-    .pptx-thumbnail-button {
-        grid-template-columns: 1fr;
-        gap: 4px;
-        min-height: 56px;
-    }
-
-    .pptx-thumbnail-number {
-        text-align: left;
     }
 
     #pptxMainSlidePane {
@@ -4014,10 +3949,9 @@ body.is-deck-pages-resizing .deck-pages-resize-handle::before {
 @media (max-width: 760px) {
     /*
      * Note: --deck-pages-width itself is driven by an inline style
-     * (see applyDeckPagesWidth() in app.js, shared with the PPTX sidebar's
-     * own 128–360px drag range), which always wins over this class-level
-     * default. --deck-pages-scale already floors at 0.82 so labels/index
-     * numbers stay legible even at the pane's 128px minimum.
+     * (see applyDeckPagesWidth() in app.js), which always wins over this
+     * class-level default. --deck-pages-scale already floors at 0.82 so
+     * labels/index numbers stay legible at the pane's minimum width.
      */
     .slides-workspace {
         --deck-properties-width: 220px;

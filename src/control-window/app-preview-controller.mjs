@@ -31,6 +31,7 @@ import {
   getPptxNaturalSlideSize,
   getPptxPdfjsConfig,
   getPptxRenderedSlideElement,
+  getPptxSlideElementFromHandle,
   invoke,
   isActiveMediaWindow,
   isImg,
@@ -73,6 +74,8 @@ let pptxPreviewSlideHandle = null;
 
 let pptxThumbnailHandles = new Map();
 
+let pptxThumbnailHandleOwners = new Map();
+
 let pptxThumbnailObserver = null;
 
 let pptxSlideCount = 0;
@@ -84,6 +87,12 @@ let pptxFilePath = null;
 let pptxLayoutRefreshRaf = 0;
 
 let pptxPreviewRequestToken = 0;
+
+let pptxOpenAbortController = null;
+
+let pptxSlideRenderToken = 0;
+
+let pptxThumbnailRenderToken = 0;
 
 let pptxSlideNavigationTarget = null;
 
@@ -143,16 +152,28 @@ function restorePptxSidebarWidth(container) {
 }
 
 function schedulePptxLayoutRefresh() {
-  requestAnimationFrame(() => {
-    if (!pptxViewer) return;
-    void showPptxSlide(pptxCurrentSlide);
-    buildPptxNavigator();
-  });
+  schedulePptxLiveRelayout();
+}
+
+function applyPptxThumbnailAspectRatio(viewport, width, height) {
+  if (!viewport || !(width > 0) || !(height > 0)) return;
+  const aspectRatio = `${width} / ${height}`;
+  viewport.style.aspectRatio = aspectRatio;
+  viewport.closest(".pptx-thumbnail-frame")?.style.setProperty(
+    "aspect-ratio",
+    aspectRatio,
+  );
 }
 
 function layoutPptxSlideStage(stage, slideEl, containerEl, fallbackSize = {}) {
   if (!stage || !containerEl) return;
   const { width, height } = getPptxNaturalSlideSize(slideEl, fallbackSize);
+  if (fallbackSize.matchContainerAspectRatio === true && width > 0 && height > 0) {
+    // Native decks are 16:9, but imported presentations may be 4:3 or use a
+    // custom page size. Match the thumbnail viewport to the imported deck so
+    // contain-fitting does not leave a black strip beside the slide.
+    applyPptxThumbnailAspectRatio(containerEl, width, height);
+  }
   const { width: cw, height: ch } = getElementContentSize(containerEl);
   const scale = cw && ch ? Math.min(cw / width, ch / height) : 1;
   stage.style.width = `${width * scale}px`;
@@ -166,6 +187,27 @@ function layoutPptxSlideStage(stage, slideEl, containerEl, fallbackSize = {}) {
     slideEl.style.transformOrigin = "top left";
   }
   enforcePptxCoverFit(stage);
+}
+
+function relayoutVisiblePptxThumbnails() {
+  const thumbnailList = document.getElementById("pptxThumbnailList");
+  if (!thumbnailList) return;
+  thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
+    const viewport = button.querySelector(".pptx-thumbnail-viewport");
+    const stage = viewport?.querySelector(".pptx-thumbnail-stage");
+    if (!viewport || !stage) return;
+    const index = Number(button.dataset.slideIndex);
+    const slideEl = getPptxSlideElementFromHandle(
+      pptxThumbnailHandles.get(index),
+      stage,
+    );
+    layoutPptxSlideStage(stage, slideEl, viewport, {
+      slideWidth: pptxViewer?.slideWidth,
+      slideHeight: pptxViewer?.slideHeight,
+      matchContainerAspectRatio: true,
+    });
+    stage.style.visibility = "";
+  });
 }
 
 function relayoutCurrentPptxSlide() {
@@ -186,7 +228,14 @@ function schedulePptxLiveRelayout() {
     pptxLayoutRefreshRaf = 0;
     if (!pptxViewer) return;
     relayoutCurrentPptxSlide();
+    relayoutVisiblePptxThumbnails();
   });
+}
+
+function cancelPptxLayoutRefresh() {
+  if (!pptxLayoutRefreshRaf) return;
+  cancelAnimationFrame(pptxLayoutRefreshRaf);
+  pptxLayoutRefreshRaf = 0;
 }
 
 function bindPptxSidebarResize(container) {
@@ -332,19 +381,8 @@ async function loadPptxPreview(filePath, opts = {}) {
     const videoPreview = document.getElementById("preview");
     if (videoPreview) videoPreview.style.display = "none";
   }
-  disposePptxThumbnails();
-  if (pptxViewer) {
-    try {
-      pptxViewer.destroy();
-    } catch {}
-    pptxViewer = null;
-  }
-  if (pptxPreviewSlideHandle) {
-    try {
-      pptxPreviewSlideHandle.dispose();
-    } catch {}
-    pptxPreviewSlideHandle = null;
-  }
+  disposePptxRenderResources();
+  disposePptxViewerHost();
   container.innerHTML = "";
   container.style.display = "flex";
   setPreviewStackSurface(PREVIEW_SURFACE_PPTX);
@@ -352,9 +390,12 @@ async function loadPptxPreview(filePath, opts = {}) {
   const readPayload = await mediaReadPayloadForPath(filePath);
   const arrayBuffer = await invoke("read-file-as-arraybuffer", readPayload);
   if (!isCurrentPptxPreviewRequest(requestToken)) return;
-  const viewerHost = ensurePptxViewerHost();
-  viewerHost.innerHTML = "";
-  const openedViewer = await PptxViewer.open(arrayBuffer, viewerHost, {
+  // Each in-flight open gets an isolated host. A superseded request can then
+  // destroy and remove its own viewer without touching the newer request.
+  const viewerHost = createPptxViewerHost();
+  const openAbortController = new AbortController();
+  pptxOpenAbortController = openAbortController;
+  const viewerOptions = {
     zipLimits: RECOMMENDED_ZIP_LIMITS,
     fitMode: "contain",
     renderMode: "slide",
@@ -362,13 +403,43 @@ async function loadPptxPreview(filePath, opts = {}) {
     // `renderMode: "slide"` keeps preview cheap; these options apply if the
     // viewer is later asked to render a list (windowed mounting by default).
     listOptions: getPptxListRenderOptions(),
-  });
+  };
+  let openedViewer = null;
+  try {
+    // Own the instance before opening it. The static factory cannot return an
+    // instance when parsing rejects, which would leave no way to destroy it.
+    openedViewer = new PptxViewer(viewerHost, viewerOptions);
+    await openedViewer.open(arrayBuffer, {
+      renderMode: "slide",
+      listOptions: viewerOptions.listOptions,
+      signal: openAbortController.signal,
+    });
+  } catch (err) {
+    try {
+      openedViewer?.destroy?.();
+    } catch {}
+    disposePptxViewerHost(viewerHost);
+    if (
+      openAbortController.signal.aborted ||
+      !isCurrentPptxPreviewRequest(requestToken)
+    ) {
+      return;
+    }
+    throw err;
+  } finally {
+    if (pptxOpenAbortController === openAbortController) {
+      pptxOpenAbortController = null;
+    }
+  }
   if (!isCurrentPptxPreviewRequest(requestToken)) {
     try {
       openedViewer?.destroy?.();
     } catch {}
+    disposePptxViewerHost(viewerHost);
     return;
   }
+  viewerHost.id = "pptxRendererHost";
+  pptxViewerHost = viewerHost;
   pptxViewer = openedViewer;
   pptxFilePath = filePath;
   pptxSlideCount = pptxViewer.slideCount ?? pptxViewer.slides?.length ?? 1;
@@ -378,12 +449,14 @@ async function loadPptxPreview(filePath, opts = {}) {
     window.addEventListener("resize", () => {
       if (!pptxViewer) return;
       ensurePptxPreviewShell(container);
-      void showPptxSlide(pptxCurrentSlide);
-      buildPptxNavigator();
+      schedulePptxLayoutRefresh();
     });
   }
-  await showPptxSlide(clampPptxSlideIndex(startSlide, pptxSlideCount));
+  const didRender = await showPptxSlide(
+    clampPptxSlideIndex(startSlide, pptxSlideCount),
+  );
   if (!isCurrentPptxPreviewRequest(requestToken)) return;
+  if (!didRender) return;
   if (rememberPptxSlide(filePath, pptxCurrentSlide)) {
     scheduleAutosaveProjectState();
   }
@@ -394,6 +467,7 @@ async function loadPptxPreview(filePath, opts = {}) {
 }
 
 function disposePptxThumbnails() {
+  pptxThumbnailRenderToken += 1;
   if (pptxThumbnailObserver) {
     try {
       pptxThumbnailObserver.disconnect();
@@ -405,126 +479,230 @@ function disposePptxThumbnails() {
       handle?.dispose?.();
     } catch {}
   });
+  pptxThumbnailHandleOwners.forEach((button) => {
+    button
+      ?.querySelector?.(".pptx-thumbnail-viewport")
+      ?.replaceChildren?.();
+  });
   pptxThumbnailHandles.clear();
+  pptxThumbnailHandleOwners.clear();
+}
+
+function disposePptxPreviewSlide() {
+  pptxSlideRenderToken += 1;
+  const handle = pptxPreviewSlideHandle;
+  pptxPreviewSlideHandle = null;
+  try {
+    handle?.dispose?.();
+  } catch {}
+  document.getElementById("pptxMainSlidePane")?.replaceChildren();
+}
+
+function disposePptxRenderResources() {
+  // pptx-renderer deliberately does not own handles returned by
+  // renderSlideToContainer(). Release every external handle before destroying
+  // the viewer so charts, media nodes, and their callbacks cannot survive it.
+  try {
+    pptxOpenAbortController?.abort?.();
+  } catch {}
+  pptxOpenAbortController = null;
+  cancelPptxLayoutRefresh();
+  disposePptxPreviewSlide();
+  disposePptxThumbnails();
+  const viewer = pptxViewer;
+  pptxViewer = null;
+  try {
+    viewer?.destroy?.();
+  } catch {}
+}
+
+function createPptxViewerHost() {
+  const host = document.createElement("div");
+  host.className = "pptx-renderer-host";
+  host.setAttribute("aria-hidden", "true");
+  document.body.appendChild(host);
+  return host;
 }
 
 function ensurePptxViewerHost() {
   if (pptxViewerHost?.isConnected) return pptxViewerHost;
-  pptxViewerHost = document.createElement("div");
+  pptxViewerHost = createPptxViewerHost();
   pptxViewerHost.id = "pptxRendererHost";
-  pptxViewerHost.setAttribute("aria-hidden", "true");
-  document.body.appendChild(pptxViewerHost);
   return pptxViewerHost;
 }
 
-function disposePptxViewerHost() {
-  if (!pptxViewerHost) return;
+function disposePptxViewerHost(host = pptxViewerHost) {
+  if (!host) return;
   try {
-    pptxViewerHost.remove();
+    host.remove();
   } catch {}
-  pptxViewerHost = null;
+  if (pptxViewerHost === host) pptxViewerHost = null;
 }
 
 function ensurePptxPreviewShell(container) {
   let mainPane = document.getElementById("pptxMainSlidePane");
-  let controls = document.getElementById("pptxSlideControls");
-  if (mainPane && controls) return { mainPane, controls };
+  let thumbnailList = document.getElementById("pptxThumbnailList");
+  if (mainPane && thumbnailList) return { mainPane, thumbnailList };
 
   container.innerHTML = "";
+  restorePptxSidebarWidth(container);
+  const sidebar = document.createElement("aside");
+  sidebar.id = "pptxSlideNavigator";
+  sidebar.setAttribute("aria-label", "PowerPoint slide navigator");
+
+  const header = document.createElement("div");
+  header.className = "pptx-slide-navigator__header songs-workspace__nav-header";
+
+  const heading = document.createElement("div");
+  heading.className = "pptx-slide-navigator__heading songs-workspace__heading";
+  heading.textContent = "Slides";
+  header.appendChild(heading);
+
+  const navigatorBody = document.createElement("div");
+  navigatorBody.className = "pptx-slide-navigator__body song-slide-navigator";
+
+  thumbnailList = document.createElement("div");
+  thumbnailList.id = "pptxThumbnailList";
+  thumbnailList.className = "pptx-thumbnail-list song-slide-thumbnail-list";
+  thumbnailList.setAttribute("role", "listbox");
+  thumbnailList.setAttribute("aria-label", "PowerPoint slides");
+  navigatorBody.appendChild(thumbnailList);
+
   mainPane = document.createElement("div");
   mainPane.id = "pptxMainSlidePane";
   mainPane.setAttribute("aria-label", "Selected PowerPoint slide");
-  controls = document.createElement("div");
-  controls.id = "pptxSlideControls";
-  controls.className = "pptx-slide-controls";
-  controls.setAttribute("aria-label", "PowerPoint slide navigation");
-  controls.innerHTML = `
-    <button type="button" data-pptx-step="previous" aria-label="Previous slide" title="Previous slide">‹</button>
-    <span id="pptxSlidePosition" aria-live="polite">Slide 1</span>
-    <button type="button" data-pptx-step="next" aria-label="Next slide" title="Next slide">›</button>`;
-  controls.addEventListener("click", (event) => {
-    const direction = event.target.closest("[data-pptx-step]")?.dataset.pptxStep;
-    if (direction === "previous") void jumpToPptxSlide(pptxCurrentSlide - 1);
-    if (direction === "next") void jumpToPptxSlide(pptxCurrentSlide + 1);
-  });
+
+  const resizeHandle = document.createElement("div");
+  resizeHandle.id = "pptxSidebarResizeHandle";
+  resizeHandle.className = "pptx-sidebar-resize-handle song-sidebar-resize-handle";
+  resizeHandle.setAttribute("role", "separator");
+  resizeHandle.setAttribute("aria-label", "Resize slides pane");
+  resizeHandle.setAttribute("aria-orientation", "vertical");
+  resizeHandle.tabIndex = 0;
+
+  sidebar.appendChild(header);
+  sidebar.appendChild(navigatorBody);
+  container.appendChild(sidebar);
+  container.appendChild(resizeHandle);
   container.appendChild(mainPane);
-  container.appendChild(controls);
-  return { mainPane, controls };
+  bindPptxSidebarResize(container);
+  return { mainPane, thumbnailList };
 }
 
 function updatePptxNavigatorSelection() {
-  const controls = document.getElementById("pptxSlideControls");
-  if (!controls) return;
-  const previous = controls.querySelector("[data-pptx-step='previous']");
-  const next = controls.querySelector("[data-pptx-step='next']");
-  previous.disabled = pptxCurrentSlide <= 0;
-  next.disabled = pptxCurrentSlide >= pptxSlideCount - 1;
-  const position = document.getElementById("pptxSlidePosition");
-  if (position) position.textContent = `Slide ${pptxCurrentSlide + 1} of ${Math.max(1, pptxSlideCount)}`;
+  const thumbnailList = document.getElementById("pptxThumbnailList");
+  if (!thumbnailList) return;
+  thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
+    const isActive = Number(button.dataset.slideIndex) === pptxCurrentSlide;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+    button.tabIndex = isActive ? 0 : -1;
+  });
+  const active = thumbnailList.querySelector(".pptx-thumbnail-button.is-active");
+  active?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
 }
 
 async function renderPptxThumbnail(index, button, opts = {}) {
   if (!pptxViewer || !button?.isConnected) return;
+  const viewer = pptxViewer;
+  const renderToken = pptxThumbnailRenderToken;
   const force = opts?.force === true;
   const viewport = button.querySelector(".pptx-thumbnail-viewport");
   if (!viewport) return;
   const existingHandle = pptxThumbnailHandles.get(index);
   if (existingHandle) {
+    const existingOwner = pptxThumbnailHandleOwners.get(index);
+    const existingStage = viewport.querySelector(".pptx-thumbnail-stage");
+    const existingSlide = getPptxSlideElementFromHandle(existingHandle, existingStage);
     if (
       !force &&
-      existingHandle.element &&
-      viewport.contains(existingHandle.element)
+      existingOwner === button &&
+      existingStage &&
+      existingSlide &&
+      viewport.contains(existingSlide)
     ) {
+      layoutPptxSlideStage(existingStage, existingSlide, viewport, {
+        slideWidth: viewer.slideWidth,
+        slideHeight: viewer.slideHeight,
+        matchContainerAspectRatio: true,
+      });
+      existingStage.style.visibility = "";
       return;
     }
     try {
       existingHandle.dispose?.();
     } catch {}
     pptxThumbnailHandles.delete(index);
+    pptxThumbnailHandleOwners.delete(index);
   }
   viewport.innerHTML = "";
-  const { width } = getElementContentSize(viewport);
-  const thumbnailWidth = Math.max(
-    1,
-    Math.round(width || viewport.clientWidth || 96),
-  );
+  applyPptxThumbnailAspectRatio(viewport, viewer.slideWidth, viewer.slideHeight);
+  const stage = document.createElement("div");
+  stage.className = "pptx-thumbnail-stage";
+  stage.style.visibility = "hidden";
+  viewport.appendChild(stage);
 
   let handle = null;
   try {
-    handle = pptxViewer.renderThumbnailToContainer(index, viewport, {
-      width: thumbnailWidth,
-    });
+    // Render at the deck's natural size, then apply one measured transform.
+    // renderThumbnailToContainer() already scales its slide; forcing its SVG
+    // to fill our viewport applies a second scale and makes it microscopic.
+    handle = viewer.renderSlideToContainer(index, stage, 1);
   } catch (err) {
     console.error("Failed to render PPTX thumbnail:", err);
   }
   if (!handle) return;
-  handle.element?.classList?.add("pptx-thumbnail-stage");
-  if (handle.element) handle.element.style.visibility = "hidden";
   pptxThumbnailHandles.set(index, handle);
+  pptxThumbnailHandleOwners.set(index, button);
   try {
     await handle.ready;
   } catch (err) {
-    console.error("Failed to finish PPTX thumbnail render:", err);
+    if (
+      renderToken === pptxThumbnailRenderToken &&
+      viewer === pptxViewer &&
+      pptxThumbnailHandles.get(index) === handle
+    ) {
+      console.error("Failed to finish PPTX thumbnail render:", err);
+    }
   }
+  await waitForNextFrame();
   if (
+    renderToken !== pptxThumbnailRenderToken ||
+    viewer !== pptxViewer ||
     pptxThumbnailHandles.get(index) !== handle ||
+    pptxThumbnailHandleOwners.get(index) !== button ||
     !button.isConnected
   ) {
+    if (pptxThumbnailHandles.get(index) === handle) {
+      pptxThumbnailHandles.delete(index);
+      pptxThumbnailHandleOwners.delete(index);
+    }
+    try {
+      handle.dispose?.();
+    } catch {}
+    stage.remove();
     return;
   }
-  enforcePptxCoverFit(handle.element);
-  if (handle.element) handle.element.style.visibility = "";
+  const slideEl = getPptxSlideElementFromHandle(handle, stage);
+  layoutPptxSlideStage(stage, slideEl, viewport, {
+    slideWidth: viewer.slideWidth,
+    slideHeight: viewer.slideHeight,
+    matchContainerAspectRatio: true,
+  });
+  stage.style.visibility = "";
 }
 
 function unmountPptxThumbnail(index, button) {
   const handle = pptxThumbnailHandles.get(index);
   if (!handle) return;
+  if (pptxThumbnailHandleOwners.get(index) !== button) return;
   const viewport = button?.querySelector?.(".pptx-thumbnail-viewport");
   try {
     handle.dispose?.();
   } catch {}
   if (viewport) viewport.innerHTML = "";
   pptxThumbnailHandles.delete(index);
+  pptxThumbnailHandleOwners.delete(index);
 }
 
 function refreshVisiblePptxThumbnails() {
@@ -537,14 +715,19 @@ function refreshVisiblePptxThumbnails() {
     const rect = button.getBoundingClientRect();
     const isVisible =
       rect.bottom >= listRect.top - 240 && rect.top <= listRect.bottom + 240;
-    if (isVisible) void renderPptxThumbnail(index, button, { force: true });
+    if (isVisible) void renderPptxThumbnail(index, button);
   });
 }
 
 function schedulePptxThumbnailRefresh() {
+  const renderToken = pptxThumbnailRenderToken;
   requestAnimationFrame(() => {
+    if (renderToken !== pptxThumbnailRenderToken || !pptxViewer) return;
     refreshVisiblePptxThumbnails();
-    requestAnimationFrame(refreshVisiblePptxThumbnails);
+    requestAnimationFrame(() => {
+      if (renderToken !== pptxThumbnailRenderToken || !pptxViewer) return;
+      refreshVisiblePptxThumbnails();
+    });
   });
 }
 
@@ -562,39 +745,131 @@ function buildPptxNavigator() {
       void jumpToPptxSlide(pptxCurrentSlide + (event.key === "ArrowLeft" ? -1 : 1));
     });
   }
-  ensurePptxPreviewShell(container);
+  const { thumbnailList } = ensurePptxPreviewShell(container);
   disposePptxThumbnails();
+  thumbnailList.innerHTML = "";
+
+  for (let i = 0; i < pptxSlideCount; i++) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "pptx-thumbnail-button song-slide-thumbnail-button";
+    button.dataset.slideIndex = String(i);
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-label", `Go to slide ${i + 1}`);
+    button.innerHTML = `
+      <span class="pptx-thumbnail-number song-slide-thumbnail-button__number">${i + 1}</span>
+      <span class="pptx-thumbnail-frame song-slide-thumbnail-button__viewport">
+        <span class="pptx-thumbnail-viewport slides-page-list__thumb song-slide-thumbnail-button__thumb"></span>
+      </span>
+    `;
+    button.addEventListener("click", () => {
+      void jumpToPptxSlide(i);
+    });
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        const next = thumbnailList.querySelector(
+          `.pptx-thumbnail-button[data-slide-index="${Math.min(i + 1, pptxSlideCount - 1)}"]`,
+        );
+        next?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const previous = thumbnailList.querySelector(
+          `.pptx-thumbnail-button[data-slide-index="${Math.max(i - 1, 0)}"]`,
+        );
+        previous?.focus();
+      } else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        void jumpToPptxSlide(i);
+      }
+    });
+    thumbnailList.appendChild(button);
+  }
+
+  if ("IntersectionObserver" in window) {
+    pptxThumbnailObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const index = Number(entry.target.dataset.slideIndex);
+          if (!Number.isFinite(index)) return;
+          if (entry.isIntersecting) {
+            void renderPptxThumbnail(index, entry.target);
+          } else {
+            unmountPptxThumbnail(index, entry.target);
+          }
+        });
+      },
+      {
+        root: thumbnailList,
+        rootMargin: "240px 0px",
+      },
+    );
+    thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
+      pptxThumbnailObserver.observe(button);
+    });
+  } else {
+    thumbnailList.querySelectorAll(".pptx-thumbnail-button").forEach((button) => {
+      const index = Number(button.dataset.slideIndex);
+      if (Number.isFinite(index)) void renderPptxThumbnail(index, button);
+    });
+  }
   updatePptxNavigatorSelection();
 }
 
 async function showPptxSlide(index) {
   const container = document.getElementById("pptxPreviewContainer");
-  if (!container) return;
+  const viewer = pptxViewer;
+  if (!container || !viewer) return false;
   const { mainPane } = ensurePptxPreviewShell(container);
   const slideIndex = clampPptxSlideIndex(index);
-  if (pptxPreviewSlideHandle) {
-    try {
-      pptxPreviewSlideHandle.dispose();
-    } catch {}
-    pptxPreviewSlideHandle = null;
-  }
+  disposePptxPreviewSlide();
+  const renderToken = pptxSlideRenderToken;
   mainPane.innerHTML = "";
   const stage = document.createElement("div");
   stage.className = "pptx-preview-stage";
   stage.style.visibility = "hidden";
   mainPane.appendChild(stage);
+  let handle = null;
   try {
-    pptxPreviewSlideHandle = pptxViewer?.renderSlideToContainer(slideIndex, stage, 1) || null;
-  } catch {}
+    handle = viewer.renderSlideToContainer(slideIndex, stage, 1);
+  } catch (err) {
+    console.error("Failed to render PPTX preview slide:", err);
+  }
+  if (!handle) {
+    stage.remove();
+    return false;
+  }
+  pptxPreviewSlideHandle = handle;
+  try {
+    await handle.ready;
+  } catch (err) {
+    if (renderToken === pptxSlideRenderToken) {
+      console.error("Failed to finish PPTX preview render:", err);
+    }
+  }
   await waitForNextFrame();
-  const slideEl = getPptxRenderedSlideElement(pptxPreviewSlideHandle, stage);
+  if (
+    renderToken !== pptxSlideRenderToken ||
+    viewer !== pptxViewer ||
+    pptxPreviewSlideHandle !== handle ||
+    !stage.isConnected
+  ) {
+    if (pptxPreviewSlideHandle === handle) pptxPreviewSlideHandle = null;
+    try {
+      handle.dispose?.();
+    } catch {}
+    stage.remove();
+    return false;
+  }
+  const slideEl = getPptxRenderedSlideElement(handle, stage);
   layoutPptxSlideStage(stage, slideEl, mainPane, {
-    slideWidth: pptxViewer?.slideWidth,
-    slideHeight: pptxViewer?.slideHeight,
+    slideWidth: viewer.slideWidth,
+    slideHeight: viewer.slideHeight,
   });
   stage.style.visibility = "";
   pptxCurrentSlide = slideIndex;
   updatePptxNavigatorSelection();
+  return true;
 }
 
 function sendPptxSlideToMediaWindow(slideIndex) {
@@ -661,7 +936,8 @@ async function jumpToPptxSlide(index) {
 
   pptxSlideNavigationTarget = slideIndex;
   const navigation = (async () => {
-    await showPptxSlide(slideIndex);
+    const didRender = await showPptxSlide(slideIndex);
+    if (!didRender) return;
     if (pptxFilePath && rememberPptxSlide(pptxFilePath, pptxCurrentSlide)) {
       scheduleAutosaveProjectState();
     }
@@ -694,13 +970,7 @@ function hidePptxPreview(options = {}) {
   } else {
     document.getElementById("customControls")?.style.setProperty("visibility", "");
   }
-  if (pptxViewer) {
-    try {
-      pptxViewer.destroy();
-    } catch {}
-    pptxViewer = null;
-  }
-  disposePptxThumbnails();
+  disposePptxRenderResources();
   disposePptxViewerHost();
   pptxFilePath = null;
   pptxSlideCount = 0;
