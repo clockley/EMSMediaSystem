@@ -117,6 +117,24 @@ else
   GO ?= $(shell for c in /usr/local/go/bin/go go; do command -v "$$c" >/dev/null 2>&1 && { echo "$$c"; break; }; done)
 endif
 
+# .NET 8 SDK. Override with `make DOTNET=/path/to/dotnet`.
+# A mixed Microsoft SDK + Ubuntu runtime install leaves /usr/bin/dotnet unable
+# to start; fall back to a standalone SDK in $HOME/.dotnet and bootstrap it
+# when the Windows video poster is published.
+DOTNET_STANDALONE_DIR = $(HOME)/.dotnet
+DOTNET_STANDALONE = $(DOTNET_STANDALONE_DIR)/dotnet
+ifeq ($(origin DOTNET), undefined)
+  DOTNET := $(shell \
+    if [ -x "$(DOTNET_STANDALONE)" ] && "$(DOTNET_STANDALONE)" --list-runtimes >/dev/null 2>&1; then \
+      echo "$(DOTNET_STANDALONE)"; \
+    elif command -v dotnet >/dev/null 2>&1 && dotnet --list-runtimes >/dev/null 2>&1; then \
+      command -v dotnet; \
+    else \
+      echo "$(DOTNET_STANDALONE)"; \
+    fi)
+endif
+WINDOWS_VIDEO_POSTER_RID = win-x64
+
 # Go source that produces the sidecar binary (edition independent).
 BIBLE_RPC_GO_SOURCES = $(BIBLE_RPC_ROOT)/main.go $(BIBLE_RPC_ROOT)/sources.go $(BIBLE_RPC_ROOT)/installed.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
 MEDIA_WATCHER_GO_SOURCES = $(MEDIA_WATCHER_ROOT)/main.go $(MEDIA_WATCHER_ROOT)/go.mod $(MEDIA_WATCHER_ROOT)/go.sum
@@ -391,8 +409,30 @@ else
 endif
 
 $(WINDOWS_VIDEO_POSTER_OUT): $(WINDOWS_VIDEO_POSTER_SOURCES) | $(DERIVED_DIR)
-	@echo "$(COLOR_YELLOW)Publishing Windows video poster sidecar -> $@$(COLOR_RESET)"
-	@dotnet publish "$(WINDOWS_VIDEO_POSTER_PROJECT)" -c Release -r win-x64 --self-contained true -o "$(CURDIR)/$(DERIVED_DIR)/bin"
+	@echo "$(COLOR_YELLOW)Cross-publishing Windows video poster sidecar -> $@$(COLOR_RESET)"
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
+else
+	@mkdir -p $(dir $@)
+endif
+	@DOTNET_BIN="$(DOTNET)"; \
+	if ! "$$DOTNET_BIN" --list-runtimes >/dev/null 2>&1; then \
+		echo "$(COLOR_YELLOW)System dotnet has no Microsoft.NETCore.App runtime; installing .NET 8 SDK to $(DOTNET_STANDALONE_DIR)$(COLOR_RESET)"; \
+		curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --install-dir "$(DOTNET_STANDALONE_DIR)"; \
+		DOTNET_BIN="$(DOTNET_STANDALONE)"; \
+	fi; \
+	if [ ! -x "$$DOTNET_BIN" ]; then \
+		echo "$(COLOR_RED)Error: .NET 8 SDK is required to cross-publish the Windows video poster$(COLOR_RESET)" >&2; \
+		exit 1; \
+	fi; \
+	DOTNET_ROOT="$$(cd "$$(dirname "$$DOTNET_BIN")" && pwd)"; \
+	export DOTNET_ROOT; \
+	"$$DOTNET_BIN" publish "$(WINDOWS_VIDEO_POSTER_PROJECT)" \
+		-c Release \
+		-r $(WINDOWS_VIDEO_POSTER_RID) \
+		--self-contained true \
+		-p:EnableWindowsTargeting=true \
+		-o "$(CURDIR)/$(DERIVED_DIR)/bin"
 	@test -f "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
 
@@ -446,7 +486,7 @@ check-deps:
 	@test -f node_modules/html-minifier-terser/cli.js || { echo "$(COLOR_RED)Error: html-minifier-terser not found in node_modules. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@test -f node_modules/csso/package.json || { echo "$(COLOR_RED)Error: csso module required. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@command -v sqlite3 >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: sqlite3 is required$(COLOR_RESET)" >&2; exit 1; }
-	@command -v dotnet >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: .NET 8 SDK is required$(COLOR_RESET)" >&2; exit 1; }
+	@"$(DOTNET)" --list-runtimes >/dev/null 2>&1 || test -x "$(DOTNET_STANDALONE)" || command -v curl >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: .NET 8 SDK is required to cross-publish the Windows video poster$(COLOR_RESET)" >&2; exit 1; }
 	@$(NODE) -e "const {spawnSync}=require('node:child_process'); const supported=(out)=>{const m=String(out||'').match(/go(\\d+)\\.(\\d+)/); return !!m && (Number(m[1])>1 || Number(m[2])>=22);}; for (const c of [process.env.GO,'/usr/local/go/bin/go','go'].filter(Boolean)) { const r=spawnSync(c,['version'],{encoding:'utf8'}); if (r.status===0 && supported(r.stdout)) process.exit(0); } process.exit(1);" || { echo "$(COLOR_RED)Error: Go 1.22+ is required$(COLOR_RESET)" >&2; exit 1; }
 
 # Rule: Generate CSS source map
