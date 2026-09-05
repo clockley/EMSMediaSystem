@@ -1663,6 +1663,7 @@ function installBibleMediaControls() {
   versionSelect.addEventListener("change", () => {
     void (async () => {
       setBibleDesignerVersion(versionSelect.value, { syncControls: false });
+      hideBibleReferenceSuggestions();
       syncBibleVersionAttributionDisplay();
       await selectFirstBibleReferenceForVersion(bibleDesignerState.version);
       await refreshBibleBrowser();

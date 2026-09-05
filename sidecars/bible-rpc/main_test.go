@@ -7,6 +7,92 @@ import (
 	"emsmediasystem/bible-rpc/internal/biblestore"
 )
 
+func TestSuggestReferencesUsesOnlyBooksInSelectedVersion(t *testing.T) {
+	testDB, err := sql.Open(sqliteDriverName, ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer testDB.Close()
+
+	if _, err := testDB.Exec(`
+CREATE TABLE bible_chapter_text (
+	table_name TEXT NOT NULL,
+	b INTEGER NOT NULL,
+	c INTEGER NOT NULL,
+	verse_count INTEGER NOT NULL,
+	PRIMARY KEY (table_name, b, c)
+);
+INSERT INTO bible_chapter_text (table_name, b, c, verse_count) VALUES
+	('source_kjv', 2, 1, 22),
+	('source_kjva', 69, 1, 22);
+`); err != nil {
+		t.Fatalf("create Bible suggestion fixture: %v", err)
+	}
+
+	oldDB := db
+	oldVersions := cachedVersions
+	oldBooks := cachedBooks
+	oldBookDetails := cachedBookDetails
+	oldBookOrder := cachedBookOrder
+	oldAliases := cachedAliases
+	oldAliasKeys := cachedAliasKeys
+	oldMetadata := cachedBookMetadataByVersion
+	defer func() {
+		db = oldDB
+		cachedVersions = oldVersions
+		cachedBooks = oldBooks
+		cachedBookDetails = oldBookDetails
+		cachedBookOrder = oldBookOrder
+		cachedAliases = oldAliases
+		cachedAliasKeys = oldAliasKeys
+		cachedBookMetadataByVersion = oldMetadata
+	}()
+
+	exodus := BookMetadata{ID: 2, Name: "Exodus", Testament: "Old Testament"}
+	tobit := BookMetadata{ID: 69, Name: "Tobit", Testament: "Apocrypha"}
+	db = testDB
+	cachedVersions = map[string]Version{
+		"KJV":  {Abbreviation: "KJV", Version: "King James Version", TableName: "source_kjv"},
+		"KJVA": {Abbreviation: "KJVA", Version: "King James Apocrypha", TableName: "source_kjva"},
+	}
+	cachedBooks = map[string]int{"Exodus": exodus.ID, "Tobit": tobit.ID}
+	cachedBookDetails = map[int]BookMetadata{exodus.ID: exodus, tobit.ID: tobit}
+	cachedBookOrder = []BookMetadata{exodus, tobit}
+	cachedAliases = map[string]string{
+		"ex": "Exodus", "exo": "Exodus", "exodus": "Exodus",
+		"tob": "Tobit", "tobit": "Tobit",
+	}
+	cachedAliasKeys = []string{"exodus", "tobit", "exo", "tob", "ex"}
+	cachedBookMetadataByVersion = make(map[string]BookMetadataResponse)
+
+	assertSuggestedBooks := func(version string, input string, wantBook string) {
+		t.Helper()
+		result := suggestReferencesResult(version, input)
+		if result.Error != "" {
+			t.Fatalf("suggestReferencesResult(%q, %q) error = %q", version, input, result.Error)
+		}
+		if len(result.Suggestions) == 0 {
+			t.Fatalf("suggestReferencesResult(%q, %q) returned no suggestions", version, input)
+		}
+		for _, suggestion := range result.Suggestions {
+			if suggestion.Book != wantBook {
+				t.Fatalf("suggestReferencesResult(%q, %q) suggested unavailable book %q, want only %q", version, input, suggestion.Book, wantBook)
+			}
+		}
+	}
+
+	assertSuggestedBooks("KJV", "Exo", "Exodus")
+	assertSuggestedBooks("KJVA", "Tob", "Tobit")
+
+	result := suggestReferencesResult("KJVA", "Exo")
+	if result.Error != "" {
+		t.Fatalf("suggestReferencesResult(\"KJVA\", \"Exo\") error = %q", result.Error)
+	}
+	if len(result.Suggestions) != 0 {
+		t.Fatalf("suggestReferencesResult(\"KJVA\", \"Exo\") suggestions = %#v, want none", result.Suggestions)
+	}
+}
+
 func TestFTSSearchQueryPhraseUsesFinalTokenPrefix(t *testing.T) {
 	query, err := ftsSearchQuery("Remember the sabbat", "phrase")
 	if err != nil {

@@ -1351,7 +1351,7 @@ func bookMatchesPrefixQuery(book BookMetadata, query string) bool {
 	return false
 }
 
-func addPrefixReferenceSuggestions(db *sql.DB, suggestions []ReferenceSuggestion, version string, input string, limit int) []ReferenceSuggestion {
+func addPrefixReferenceSuggestions(db *sql.DB, suggestions []ReferenceSuggestion, version string, input string, books []BookMetadata, limit int) []ReferenceSuggestion {
 	tokens := strings.Fields(normalizeBibleAlias(input))
 	if len(tokens) < 2 {
 		return suggestions
@@ -1366,7 +1366,7 @@ func addPrefixReferenceSuggestions(db *sql.DB, suggestions []ReferenceSuggestion
 		}
 		bookQuery := strings.Join(tokens[:split], " ")
 		tail := strings.Join(tailTokens, " ")
-		for _, book := range cachedBookOrder {
+		for _, book := range books {
 			if !bookMatchesPrefixQuery(book, bookQuery) {
 				continue
 			}
@@ -1480,7 +1480,7 @@ type fuzzyBookCandidate struct {
 	tail  string
 }
 
-func fuzzyBookCandidates(input string) []fuzzyBookCandidate {
+func fuzzyBookCandidates(input string, books []BookMetadata) []fuzzyBookCandidate {
 	tokens := strings.Fields(normalizeBibleAlias(input))
 	if len(tokens) == 0 {
 		return nil
@@ -1497,7 +1497,7 @@ func fuzzyBookCandidates(input string) []fuzzyBookCandidate {
 			continue
 		}
 		tail := strings.Join(tokens[split:], " ")
-		for _, book := range cachedBookOrder {
+		for _, book := range books {
 			score := bestAliasDistanceForBook(bookQuery, book.Name)
 			if score > threshold {
 				continue
@@ -1529,8 +1529,8 @@ func fuzzyBookCandidates(input string) []fuzzyBookCandidate {
 	return candidates
 }
 
-func addFuzzyReferenceSuggestions(db *sql.DB, suggestions []ReferenceSuggestion, version string, input string, limit int) []ReferenceSuggestion {
-	for _, candidate := range fuzzyBookCandidates(input) {
+func addFuzzyReferenceSuggestions(db *sql.DB, suggestions []ReferenceSuggestion, version string, input string, books []BookMetadata, limit int) []ReferenceSuggestion {
+	for _, candidate := range fuzzyBookCandidates(input, books) {
 		if len(suggestions) >= limit {
 			break
 		}
@@ -1558,6 +1558,19 @@ func suggestReferencesResult(version string, input string) SuggestReferencesResp
 			Error:   err.Error(),
 		}
 	}
+	bookMetadata := getBookMetadataResult(versionInfo.Abbreviation)
+	if bookMetadata.Error != "" {
+		return SuggestReferencesResponse{
+			Input:   input,
+			Version: versionInfo.Abbreviation,
+			Error:   bookMetadata.Error,
+		}
+	}
+	availableBooks := bookMetadata.Books
+	availableBookNames := make(map[string]bool, len(availableBooks))
+	for _, book := range availableBooks {
+		availableBookNames[book.Name] = true
+	}
 
 	suggestions := []ReferenceSuggestion{}
 	resolvedOK := false
@@ -1569,12 +1582,12 @@ func suggestReferencesResult(version string, input string) SuggestReferencesResp
 		}
 	}
 	if !resolvedOK && len(suggestions) < 12 {
-		suggestions = addPrefixReferenceSuggestions(db, suggestions, versionInfo.Abbreviation, input, 12)
+		suggestions = addPrefixReferenceSuggestions(db, suggestions, versionInfo.Abbreviation, input, availableBooks, 12)
 	}
 
 	query := normalizeBibleAlias(input)
 	if query != "" {
-		for _, book := range cachedBookOrder {
+		for _, book := range availableBooks {
 			normalizedName := normalizeBibleAlias(book.Name)
 			if strings.HasPrefix(normalizedName, query) ||
 				strings.HasPrefix(compactAlias(book.Name), strings.ReplaceAll(query, " ", "")) {
@@ -1594,7 +1607,7 @@ func suggestReferencesResult(version string, input string) SuggestReferencesResp
 					continue
 				}
 				bookName := cachedAliases[alias]
-				if seenBooks[bookName] {
+				if seenBooks[bookName] || !availableBookNames[bookName] {
 					continue
 				}
 				bookID := cachedBooks[bookName]
@@ -1611,7 +1624,7 @@ func suggestReferencesResult(version string, input string) SuggestReferencesResp
 		}
 	}
 	if !resolvedOK && len(suggestions) < 12 {
-		suggestions = addFuzzyReferenceSuggestions(db, suggestions, versionInfo.Abbreviation, input, 12)
+		suggestions = addFuzzyReferenceSuggestions(db, suggestions, versionInfo.Abbreviation, input, availableBooks, 12)
 	}
 
 	return SuggestReferencesResponse{

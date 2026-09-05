@@ -385,11 +385,19 @@ async function normalizeBibleReferenceInput(rawReference) {
 async function bibleReferenceSuggestionsForInput(rawReference) {
   const query = String(rawReference || "").trim();
   if (!query) return [];
+  const requestedVersion = bibleDesignerState.version || DEFAULT_BIBLE_VERSION;
   try {
     const result = await bibleAPI.suggestReferences(
-      bibleDesignerState.version || "KJV",
+      requestedVersion,
       query,
     );
+    if (
+      bibleVersionValue(bibleDesignerState.version || DEFAULT_BIBLE_VERSION) !==
+        bibleVersionValue(requestedVersion) ||
+      bibleVersionValue(result?.version || "") !== bibleVersionValue(requestedVersion)
+    ) {
+      return [];
+    }
     const seen = new Set();
     return (Array.isArray(result?.suggestions) ? result.suggestions : [])
       .map((suggestion) => {
