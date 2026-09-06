@@ -1,0 +1,14 @@
+{
+  "format": "ems.bible-manifest.v1",
+  "id": "public:jps1917",
+  "abbreviation": "JPS",
+  "name": "JPS Tanakh 1917",
+  "language": "en",
+  "revision": "1",
+  "contentFile": "JPS TANAKH 1917.json",
+  "publicDomain": true,
+  "publisher": "The Jewish Publication Society",
+  "copyright": "Public Domain",
+  "copyrightInfo": "The Holy Scriptures According to the Masoretic Text, JPS 1917 edition. Public Domain.",
+  "infoUrl": "https://jps.org/download-the-tanakh-1917-translation/"
+}

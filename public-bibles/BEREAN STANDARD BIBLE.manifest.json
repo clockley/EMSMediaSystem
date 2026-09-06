@@ -1,0 +1,14 @@
+{
+  "format": "ems.bible-manifest.v1",
+  "id": "public:bsb",
+  "abbreviation": "BSB",
+  "name": "Berean Standard Bible",
+  "language": "en",
+  "revision": "1",
+  "contentFile": "BEREAN STANDARD BIBLE.json",
+  "publicDomain": true,
+  "publisher": "Berean Bible Translation Committee",
+  "copyright": "Public Domain",
+  "copyrightInfo": "Berean Standard Bible (BSB). Dedicated to the Public Domain on April 30, 2023.",
+  "infoUrl": "https://berean.bible/terms.htm"
+}
