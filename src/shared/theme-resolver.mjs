@@ -11,8 +11,9 @@ export const EMS_SAFE_DEFAULT_THEME = deepFreeze(normalizeTheme({
   }])), assets: [],
 }));
 
+const RUNTIME_ASSET_FIELDS = new Set(["assetUrl", "managedPath", "projectAssetId", "sourcePath"]);
 const stable = value => Array.isArray(value) ? value.map(stable) : value && typeof value === "object"
-  ? Object.fromEntries(Object.keys(value).filter(key => key !== "assetUrl").sort().map(key => [key, stable(value[key])])) : value;
+  ? Object.fromEntries(Object.keys(value).filter(key => !RUNTIME_ASSET_FIELDS.has(key)).sort().map(key => [key, stable(value[key])])) : value;
 // Browser-safe deterministic revision. Asset integrity continues to use SHA-256;
 // this identifier only invalidates renderer caches and aids diagnostics.
 export function themeRevision(theme) {

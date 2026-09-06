@@ -1197,6 +1197,7 @@ function installBibleMediaControls() {
     const page = currentPage();
     if (!page) return;
     recordSlideUndoForMutation("Change page background");
+    page.backgroundOverride = true;
     page.background = { type: "color", color: e.target.value };
     setDeckDirty(true);
     renderSlideCanvas();
@@ -1214,6 +1215,7 @@ function installBibleMediaControls() {
     }
     const isVideo = /\.(mp4|webm|mov|m4v)$/i.test(filePath);
     recordSlideUndoCheckpoint("Set page background");
+    page.backgroundOverride = true;
     page.background = { type: isVideo ? "video" : "image", path: filePath };
     setDeckDirty(true);
     renderSlideCanvas();
@@ -1227,6 +1229,7 @@ function installBibleMediaControls() {
     const item = await openMediaLibraryPicker({ title: "Choose Slide Background", kinds: ["image", "video"] });
     if (!item?.localPath) return;
     recordSlideUndoCheckpoint("Set page background");
+    page.backgroundOverride = true;
     page.background = { type: item.kind, path: item.localPath, libraryItemId: item.id };
     setDeckDirty(true);
     renderSlideCanvas();
@@ -1237,6 +1240,7 @@ function installBibleMediaControls() {
     const page = currentPage();
     if (!page) return;
     recordSlideUndoCheckpoint("Clear page background");
+    page.backgroundOverride = false;
     page.background = { type: "color", color: currentDeck?.theme?.backgroundColor || "#000000" };
     setDeckDirty(true);
     renderSlideCanvas();

@@ -103,6 +103,17 @@
             },
             "additionalProperties": true
           }
+        },
+        "pageOverrides": {
+          "type": "object",
+          "description": "Presentation properties explicitly overridden for individual song sections.",
+          "additionalProperties": { "type": "object" }
+        },
+        "pageBackgroundOverrideIds": {
+          "type": "array",
+          "description": "Section ids whose pageOverrides contain an explicitly selected background.",
+          "items": { "type": "string" },
+          "uniqueItems": true
         }
       },
       "additionalProperties": true

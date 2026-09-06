@@ -66,9 +66,16 @@ The matching JSON Schema lives next to this file as ems-song.v1.schema.json.
  */
 
 /**
+ * @typedef {Object} EmsSongPageOverride
+ * @property {Object<string, *>} [background]
+ */
+
+/**
  * @typedef {Object} EmsSongPresentation
  * @property {EmsSongChunking} [defaultChunking]
  * @property {EmsSongManualBreak[]} [manualBreaks]
+ * @property {Object<string, EmsSongPageOverride>} [pageOverrides]
+ * @property {string[]} [pageBackgroundOverrideIds] section ids with an explicitly selected page background
  */
 
 /**

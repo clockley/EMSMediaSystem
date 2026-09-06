@@ -93,8 +93,9 @@ function songDeckWithResolvedTheme(deck, resolvedTheme) {
     transition: structuredClone(resolvedTheme.transition || {}),
   };
   for (const page of themed.pages || []) {
+    page.backgroundOverride = false;
     page.background = background.type === "image" || background.type === "video"
-      ? { type: background.type, color: background.color || "#000000", path: background.path || background.url || "", ...(background.assetId ? { assetId: background.assetId } : {}) }
+      ? { type: background.type, color: background.color || "#000000", path: background.assetUrl || background.url || background.path || "", ...(background.assetId ? { assetId: background.assetId } : {}) }
       : { type: "color", color: background.color || DEFAULT_DECK_THEME.backgroundColor };
     if (resolvedTheme.transition) page.transition = {
       effect: resolvedTheme.transition.type || "none",

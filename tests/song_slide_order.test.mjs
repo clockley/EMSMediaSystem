@@ -89,6 +89,88 @@ test("page background overrides the resolved theme in preview and audience messa
   assert.equal(presentation.message.backgroundPath, "");
 });
 
+test("an untouched library song inherits the resolved theme background", () => {
+  const sourceSong = {
+    schema: "ems.song.v1",
+    id: "theme_background_inheritance",
+    title: "Theme Background Inheritance",
+    metadata: {},
+    sections: [{
+      id: "verse_1",
+      kind: "verse",
+      label: "Verse 1",
+      blocks: [{
+        id: "line_1",
+        type: "lyricLine",
+        primary: { lang: "en", segments: [{ type: "text", text: "Untouched lyrics" }] },
+      }],
+    }],
+    playOrder: [{ id: "play_1", sectionId: "verse_1", enabled: true }],
+    defaultRender: {
+      background: { mode: "color", color: "#000000", path: "" },
+    },
+  };
+  const bridgedSong = deckToTransientSong(songAstToDeck(sourceSong));
+  assert.deepEqual(bridgedSong.presentation.pageBackgroundOverrideIds, []);
+  assert.deepEqual(bridgedSong.presentation.pageOverrides, {});
+
+  const presentation = resolvedSongPresentation({
+    songSnapshot: bridgedSong,
+    render: { currentSectionId: "verse_1" },
+    resolvedTheme: {
+      canvas: {
+        background: {
+          type: "image",
+          color: "#000000",
+          assetUrl: "file:///project/theme-background.png",
+        },
+      },
+      typography: {},
+    },
+  });
+  assert.equal(presentation.message.backgroundImage, "file:///project/theme-background.png");
+  assert.equal(presentation.message.backgroundPath, "file:///project/theme-background.png");
+
+  const legacySong = structuredClone(bridgedSong);
+  delete legacySong.presentation.pageBackgroundOverrideIds;
+  legacySong.presentation.pageOverrides = {
+    verse_1: { background: { type: "color", color: "#000000" } },
+  };
+  const legacyPresentation = resolvedSongPresentation({
+    songSnapshot: legacySong,
+    render: { currentSectionId: "verse_1" },
+    resolvedTheme: {
+      canvas: {
+        background: {
+          type: "image",
+          color: "#000000",
+          assetUrl: "file:///project/theme-background.png",
+        },
+      },
+      typography: {},
+    },
+  });
+  assert.equal(legacyPresentation.message.backgroundImage, "file:///project/theme-background.png");
+  assert.equal(legacyPresentation.message.backgroundPath, "file:///project/theme-background.png");
+
+  const legacyDeckSong = deckToTransientSong(normalizeSlideDeck({
+    schema: "ems.slideDeck.v1",
+    id: "legacy_song_deck",
+    title: "Legacy Song Deck",
+    documentType: "song",
+    type: "song",
+    theme: { backgroundColor: "#000000" },
+    pages: [{
+      id: "verse_1",
+      label: "Verse 1",
+      background: { type: "color", color: "#000000" },
+      objects: [],
+    }],
+  }));
+  assert.deepEqual(legacyDeckSong.presentation.pageBackgroundOverrideIds, []);
+  assert.deepEqual(legacyDeckSong.presentation.pageOverrides, {});
+});
+
 test("a song editor font override survives resolved theme styling", () => {
   const song = deckToTransientSong(normalizeSlideDeck({
     schema: "ems.slideDeck.v1",

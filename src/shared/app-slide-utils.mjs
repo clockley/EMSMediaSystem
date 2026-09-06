@@ -10,7 +10,7 @@ schema-conformant ems.song.v1 where each deck page becomes one section.
 */
 
 import { EMS_SLIDE_DECK_SCHEMA_ID } from "../schemas/ems-slide.types.mjs";
-import { normalizeToSongAST } from "./app-song-utils.mjs";
+import { normalizeToSongAST, songPageBackgroundOverride } from "./app-song-utils.mjs";
 
 export { EMS_SLIDE_DECK_SCHEMA_ID };
 
@@ -141,6 +141,7 @@ export function createBlankPage({ label = "", text = "", background = null, obje
     durationMs: 0,
     autoAdvance: false,
     ...(transition ? { transition: { ...transition } } : {}),
+    backgroundOverride: Boolean(background),
     background: background || { type: "color", color: DEFAULT_DECK_THEME.backgroundColor },
     notes: "",
     objects: Array.isArray(objects)
@@ -325,8 +326,31 @@ function normalizeBackground(bg) {
   };
 }
 
-function normalizePage(page) {
+function deckThemeBackground(theme = {}) {
+  const path = theme.backgroundPath || "";
+  if (!path) {
+    return normalizeBackground({
+      type: "color",
+      color: theme.backgroundColor || DEFAULT_DECK_THEME.backgroundColor,
+    });
+  }
+  return normalizeBackground({
+    type: /\.(mp4|m4v|mov|mkv|webm)$/i.test(path) ? "video" : "image",
+    color: theme.backgroundColor || DEFAULT_DECK_THEME.backgroundColor,
+    path,
+  });
+}
+
+function backgroundsEqual(left, right) {
+  if (!left || !right || left.type !== right.type) return false;
+  if ((left.color || "") !== (right.color || "")) return false;
+  if ((left.path || "") !== (right.path || "")) return false;
+  return (left.assetId || "") === (right.assetId || "");
+}
+
+function normalizePage(page, { inheritedBackground = null } = {}) {
   if (!page || typeof page !== "object") return null;
+  const background = normalizeBackground(page.background);
   return {
     id: page.id || shortId("page"),
     ...(typeof page.kind === "string" && page.kind.trim()
@@ -337,7 +361,11 @@ function normalizePage(page) {
     autoAdvance: page.autoAdvance === true,
     ...(page.transition ? { transition: { ...page.transition } } : {}),
     notes: typeof page.notes === "string" ? page.notes : "",
-    background: normalizeBackground(page.background),
+    backgroundOverride: typeof page.backgroundOverride === "boolean"
+      ? page.backgroundOverride
+      : Boolean(page.background && typeof page.background === "object") &&
+        !backgroundsEqual(background, inheritedBackground),
+    background,
     objects: (Array.isArray(page.objects) ? page.objects : [])
       .map(normalizeObject)
       .filter(Boolean),
@@ -390,8 +418,10 @@ export function normalizeSlideDeck(deck) {
   const now = new Date().toISOString();
   const canvas = deck.canvas && typeof deck.canvas === "object" ? deck.canvas : DEFAULT_CANVAS;
   const theme = { ...DEFAULT_DECK_THEME, ...(deck.theme && typeof deck.theme === "object" ? deck.theme : {}) };
+  const songDocument = deck.documentType === SONG_DECK_DOCUMENT_TYPE || deck.type === SONG_DECK_DOCUMENT_TYPE;
+  const inheritedBackground = songDocument ? deckThemeBackground(theme) : null;
   let pages = (Array.isArray(deck.pages) ? deck.pages : [])
-    .map(normalizePage)
+    .map(page => normalizePage(page, { inheritedBackground }))
     .filter(Boolean);
   if (!pages.length) pages = [createBlankPage({ label: "Page 1" })];
   const pageSequence = normalizePageSequence(pages, deck.pageSequence);
@@ -701,10 +731,13 @@ export function deckToTransientSong(deck) {
       // editing/round-tripping, but do not apply it to the page a second time.
       explicitPageBoundaries: true,
       pageOverrides: Object.fromEntries(
-        norm.pages.map((page) => [page.id, {
+        norm.pages.filter(page => page.backgroundOverride === true).map((page) => [page.id, {
           background: structuredClone(page.background),
         }]),
       ),
+      pageBackgroundOverrideIds: norm.pages
+        .filter(page => page.backgroundOverride === true)
+        .map(page => page.id),
     },
     defaultRender: deckDefaultRender(norm),
   };
@@ -875,17 +908,8 @@ export function songAstToDeck(song, { documentType = SONG_DECK_DOCUMENT_TYPE } =
   const ast = normalizeToSongAST(song);
   if (!ast) return null;
   const theme = songDefaultRenderToDeckTheme(ast.defaultRender || {});
-  const defaultBackground = theme.backgroundPath
-    ? {
-        type: /\.(mp4|m4v|mov|mkv|webm)$/i.test(theme.backgroundPath) ? "video" : "image",
-        color: theme.backgroundColor,
-        path: theme.backgroundPath,
-      }
-    : { type: "color", color: theme.backgroundColor || DEFAULT_DECK_THEME.backgroundColor };
+  const defaultBackground = deckThemeBackground(theme);
   const orderedSections = songSectionOrder(ast);
-  const pageOverrides = ast.presentation?.pageOverrides && typeof ast.presentation.pageOverrides === "object"
-    ? ast.presentation.pageOverrides
-    : {};
   const pages = orderedSections.map((section, index) => {
     const fallbackText = blocksToText(section.blocks || []);
     const fallbackFrame = importedSongTextFrame(section, ast.defaultRender?.textBoxPosition || null);
@@ -922,14 +946,16 @@ export function songAstToDeck(song, { documentType = SONG_DECK_DOCUMENT_TYPE } =
     if (!sourceObjects && objects[0]) {
       objects[0].blocks = cloneBlocks(section.blocks, "");
     }
+    const backgroundOverride = songPageBackgroundOverride(ast, section.id);
     return {
       id: section.id || shortId("page"),
       label: section.label || `Slide ${index + 1}`,
       kind: section.kind || "verse",
       durationMs: 0,
       autoAdvance: false,
-      background: pageOverrides[section.id]?.background
-        ? structuredClone(pageOverrides[section.id].background)
+      backgroundOverride: Boolean(backgroundOverride),
+      background: backgroundOverride?.background
+        ? structuredClone(backgroundOverride.background)
         : { ...defaultBackground },
       notes: "",
       objects,

@@ -33,8 +33,8 @@ test("base inheritance detects cycles", () => {
 test("validation, stable revisions, legacy mapping, and embedded snapshots", () => {
   assert.equal(validateTheme(theme).valid, true); assert.equal(themeRevision(theme), themeRevision({ ...theme }));
   assert.equal(
-    themeRevision({ ...theme, assets: [{ id: "photo", assetUrl: "file:///first/photo.png" }] }),
-    themeRevision({ ...theme, assets: [{ id: "photo", assetUrl: "file:///second/photo.png" }] }),
+    themeRevision({ ...theme, assets: [{ id: "photo", assetUrl: "file:///first/photo.png", projectAssetId: "asset_1" }] }),
+    themeRevision({ ...theme, assets: [{ id: "photo", assetUrl: "file:///second/photo.png", projectAssetId: "asset_9" }] }),
   );
   assert.equal(legacyStyleToThemeOverrides({ lowerThirdFontSize: 44 }, "lowerThird").typography.fontSize, 44);
   const packaged = createProjectThemeSnapshot([theme], { song: "test" });

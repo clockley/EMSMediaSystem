@@ -89,6 +89,7 @@ Text objects reuse the EMS song block/segment grammar from ems-song.types.mjs.
  * @property {EmsSlideTransition} [transition]
  * @property {string} [notes]
  * @property {EmsSlidePageBackground} [background]
+ * @property {boolean} [backgroundOverride] true for an explicit page background; false for an inherited background
  * @property {EmsSlideObject[]} objects
  */
 

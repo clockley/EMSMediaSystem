@@ -93,6 +93,10 @@
           },
           "additionalProperties": true
         },
+        "backgroundOverride": {
+          "type": "boolean",
+          "description": "True when the page background is an explicit override; false when it is inherited from the deck or resolved theme."
+        },
         "objects": {
           "type": "array",
           "items": { "$ref": "#/$defs/Object" }

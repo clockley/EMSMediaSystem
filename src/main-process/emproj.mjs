@@ -12,7 +12,7 @@ import os from "os";
 import path from "path";
 import { Transform } from "stream";
 import { pipeline } from "stream/promises";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import {
   baselineFileHashFields,
   hashMediaFile,
@@ -1199,6 +1199,59 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
     if (typeof asset.path === "string") assetByPath.set(asset.path, asset);
   }
 
+  function extractedProjectAssetPath(projectAssetId) {
+    if (typeof projectAssetId !== "string" || !projectAssetId) return "";
+    const projectAsset = assetById.get(projectAssetId);
+    return projectAsset ? resolveAssetPath(projectAsset, extractedMediaPaths) : "";
+  }
+
+  function hydrateProjectBackground(background) {
+    if (!background || typeof background !== "object") return;
+    const extractedPath = extractedProjectAssetPath(background.projectAssetId);
+    if (!extractedPath) return;
+    background.path = extractedPath;
+    background.assetUrl = pathToFileURL(extractedPath).href;
+  }
+
+  function hydrateProjectTheme(theme) {
+    const copy = cloneJsonValue(theme);
+    if (!copy || typeof copy !== "object") return copy;
+    for (const asset of Array.isArray(copy.assets) ? copy.assets : []) {
+      if (!asset || typeof asset !== "object") continue;
+      const extractedPath = extractedProjectAssetPath(asset.projectAssetId);
+      if (extractedPath) asset.assetUrl = pathToFileURL(extractedPath).href;
+    }
+    for (const profileSet of Object.values(copy.profiles || {})) {
+      for (const profile of Object.values(profileSet || {})) {
+        hydrateProjectBackground(profile?.canvas?.background);
+        hydrateProjectBackground(profile?.backdrop?.background);
+      }
+    }
+    return copy;
+  }
+
+  function hydrateProjectItemTheme(itemTheme) {
+    const copy = cloneJsonValue(itemTheme);
+    if (!copy || typeof copy !== "object") return copy;
+    if (copy.snapshot && typeof copy.snapshot === "object") {
+      copy.snapshot = hydrateProjectTheme(copy.snapshot);
+    }
+    for (const profile of Object.values(copy.overrides || {})) {
+      hydrateProjectBackground(profile?.canvas?.background);
+      hydrateProjectBackground(profile?.backdrop?.background);
+    }
+    return copy;
+  }
+
+  const projectThemes = cloneJsonValue(queueJson.projectThemes);
+  if (projectThemes && typeof projectThemes === "object") {
+    for (const snapshot of Object.values(projectThemes.snapshots || {})) {
+      if (snapshot?.theme && typeof snapshot.theme === "object") {
+        snapshot.theme = hydrateProjectTheme(snapshot.theme);
+      }
+    }
+  }
+
   let outputsJson = { outputs: [] };
   const outputsJsonRaw = rootFiles.get("outputs.json");
   if (outputsJsonRaw) {
@@ -1409,6 +1462,13 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
       return queueItem;
     }))
   ).filter(Boolean);
+  for (const item of mediaQueue) {
+    if (!item || typeof item !== "object") continue;
+    item.itemTheme = hydrateProjectItemTheme(item.itemTheme);
+    if (item.bible && typeof item.bible === "object") {
+      item.bible.itemTheme = item.itemTheme;
+    }
+  }
   const manifestProjectGuid = normalizeProjectGuid(manifestJson?.project?.guid) || randomUUID();
   const manifestProjectCreated =
     typeof manifestJson?.project?.created === "string" &&
@@ -1443,8 +1503,8 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
     projectStorageMode: manifestJson?.storage?.mode === "packed" ? "packed" : "working",
     projectScriptureText: projectScriptureTextFromOverrides(projectScriptureOverrides),
     projectThemes:
-      queueJson.projectThemes && typeof queueJson.projectThemes === "object"
-        ? queueJson.projectThemes
+      projectThemes && typeof projectThemes === "object"
+        ? projectThemes
         : undefined,
     projectOutputHold: projectOutputHold || undefined,
     projectOutputs,
@@ -1641,6 +1701,97 @@ async function saveEmprojSnapshotUnlocked(
     }
   }
 
+  async function themeForProjectArchive(theme) {
+    const copy = cloneJsonValue(theme);
+    if (!copy || typeof copy !== "object") return copy;
+
+    for (const asset of Array.isArray(copy.assets) ? copy.assets : []) {
+      if (!asset || typeof asset !== "object") continue;
+      const sourcePath = [
+        asset.managedPath,
+        asset.sourcePath,
+        asset.assetUrl,
+        path.isAbsolute(asset.path || "") ? asset.path : "",
+      ].find(value => typeof value === "string" && value.length > 0);
+      delete asset.projectAssetId;
+      const projectAsset = await registerAssetForPath(sourcePath, {
+        originalPath: sourcePath,
+        originalName: asset.name || basenameAny(sourcePath || asset.path || ""),
+        forcePack: true,
+      });
+      if (projectAsset?.assetId) asset.projectAssetId = projectAsset.assetId;
+      delete asset.assetUrl;
+      delete asset.managedPath;
+      delete asset.sourcePath;
+    }
+
+    for (const profileSet of Object.values(copy.profiles || {})) {
+      for (const profile of Object.values(profileSet || {})) {
+        for (const background of [profile?.canvas?.background, profile?.backdrop?.background]) {
+          if (!background || typeof background !== "object" || background.assetId) continue;
+          if (background.type !== "image" && background.type !== "video") continue;
+          const sourcePath = background.assetUrl || background.url || background.path || "";
+          delete background.projectAssetId;
+          const projectAsset = await registerAssetForPath(sourcePath, {
+            originalPath: sourcePath,
+            originalName: background.name || basenameAny(sourcePath),
+            forcePack: true,
+          });
+          if (projectAsset?.assetId) {
+            background.projectAssetId = projectAsset.assetId;
+            background.path = projectAsset.bundledPath;
+            delete background.url;
+          }
+          delete background.assetUrl;
+        }
+      }
+    }
+    return copy;
+  }
+
+  async function itemThemeForProjectArchive(itemTheme) {
+    const copy = cloneJsonValue(itemTheme);
+    if (!copy || typeof copy !== "object") return copy;
+    if (copy.snapshot && typeof copy.snapshot === "object") {
+      copy.snapshot = await themeForProjectArchive(copy.snapshot);
+    }
+    for (const profile of Object.values(copy.overrides || {})) {
+      for (const background of [profile?.canvas?.background, profile?.backdrop?.background]) {
+        if (!background || typeof background !== "object" || background.assetId) continue;
+        if (background.type !== "image" && background.type !== "video") continue;
+        const sourcePath = background.assetUrl || background.url || background.path || "";
+        delete background.projectAssetId;
+        const projectAsset = await registerAssetForPath(sourcePath, {
+          originalPath: sourcePath,
+          originalName: background.name || basenameAny(sourcePath),
+          forcePack: true,
+        });
+        if (projectAsset?.assetId) {
+          background.projectAssetId = projectAsset.assetId;
+          background.path = projectAsset.bundledPath;
+          delete background.url;
+        }
+        delete background.assetUrl;
+      }
+    }
+    return copy;
+  }
+
+  async function projectThemesForProjectArchive(projectThemes) {
+    const copy = cloneJsonValue(projectThemes);
+    if (!copy || typeof copy !== "object") return copy;
+    for (const snapshot of Object.values(copy.snapshots || {})) {
+      if (snapshot?.theme && typeof snapshot.theme === "object") {
+        snapshot.theme = await themeForProjectArchive(snapshot.theme);
+      }
+    }
+    return copy;
+  }
+
+  const projectThemesForArchive = await projectThemesForProjectArchive(
+    snapshot?.projectThemes,
+  );
+
   const deckSnapshotsForExport = new Map();
 
   async function registerDeckMediaRef(holder, key = "path") {
@@ -1716,6 +1867,8 @@ async function saveEmprojSnapshotUnlocked(
         ...scripture,
         backgroundAssetId: backgroundAsset?.assetId,
       };
+      const itemTheme = await itemThemeForProjectArchive(item.itemTheme);
+      if (itemTheme) projectScripture.itemTheme = itemTheme;
       queueSequence.push({
         id: makeId("item", itemCounter),
         label: `${scripture.reference || ""} ${scripture.version || "KJV"}`.trim() || "Bible",
@@ -1725,7 +1878,7 @@ async function saveEmprojSnapshotUnlocked(
           path: scripturePath,
         },
         scripture: projectScripture,
-        itemTheme: item.itemTheme && typeof item.itemTheme === "object" ? item.itemTheme : undefined,
+        itemTheme,
         currentSlideId: scripture.currentSlideId,
         transition: projectSlideTransitionOverride(item.transition),
         playback: {
@@ -1771,6 +1924,7 @@ async function saveEmprojSnapshotUnlocked(
         render.backgroundAssetId = backgroundAsset.assetId;
       }
       const deckSnapshot = await deckSnapshotForArchive(item);
+      const itemTheme = await itemThemeForProjectArchive(item.itemTheme);
       const source = {
         kind: item.source?.kind || (item.type === "deck" ? "deck" : "library"),
         songId,
@@ -1804,7 +1958,7 @@ async function saveEmprojSnapshotUnlocked(
               ? item.sequence.currentSequenceEntryId
               : undefined,
         render,
-        itemTheme: item.itemTheme && typeof item.itemTheme === "object" ? item.itemTheme : undefined,
+        itemTheme,
         transition: projectSlideTransitionOverride(item.transition),
         playback: {
           startTime: 0,
@@ -1999,8 +2153,8 @@ async function saveEmprojSnapshotUnlocked(
     created: nowIso,
     modified: nowIso,
     projectThemes:
-      snapshot?.projectThemes && typeof snapshot.projectThemes === "object"
-        ? snapshot.projectThemes
+      projectThemesForArchive && typeof projectThemesForArchive === "object"
+        ? projectThemesForArchive
         : undefined,
     projectScriptureText: (() => {
       const scriptureText = projectScriptureTextFromOverrides(projectScriptureOverrides);
@@ -2215,13 +2369,52 @@ export function saveEmprojSnapshot(projectPath, snapshot, appInfo = {}, opts = {
 }
 
 export async function cleanupExtractedProjectMedia(snapshot) {
-  const queue = snapshot?.mediaQueue;
-  if (!Array.isArray(queue) || queue.length === 0) return;
+  const queue = Array.isArray(snapshot?.mediaQueue) ? snapshot.mediaQueue : [];
   const marker = `${path.sep}ems-emproj-`;
-  let root = "";
+  const candidates = [];
+  const addCandidate = value => {
+    if (typeof value !== "string" || !value) return;
+    if (/^file:\/\//i.test(value)) {
+      try { candidates.push(fileUrlToPath(value)); } catch {}
+      return;
+    }
+    candidates.push(value);
+  };
+  const collectTheme = theme => {
+    for (const asset of Array.isArray(theme?.assets) ? theme.assets : []) {
+      addCandidate(asset?.assetUrl);
+      addCandidate(asset?.managedPath);
+      addCandidate(asset?.sourcePath);
+    }
+    for (const profileSet of Object.values(theme?.profiles || {})) {
+      for (const profile of Object.values(profileSet || {})) {
+        for (const background of [profile?.canvas?.background, profile?.backdrop?.background]) {
+          addCandidate(background?.assetUrl);
+          addCandidate(background?.path);
+        }
+      }
+    }
+  };
+  const collectItemTheme = itemTheme => {
+    collectTheme(itemTheme?.snapshot);
+    for (const profile of Object.values(itemTheme?.overrides || {})) {
+      for (const background of [profile?.canvas?.background, profile?.backdrop?.background]) {
+        addCandidate(background?.assetUrl);
+        addCandidate(background?.path);
+      }
+    }
+  };
   for (const entry of queue) {
-    const entryPath = entry?.path;
-    if (typeof entryPath !== "string") continue;
+    addCandidate(entry?.path);
+    addCandidate(entry?.render?.backgroundPath);
+    addCandidate(entry?.bible?.backgroundPath);
+    collectItemTheme(entry?.itemTheme);
+  }
+  for (const themeSnapshot of Object.values(snapshot?.projectThemes?.snapshots || {})) {
+    collectTheme(themeSnapshot?.theme);
+  }
+  let root = "";
+  for (const entryPath of candidates) {
     const idx = entryPath.indexOf(marker);
     if (idx < 0) continue;
     const sepIdx = entryPath.indexOf(path.sep, idx + marker.length);

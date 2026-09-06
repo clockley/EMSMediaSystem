@@ -14,6 +14,7 @@ let applyContext = {
 const $ = id => document.getElementById(id);
 const copy = value => structuredClone(value);
 const color = (value, fallback) => /^#[0-9a-f]{6}$/i.test(value || "") ? value : fallback;
+const fileName = value => String(value || "").split(/[/\\]/).filter(Boolean).at(-1) || "";
 const profile = () => draft?.profiles?.[$("tmKind").value]?.[outputRole];
 const isBuiltIn = () => records.find(item => item.id === selectedId)?.source === "built-in";
 const isDirty = () => original && draft && JSON.stringify(original) !== JSON.stringify(draft);
@@ -122,11 +123,11 @@ function fillEditor() {
   );
   const background = target.canvas.background || {};
   const backgroundAsset = draft.assets?.find(asset => asset.id === background.assetId);
-  $("tmBackgroundAssetRow").hidden = outputRole !== "audience" || applyContext.scope === "item";
+  $("tmBackgroundAssetRow").hidden = outputRole !== "audience";
   $("tmBackgroundAssetLabel").textContent = background.type === "image"
-    ? backgroundAsset?.name || "Selected graphic"
+    ? background.name || backgroundAsset?.name || fileName(background.path) || "Selected graphic"
     : "None";
-  $("tmChooseBackground").disabled = isBuiltIn();
+  $("tmChooseBackground").disabled = isBuiltIn() && applyContext.scope !== "item";
   $("tmClearBackground").disabled = background.type !== "image";
   $("tmSafeMargin").value = Math.round((Number(target.canvas.safeMargins.left) || .06) * 100);
   $("tmBackdrop").checked = target.backdrop.enabled === true;
@@ -198,19 +199,23 @@ function renderPreview() {
 }
 
 async function chooseAudienceBackground() {
-  if (!draft || outputRole !== "audience" || applyContext.scope === "item") return;
+  if (!draft || outputRole !== "audience") return;
   readEditor();
-  const result = await api.chooseBackgroundAsset(draft.id);
+  const result = await api.chooseBackgroundAsset(draft.id, applyContext);
   if (result?.canceled || !result?.asset) return;
-  draft.assets ||= [];
-  draft.assets = [...draft.assets.filter(asset => asset.id !== result.asset.id), result.asset];
+  if (applyContext.scope !== "item") {
+    draft.assets ||= [];
+    draft.assets = [...draft.assets.filter(asset => asset.id !== result.asset.id), result.asset];
+  }
   for (const kind of ["song", "scripture", "text"]) {
     const target = ensureProfile(kind, "audience");
     target.canvas.background = {
       type: "image",
       color: $("tmBackground").value,
-      assetId: result.asset.id,
+      assetId: applyContext.scope === "item" ? null : result.asset.id,
       path: result.asset.path,
+      ...(result.asset.assetUrl ? { assetUrl: result.asset.assetUrl } : {}),
+      name: result.asset.name,
       fit: "cover",
       position: "center",
     };

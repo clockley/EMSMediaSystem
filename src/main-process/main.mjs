@@ -5604,9 +5604,10 @@ function setIPC() {
     const saved = await themeLibrary.save(stripThemeRuntimeAssetUrls(theme));
     return { ...saved, theme: await hydrateThemeAssetUrls(saved.theme), source: "user" };
   });
-  ipcMain.handle("themes:chooseBackgroundAsset", async (event, id) => {
+  ipcMain.handle("themes:chooseBackgroundAsset", async (event, id, rawContext = {}) => {
     await readyThemeLibrary();
-    if (id === EMS_SAFE_DEFAULT_THEME.id) {
+    const itemScope = rawContext?.scope === "item";
+    if (!itemScope && id === EMS_SAFE_DEFAULT_THEME.id) {
       throw new Error("Duplicate the built-in theme before adding a background graphic");
     }
     const parent = BrowserWindow.fromWebContents(event.sender);
@@ -5616,6 +5617,18 @@ function setIPC() {
       filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"] }],
     });
     if (selected.canceled || !selected.filePaths?.[0]) return { canceled: true };
+    if (itemScope) {
+      const selectedPath = selected.filePaths[0];
+      return {
+        canceled: false,
+        asset: {
+          type: "image",
+          path: selectedPath,
+          assetUrl: pathToFileURL(selectedPath).href,
+          name: path.basename(selectedPath),
+        },
+      };
+    }
     const asset = await importThemeAsset(
       selected.filePaths[0],
       path.join(themeLibrary.themeDir(id), "assets"),

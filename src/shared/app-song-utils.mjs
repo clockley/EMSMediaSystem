@@ -466,6 +466,49 @@ export function mergeSongRenderState(base = {}, overrides = {}) {
   };
 }
 
+function normalizedSongBackground(background = {}, fallback = {}) {
+  const path = background.path || background.url || fallback.path || "";
+  const type = background.type === "image" || background.type === "video"
+    ? background.type
+    : path
+      ? /\.(mp4|m4v|mov|mkv|webm)$/i.test(path) ? "video" : "image"
+      : "color";
+  return {
+    type,
+    color: background.color || fallback.color || DEFAULT_SONG_RENDER.backgroundColor,
+    path: type === "color" ? "" : path,
+  };
+}
+
+/**
+ * Return a real page-level background override, excluding the synthetic page
+ * backgrounds produced when an untouched library song is bridged through the
+ * deck editor. Older projects do not have explicit override IDs, so an
+ * override identical to the song-wide default is treated as inherited.
+ */
+export function songPageBackgroundOverride(song, sectionId) {
+  const presentation = song?.presentation;
+  const pageOverride = presentation?.pageOverrides?.[sectionId];
+  if (!pageOverride?.background || typeof pageOverride.background !== "object") return null;
+  if (Array.isArray(presentation.pageBackgroundOverrideIds)) {
+    return presentation.pageBackgroundOverrideIds.includes(sectionId) ? pageOverride : null;
+  }
+  const defaultRender = song?.defaultRender || {};
+  const defaultBackground = normalizedSongBackground(
+    defaultRender.background,
+    {
+      color: defaultRender.backgroundColor || DEFAULT_SONG_RENDER.backgroundColor,
+      path: defaultRender.backgroundPath || "",
+    },
+  );
+  const pageBackground = normalizedSongBackground(pageOverride.background, defaultBackground);
+  return pageBackground.type === defaultBackground.type &&
+    pageBackground.color === defaultBackground.color &&
+    pageBackground.path === defaultBackground.path
+    ? null
+    : pageOverride;
+}
+
 export function songDefaultRenderFromRender(render = {}) {
   const style = mergeSongRenderState({}, render);
   return {
@@ -913,7 +956,7 @@ export function resolvedSongPresentation(item) {
     // song-wide render defaults. Apply them last for preview and audience.
     message: applySongPageOverridesToMessage(
       applyResolvedThemeToSongMessage(message, item?.resolvedTheme),
-      song.presentation?.pageOverrides?.[section?.id],
+      songPageBackgroundOverride(song, section?.id),
     ),
   };
 }
