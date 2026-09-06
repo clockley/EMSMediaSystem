@@ -1,0 +1,14 @@
+{
+  "format": "ems.bible-manifest.v1",
+  "id": "public:dra1899",
+  "abbreviation": "DRA",
+  "name": "Douay-Rheims 1899",
+  "language": "en",
+  "revision": "2022-11-03",
+  "contentFile": "DOUAY-RHEIMS 1899.json",
+  "publicDomain": true,
+  "publisher": "",
+  "copyright": "Public Domain",
+  "copyrightInfo": "Douay-Rheims American Edition of 1899. Public Domain. Source text courtesy of eBible.org.",
+  "infoUrl": "https://ebible.org/bible/details.php?id=engDRA"
+}
