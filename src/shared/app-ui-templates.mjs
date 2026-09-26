@@ -168,12 +168,6 @@ export function generateMediaFormHTML() {
         <div class="list-header">
           <span class="queue-section-title">Schedule</span>
           <span class="queue-section-actions">
-            <button type="button" id="addNetworkItemBtn" class="queue-header-button" title="Add network item" aria-label="Add network item">
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                <path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M8 3.5v9M3.5 8h9"/>
-              </svg>
-              <span>Network</span>
-            </button>
             <button type="button" id="clearQueueBtn" class="pill-button destructive-action" title="Clear the schedule" aria-label="Clear schedule" hidden>Clear</button>
           </span>
         </div>

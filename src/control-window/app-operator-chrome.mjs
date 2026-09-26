@@ -271,7 +271,7 @@ function installMediaOpenButton() {
 
 function updateHeaderAddMediaButtonVisibility() {
   const visible = currentMode === MEDIAPLAYER;
-  for (const id of ["headerAddMediaButton", "headerBrowseMediaButton"]) {
+  for (const id of ["headerAddMediaButton", "addNetworkItemBtn", "headerBrowseMediaButton"]) {
     const button = document.getElementById(id);
     if (!button) continue;
     button.hidden = !visible;
