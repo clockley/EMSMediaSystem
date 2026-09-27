@@ -976,6 +976,12 @@ function waitForMetadata(mediaEl = video) {
 async function playMedia(e) {
   if (presentationStartInProgress) return;
 
+  // Where the operator left the playhead when they pressed Present. This has to
+  // be a local: saveMediaFile() below resets the shared startTime to 0 and
+  // assigns that 0 straight onto the preview element whenever the media file
+  // differs from prePathname, so by the time the take reads a position both the
+  // shared value and the element have lost the scrub.
+  const requestedPreviewStartTime = validMediaStartTime(video?.currentTime);
   if (video) {
     setSharedRendererState({ itc: performance.now() * 0.001 });
     setSharedRendererState({ startTime: video.currentTime });
@@ -1044,7 +1050,10 @@ async function playMedia(e) {
     const startIdx = queueStartIndexForPresent();
     const item = mediaQueue[startIdx];
     return runPresentationStart(async () => {
-      const presentStartTime = presentationStartTimeForQueueItem(startIdx, startTime);
+      const presentStartTime = presentationStartTimeForQueueItem(
+        startIdx,
+        requestedPreviewStartTime,
+      );
       setSharedRendererState({ isQueuePlaying: true });
       setSharedRendererState({ currentQueueIndex: startIdx });
       await playCurrentQueueItem({
@@ -1076,7 +1085,7 @@ async function playMedia(e) {
       setSharedRendererState({ isQueuePlaying: true });
       await playCurrentQueueItem({
         preservePreviewSeek: false,
-        startTime: validMediaStartTime(startTime),
+        startTime: requestedPreviewStartTime,
       });
     });
   }
@@ -1626,6 +1635,13 @@ function seekLocalMedia(e) {
     e.preventDefault();
     return;
   }
+  // Recording where the operator left the playhead is independent of whether we
+  // are allowed to drive the projection: suppression exists to keep preview
+  // churn off the audience output, not to discard the scrub. Persisting before
+  // the suppression check is what makes "scrub, then Present" start at the
+  // scrubbed position. syncTrackedPreviewStartTime only writes a cue for an item
+  // that actually owns the preview, so a projection→preview sync cannot forge one.
+  syncTrackedPreviewStartTime(e.target, { force: true });
   // The old architecture re-used #preview as the cue scrub element, so a
   // seek here could mean "operator is dragging the cue scrubber" and was
   // forwarded to setCueStartTime. The new architecture keeps cue scrubs on
@@ -1643,7 +1659,6 @@ function seekLocalMedia(e) {
     return;
   }
   tracePlayback("seekLocalMedia FORWARD timeGoto", "t=" + e.target.currentTime);
-  syncTrackedPreviewStartTime(e.target, { force: true });
   if (e.target.isConnected) {
     send("timeGoto-message", {
       currentTime: e.target.currentTime,
@@ -1672,10 +1687,12 @@ function seekingLocalMedia(e) {
     e.preventDefault();
     return;
   }
+  // See seekLocalMedia: the cue write is deliberately outside the suppression
+  // gate so an in-progress scrub is still recorded.
+  syncTrackedPreviewStartTime(e.target, { force: true });
   if (shouldSuppressPreviewForwarding()) {
     return;
   }
-  syncTrackedPreviewStartTime(e.target, { force: true });
   if (e.target.isConnected) {
     send("timeGoto-message", {
       currentTime: e.target.currentTime,
@@ -2209,7 +2226,7 @@ async function createMediaWindow(options) {
         `__autoplay=${autoPlayEnabled}`,
         seekOnly ? "__seek-only" : "",
         playbackTraceEnabled ? "__debug-playback" : "",
-        birth,
+        "__media-birth=" + birth,
       ],
       preload: `${__dirname}/../media-window/media_preload.min.js`,
       devTools: false,

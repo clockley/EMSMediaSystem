@@ -28,6 +28,7 @@ import {
   audienceTextMessageForSend,
   audioOnlyFile,
   beginNetworkPreviewStatus,
+  beginPreviewForwardingSuppression,
   beginPreviewTransportLoad,
   beginProjectionPlaybackStartupSync,
   beginScriptureTake,
@@ -55,6 +56,7 @@ import {
   currentTimeDisplay,
   disableNativeVideoControls,
   durationTimeDisplay,
+  endPreviewForwardingSuppression,
   ensurePendingMediaUpdateApproved,
   ensurePreviewAudioElement,
   fileEnded,
@@ -1589,6 +1591,13 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
 
   setSharedRendererState({ queueSlipstreamTransitionInProgress: true });
   let startupSyncStarted = false;
+  // Staging the next item rewrites #preview's source and seeks it to the new
+  // cue point. Those pause/seek events would otherwise be forwarded to the
+  // projection as play-ctl / timeGoto-message commands describing a clip that is
+  // not live yet, fighting the slipstream payload that is about to carry the
+  // same cue. The projection is driven entirely by that payload here, so mirror
+  // forwarding stays off for the whole transition.
+  beginPreviewForwardingSuppression();
   try {
     const nextItem = mediaQueue[index];
     const nextType = nextItem.type || classifyQueueMediaType(nextItem.path);
@@ -1805,6 +1814,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     if (startupSyncStarted) finishProjectionPlaybackStartupSync();
     throw err;
   } finally {
+    endPreviewForwardingSuppression();
     setSharedRendererState({ queueSlipstreamTransitionInProgress: false });
   }
 }

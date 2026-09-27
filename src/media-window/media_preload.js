@@ -22,6 +22,21 @@ let timeRemainingPort = null;
 const TIME_REMAINING_PAYLOAD = [0, 0, 0, ""];
 const TIME_REMAINING_PAYLOAD_NO_FILE = [0, 0, 0];
 
+function mediaWindowBirth(argv) {
+  const prefix = "__media-birth=";
+  const named = argv.find((arg) => arg.startsWith(prefix));
+  // Main appends audience-session and alert options after the control window's
+  // arguments. Older callers send a bare timestamp, so find it by value rather
+  // than assuming it is still the last argument.
+  const value = named === undefined
+    ? [...argv].reverse().find((arg) => /^\d+(?:\.\d+)?$/.test(arg))
+    : named.slice(prefix.length);
+  const timestamp = Number(value);
+  return value !== undefined && value.trim() !== "" && Number.isFinite(timestamp) && timestamp >= 0
+    ? timestamp
+    : null;
+}
+
 ipcRenderer.on("timeRemaining-port", (event) => {
   const [port] = event.ports || [];
   if (!port) return;
@@ -93,7 +108,7 @@ contextBridge.exposeInMainWorld("electron", {
     return attachCubicWaveShaper(...args);
   },
   argv: process.argv,
-  birth: process.argv[process.argv.length - 1],
+  birth: mediaWindowBirth(process.argv),
 
   createFadeOut: (duration = 3, debug = false) => {
     const fadePromise = audioFxPromise.then(

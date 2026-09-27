@@ -58,6 +58,13 @@ let dashManifestObjectUrl = null;
 let videoPlaybackWiringInstalled = false;
 /** Sent with playback-state-change so the control preview ignores source-swap churn. */
 let playbackSyncPhase = "stable";
+/**
+ * Bumped on every assignment to the <video> element's source. Deferred work that
+ * writes a playback position (notably the mirrored `timeGoto-message` seek)
+ * captures this and bails when it no longer matches, so a position belonging to
+ * the outgoing clip can never be applied to the clip that replaced it.
+ */
+let videoSourceGeneration = 0;
 /** Tags the next paused playback-state-change as operator intent, not source churn. */
 let explicitPauseSyncPending = false;
 let lastTimeRemainingMediaFile = "";
@@ -83,6 +90,9 @@ let textIpcHandlersInstalled = false;
 let ipcHandlersInstalled = false;
 const PRESENTATION_START_BUFFER_SECONDS = 12;
 const PRESENTATION_START_BUFFER_TIMEOUT_MS = 12000;
+const MEDIA_METADATA_WAIT_TIMEOUT_MS = 4000;
+/** How far the position may sit below a cue before it counts as lost, in seconds. */
+const CUE_START_TOLERANCE_SECONDS = 0.25;
 const STREAM_MIN_LOADING_STATUS_MS = 500;
 const PREVIEW_RTC_CAPTURE_ATTEMPTS = 8;
 const PREVIEW_RTC_CAPTURE_TRACK_WAIT_MS = 1200;
@@ -217,6 +227,48 @@ function setLoopEnabled(enabled) {
   }
   tracePlayback("setLoopEnabled", loopFile, "file=" + mediaFile);
   return loopFile;
+}
+
+/**
+ * Show or hide the projection surface.
+ *
+ * `#bigPlayer` is not the only <video> in this document: `#liveBackgroundVideo`
+ * precedes it in `#liveBackgroundLayer` and the output hold overlay has its own.
+ * `document.querySelector("video")` therefore resolves to a background layer,
+ * not the audience surface, so visibility changes must always go through the
+ * resolved `#bigPlayer` element. Both the `hidden` attribute and the inline
+ * display are cleared when showing, because the two are set from different
+ * paths and an inline `display: none` silently outlives `hidden = false`.
+ */
+function setProjectionVideoVisible(visible) {
+  const el = video ?? document.getElementById("bigPlayer");
+  if (!el) return;
+  if (visible) {
+    el.hidden = false;
+    el.style.display = "block";
+  } else {
+    el.style.display = "none";
+  }
+}
+
+/**
+ * Point the projection <video> at `url`, or detach it entirely when `url` is
+ * empty. Routing every source change through here keeps `videoSourceGeneration`
+ * accurate, which is what stops a deferred seek for the previous clip from
+ * landing on the new one.
+ */
+function setProjectionVideoSource(url) {
+  videoSourceGeneration += 1;
+  if (!video) return;
+  if (typeof url === "string" && url.length > 0) {
+    // Per HTML5 spec, assigning to .src aborts the current load and resets the
+    // media element. Don't call removeAttribute("src") + load() first — that
+    // briefly puts the element in NETWORK_EMPTY and races the new src assignment.
+    video.src = url;
+    return;
+  }
+  video.removeAttribute("src");
+  video.load();
 }
 
 function beginPlaybackStateStabilizing() {
@@ -462,6 +514,17 @@ function getPptxListRenderOptions(slideCount) {
   };
 }
 
+/**
+ * Resolve once `mediaEl` has metadata for the source that was current when the
+ * wait began.
+ *
+ * Swapping the source aborts the outgoing clip's load, which can deliver a late
+ * `error` belonging to the clip we just left. Treating that as fatal rejected
+ * the incoming clip's `applyVideoStartTime`, so its cue seek was skipped and it
+ * started from the top. Errors are therefore only honoured for the source being
+ * waited on, and the wait is bounded so a source that never reports metadata
+ * cannot strand the caller short of play().
+ */
 function waitForMediaMetadata(mediaEl) {
   if (!mediaEl) {
     return Promise.reject(new Error("Missing media element"));
@@ -469,11 +532,14 @@ function waitForMediaMetadata(mediaEl) {
   if (mediaEl.readyState >= HTMLMediaElement.HAVE_METADATA) {
     return Promise.resolve();
   }
+  const generation = videoSourceGeneration;
   return new Promise((resolve, reject) => {
     let settled = false;
+    let timer = null;
     const cleanup = () => {
       mediaEl.removeEventListener("loadedmetadata", onLoaded);
       mediaEl.removeEventListener("error", onError);
+      if (timer !== null) window.clearTimeout(timer);
     };
     const onLoaded = () => {
       if (settled) return;
@@ -482,13 +548,21 @@ function waitForMediaMetadata(mediaEl) {
       resolve();
     };
     const onError = () => {
-      if (settled) return;
+      // Not `once`: a stale error must not consume the listener that the
+      // current source still needs.
+      if (settled || generation !== videoSourceGeneration) return;
       settled = true;
       cleanup();
       reject(mediaEl.error ?? new Error("Failed to load media metadata"));
     };
-    mediaEl.addEventListener("loadedmetadata", onLoaded, { once: true });
-    mediaEl.addEventListener("error", onError, { once: true });
+    timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("Timed out waiting for media metadata"));
+    }, MEDIA_METADATA_WAIT_TIMEOUT_MS);
+    mediaEl.addEventListener("loadedmetadata", onLoaded);
+    mediaEl.addEventListener("error", onError);
   });
 }
 
@@ -580,17 +654,60 @@ async function playVideoWithStartupBuffer(errorContext = "Video playback did not
   });
 }
 
-async function applyVideoStartTime(mediaEl, requestedStartTime) {
-  if (!mediaEl || !Number.isFinite(requestedStartTime) || requestedStartTime <= 0) {
-    return;
-  }
-  await waitForMediaMetadata(mediaEl);
+function cueStartTimeWithinDuration(mediaEl, requestedStartTime) {
   let safeTime = requestedStartTime;
   if (Number.isFinite(mediaEl.duration) && mediaEl.duration > 0) {
     safeTime = Math.min(requestedStartTime, Math.max(0, mediaEl.duration - 0.15));
   }
-  if (safeTime < 0) safeTime = 0;
-  mediaEl.currentTime = safeTime;
+  return safeTime < 0 ? 0 : safeTime;
+}
+
+/**
+ * Keep the cue position asserted until the clip is genuinely playing.
+ *
+ * A single write on `loadedmetadata` is not enough: the element can still be
+ * re-running its load, and Chromium resets the playback position to zero each
+ * time it does. Re-asserting on the events that precede playback means the first
+ * frame the audience sees is the cued one. The generation check retires the
+ * guard the moment a newer source takes over the element.
+ */
+function holdVideoStartTime(mediaEl, requestedStartTime, generation) {
+  const events = ["loadeddata", "canplay"];
+  const reassert = () => {
+    if (generation !== videoSourceGeneration) {
+      stop();
+      return;
+    }
+    const target = cueStartTimeWithinDuration(mediaEl, requestedStartTime);
+    if (mediaEl.currentTime < target - CUE_START_TOLERANCE_SECONDS) {
+      mediaEl.currentTime = target;
+    }
+  };
+  const stop = () => {
+    events.forEach((name) => mediaEl.removeEventListener(name, reassert));
+    mediaEl.removeEventListener("playing", finish);
+    mediaEl.removeEventListener("emptied", stop);
+  };
+  const finish = () => {
+    reassert();
+    stop();
+  };
+  events.forEach((name) => mediaEl.addEventListener(name, reassert));
+  mediaEl.addEventListener("playing", finish, { once: true });
+  // Every source swap re-runs the load algorithm and fires `emptied`, so this is
+  // the one event guaranteed to retire a guard whose clip never played.
+  mediaEl.addEventListener("emptied", stop);
+}
+
+async function applyVideoStartTime(mediaEl, requestedStartTime) {
+  if (!mediaEl || !Number.isFinite(requestedStartTime) || requestedStartTime <= 0) {
+    return;
+  }
+  const generation = videoSourceGeneration;
+  await waitForMediaMetadata(mediaEl);
+  if (generation !== videoSourceGeneration) return;
+  mediaEl.currentTime = cueStartTimeWithinDuration(mediaEl, requestedStartTime);
+  holdVideoStartTime(mediaEl, requestedStartTime, generation);
 }
 
 async function effectiveWindowStartTime() {
@@ -599,7 +716,7 @@ async function effectiveWindowStartTime() {
   const ts = await ipcRenderer.invoke("get-system-time");
   return (
     strtTm +
-    (ts.systemTime - birth) +
+    (Number.isFinite(birth) ? ts.systemTime - birth : 0) +
     (Date.now() - ts.ipcTimestamp) * 0.001
   );
 }
@@ -796,17 +913,13 @@ function teardownStreamingPlayers() {
 /** Stop the <video> element and fully detach its current source. */
 function teardownVideoElement() {
   teardownStreamingPlayers();
-  const videoEl = document.querySelector("video");
   try {
     video?.pause();
   } catch {
     /* element may already be paused-at-end */
   }
-  if (video) {
-    video.removeAttribute("src");
-    video.load();
-  }
-  if (videoEl) videoEl.style.display = "none";
+  setProjectionVideoSource("");
+  setProjectionVideoVisible(false);
 }
 
 function teardownImageElement() {
@@ -897,16 +1010,14 @@ async function activateVideoTarget(data) {
   // A previous live stream could still own the <video> element; drop its
   // player so it can't keep pushing data into the element we're reusing.
   teardownStreamingPlayers();
-  const videoEl = document.querySelector("video");
   setLoopEnabled(loopFile);
   if (data.startVolume != null && video) {
     video.volume = data.startVolume;
   }
-  // Per HTML5 spec, assigning to .src aborts the current load and resets the
-  // media element. Don't call removeAttribute("src") + load() here — that
-  // briefly puts the element in NETWORK_EMPTY and races the new src assignment.
-  video.src = mediaFile;
-  if (videoEl) videoEl.style.display = "block";
+  setProjectionVideoSource(mediaFile);
+  // The previous clip's natural end hid this element; a slipstreamed clip is
+  // only ever seen again if the surface is explicitly restored here.
+  setProjectionVideoVisible(true);
   // A video reached via slipstream (e.g. image -> video) must behave exactly
   // like one loaded fresh, including firing media-playback-ended for queue
   // auto-advance. Install the shared wiring here in case the initial media
@@ -941,6 +1052,7 @@ async function startLiveStreamPlayback(url) {
   try {
     video.pause();
   } catch {}
+  videoSourceGeneration += 1;
   liveStreamMode = true;
 
   let ytResolved = null;
@@ -984,7 +1096,7 @@ async function startLiveStreamPlayback(url) {
   } else {
     video.onended = () => {
       if (loopFile || video.loop) return;
-      video.style.display = "none";
+      setProjectionVideoVisible(false);
       ipcRenderer.send("media-playback-ended", mediaFile);
     };
   }
@@ -1080,7 +1192,18 @@ async function applySlipstream(data) {
 
 window.emsApplySlipstream = applySlipstream;
 window.emsGetPptxCurrentSlide = () => (isPptx ? pptxCurrentSlide : null);
-window.emsSetLoopEnabled = setLoopEnabled;
+window.emsSetLoopEnabled = (enabled) => {
+  const looping = setLoopEnabled(enabled);
+  // A clip that reached its natural end already hid this surface and reported
+  // the end to the control window. If the control window answers with "loop"
+  // instead of an advance, nothing else brings the element back, so restore and
+  // restart it here. play() on an ended element seeks back to the start.
+  if (looping && video?.ended && !isText && !isImg && !isPptx) {
+    setProjectionVideoVisible(true);
+    void video.play().catch(() => {});
+  }
+  return looping;
+};
 window.emsGetLoopEnabled = () => !!loopFile;
 
 const OUTPUT_HOLD_NONE = "none";
@@ -1647,8 +1770,7 @@ ipcRenderer.on("audience-enter-alert-only", () => {
   if (video) {
     video.pause();
     video.muted = true;
-    video.removeAttribute("src");
-    video.load();
+    setProjectionVideoSource("");
   }
 });
 
@@ -1679,13 +1801,23 @@ function installICPHandlers() {
     ) {
       return;
     }
+    // A source swap applies its own cue start time. Positions mirrored from the
+    // control preview describe the clip that was loaded when they were sent, so
+    // honouring them here would overwrite that cue seek with a stale position.
+    if (playbackSyncPhase === "stabilizing") {
+      return;
+    }
 
     const localTs = performance.now();
     const now = Date.now();
     const travelTime = now - message.timestamp;
+    const sourceGeneration = videoSourceGeneration;
 
     const adjustedTime = message.currentTime + travelTime * 0.001;
     requestAnimationFrame(() => {
+      // The write is deferred a frame, which is long enough for a queue advance
+      // to have swapped the source and seeked it to the new clip's cue point.
+      if (sourceGeneration !== videoSourceGeneration) return;
       video.currentTime =
         adjustedTime + (performance.now() - localTs) * 0.001;
     });
@@ -1900,7 +2032,7 @@ function installVideoPlaybackWiring() {
       "dur=" + video.duration,
     );
     if (loopFile || video.loop) return;
-    video.style.display = "none";
+    setProjectionVideoVisible(false);
     ipcRenderer.send("media-playback-ended", mediaFile);
   };
 
@@ -3164,7 +3296,7 @@ async function loadMedia() {
 
   if (logoHoldOnly) {
     installICPHandlers();
-    if (video) video.style.display = "none";
+    setProjectionVideoVisible(false);
     if (textCanvas) textCanvas.style.display = "none";
     const pptxCanvas = document.getElementById("pptxCanvas");
     if (pptxCanvas) pptxCanvas.style.display = "none";
@@ -3173,8 +3305,7 @@ async function loadMedia() {
 
   if (isText) {
     installICPHandlers();
-    const videoEl = document.querySelector("video");
-    if (videoEl) videoEl.style.display = "none";
+    setProjectionVideoVisible(false);
     if (textCanvas) textCanvas.style.display = "flex";
     installTextHandlers();
     scheduleStableTextPresentationRefit();
@@ -3194,7 +3325,7 @@ async function loadMedia() {
     img.src = mediaFile;
     img.setAttribute("id", "bigPlayer");
     document.body.appendChild(img);
-    document.querySelector("video").style.display = "none";
+    setProjectionVideoVisible(false);
     return;
   }
 
@@ -3206,12 +3337,11 @@ async function loadMedia() {
     } else if (!globalThis.process.env) {
       globalThis.process.env = {};
     }
-    document.querySelector("video").style.display = "none";
+    setProjectionVideoVisible(false);
     try {
       video.pause();
     } catch {}
-    video.removeAttribute("src");
-    video.load();
+    setProjectionVideoSource("");
     if (pptxCanvas) pptxCanvas.style.display = "flex";
     const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import("../../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js");
     const arrayBuffer = await ipcRenderer.invoke(
@@ -3265,14 +3395,14 @@ async function loadMedia() {
   if (autoPlay) {
     beginPlaybackStateStabilizing();
   }
-  video.src = mediaFile;
+  setProjectionVideoSource(mediaFile);
 
   let ts = await ipcRenderer.invoke("get-system-time");
   if (strtTm != 0) {
     let t = seekOnly
       ? strtTm
       : strtTm +
-        (ts.systemTime - birth) +
+        (Number.isFinite(birth) ? ts.systemTime - birth : 0) +
         (Date.now() - ts.ipcTimestamp) * 0.001;
     try {
       await applyVideoStartTime(video, t);

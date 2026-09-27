@@ -947,6 +947,10 @@ function setupCustomMediaControls() {
       if (duration <= 0) return;
       const seekTime = (timeline.value / 100) * duration;
       const seekToken = ++timelineSeekToken;
+      const seekCueIndex = previewCueIndex;
+      const seekQueueIndex = currentQueueIndex;
+      const seekItem = mediaQueue[seekCueIndex >= 0 ? seekCueIndex : seekQueueIndex];
+      const seekSource = mediaEl.src;
 
       currentTimeDisplay && paintTransportTimeDisplay(currentTimeDisplay, seekTime);
       const seekPromise = mediaIsNetworkTransport(mediaEl)
@@ -954,8 +958,19 @@ function setupCustomMediaControls() {
         : seekMedia(mediaEl, seekTime);
       void seekPromise.then((actualTime) => {
         if (seekToken !== timelineSeekToken) return;
+        if (
+          mediaEl !== currentControlMedia() ||
+          mediaEl.src !== seekSource ||
+          previewCueIndex !== seekCueIndex ||
+          currentQueueIndex !== seekQueueIndex ||
+          mediaQueue[seekCueIndex >= 0 ? seekCueIndex : seekQueueIndex] !== seekItem
+        ) return;
         currentTimeDisplay && paintTransportTimeDisplay(currentTimeDisplay, actualTime);
-        if (isPreparingSeparateCue()) {
+        // A paused audio cue has no playing timeupdate to save its position.
+        // Persist all operator-owned previews, including before first Present.
+        if (!mediaIsNetworkTransport(mediaEl)) {
+          syncTrackedPreviewStartTime(mediaEl, { force: true });
+        } else if (isPreparingSeparateCue()) {
           setCueStartTime(previewCueIndex, actualTime);
         }
       });

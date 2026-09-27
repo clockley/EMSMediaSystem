@@ -1748,11 +1748,19 @@ function currentPreviewStartTimeForQueueItem(index, item, fallback = null) {
   }
 
   if (index === currentQueueIndex || previewShowsSameClipAsPath(item.path)) {
-    if (Number.isFinite(video?.currentTime)) {
-      return validMediaStartTime(video.currentTime);
+    const livePosition = validMediaStartTime(video?.currentTime);
+    if (livePosition > 0) {
+      return livePosition;
     }
+    // Reloading the preview resets the element to zero, and taking an item live
+    // can do exactly that between the operator's scrub and this read. A finite
+    // zero is therefore not evidence that the playhead is at the start, so the
+    // caller's snapshot of where it left the scrub wins over it.
     if (Number.isFinite(fallback)) {
       return validMediaStartTime(fallback);
+    }
+    if (Number.isFinite(video?.currentTime)) {
+      return livePosition;
     }
   }
 
