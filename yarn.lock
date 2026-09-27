@@ -5,18 +5,19 @@ __metadata:
   version: 10
   cacheKey: 10c0
 
-"@aiden0z/pptx-renderer@npm:^1.2.4":
-  version: 1.2.4
-  resolution: "@aiden0z/pptx-renderer@npm:1.2.4"
+"@aiden0z/pptx-renderer@npm:^1.3.0":
+  version: 1.3.0
+  resolution: "@aiden0z/pptx-renderer@npm:1.3.0"
   dependencies:
     echarts: "npm:^6.0.0"
     jszip: "npm:^3.10.1"
+    mtx-decompressor: "npm:^1.4.2"
   peerDependencies:
     pdfjs-dist: ">=5 <7"
   peerDependenciesMeta:
     pdfjs-dist:
       optional: true
-  checksum: 10c0/48629f1a9097b861e2237dac5705bd774339ce87869180ce37c40ad676745d28a3bca7b7dbd05a0eb703286c2bb319d8093dc5092d165de79465e718c576bc69
+  checksum: 10c0/0febd90f622e9c340ecd7a65134ad62e51e89571a16dd796edb9b79cb43e684360e37da187fe49f6ea01edd4ab92cbce91b27bd39ced2fb6fcb8d4f82cd9afd1
   languageName: node
   linkType: hard
 
@@ -1703,7 +1704,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "emsmediasystem@workspace:."
   dependencies:
-    "@aiden0z/pptx-renderer": "npm:^1.2.4"
+    "@aiden0z/pptx-renderer": "npm:^1.3.0"
     atem-connection: "npm:^3.9.0"
     concurrently: "npm:^9.1.0"
     csso: "npm:^5.0.5"
@@ -2939,6 +2940,13 @@ __metadata:
   version: 2.1.3
   resolution: "ms@npm:2.1.3"
   checksum: 10c0/d924b57e7312b3b63ad21fc5b3dc0af5e78d61a1fc7cfb5457edaf26326bf62be5307cc87ffb6862ef1c2b33b0233cdb5d4f01c4c958cc0d660948b65a287a48
+  languageName: node
+  linkType: hard
+
+"mtx-decompressor@npm:^1.4.2":
+  version: 1.8.0
+  resolution: "mtx-decompressor@npm:1.8.0"
+  checksum: 10c0/4e97ccf698fd3cc96ea367476e50a411a5315a2c4b570cb5bc4e097a8b98a18035fe619cbe6e2a36ffa5be58b31f231c8aee4fdf6addf7fe3f2dd26f1a19f724
   languageName: node
   linkType: hard
 
