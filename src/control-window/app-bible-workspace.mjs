@@ -653,12 +653,26 @@ function bibleBookAbbreviationSync(bookName) {
 function bibleQueueItemDisplayName(item) {
   const fallback = item?.name || "";
   const bible = item?.bible;
-  const book = String(bible?.book || "").trim();
-  const chapter = Number.isFinite(bible?.chapter) ? bible.chapter : null;
-  if (!bible || !book || !chapter) return fallback;
+  if (!bible) return fallback;
+  // item.path is the identity of a scheduled scripture, so the reference it
+  // encodes decides the label. Verse metadata stored on the entry can describe a
+  // wider passage than this row, which would otherwise label sibling rows alike.
+  const reference = normalizeScriptureReference(
+    parseBibleQueuePath(item.path)?.reference || bible.reference || "",
+  );
+  const parsedReference = parseScriptureReference(reference);
+  const book = String(parsedReference.book || bible.book || "").trim();
+  const chapter = Number.isFinite(parsedReference.chapter)
+    ? parsedReference.chapter
+    : Number.isFinite(bible.chapter)
+      ? bible.chapter
+      : null;
+  if (!book || !chapter) return fallback;
   const abbreviation = bibleBookAbbreviationSync(book);
   if (!abbreviation || abbreviation.toLowerCase() === book.toLowerCase()) return fallback;
-  const selectedVerses = bibleSelectedVersesForEntry(bible);
+  const selectedVerses = parsedReference.verseSelector
+    ? verseNumbersFromSelector(parsedReference.verseSelector, 500)
+    : bibleSelectedVersesForEntry(bible);
   const shortReference =
     selectedVerses.length > 0
       ? referenceForBibleVerseNumbers(abbreviation, chapter, selectedVerses)
@@ -1037,6 +1051,18 @@ function selectScriptureResolvedSlide(entry, presentation, slideId) {
   void syncActiveScheduledBiblePresentation().catch(console.error);
   void syncShowNowBiblePresentation().catch(console.error);
   return true;
+}
+
+function hideBibleSlideNavigator() {
+  const navigator = document.getElementById("bibleSlideNavigator");
+  if (navigator) navigator.hidden = true;
+  document.getElementById("bibleSlideThumbnailList")?.replaceChildren();
+  const status = document.getElementById("bibleSlideStatus");
+  if (status) status.textContent = "";
+  const previous = document.getElementById("biblePrevSlideBtn");
+  const next = document.getElementById("bibleNextSlideBtn");
+  if (previous) previous.disabled = true;
+  if (next) next.disabled = true;
 }
 
 function renderBibleSlideNavigator(entry, presentation) {
@@ -2221,7 +2247,7 @@ async function bibleEntryForSingleVerse(verseNumber) {
   const verses = Array.isArray(textData?.verses) ? textData.verses : [];
   const text = verses[verseNumber - 1];
   if (!text) return null;
-  return {
+  const entry = {
     ...bibleDesignerState,
     ...getBibleDesignerStyle(),
     attribution: textData.attribution || bibleAttributionForVersion(bibleDesignerState.version),
@@ -2229,7 +2255,17 @@ async function bibleEntryForSingleVerse(verseNumber) {
     text,
     verse: verseNumber,
     verseEnd: 0,
+    // The designer state describes the whole multi-verse selection this entry is
+    // being carved out of, so every verse-scoped field has to be narrowed here or
+    // each scheduled verse claims the full passage.
+    selectedVerses: [verseNumber],
+    verseSelector: String(verseNumber),
+    currentSlideId: null,
+    lowerThirdSegmentIndex: 0,
+    currentLowerThirdSlideId: null,
   };
+  delete entry.autosizeGroupFontSize;
+  return entry;
 }
 
 function buildBibleVerseDragPayload() {
@@ -2411,6 +2447,12 @@ function bibleEntryForVerseRows(baseEntry, rows) {
     verse: verseStart,
     verseEnd: verseEnd > verseStart ? verseEnd : 0,
     selectedVerses,
+    // baseEntry carries the rows and slide cursor of the passage being carved up,
+    // so they have to be narrowed to these rows or the entry still resolves to the
+    // whole passage and keeps its paging.
+    verseRows: rows,
+    verseSelector: "",
+    currentSlideId: null,
     lowerThirdSegmentIndex: 0,
     currentLowerThirdSlideId: null,
   };
@@ -5207,20 +5249,30 @@ async function splitScheduledBiblePassageIntoVerses(index) {
   const rows = await bibleVerseRowsForEntry(entry);
   if (rows.length <= 1) return false;
 
-  const splitEntries = normalizeBibleScheduleEntryGroup(
+  const verseEntries = normalizeBibleScheduleEntryGroup(
     rows.map((row) => bibleEntryForVerseRows(entry, [row])),
-  ).map((verseEntry) => ({
-    ...queueEntryFromBibleEntry(verseEntry),
-    autoAdvance: originalItem.autoAdvance !== false,
-  }));
+  );
+  const splitEntries = [];
+  for (const verseEntry of verseEntries) {
+    const [queueEntry] = await queueEntriesForBibleScheduleEntry(verseEntry);
+    if (!queueEntry) continue;
+    queueEntry.autoAdvance = originalItem.autoAdvance !== false;
+    if (originalItem.transition) queueEntry.transition = originalItem.transition;
+    splitEntries.push(queueEntry);
+  }
   if (splitEntries.length <= 1) return false;
 
   invalidateQueueUndoToastAfterMutation();
   mediaQueue.splice(index, 1, ...splitEntries);
   shiftQueueIndexesForInsertion(index + 1, splitEntries.length - 1);
+  hideBibleSlideNavigator();
   setSelectedQueueAnchor(index);
   renderQueue();
   saveMediaFile();
+  const firstItem = mediaQueue[index];
+  if (firstItem && isQueueItemBible(firstItem)) {
+    await loadQueueItemIntoPreviewCue(index);
+  }
   showGnomeToast(`Split into ${splitEntries.length} Bible verses`);
   return true;
 }

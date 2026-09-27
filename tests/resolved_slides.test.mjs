@@ -443,6 +443,29 @@ test("audience and lower-third Scripture omit a leading verse number without aut
   }
 });
 
+test("a single-verse Scripture entry keeps its own verse when a wider selection is stored", () => {
+  // Verses scheduled one row per verse used to inherit the whole multi-verse
+  // selection they were carved out of, which made every row claim the first verse.
+  const entry = {
+    version: "KJV",
+    book: "John",
+    chapter: 3,
+    verse: 17,
+    verseEnd: 0,
+    selectedVerses: [16, 17, 18],
+    reference: "John 3:17",
+    text: "For God sent not his Son into the world to condemn the world.",
+  };
+  const presentation = resolveScriptureSlides(entry, {
+    outputRole: "audience",
+    cache: false,
+    measure: capacityMeasure(500),
+  });
+  assert.equal(presentation.slides.length, 1);
+  assert.deepEqual(presentation.slides[0].verseNumbers, [17]);
+  assert.equal(presentation.slides[0].referenceText, "John 3:17 KJV");
+});
+
 test("Scripture autoSplit false preserves one overflowing unit", async () => {
   const entry = await readFixture("long-scripture.json");
   entry.autoSplit = false;

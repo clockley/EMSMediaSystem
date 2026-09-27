@@ -57,8 +57,12 @@ export function scriptureVerseRows(entry = {}) {
   if (selected.length === lines.length && selected.length > 0) {
     return lines.map((text, index) => ({ verseNumber: selected[index], text: cleanText(text) }));
   }
+  // The selection disagrees with the text we were handed, so it describes a wider
+  // passage than this entry. entry.verse is the one number that still refers to
+  // this text.
+  const explicitVerse = Math.trunc(Number(entry.verse));
   return [{
-    verseNumber: selected[0] || Math.max(1, Math.trunc(Number(entry.verse)) || 1),
+    verseNumber: explicitVerse > 0 ? explicitVerse : selected[0] || 1,
     text: cleanText(entry.text),
   }].filter((row) => row.text);
 }
