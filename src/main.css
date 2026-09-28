@@ -2813,6 +2813,68 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     color: var(--window-fg-color);
 }
 
+.queue-start-controls {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--card-bg-color) 94%, var(--window-fg-color));
+}
+
+.queue-start-controls[hidden] {
+    display: none;
+}
+
+.queue-start-controls__title {
+    color: color-mix(in srgb, var(--window-fg-color) 76%, transparent);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.queue-start-mode {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px;
+    padding: 3px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--window-fg-color) 4%, transparent);
+}
+
+.queue-start-mode__button {
+    min-width: 0;
+    min-height: 30px;
+    padding: 5px 6px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: color-mix(in srgb, var(--window-fg-color) 72%, transparent);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.queue-start-mode__button:hover {
+    color: var(--window-fg-color);
+    background: var(--row-hover-bg-color);
+}
+
+.queue-start-mode__button.is-active {
+    color: #ffffff;
+    background: color-mix(in srgb, var(--accent-bg-color) 64%, transparent);
+}
+
+.queue-start-mode__button:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
 /* Media tab: stack Autoplay + queue continuous; align switch columns */
 .control-panel--media .media-toggle-rows {
     gap: 10px;
@@ -8536,6 +8598,34 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     color: var(--accent-bg-color);
 }
 
+.queue-item.is-selected .state-badge--cued,
+.queue-item.is-selected .state-badge--transition {
+    background: color-mix(in srgb, #ffffff 22%, transparent);
+    color: #ffffff;
+}
+
+.queue-auto-start-badge {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    min-height: 22px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-bg-color) 14%, transparent);
+    color: var(--accent-bg-color);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.queue-item.is-selected .queue-auto-start-badge {
+    background: color-mix(in srgb, #ffffff 22%, transparent);
+    color: #ffffff;
+}
+
 .item-cue-start {
     font-size: 12px;
     font-feature-settings: "tnum" 1;
@@ -8543,21 +8633,6 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-}
-
-.row-auto-advance-btn {
-    flex: 0 0 auto;
-    min-width: 64px;
-    min-height: 28px;
-    margin-left: 0;
-    padding: 4px 8px;
-    border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
-    border-radius: 999px;
-    background: color-mix(in srgb, currentColor 8%, transparent);
-    color: inherit;
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1.2;
 }
 
 .row-media-update-btn {
@@ -8584,19 +8659,6 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 }
 
 .queue-item.is-selected .row-media-update-btn:focus-visible {
-    outline-color: #ffffff;
-}
-
-.row-auto-advance-btn:hover {
-    background: color-mix(in srgb, currentColor 14%, transparent);
-}
-
-.row-auto-advance-btn:focus-visible {
-    outline: 2px solid var(--accent-bg-color);
-    outline-offset: 2px;
-}
-
-.queue-item.is-selected .row-auto-advance-btn:focus-visible {
     outline-color: #ffffff;
 }
 

@@ -182,6 +182,7 @@ function renderQueue() {
           selectedQueueItems.size > 0
             ? selectedQueueItems.has(item)
             : index === selectedQueueIndex;
+        const autoAdvanceEnabled = item.autoAdvance !== false;
 
         const classes = [
           "queue-item",
@@ -233,7 +234,6 @@ function renderQueue() {
           badges.length || hasCueStart
             ? `<span class="item-status-row">${badges.join("")}${cueStartMarkup}</span>`
             : "";
-        const autoAdvanceEnabled = item.autoAdvance !== false;
         const canKeepOldUpdate =
           item.pendingMediaUpdate?.status === "ready" &&
           queueItemCanKeepOldMediaVersion(item);
@@ -245,8 +245,9 @@ function renderQueue() {
           statusMarkup || updateActionMarkup
             ? `<span class="item-secondary-row">${statusMarkup}${updateActionMarkup}</span>`
             : "";
-        const autoAdvanceLabel = autoAdvanceEnabled ? "Advance" : "Hold";
-        const autoAdvanceMarkup = `<button type="button" class="row-auto-advance-btn" data-queue-auto="${index}" aria-label="${autoAdvanceEnabled ? "Advance: auto-advance into this scheduled item" : "Hold: pause before this scheduled item"}" title="${autoAdvanceEnabled ? "Auto-advance into this item" : "Pause before this item"}">${autoAdvanceLabel}</button>`;
+        const autoStartBadgeMarkup = autoAdvanceEnabled
+          ? '<span class="queue-auto-start-badge" title="Starts when the previous item finishes">Auto</span>'
+          : "";
         return `<div class="${classes}" role="listitem" data-queue-index="${index}" draggable="true" ${isSelected ? 'data-selected="true"' : ""} ${isLive ? 'data-live="true"' : ""} ${isCued ? 'data-cued="true"' : ""}>
       <span class="item-icon">${queueTypeIconMarkup(item)}</span>
       <span class="item-text">
@@ -254,7 +255,7 @@ function renderQueue() {
         ${secondaryMarkup}
       </span>
       <span class="queue-item-trailing-actions">
-      ${autoAdvanceMarkup}
+      ${autoStartBadgeMarkup}
       <button type="button" class="remove-btn" draggable="false" data-queue-remove="${index}" title="Remove from schedule" aria-label="Remove from schedule">✕</button>
       </span>
     </div>`;
@@ -262,7 +263,26 @@ function renderQueue() {
       .join("");
   }
   updateClearQueueButtonState();
+  updateQueueStartControls();
   updatePreviewCueUI();
+}
+
+function updateQueueStartControls() {
+  const controls = document.getElementById("queueStartControls");
+  if (!controls) return;
+  const index = selectedQueueIndexForDisplay();
+  const hasSelection = queueIndexInRange(index);
+  controls.hidden = !hasSelection;
+  controls.dataset.queueIndex = hasSelection ? String(index) : "";
+  controls.querySelectorAll("[data-queue-start-mode]").forEach((button) => {
+    const mode = button.getAttribute("data-queue-start-mode");
+    const active =
+      hasSelection &&
+      (mode === "auto") === (mediaQueue[index].autoAdvance !== false);
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.disabled = !hasSelection;
+  });
 }
 
 function fallbackSelectedQueueIndex() {
@@ -358,6 +378,7 @@ function updateQueueSelectionVisual() {
       delete row.dataset.selected;
     }
   });
+  updateQueueStartControls();
 }
 
 function insertQueueEntriesAt(entries, insertIndex) {
@@ -777,18 +798,30 @@ function removeFromQueue(index) {
   saveMediaFile();
 }
 
-function toggleQueueItemAutoAdvance(index) {
+function setQueueItemAutoAdvance(index, autoAdvanceEnabled, options = {}) {
   if (index < 0 || index >= mediaQueue.length) return;
-  mediaQueue[index].autoAdvance = mediaQueue[index].autoAdvance === false;
-  const autoAdvanceEnabled = mediaQueue[index].autoAdvance !== false;
+  const nextAutoAdvanceEnabled = autoAdvanceEnabled !== false;
+  const wasAutoAdvanceEnabled = mediaQueue[index].autoAdvance !== false;
+  if (wasAutoAdvanceEnabled === nextAutoAdvanceEnabled) {
+    updateQueueStartControls();
+    return;
+  }
+  mediaQueue[index].autoAdvance = nextAutoAdvanceEnabled;
   renderQueue();
   schedulePptxThumbnailRefresh();
   saveMediaFile();
-  if (autoAdvanceEnabled) {
+  if (nextAutoAdvanceEnabled && options.resumeIfReady === true) {
     void resumeQueueFromManualBoundaryIfReady(index).catch((err) =>
       console.error("Failed to resume queue after auto-advance toggle:", err),
     );
   }
+}
+
+function toggleQueueItemAutoAdvance(index) {
+  if (index < 0 || index >= mediaQueue.length) return;
+  setQueueItemAutoAdvance(index, mediaQueue[index].autoAdvance === false, {
+    resumeIfReady: true,
+  });
 }
 
 function hideScheduleSongContextMenu() {
@@ -904,14 +937,6 @@ function installMediaQueueListDelegation() {
     }
   });
   list.addEventListener("click", (e) => {
-    const autoBtn = e.target.closest("[data-queue-auto]");
-    if (autoBtn && list.contains(autoBtn)) {
-      e.preventDefault();
-      toggleQueueItemAutoAdvance(
-        Number.parseInt(autoBtn.getAttribute("data-queue-auto"), 10),
-      );
-      return;
-    }
     const keepUpdateBtn = e.target.closest("[data-queue-keep-update]");
     if (keepUpdateBtn && list.contains(keepUpdateBtn)) {
       e.preventDefault();
@@ -1217,6 +1242,20 @@ function installMediaQueueListDelegation() {
   });
 }
 
+function installQueueStartControls() {
+  const controls = document.getElementById("queueStartControls");
+  if (!controls || controls.dataset.queueStartBound === "1") return;
+  controls.dataset.queueStartBound = "1";
+  controls.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-queue-start-mode]");
+    if (!button || !controls.contains(button)) return;
+    event.preventDefault();
+    const index = Number.parseInt(controls.dataset.queueIndex || "", 10);
+    if (!queueIndexInRange(index)) return;
+    setQueueItemAutoAdvance(index, button.getAttribute("data-queue-start-mode") === "auto");
+  });
+}
+
 export {
   applyDroppedMediaPaths,
   clearMediaQueue,
@@ -1231,6 +1270,7 @@ export {
   ignoreQueueItemClicksUntil,
   insertQueueEntriesAt,
   installMediaQueueListDelegation,
+  installQueueStartControls,
   nextPlayableQueueItemStageText,
   onClearMediaQueueClick,
   queueDragFromIndex,
@@ -1254,4 +1294,5 @@ export {
   updateClearQueueButtonState,
   updateQueueDropIndicator,
   updateQueueSelectionVisual,
+  updateQueueStartControls,
 };

@@ -177,6 +177,13 @@ export function generateMediaFormHTML() {
             <span class="list-placeholder-hint">Add media, network items, or Bible text</span>
           </div>
         </div>
+        <div id="queueStartControls" class="queue-start-controls" hidden>
+          <span class="queue-start-controls__title">Start this item</span>
+          <div class="queue-start-mode" role="group" aria-label="Start this item">
+            <button type="button" class="queue-start-mode__button" data-queue-start-mode="manual" aria-pressed="true" title="Wait until Present is pressed">Press Present</button>
+            <button type="button" class="queue-start-mode__button" data-queue-start-mode="auto" aria-pressed="false" title="Start when the previous item finishes">After previous</button>
+          </div>
+        </div>
       </div>
 
       <div id="confidenceMonitor" class="confidence-monitor" aria-label="Confidence monitor">

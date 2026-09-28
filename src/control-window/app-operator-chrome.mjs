@@ -91,6 +91,7 @@ import {
   installDisplayChangeHandler,
   installGlobalSlideTransitionControls,
   installMediaQueueListDelegation,
+  installQueueStartControls,
   installNetworkItemButton,
   installPreviewEmptyStateHandlers,
   invoke,
@@ -1875,6 +1876,7 @@ function setSBFormMediaPlayer() {
     clearQueueBtn.addEventListener("click", onClearMediaQueueClick);
   }
   installMediaQueueListDelegation();
+  installQueueStartControls();
   renderQueue();
   const isActiveMW = isActiveMediaWindow();
   if (!isActiveMW && !playingMediaAudioOnly) {
