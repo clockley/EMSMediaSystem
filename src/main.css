@@ -8863,6 +8863,7 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     border-radius: 50%;
     background: #ed333b;
 }
+.transport-position-label[hidden] { display: none; }
 .transport-position-labels[hidden] { display: none; }
 
 /* Output preflight lives next to Present, where the decision is made. */

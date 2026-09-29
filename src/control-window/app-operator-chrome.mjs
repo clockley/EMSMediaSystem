@@ -110,10 +110,13 @@ import {
   isPreparingSeparateCue,
   isPreviewCueVolumeActive,
   isPreviewWorkspaceOverlayVisible,
+  isQueueItemAudio,
   isQueueItemBible,
   isQueueItemDeck,
   isQueueItemSong,
+  isQueueItemVideo,
   isQueuePlaying,
+  isQueuePresentationActive,
   lastStageCountdownSecond,
   liveAudio,
   liveAudioQueueIndex,
@@ -599,6 +602,13 @@ function setupCustomMediaControls() {
   const updateCueLiveReadout = () => {
     const cue = cueMediaEl();
     const separateCue = Boolean(cue && isPreparingSeparateCue());
+    const liveItem = isQueuePresentationActive() &&
+      currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
+      ? mediaQueue[currentQueueIndex]
+      : null;
+    const showTimedLiveReadout = Boolean(
+      separateCue && liveItem && (isQueueItemAudio(liveItem) || isQueueItemVideo(liveItem)),
+    );
     const cueDuration = Number(cue?.duration);
     const cueCurrent = Number(cue?.currentTime) || 0;
     const liveEl =
@@ -617,9 +627,16 @@ function setupCustomMediaControls() {
     timeline.setAttribute?.("aria-label", separateCue ? "Seek cued or next item" : "Seek media");
     if (positionLabels) positionLabels.hidden = !separateCue;
     if (cuePositionLabel) cuePositionLabel.textContent = `Cue / Next ${concisePosition(cueCurrent)}`;
-    if (livePositionLabel) livePositionLabel.textContent = `Live ${concisePosition(liveCurrent)}`;
+    if (livePositionLabel) {
+      livePositionLabel.hidden = !showTimedLiveReadout;
+      livePositionLabel.textContent = showTimedLiveReadout
+        ? `Live ${concisePosition(liveCurrent)}`
+        : "";
+    }
     if (endsInLabel) {
-      endsInLabel.textContent = Number.isFinite(liveDuration) && liveDuration > 0
+      const hasRemainingTime = showTimedLiveReadout && Number.isFinite(liveDuration) && liveDuration > 0;
+      endsInLabel.hidden = !hasRemainingTime;
+      endsInLabel.textContent = hasRemainingTime
         ? `${concisePosition(Math.max(0, liveDuration - liveCurrent))} left`
         : "";
     }
@@ -1050,6 +1067,28 @@ function setupCustomMediaControls() {
       const seekSource = mediaEl.src;
 
       currentTimeDisplay && paintTransportTimeDisplay(currentTimeDisplay, seekTime);
+      // A timeline input is explicit operator intent. Do not rely solely on the
+      // preview element's asynchronous seeking/seeked events to forward it:
+      // those events are intentionally swallowed while a PID correction or
+      // projection startup sync is settling. If the input lands inside that
+      // suppression window, the audience stays at its old position and its
+      // next time tick pulls the preview straight back there.
+      //
+      // Send the live seek authoritatively here. The element events remain as
+      // a fallback for seeks initiated elsewhere, and duplicate live seeks are
+      // harmless. Cue previews never enter this branch because they use their
+      // dedicated previewAudio/previewCueVideo element instead of #preview.
+      if (
+        !mediaIsNetworkTransport(mediaEl) &&
+        previewMediaControlsLiveProjection(mediaEl)
+      ) {
+        pidController?.reset();
+        setSharedRendererState({ targetTime: seekTime });
+        send("timeGoto-message", {
+          currentTime: seekTime,
+          timestamp: Date.now(),
+        });
+      }
       const seekPromise = mediaIsNetworkTransport(mediaEl)
         ? seekNetworkPreviewTransport(seekTime)
         : seekMedia(mediaEl, seekTime);
