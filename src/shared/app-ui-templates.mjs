@@ -950,6 +950,7 @@ export function generateMediaFormHTML() {
             <button type="button" id="bibleShowNowBtn" class="pill-button suggested-action">Show Now</button>
             <button type="button" id="bibleInsertQueueBtn" class="pill-button secondary">Add to Schedule</button>
           </div>
+          <span class="bible-verse-list-hint">Click to cue · Double-click to show live · Drag to schedule</span>
           <div id="bibleVerseList" class="bible-verse-list" role="listbox" aria-label="Chapter verses">
             <div class="list-placeholder">
               <span class="list-placeholder-title">Loading Bible…</span>

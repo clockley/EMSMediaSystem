@@ -132,10 +132,12 @@ import {
   readSlideTransitionControls,
   refreshBiblePreviewMediaWindowSize,
   renderLowerThirdPreview,
+  renderOperatorPreviewState,
   renderQueue,
   renderScriptureForTarget,
   renderSongLowerThirdControls,
   resolveScriptureSlideForCursor,
+  resolvedPreviewMessagesMatch,
   resolveThemeForTarget,
   resolvedThemeForItem,
   saveCurrentProjectInStorageMode,
@@ -1115,6 +1117,63 @@ function renderBibleSlideNavigator(entry, presentation) {
   };
 }
 
+function bibleAudiencePreviewIsLive(previewMessage) {
+  return Boolean(
+    isBiblePresentationActive() &&
+      resolvedPreviewMessagesMatch(lastAudienceBibleTextMessage, previewMessage),
+  );
+}
+
+function liveBibleAudienceVerseNumbers() {
+  if (!isBiblePresentationActive() || !lastAudienceBibleTextMessage) return new Set();
+  const liveMessage = lastAudienceBibleTextMessage;
+  const sameBook =
+    String(liveMessage.book || "").trim().toLocaleLowerCase() ===
+    String(bibleDesignerState.book || "").trim().toLocaleLowerCase();
+  const sameChapter = Number(liveMessage.chapter) === Number(bibleDesignerState.chapter);
+  const sameVersion =
+    !liveMessage.version ||
+    !bibleDesignerState.version ||
+    String(liveMessage.version).trim().toLocaleLowerCase() ===
+      String(bibleDesignerState.version).trim().toLocaleLowerCase();
+  if (!sameBook || !sameChapter || !sameVersion) return new Set();
+
+  const resolvedVerses = lastAudienceBibleTextMessage.resolvedUnit?.verseNumbers;
+  if (Array.isArray(resolvedVerses) && resolvedVerses.length > 0) {
+    return new Set(resolvedVerses.map(Number).filter((verse) => Number.isFinite(verse)));
+  }
+  const start = Math.max(0, Math.trunc(Number(liveMessage.verse) || 0));
+  const end = Math.max(start, Math.trunc(Number(liveMessage.verseEnd) || start));
+  const verses = new Set();
+  for (let verse = start; verse <= end && verse > 0; verse += 1) verses.add(verse);
+  return verses;
+}
+
+function syncBibleShowNowButton(live) {
+  const button = document.getElementById("bibleShowNowBtn");
+  if (!button) return;
+  button.textContent = live ? "Live" : "Show Now";
+  button.disabled = live;
+  button.classList.toggle("is-live-status", live);
+  button.title = live
+    ? "This Scripture is live on the audience display"
+    : "Present this Scripture on the audience display";
+}
+
+function syncBibleOperatorPreviewState(previewMessage = null) {
+  const shell = document.getElementById("bibleAudiencePreviewShell");
+  if (!shell) return false;
+  const message = previewMessage || buildBibleTextMessage(bibleDesignerState, {
+    look: SCRIPTURE_LOOK_FULLSCREEN,
+  });
+  const hasCue = Boolean(String(message?.bodyText || message?.text || "").trim());
+  const live = hasCue && bibleAudiencePreviewIsLive(message);
+  renderOperatorPreviewState(shell, { live, cued: hasCue });
+  syncBibleShowNowButton(live);
+  syncBibleVerseListSelection();
+  return live;
+}
+
 function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
   const renderToken = Number.isFinite(opts.renderToken)
     ? opts.renderToken
@@ -1251,7 +1310,14 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
   );
   applyOperatorSelectionContrast(audienceRender, audienceMessage);
   markAudiencePreviewTextSelection(audienceText, lowerThirdMessage?.bodyText);
+  syncBibleOperatorPreviewState(audienceMessage);
   if (lowerThirdEnabled && lowerThirdMessage) {
+    const lowerThirdLive = Boolean(
+      bibleLowerThirdOutputActive &&
+        activeLowerThirdContentType === "bible" &&
+        bibleLowerThirdLiveCueKey ===
+          bibleLowerThirdCueKey(lowerThirdMessage.lowerThirdSegmentIndex, previewEntry),
+    );
     renderLowerThirdPreview({
       shell: lowerThirdShell,
       render: lowerThirdRender,
@@ -1260,6 +1326,7 @@ function applyBiblePreview(entry = bibleDesignerState, opts = {}) {
       message: lowerThirdMessage,
       outputSize: selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
       renderMessage: applyScriptureRenderToPreview,
+      live: lowerThirdLive,
       cued:
         Array.isArray(lowerThirdMessage.lowerThirdSegments) &&
         lowerThirdMessage.lowerThirdSegments.length > 0,
@@ -1301,9 +1368,18 @@ function syncBibleLookControls(message) {
   if (status) {
     status.textContent =
       `Cue ${segmentCount > 0 ? index + 1 : 0} of ${segmentCount}`;
+    status.hidden = segmentCount <= 1;
   }
-  if (prevButton) prevButton.disabled = index <= 0;
-  if (nextButton) nextButton.disabled = segmentCount <= 0 || index >= segmentCount - 1;
+  if (prevButton) {
+    prevButton.hidden = segmentCount <= 1;
+    prevButton.disabled = index <= 0;
+  }
+  if (nextButton) {
+    nextButton.hidden = segmentCount <= 1;
+    nextButton.disabled = segmentCount <= 0 || index >= segmentCount - 1;
+  }
+  const cueList = document.getElementById("bibleLowerThirdCueList");
+  if (cueList) cueList.hidden = segmentCount <= 1;
   renderBibleLowerThirdCueList(controlMessage.lowerThirdSegments, index);
 }
 
@@ -1319,6 +1395,7 @@ function renderBibleLowerThirdCueList(rawSegments, selectedIndex) {
   if (!list) return;
   const segments = normalizeLowerThirdSegments(rawSegments);
   list.replaceChildren();
+  let selectedIsLive = false;
   segments.forEach((segment, index) => {
     const row = document.createElement("button");
     row.type = "button";
@@ -1329,6 +1406,7 @@ function renderBibleLowerThirdCueList(rawSegments, selectedIndex) {
     row.setAttribute("aria-selected", index === selectedIndex ? "true" : "false");
     row.classList.toggle("is-cued", index === selectedIndex);
     const isLive = bibleLowerThirdOutputActive && bibleLowerThirdLiveCueKey === bibleLowerThirdCueKey(index);
+    if (isLive && index === selectedIndex) selectedIsLive = true;
     row.classList.toggle("is-live", isLive);
 
     const marker = document.createElement("span");
@@ -1345,6 +1423,16 @@ function renderBibleLowerThirdCueList(rawSegments, selectedIndex) {
   });
   const selectedRow = list.querySelector(".is-cued");
   selectedRow?.scrollIntoView?.({ block: "nearest" });
+  const previewRender = document.getElementById("bibleLowerThirdPreviewRender");
+  if (previewRender) {
+    previewRender.classList.toggle("is-operator-live", selectedIsLive);
+    previewRender.classList.toggle("is-operator-cued", !selectedIsLive && segments.length > 0);
+    previewRender.dataset.operatorPreviewState = selectedIsLive
+      ? "live"
+      : segments.length > 0
+        ? "cued"
+        : "";
+  }
   const showButton = document.getElementById("bibleLowerThirdShowBtn");
   if (showButton) {
     showButton.disabled = segments.length === 0;
@@ -2154,12 +2242,24 @@ function bibleVerseNumberIsSelected(verseNumber) {
 function syncBibleVerseListSelection() {
   const list = document.getElementById("bibleVerseList");
   if (!list) return;
+  const liveVerses = liveBibleAudienceVerseNumbers();
   list.querySelectorAll(".bible-verse-row").forEach((row) => {
     const verseNumber = Number.parseInt(row.dataset.verse || "", 10);
     if (!Number.isFinite(verseNumber)) return;
     const isSelected = bibleVerseNumberIsSelected(verseNumber);
+    const isLive = liveVerses.has(verseNumber);
     row.classList.toggle("is-selected", isSelected);
+    row.classList.toggle("is-live", isLive);
     row.setAttribute("aria-selected", isSelected ? "true" : "false");
+    let liveBadge = row.querySelector(".bible-verse-live-badge");
+    if (isLive && !liveBadge) {
+      liveBadge = document.createElement("span");
+      liveBadge.className = "bible-verse-live-badge";
+      liveBadge.textContent = "Live";
+      row.append(liveBadge);
+    } else if (!isLive) {
+      liveBadge?.remove();
+    }
   });
 }
 
@@ -4981,6 +5081,7 @@ async function renderBibleVerseList() {
   while (list.children.length > numVerses) {
     list.removeChild(list.lastChild);
   }
+  syncBibleVerseListSelection();
 }
 
 async function refreshBibleBrowser() {
@@ -5480,6 +5581,7 @@ export {
   syncBibleDesignerStateToPreviewedQueueItem,
   syncBibleLookControls,
   syncBibleLowerThirdBarBackgroundLabel,
+  syncBibleOperatorPreviewState,
   syncBibleSearchControlsFromState,
   syncBibleSearchResultActiveState,
   syncBibleSelectorsFromState,

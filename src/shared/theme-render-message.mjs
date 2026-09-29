@@ -135,14 +135,18 @@ export function messageFromResolvedPresentation(
       vertical: resolvedTheme?.typography?.verticalAlign || "center",
       horizontal: resolvedTheme?.typography?.align || "center",
     },
-    textBoxPosition: resolvedTheme?.textFrame
-      ? {
-          left: `${resolvedTheme.textFrame.x * 100}%`,
-          top: `${resolvedTheme.textFrame.y * 100}%`,
-          width: `${resolvedTheme.textFrame.width * 100}%`,
-          height: `${resolvedTheme.textFrame.height * 100}%`,
-        }
-      : style.textBoxPosition || null,
+    // Audience text frames are not lower-third geometry. Let the dedicated
+    // lower-third layout own the plate position so it remains window-centered.
+    textBoxPosition: lowerThird
+      ? null
+      : resolvedTheme?.textFrame
+        ? {
+            left: `${resolvedTheme.textFrame.x * 100}%`,
+            top: `${resolvedTheme.textFrame.y * 100}%`,
+            width: `${resolvedTheme.textFrame.width * 100}%`,
+            height: `${resolvedTheme.textFrame.height * 100}%`,
+          }
+        : style.textBoxPosition || null,
     ...resolvedBackground(resolvedTheme, style),
   };
   if (Array.isArray(unit?.slideObjects)) message.slideObjects = unit.slideObjects;

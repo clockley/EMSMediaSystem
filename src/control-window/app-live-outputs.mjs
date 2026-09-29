@@ -943,6 +943,9 @@ function themedLowerThirdMessage(message, resolved) {
     ...message,
     ...fields,
     ...resolvedFontFamilyFields(message, resolved, { lowerThird: true }),
+    // textFrame belongs to the audience canvas. The lower-third renderer has
+    // its own centered plate geometry and must not inherit that absolute box.
+    textBoxPosition: null,
     lowerThirdFontSize: resolved.typography?.fontSize,
     lowerThirdColor: resolved.typography?.color,
     lowerThirdBarBackgroundColor:

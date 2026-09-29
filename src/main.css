@@ -3316,6 +3316,13 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     margin-top: -2px;
 }
 
+.bible-verse-list-hint {
+    margin: -2px 2px 0;
+    color: color-mix(in srgb, var(--window-fg-color) 62%, transparent);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
 .bible-field {
     display: flex;
     flex-direction: column;
@@ -6637,7 +6644,7 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     width: 100%;
     box-sizing: border-box;
     display: grid;
-    grid-template-columns: 32px minmax(0, 1fr);
+    grid-template-columns: 32px minmax(0, 1fr) auto;
     gap: 10px;
     padding: 10px 12px;
     border: 0;
@@ -6663,6 +6670,10 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     background: color-mix(in srgb, var(--accent-bg-color) 42%, transparent);
 }
 
+.bible-verse-row.is-live {
+    box-shadow: inset 3px 0 var(--destructive-bg-color);
+}
+
 .bible-verse-number {
     color: color-mix(in srgb, var(--window-fg-color) 62%, transparent);
     font-weight: 700;
@@ -6672,6 +6683,21 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 .bible-verse-row-text {
     min-width: 0;
     line-height: 1.35;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.bible-verse-live-badge {
+    align-self: start;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--destructive-bg-color);
+    color: var(--destructive-fg-color);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1.35;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
 .bible-workspace__main {
@@ -6760,7 +6786,87 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 }
 
 .lower-third-preview {
-    background: #00ff00;
+    --lower-third-preview-key-color: #00ff00;
+    background:
+        radial-gradient(circle at 58% 28%, rgba(71, 96, 119, 0.34), transparent 42%),
+        linear-gradient(145deg, #25313b 0%, #151c23 52%, #0b0f14 100%);
+}
+
+.lower-third-preview[data-lower-third-preview-mode="key"] {
+    background: var(--lower-third-preview-key-color);
+}
+
+.lower-third-preview__chrome {
+    position: absolute;
+    inset: 8px 8px auto;
+    z-index: 5;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 7px;
+    pointer-events: none;
+}
+
+.lower-third-preview__chrome .bible-preview-surface-label {
+    position: static;
+    margin-right: auto;
+}
+
+.lower-third-preview__key-swatch,
+.lower-third-preview__mode-switch {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
+    background: rgba(12, 15, 19, 0.78);
+    color: rgba(255, 255, 255, 0.9);
+    font: 700 10px/1.4 system-ui, sans-serif;
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(5px);
+}
+
+.lower-third-preview__key-swatch {
+    gap: 5px;
+    padding: 3px 7px 3px 4px;
+}
+
+.lower-third-preview__key-swatch-color {
+    width: 14px;
+    height: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    border-radius: 50%;
+    background: var(--lower-third-preview-key-color);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.32);
+}
+
+.lower-third-preview__mode-switch {
+    padding: 2px;
+    pointer-events: auto;
+}
+
+.lower-third-preview__mode-button {
+    min-height: 24px;
+    padding: 2px 8px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+    font: inherit;
+}
+
+.lower-third-preview__mode-button:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.lower-third-preview__mode-button.is-active {
+    color: #ffffff;
+    background: #1a5fb4;
+}
+
+.lower-third-preview__mode-button:focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: 1px;
 }
 
 .bible-preview-surface-label {
@@ -7227,6 +7333,10 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     background: color-mix(in srgb, var(--window-bg-color) 92%, var(--window-fg-color));
 }
 
+.bible-lower-third-cue-list[hidden] {
+    display: none;
+}
+
 .bible-lower-third-cue-list:focus-visible {
     outline: 2px solid var(--accent-bg-color);
     outline-offset: 2px;
@@ -7297,11 +7407,10 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     place-items: center;
     /* Preserve enough of the width-scaled output's lower band to show the
        complete two-line plate instead of cropping everything above its foot. */
-    height: clamp(210px, 18vw, 300px);
+    height: clamp(154px, 14vw, 220px);
     overflow: hidden;
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    background: #00ff00;
 }
 
 /* Compact desktop layout for 1440x900-class operator displays.
@@ -7360,7 +7469,7 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     }
 
     .lower-third-preview--standalone {
-        height: clamp(150px, 16cqi, 210px);
+        height: clamp(138px, 13cqi, 184px);
     }
 
     .bible-lower-third-cue-list {
@@ -7438,17 +7547,25 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     margin-top: 12px;
 }
 
-/* Operator-only cue marker. The light/dark/accent rings stay legible over
-   chroma keys, photographs, and user-selected plate/text colors. */
-.lower-third-preview .scripture-render.is-operator-cued .scripture-render__box {
+/* Operator-only lower-third state. The light/dark/accent rings stay legible
+   over chroma keys, photographs, and user-selected plate/text colors. */
+.lower-third-preview .scripture-render.is-operator-cued .scripture-render__box,
+.lower-third-preview .scripture-render.is-operator-live .scripture-render__box {
     position: relative;
     outline: 2px solid #fff;
     outline-offset: -3px;
+}
+
+.lower-third-preview .scripture-render.is-operator-cued .scripture-render__box {
     box-shadow: inset 0 0 0 5px #1a5fb4, inset 0 0 0 7px rgba(0, 0, 0, 0.9);
 }
 
-.lower-third-preview .scripture-render.is-operator-cued .scripture-render__box::after {
-    content: "Cued";
+.lower-third-preview .scripture-render.is-operator-live .scripture-render__box {
+    box-shadow: inset 0 0 0 5px var(--destructive-bg-color), inset 0 0 0 7px rgba(0, 0, 0, 0.9);
+}
+
+.lower-third-preview .scripture-render.is-operator-cued .scripture-render__box::after,
+.lower-third-preview .scripture-render.is-operator-live .scripture-render__box::after {
     position: absolute;
     right: 10px;
     top: 8px;
@@ -7459,6 +7576,68 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     background: #1a5fb4;
     font: 700 11px/1.3 system-ui, sans-serif;
     text-shadow: 0 1px 2px #000;
+}
+
+.lower-third-preview .scripture-render.is-operator-cued .scripture-render__box::after {
+    content: "Cued";
+    background: #1a5fb4;
+}
+
+.lower-third-preview .scripture-render.is-operator-live .scripture-render__box::after {
+    content: "Live";
+    background: var(--destructive-bg-color);
+}
+
+.bible-preview-surface--audience.is-operator-cued,
+.songs-preview-slide.is-operator-cued {
+    box-shadow: inset 0 0 0 3px #1a5fb4;
+}
+
+.bible-preview-surface--audience.is-operator-live,
+.songs-preview-slide.is-operator-live {
+    box-shadow: inset 0 0 0 4px var(--destructive-bg-color);
+}
+
+.operator-preview-state {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 8;
+    min-width: 42px;
+    box-sizing: border-box;
+    padding: 3px 9px;
+    border: 2px solid #ffffff;
+    border-radius: 999px;
+    color: #ffffff;
+    font: 800 11px/1.3 system-ui, sans-serif;
+    letter-spacing: 0.03em;
+    text-align: center;
+    text-transform: uppercase;
+    text-shadow: 0 1px 2px #000000;
+    pointer-events: none;
+}
+
+.is-operator-cued > .operator-preview-state {
+    background: #1a5fb4;
+}
+
+.is-operator-live > .operator-preview-state {
+    background: var(--destructive-bg-color);
+}
+
+.operator-preview-state[hidden] {
+    display: none;
+}
+
+.pill-button.is-live-status,
+.pill-button.is-live-status:disabled,
+.songs-action-btn.is-live-status,
+.songs-action-btn.is-live-status:disabled {
+    border-color: color-mix(in srgb, var(--destructive-bg-color) 82%, black);
+    background: var(--destructive-bg-color);
+    color: var(--destructive-fg-color);
+    opacity: 1;
+    cursor: default;
 }
 
 /* Operator-only selection shown inside the full Audience preview. Use an
@@ -8597,6 +8776,13 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 
 .queue-item.is-cued:not(.is-selected):hover {
     background: color-mix(in srgb, var(--accent-bg-color) 16%, transparent);
+}
+
+.queue-item.is-live,
+.queue-item.is-live:hover,
+.queue-item.is-live.is-selected,
+.queue-item.is-live.is-selected:hover {
+    box-shadow: inset 4px 0 var(--destructive-bg-color);
 }
 
 .queue-item-dragging {

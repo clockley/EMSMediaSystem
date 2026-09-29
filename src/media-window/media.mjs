@@ -3168,7 +3168,9 @@ function applyTextMessage(message) {
   textContent.classList.remove("scripture-render--slide-objects");
   const shell = ensureScriptureTextShell(textContent);
   if (shell.box) {
-    if (safeMessage.textBoxPosition) {
+    // A lower-third may arrive with legacy audience text-frame metadata. Do
+    // not let it replace the centered plate layout with absolute positioning.
+    if (look !== SCRIPTURE_LOOK_LOWER_THIRD && safeMessage.textBoxPosition) {
       shell.box.style.position = "absolute";
       shell.box.style.left = safeMessage.textBoxPosition.left;
       shell.box.style.top = safeMessage.textBoxPosition.top;

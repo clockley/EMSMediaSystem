@@ -221,6 +221,7 @@ import {
   switchQueueItemLiveWithConfirmation,
   syncActiveScheduledBiblePresentation,
   syncBiblePreviewOutputScale,
+  syncBibleOperatorPreviewState,
   syncConfidenceMonitorCarousel,
   syncLowerThirdFeatureAvailability,
   syncLowerThirdRendererPreviewCapture,
@@ -228,6 +229,7 @@ import {
   syncQueuePreviewMediaElements,
   syncShowNowBiblePresentation,
   syncSongLowerThirdForSection,
+  syncSongOperatorPreviewState,
   syncPreviewStackSurface,
   syncStreamRendererPreviewCapture,
   syncTrackedPreviewStartTime,
@@ -1533,6 +1535,8 @@ function installIPCHandler() {
     setSharedRendererState({ activeLowerThirdContentType: null });
     songLowerThirdState.liveKey = "";
     renderSongLowerThirdControls();
+    syncBibleOperatorPreviewState();
+    syncSongOperatorPreviewState();
     stopLowerThirdRendererPreviewCapture();
     syncConfidenceMonitorCarousel();
   });
@@ -1633,6 +1637,8 @@ function updateDynUI() {
   }
   updateClearLiveTextButtonState();
   updateOutputHoldButtonStates();
+  syncBibleOperatorPreviewState();
+  syncSongOperatorPreviewState();
 
   document.querySelectorAll("#dspSelct, #dspSelctStreams").forEach((sel) => {
     sel.disabled = isPlaying && audioOnlyFile;

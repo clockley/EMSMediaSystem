@@ -1241,6 +1241,36 @@ function updateSongSlideNavigatorSelection({ scroll = true } = {}) {
   if (scroll) active?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
 }
 
+function syncSongShowNowButton(live) {
+  const button = document.getElementById("songsShowNowBtn");
+  if (!button) return;
+  const label = button.querySelector("span");
+  if (label) label.textContent = live ? "Live" : "Show Now";
+  button.disabled = !currentWorkspaceSong || live;
+  button.classList.toggle("is-live-status", live);
+  button.title = live
+    ? "This song slide is live on the audience display"
+    : "Present this song on the audience display";
+}
+
+function syncSongOperatorPreviewState(previewMessage = null) {
+  const preview = document.getElementById("songsPreviewSlide");
+  if (!preview) return false;
+  const message =
+    previewMessage || currentResolvedSongPresentation()?.message || null;
+  const hasCue = Boolean(
+    currentWorkspaceSong && String(message?.bodyText || message?.text || "").trim(),
+  );
+  const live = Boolean(
+    hasCue &&
+      hasLiveAudienceTextPresentation("song") &&
+      resolvedPreviewMessagesMatch(lastAudienceSongTextMessage, message),
+  );
+  renderOperatorPreviewState(preview, { live, cued: hasCue });
+  syncSongShowNowButton(live);
+  return live;
+}
+
 function syncCurrentSongQueueItemSection(sectionId, slideId = currentSongSlideId) {
   if (!currentSongQueueItem || !sectionId) return;
   if (!currentSongQueueItem.render || typeof currentSongQueueItem.render !== "object") {
@@ -2824,7 +2854,7 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     document.getElementById("songLowerThirdPreviewReference")?.replaceChildren();
     document
       .getElementById("songLowerThirdPreviewRender")
-      ?.classList.remove("is-operator-cued");
+      ?.classList.remove("is-operator-cued", "is-operator-live");
     markSongAudiencePreviewSelection({ text: "", blockIds: [] });
   }
 
@@ -2858,6 +2888,7 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     if (prevBtn) prevBtn.disabled = true;
     if (nextBtn) nextBtn.disabled = true;
     if (slide) slide.innerHTML = "";
+    syncSongOperatorPreviewState();
     currentSongSectionId = null;
     currentSongSequenceEntryId = null;
     currentSongSlideId = null;
@@ -3042,6 +3073,7 @@ async function renderSongSectionPreview(section) {
   }
   renderResolvedSongMessageIntoPreview(preview, message, { fontSize: scaledPreviewFontSize });
   applyOperatorSelectionContrast(preview, message);
+  if (!isEditing) syncSongOperatorPreviewState(message);
 
   if (isEditing) {
     syncSongEditorWorkspaceStyles(message);
@@ -3228,6 +3260,7 @@ function renderSongLowerThirdControls() {
     row.className = "bible-lower-third-cue-row";
     row.dataset.cueIndex = String(index);
     row.setAttribute("role", "option");
+    row.title = "Click to cue; double-click to show live";
     row.setAttribute("aria-selected", index === songLowerThirdState.index ? "true" : "false");
     row.classList.toggle("is-cued", index === songLowerThirdState.index);
     // Bind the generated row itself. The Songs workspace can be rebuilt,
@@ -3235,6 +3268,15 @@ function renderSongLowerThirdControls() {
     // activation ensures every regenerated cue remains selectable, including
     // the final row at the bottom of the scrolling list.
     row.addEventListener("click", () => setSongLowerThirdCue(index, { focus: true }));
+    row.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setSongLowerThirdCue(index, { focus: true });
+      void showCuedSongLowerThird().catch((error) => {
+        console.error("Failed to show double-clicked song lower third:", error);
+        showGnomeToast("Failed to show song lower third");
+      });
+    });
     const isLive = bibleLowerThirdOutputActive && songLowerThirdState.liveKey === songLowerThirdCueKey(index);
     row.classList.toggle("is-live", isLive);
     const marker = document.createElement("span");
@@ -3258,8 +3300,16 @@ function renderSongLowerThirdControls() {
   const prev = document.getElementById("songLowerThirdPrevBtn");
   const next = document.getElementById("songLowerThirdNextBtn");
   const show = document.getElementById("songLowerThirdShowBtn");
-  if (prev) prev.disabled = count === 0 || index <= 0;
-  if (next) next.disabled = count === 0 || index >= count - 1;
+  list.hidden = count <= 1;
+  if (status) status.hidden = count <= 1;
+  if (prev) {
+    prev.hidden = count <= 1;
+    prev.disabled = count === 0 || index <= 0;
+  }
+  if (next) {
+    next.hidden = count <= 1;
+    next.disabled = count === 0 || index >= count - 1;
+  }
   if (show) {
     show.disabled = count === 0;
     show.textContent = bibleLowerThirdOutputActive ? "Update" : "Show";
@@ -3270,6 +3320,11 @@ function renderSongLowerThirdControls() {
   const body = document.getElementById("songLowerThirdPreviewText");
   const reference = document.getElementById("songLowerThirdPreviewReference");
   const message = buildSongLowerThirdMessage();
+  const lowerThirdLive = Boolean(
+    bibleLowerThirdOutputActive &&
+      activeLowerThirdContentType === "song" &&
+      songLowerThirdState.liveKey === songLowerThirdCueKey(index),
+  );
   renderLowerThirdPreview({
     shell,
     render,
@@ -3278,6 +3333,7 @@ function renderSongLowerThirdControls() {
     message,
     outputSize: selectedBiblePreviewOutputSize("lowerThirdDspSelct"),
     renderMessage: applyScriptureRenderToPreview,
+    live: lowerThirdLive,
     cued: count > 0,
   });
   const selectedCueText = normalizedCueMatchText(message.bodyText).toLocaleLowerCase();
@@ -8300,6 +8356,7 @@ export {
   syncSongBackgroundLabel,
   syncSongEditorWorkspaceStyles,
   syncSongLowerThirdForSection,
+  syncSongOperatorPreviewState,
   syncSongSlideNavigator,
   syncSongsMoveFolderSelect,
   undoSlideEdit,
@@ -8419,7 +8476,9 @@ import {
   recoverOutputHoldsToDeckPage,
   recoverOutputHoldsToSongSection,
   renderLowerThirdPreview,
+  renderOperatorPreviewState,
   renderQueue,
+  resolvedPreviewMessagesMatch,
   resolveThemeForTarget,
   resolvedSongPresentation,
   resolvedThemeForItem,

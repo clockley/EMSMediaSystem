@@ -32,3 +32,12 @@ test("chroma-only layout snaps lower-third margins to whole pixels", async () =>
   assert.match(source, /classList\.toggle\("chroma-edge-opaque-plate", opaquePlate\)/);
   assert.match(source, /typeof message\.lowerThirdBackingPlateEnabled === "boolean"/);
 });
+
+test("lower-third output ignores audience text-frame positioning", async () => {
+  const source = await readFile(mediaModulePath, "utf8");
+
+  assert.match(
+    source,
+    /look !== SCRIPTURE_LOOK_LOWER_THIRD && safeMessage\.textBoxPosition/,
+  );
+});

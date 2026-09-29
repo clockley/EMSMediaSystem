@@ -193,8 +193,11 @@ test("an editor font overrides the theme only when marked as a local override", 
   );
 });
 
-test("resolved lower-third messages retain the editor font override", () => {
-  const resolvedTheme = { typography: { fontFamily: "Theme Sans" } };
+test("resolved lower-third messages retain the editor font override without audience frame geometry", () => {
+  const resolvedTheme = {
+    typography: { fontFamily: "Theme Sans" },
+    textFrame: { x: 0.04, y: 0.7, width: 0.7, height: 0.22 },
+  };
   const message = messageFromResolvedPresentation({
     target: { outputRole: "lowerThird" },
     activeSlide: { bodyText: "Lower third" },
@@ -204,9 +207,23 @@ test("resolved lower-third messages retain the editor font override", () => {
       fontFamily: "Body Sans",
       lowerThirdFontFamily: "Lower Sans",
       lowerThirdFontFamilyOverride: true,
+      textBoxPosition: { left: "4%", top: "70%", width: "70%", height: "22%" },
     },
     resolvedTheme,
   });
   assert.equal(message.fontFamily, "Lower Sans");
   assert.equal(message.fontFamilyOverride, true);
+  assert.equal(message.textBoxPosition, null);
+
+  const audienceMessage = messageFromResolvedPresentation({
+    target: { outputRole: "audience" },
+    activeSlide: { bodyText: "Audience" },
+    resolvedTheme,
+  }, { resolvedTheme });
+  assert.deepEqual(audienceMessage.textBoxPosition, {
+    left: "4%",
+    top: "70%",
+    width: "70%",
+    height: "22%",
+  });
 });

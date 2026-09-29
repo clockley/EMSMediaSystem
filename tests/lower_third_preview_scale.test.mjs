@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   applyLowerThirdPreviewScale,
   lowerThirdPreviewMarkup,
+  resolvedPreviewMessagesMatch,
 } from "../src/shared/lower-third-preview.mjs";
 
 test("shared lower-third markup provides stable component slots", () => {
@@ -18,7 +19,36 @@ test("shared lower-third markup provides stable component slots", () => {
   assert.match(markup, /id="scriptureLowerThirdText"/);
   assert.match(markup, /id="scriptureLowerThirdReference"/);
   assert.match(markup, /id="scriptureLowerThirdAttribution"/);
+  assert.match(markup, /data-lower-third-preview-mode="on-air"/);
+  assert.match(markup, /data-lower-third-preview-mode="key"/);
+  assert.match(markup, /id="scriptureLowerThirdKeySwatch"/);
   assert.match(markup, /data-lower-third-feature hidden/);
+});
+
+test("operator state only reports live for the exact resolved slide", () => {
+  const message = (slideId) => ({
+    contentKind: "scripture",
+    slideId,
+    resolvedPresentation: {
+      source: { id: "KJV:John 3:16-18" },
+      navigation: { activeSlideId: slideId },
+    },
+  });
+  assert.equal(resolvedPreviewMessagesMatch(message("slide-1"), message("slide-1")), true);
+  assert.equal(resolvedPreviewMessagesMatch(message("slide-1"), message("slide-2")), false);
+  assert.equal(
+    resolvedPreviewMessagesMatch(
+      message("slide-1"),
+      {
+        ...message("slide-1"),
+        resolvedPresentation: {
+          source: { id: "KJV:Psalm 23:1" },
+          navigation: { activeSlideId: "slide-1" },
+        },
+      },
+    ),
+    false,
+  );
 });
 
 function fakeSurface(width, height) {
