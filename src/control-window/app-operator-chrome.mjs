@@ -171,6 +171,7 @@ import {
   previewMediaSourcePath,
   previewTransportLoadIsPending,
   previousPlayableQueueIndexBefore,
+  projectStageConfig,
   projectThemeDefaults,
   queueBiblePreviewMediaWindowSizeRefresh,
   queueIndexInRange,
@@ -324,6 +325,54 @@ function openSettingsControls() {
   document.getElementById("closeSettingsControlsBtn")?.focus();
 }
 
+function setOutputReadiness(name, ready, detail = "") {
+  const button = document.querySelector(`[data-output-readiness="${name}"]`);
+  if (!button) return;
+  button.dataset.ready = ready ? "true" : "false";
+  const label = button.querySelector("span:last-child")?.textContent || name;
+  const status = ready ? "Ready" : "Needs setup";
+  button.setAttribute("aria-label", `${label}: ${status}${detail ? `. ${detail}` : ""}`);
+}
+
+function updateOutputReadinessStrip() {
+  const audience = document.getElementById("dspSelct")?.value || "";
+  const lowerThird = document.getElementById("lowerThirdDspSelct")?.value || "";
+  const lowerThirdAvailable = isBibleLowerThirdFeatureEnabled();
+  const stage = document.getElementById("stageDisplaySelect")?.value || projectStageConfig?.display || "";
+  setOutputReadiness("audience", Boolean(audience), audience ? "Audience display selected" : "Choose an audience display");
+  setOutputReadiness(
+    "lower-third",
+    lowerThirdAvailable && Boolean(lowerThird),
+    lowerThirdAvailable ? "Choose a lower-third display" : "Enable Lower Third in Preferences",
+  );
+  setOutputReadiness("stage", Boolean(stage), stage ? "Stage display selected" : "Choose a stage display");
+  setOutputReadiness("audio", false, "Audio output routing is temporarily unavailable");
+}
+
+function installOutputReadinessStrip() {
+  const strip = document.getElementById("outputReadinessStrip");
+  if (!strip || strip.dataset.readinessBound === "1") return;
+  strip.dataset.readinessBound = "1";
+  strip.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-output-readiness]");
+    if (!button) return;
+    const route = button.dataset.outputReadiness;
+    if (route === "audio") return;
+    if (route === "stage") {
+      void openStageControls();
+      return;
+    }
+    openSettingsControls();
+    const targetId = route === "audience"
+      ? "dspSelct"
+      : route === "lower-third"
+        ? "lowerThirdDspSelct"
+        : "";
+    window.setTimeout(() => document.getElementById(targetId)?.focus(), 0);
+  });
+  updateOutputReadinessStrip();
+}
+
 function closeSettingsControls() {
   document.getElementById("settingsControlsBackdrop")?.setAttribute("hidden", "");
   if (navigationState.state === NAVIGATION_STATES.SETTINGS) {
@@ -445,6 +494,11 @@ function setupCustomMediaControls() {
   setSharedRendererState({ videoWrapper: document.querySelector(".video-wrapper") });
   setSharedRendererState({ controlsOverlay: document.querySelector(".controls-overlay") });
   const overlay = document.getElementById("customControls");
+  const timelineShell = document.getElementById("transportTimelineShell");
+  const positionLabels = document.getElementById("transportPositionLabels");
+  const cuePositionLabel = document.getElementById("cuePositionLabel");
+  const livePositionLabel = document.getElementById("livePositionLabel");
+  const endsInLabel = document.getElementById("endsInLabel");
   const clickTarget = videoWrapper || video;
 
   if (overlay) {
@@ -536,6 +590,40 @@ function setupCustomMediaControls() {
     }
     return video;
   };
+  const concisePosition = (seconds) => {
+    const safe = Math.max(0, Math.floor(Number(seconds) || 0));
+    const minutes = Math.floor(safe / 60);
+    const secs = safe % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
+  const updateCueLiveReadout = () => {
+    const cue = cueMediaEl();
+    const separateCue = Boolean(cue && isPreparingSeparateCue());
+    const cueDuration = Number(cue?.duration);
+    const cueCurrent = Number(cue?.currentTime) || 0;
+    const liveEl =
+      liveAudioQueueIndex >= 0 && liveAudio?.src && liveAudio.src !== ""
+        ? liveAudio
+        : video;
+    const liveDuration =
+      liveEl === video && networkPreviewUsesRendererCapture()
+        ? networkPreviewTransportDuration()
+        : Number(liveEl?.duration);
+    const liveCurrent =
+      liveEl === video && networkPreviewUsesRendererCapture()
+        ? networkPreviewTransportCurrentTime()
+        : Number(liveEl?.currentTime) || 0;
+    if (timelineShell) timelineShell.dataset.mode = separateCue ? "cue" : "live";
+    timeline.setAttribute?.("aria-label", separateCue ? "Seek cued or next item" : "Seek media");
+    if (positionLabels) positionLabels.hidden = !separateCue;
+    if (cuePositionLabel) cuePositionLabel.textContent = `Cue / Next ${concisePosition(cueCurrent)}`;
+    if (livePositionLabel) livePositionLabel.textContent = `Live ${concisePosition(liveCurrent)}`;
+    if (endsInLabel) {
+      endsInLabel.textContent = Number.isFinite(liveDuration) && liveDuration > 0
+        ? `${concisePosition(Math.max(0, liveDuration - liveCurrent))} left`
+        : "";
+    }
+  };
   const mediaIsNetworkTransport = (mediaEl) =>
     Boolean(mediaEl && mediaEl === video && networkPreviewUsesRendererCapture());
   const mediaIsNetworkCue = (mediaEl) =>
@@ -601,6 +689,9 @@ function setupCustomMediaControls() {
     if (hidden && timeline) {
       timeline.disabled = true;
       timeline.value = 0;
+    }
+    if (hidden) {
+      if (positionLabels) positionLabels.hidden = true;
     }
   };
   const paintControlPlayPauseIcon = (mediaEl) => {
@@ -681,6 +772,7 @@ function setupCustomMediaControls() {
     }
 
     updateLoopControlState();
+    updateCueLiveReadout();
   };
   const updateControlsForTime = (mediaEl) => {
     if (mediaEl !== currentControlMedia()) return;
@@ -697,6 +789,7 @@ function setupCustomMediaControls() {
     if (!isDragging && duration > 0) {
       timeline.value = (currentTime / duration) * 100;
     }
+    updateCueLiveReadout();
   };
 
   if (videoWrapper && controlsOverlay) {
@@ -970,6 +1063,7 @@ function setupCustomMediaControls() {
           mediaQueue[seekCueIndex >= 0 ? seekCueIndex : seekQueueIndex] !== seekItem
         ) return;
         currentTimeDisplay && paintTransportTimeDisplay(currentTimeDisplay, actualTime);
+        updateCueLiveReadout();
         // A paused audio cue has no playing timeupdate to save its position.
         // Persist all operator-owned previews, including before first Present.
         if (!mediaIsNetworkTransport(mediaEl)) {
@@ -1011,6 +1105,7 @@ function setupCustomMediaControls() {
     "timeupdate",
     (event) => {
       updateControlsForTime(event.target);
+      updateCueLiveReadout();
       if (mediaIsNetworkTransport(event.target)) return;
       if (!event.target.paused) {
         syncTrackedPreviewStartTime(event.target);
@@ -1022,6 +1117,7 @@ function setupCustomMediaControls() {
     "timeupdate",
     (event) => {
       updateControlsForTime(event.target);
+      updateCueLiveReadout();
       if (!event.target.paused) {
         syncTrackedPreviewStartTime(event.target);
       }
@@ -1030,7 +1126,10 @@ function setupCustomMediaControls() {
   );
   la.addEventListener(
     "timeupdate",
-    (event) => updateControlsForTime(event.target),
+    (event) => {
+      updateControlsForTime(event.target);
+      updateCueLiveReadout();
+    },
     sig,
   );
   if (previewCue) {
@@ -1038,6 +1137,7 @@ function setupCustomMediaControls() {
       "timeupdate",
       (event) => {
         updateControlsForTime(event.target);
+        updateCueLiveReadout();
         if (!event.target.paused) {
           syncTrackedPreviewStartTime(event.target);
         }
@@ -1637,6 +1737,7 @@ function updateDynUI() {
   }
   updateClearLiveTextButtonState();
   updateOutputHoldButtonStates();
+  updateOutputReadinessStrip();
   syncBibleOperatorPreviewState();
   syncSongOperatorPreviewState();
 
@@ -1681,6 +1782,7 @@ async function populateDisplaySelect(options = {}) {
     !force &&
     Array.from(displaySelects).every((sel) => sel.options && sel.options.length > 1);
   if (alreadyReady) {
+    updateOutputReadinessStrip();
     return;
   }
 
@@ -1698,6 +1800,7 @@ async function populateDisplaySelect(options = {}) {
       syncPeerSelects(event.target);
       syncBiblePreviewOutputScale();
       queueBiblePreviewMediaWindowSizeRefresh(50);
+      updateOutputReadinessStrip();
     };
   });
   if (lowerThirdDisplaySelect) {
@@ -1712,6 +1815,7 @@ async function populateDisplaySelect(options = {}) {
       }
       syncBiblePreviewOutputScale();
       syncSongLowerThirdForSection(currentSongActiveSection(), { rebuild: true });
+      updateOutputReadinessStrip();
     };
   }
 
@@ -1752,6 +1856,7 @@ async function populateDisplaySelect(options = {}) {
     });
     syncBiblePreviewOutputScale();
     queueBiblePreviewMediaWindowSizeRefresh(50);
+    updateOutputReadinessStrip();
   } catch (error) {
     console.error("Failed to populate display select:", error);
   }
@@ -2232,6 +2337,8 @@ async function loadOpMode(mode) {
 
       // Wait for DOM to be stable
       await new Promise((r) => setTimeout(r, 0));
+
+      installOutputReadinessStrip();
 
       // Remove loading indicator
       loadingDiv.remove();

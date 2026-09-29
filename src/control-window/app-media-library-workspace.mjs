@@ -35,6 +35,8 @@ let layoutObserver = null;
 let activePosterJobs = 0;
 const posterQueue = [];
 const posterCache = new Map();
+const runtimeMetadata = new Map();
+const runtimeMetadataJobs = new Map();
 let presentationPreviewToken = 0;
 let presentationSlideRenderToken = 0;
 let presentationOpenAbortController = null;
@@ -207,8 +209,105 @@ function observeMediaThumbnail(thumbnail, item) {
   posterObserver.observe(thumbnail);
 }
 
+function mediaKindLabel(kind) {
+  if (kind === "presentation") return "Slides";
+  if (kind === "image") return "Image";
+  if (kind === "video") return "Video";
+  if (kind === "audio") return "Audio";
+  return "Media";
+}
+
+function compactDuration(value) {
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const seconds = Math.floor(value);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  if (hours > 0) {
+    return `${hours}:${String(minutes % 60).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function itemScheduleState(item) {
+  return item?.localPath && bridge?.scheduleStateForPath
+    ? bridge.scheduleStateForPath(item.localPath) || {}
+    : {};
+}
+
 function itemMeta(item) {
-  return humanBytes(item.size);
+  const measured = runtimeMetadata.get(item.id) || {};
+  const schedule = itemScheduleState(item);
+  const parts = [mediaKindLabel(item.kind)];
+  const duration = compactDuration(measured.duration);
+  if (duration) parts.push(duration);
+  if (measured.width > 0 && measured.height > 0) {
+    parts.push(`${Math.round(measured.width)}×${Math.round(measured.height)}`);
+  }
+  const size = humanBytes(item.size);
+  if (size) parts.push(size);
+  if (schedule.missing || item.availability === MEDIA_AVAILABILITY.missing) parts.push("Missing");
+  else if (schedule.changed) parts.push("Changed");
+  if (schedule.scheduled) parts.push("Scheduled");
+  return parts.filter(Boolean).join(" · ");
+}
+
+function syncItemMetadata(item) {
+  const card = element("mediaLibraryItems")?.querySelector(`[data-media-item-id="${CSS.escape(item.id)}"]`);
+  const meta = card?.querySelector(".media-library__item-meta:not(.media-library__availability)");
+  const text = itemMeta(item);
+  if (meta) meta.textContent = text;
+  if (card) {
+    card.setAttribute(
+      "aria-label",
+      [item.displayName, text, availabilityLabel(item.availability)].filter(Boolean).join(", "),
+    );
+  }
+  if (state.selectedId === item.id) {
+    const detailsMeta = element("mediaLibraryDetailsMeta");
+    if (detailsMeta) detailsMeta.textContent = text;
+  }
+}
+
+function rememberRuntimeMetadata(item, media) {
+  const measured = {};
+  if (Number.isFinite(media.duration) && media.duration > 0) measured.duration = media.duration;
+  const width = media.videoWidth || media.naturalWidth || 0;
+  const height = media.videoHeight || media.naturalHeight || 0;
+  if (width > 0 && height > 0) {
+    measured.width = width;
+    measured.height = height;
+  }
+  runtimeMetadata.set(item.id, measured);
+  syncItemMetadata(item);
+}
+
+function ensureRuntimeMetadata(item) {
+  if (
+    runtimeMetadata.has(item.id) ||
+    runtimeMetadataJobs.has(item.id) ||
+    item.availability !== MEDIA_AVAILABILITY.available ||
+    !item.localPath ||
+    !["image", "video", "audio"].includes(item.kind)
+  ) return;
+  const media = item.kind === "image" ? new Image() : document.createElement(item.kind);
+  if (!(media instanceof HTMLImageElement)) media.preload = "metadata";
+  let timeout = 0;
+  const cleanup = () => {
+    window.clearTimeout(timeout);
+    runtimeMetadataJobs.delete(item.id);
+    media.removeAttribute("src");
+    media.load?.();
+  };
+  const finish = () => {
+    rememberRuntimeMetadata(item, media);
+    cleanup();
+  };
+  const eventName = media instanceof HTMLImageElement ? "load" : "loadedmetadata";
+  media.addEventListener(eventName, finish, { once: true });
+  media.addEventListener("error", cleanup, { once: true });
+  timeout = window.setTimeout(cleanup, 10000);
+  runtimeMetadataJobs.set(item.id, media);
+  media.src = bridge.pathToMediaUrl(item.localPath, item.contentIdentity);
 }
 
 function mediaItemElement(item) {
@@ -250,6 +349,8 @@ function mediaItemElement(item) {
     copy.appendChild(status);
   }
   button.append(thumbnail, copy);
+  button.addEventListener("pointerenter", () => ensureRuntimeMetadata(item), { once: true });
+  button.addEventListener("focus", () => ensureRuntimeMetadata(item), { once: true });
   return button;
 }
 
@@ -859,6 +960,7 @@ function previewNode(item) {
     const image = document.createElement("img");
     image.alt = `Preview of ${item.displayName}`;
     image.src = bridge.pathToMediaUrl(item.localPath, item.contentIdentity);
+    image.addEventListener("load", () => rememberRuntimeMetadata(item, image), { once: true });
     markPreviewMediaDraggable(image, item);
     return image;
   }
@@ -868,6 +970,7 @@ function previewNode(item) {
     video.controls = false;
     video.preload = "metadata";
     video.disablePictureInPicture = true;
+    video.addEventListener("loadedmetadata", () => rememberRuntimeMetadata(item, video), { once: true });
     markPreviewMediaDraggable(video, item);
     return bindLibraryPreviewTransport(video);
   }
@@ -876,6 +979,7 @@ function previewNode(item) {
     audio.src = bridge.pathToMediaUrl(item.localPath, item.contentIdentity);
     audio.controls = false;
     audio.preload = "metadata";
+    audio.addEventListener("loadedmetadata", () => rememberRuntimeMetadata(item, audio), { once: true });
     const player = bindLibraryPreviewTransport(audio, { audio: true });
     const icon = player.querySelector(".media-library__preview-audio-icon");
     if (icon) markPreviewMediaDraggable(icon, item);
@@ -1124,6 +1228,14 @@ function showDetails(item, { focus = false, inspect = false } = {}) {
     void loadPresentationPreview(item, preview);
   }
   element("mediaLibraryDetailsName").textContent = item.displayName;
+  element("mediaLibraryDetailsMeta").textContent = itemMeta(item);
+  const showButton = element("mediaLibraryShowNowBtn");
+  const isLive = Boolean(item.localPath && bridge.isPathLive?.(item.localPath));
+  showButton.hidden = Boolean(pickerRequest);
+  showButton.disabled = item.availability !== MEDIA_AVAILABILITY.available || isLive;
+  showButton.textContent = isLive ? "Live" : "Show Now";
+  showButton.classList.toggle("is-live-status", isLive);
+  showButton.dataset.mediaItemId = item.id;
   const addButton = element("mediaLibraryAddScheduleBtn");
   addButton.disabled = item.availability !== MEDIA_AVAILABILITY.available;
   addButton.dataset.mediaItemId = item.id;
@@ -1132,6 +1244,7 @@ function showDetails(item, { focus = false, inspect = false } = {}) {
   recordPreviewActivity(item.id);
   if (inspect || shouldUseFullPreview()) enterInspect();
   if (focus) details.focus?.();
+  ensureRuntimeMetadata(item);
 }
 
 function closeDetails({ preserveScroll = true } = {}) {
@@ -1163,6 +1276,17 @@ function syncItemHighlights() {
 
 function selectedItem() {
   return state.items.find((item) => item.id === state.selectedId) || null;
+}
+
+export function syncMediaLibraryOperationalMetadata() {
+  state.items.forEach(syncItemMetadata);
+  const item = selectedItem();
+  const button = element("mediaLibraryShowNowBtn");
+  if (!item || !button) return;
+  const isLive = Boolean(item.localPath && bridge?.isPathLive?.(item.localPath));
+  button.disabled = item.availability !== MEDIA_AVAILABILITY.available || isLive;
+  button.textContent = isLive ? "Live" : "Show Now";
+  button.classList.toggle("is-live-status", isLive);
 }
 
 function recordPreviewActivity(itemId) {
@@ -1262,7 +1386,31 @@ async function addItemToSchedule(item = selectedItem()) {
   }
   bridge.addToSchedule([item.localPath], { preserveWorkspace: true });
   await bridge.invoke("media-library:record-activity", { itemId: item.id, actionKind: "scheduled" });
+  syncItemMetadata(item);
   bridge.showToast(`Added ${item.displayName} to the schedule`);
+}
+
+async function showItemNow(item = selectedItem()) {
+  if (!item || item.availability !== MEDIA_AVAILABILITY.available || !item.localPath) return;
+  const button = element("mediaLibraryShowNowBtn");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    await bridge.showNow?.(item.localPath);
+    await bridge.invoke("media-library:record-activity", {
+      itemId: item.id,
+      actionKind: "applied",
+    });
+    if (state.selectedId === item.id) showDetails(item);
+  } catch (error) {
+    console.error("Failed to show Media item:", error);
+    bridge.showToast("This media item could not be shown");
+  } finally {
+    button.removeAttribute("aria-busy");
+    if (state.selectedId === item.id && !bridge.isPathLive?.(item.localPath)) {
+      button.disabled = false;
+    }
+  }
 }
 
 async function handleExternalDrop(dataTransfer) {
@@ -1410,6 +1558,7 @@ function bindEvents(workspace) {
   });
   element("mediaLibraryCancelPickerBtn")?.addEventListener("click", () => finishPicker(null));
   element("mediaLibraryItems")?.addEventListener("scroll", maybeLoadMore, { passive: true });
+  element("mediaLibraryShowNowBtn")?.addEventListener("click", () => void showItemNow());
   element("mediaLibraryAddScheduleBtn")?.addEventListener("click", () => void addItemToSchedule());
   element("mediaLibraryEmptyAction")?.addEventListener("click", (event) => {
     const action = event.currentTarget.dataset.action;
@@ -1623,6 +1772,7 @@ export function showMediaLibraryWorkspace() {
   syncScheduleSelectionForLibraryMode();
   element("previewEmptyState")?.setAttribute("hidden", "");
   element("mediaLibraryCancelPickerBtn")?.setAttribute("hidden", "");
+  element("mediaLibraryShowNowBtn")?.removeAttribute("hidden");
   element("mediaLibraryFilters")?.querySelectorAll("[data-media-kind]").forEach((button) => { button.hidden = false; });
   const source = state.snapshot.sources.find((entry) => entry.id === state.sourceId);
   element("mediaLibraryTitle").textContent = state.sourceId === "recent" ? "Recent" : source?.displayName || "Media";
@@ -1649,6 +1799,7 @@ function finishPicker(item) {
   element("mediaLibraryWorkspace").hidden = true;
   element("mediaLibraryCancelPickerBtn").hidden = true;
   element("mediaLibraryAddScheduleBtn").textContent = "Add to Schedule";
+  element("mediaLibraryShowNowBtn")?.removeAttribute("hidden");
   element("mediaLibraryTitle").textContent = "Media";
   closeDetails({ preserveScroll: false });
   syncScheduleSelectionForLibraryMode();
@@ -1672,6 +1823,7 @@ export function openMediaLibraryPicker({ title = "Choose Media", kinds = ["image
     workspace.classList.remove("is-browsing");
     element("mediaLibraryTitle").textContent = title;
     element("mediaLibraryCancelPickerBtn").hidden = false;
+    element("mediaLibraryShowNowBtn").hidden = true;
     element("mediaLibraryAddScheduleBtn").textContent = "Choose";
     element("mediaLibraryFilters")?.querySelectorAll("[data-media-kind]").forEach((button) => {
       const kind = button.dataset.mediaKind;

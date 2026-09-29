@@ -84,13 +84,17 @@ function mediaLibraryWorkspaceMarkup() {
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 3-5 5 5 5"/></svg>
             <span>Browse</span>
           </button>
-          <button id="mediaLibraryAddScheduleBtn" type="button" class="pill-button suggested-action">Add to Schedule</button>
+          <span class="media-library__inspect-actions">
+            <button id="mediaLibraryShowNowBtn" type="button" class="pill-button suggested-action">Show Now</button>
+            <button id="mediaLibraryAddScheduleBtn" type="button" class="pill-button secondary">Add to Schedule</button>
+          </span>
           <button id="mediaLibraryCloseDetails" class="media-library__icon-button" type="button" aria-label="Close preview">×</button>
         </div>
         <div id="mediaLibraryPreview" class="media-library__preview"></div>
         <div id="mediaLibraryDetailsBody" class="media-library__details-body">
           <div class="media-library__details-copy">
             <h2 id="mediaLibraryDetailsName"></h2>
+            <p id="mediaLibraryDetailsMeta"></p>
           </div>
         </div>
       </aside>
@@ -333,7 +337,7 @@ export function generateMediaFormHTML() {
                    </button>
                     <button type="button" id="songsAddScheduleBtn" class="songs-action-btn" disabled title="Add to the presentation schedule (or drag a song from the list)">
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-                      <span>Schedule</span>
+                      <span>Add to Schedule</span>
                     </button>
                     <button type="button" id="songsSaveToLibraryBtn" class="songs-action-btn" disabled title="Save this song to the song library" hidden>
                       <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -654,7 +658,7 @@ export function generateMediaFormHTML() {
                   </button>
                   <button type="button" id="slidesAddScheduleBtn" class="songs-action-btn" disabled title="Add deck to schedule">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-                    <span>Schedule</span>
+                    <span>Add to Schedule</span>
                   </button>
                   <button type="button" id="slidesSaveDeckBtn" class="songs-action-btn" disabled title="Save deck to library">
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 8l3.5 3.5L13 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -1190,7 +1194,14 @@ export function generateMediaFormHTML() {
         </button>
 
         <span class="time-display" id="currentTime">0:00</span>
-        <input type="range" min="0" max="100" value="0" step="0.1" class="timeline-slider" id="timeline">
+        <span id="transportTimelineShell" class="transport-timeline-shell" data-mode="live">
+          <input type="range" min="0" max="100" value="0" step="0.1" class="timeline-slider" id="timeline" aria-label="Seek media">
+          <span id="transportPositionLabels" class="transport-position-labels" title="The blue slider controls Cue / Next. Live timing is read-only." hidden>
+            <span id="cuePositionLabel" class="transport-position-label transport-position-label--cue"></span>
+            <span id="livePositionLabel" class="transport-position-label transport-position-label--live"></span>
+            <span id="endsInLabel" class="transport-position-label"></span>
+          </span>
+        </span>
         <span class="time-display" id="durationTime">0:00</span>
 
         <div class="gtk-volume-popover" id="gtkVolPopover">

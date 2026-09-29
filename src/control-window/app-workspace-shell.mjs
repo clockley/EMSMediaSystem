@@ -912,6 +912,14 @@ function installBibleMediaControls() {
   });
   document.getElementById("stageDisplaySelect")?.addEventListener("change", (event) => {
     projectStageConfig.display = event.target.value || "";
+    const readiness = document.querySelector('[data-output-readiness="stage"]');
+    if (readiness) {
+      readiness.dataset.ready = event.target.value ? "true" : "false";
+      readiness.setAttribute(
+        "aria-label",
+        event.target.value ? "Stage: Ready. Stage display selected" : "Stage: Needs setup. Choose a stage display",
+      );
+    }
     send("set-stage-display-index", event.target.value || "");
     if (event.target.value) void ensureStageOutput();
     scheduleAutosaveProjectState();

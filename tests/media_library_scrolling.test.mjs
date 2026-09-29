@@ -180,14 +180,19 @@ test("Media uses a GNOME NavigationSplitView instead of viewport media queries",
   assert.doesNotMatch(mediaLibraryCss, /@media \(max-width: 900px\)[\s\S]*\.media-library \{ grid-template-columns: 1fr \}/);
 });
 
-test("Media file information omits type and source", async () => {
+test("Media file information exposes glanceable operational metadata", async () => {
   const source = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");
+  const template = await readFile(new URL("../src/shared/app-ui-templates.mjs", import.meta.url), "utf8");
   const metaStart = source.indexOf("function itemMeta(item)");
   const metaEnd = source.indexOf("\nfunction mediaItemElement(", metaStart);
   const itemMeta = source.slice(metaStart, metaEnd);
   assert.match(itemMeta, /humanBytes\(item\.size\)/);
-  assert.doesNotMatch(itemMeta, /item\.kind|sourceName|Presentation/);
-  assert.doesNotMatch(source, /mediaLibraryDetailsStatus|mediaLibraryDetailsMeta/);
+  assert.match(itemMeta, /mediaKindLabel\(item\.kind\)/);
+  assert.match(itemMeta, /compactDuration\(measured\.duration\)/);
+  assert.match(itemMeta, /measured\.width.*measured\.height/s);
+  assert.match(itemMeta, /schedule\.scheduled.*Scheduled/s);
+  assert.match(template, /id="mediaLibraryDetailsMeta"/);
+  assert.doesNotMatch(itemMeta, /sourceName/);
 });
 
 test("Media preview does not expose Properties, Keep, or Remove item actions", async () => {

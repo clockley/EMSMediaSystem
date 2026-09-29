@@ -2570,11 +2570,13 @@ function markSongShowNowPresentation(item) {
   const sourceId = songPresentationSourceId(item);
   setSharedRendererState({ songShowNowModeActive: Boolean(sourceId) });
   setSharedRendererState({ songShowNowSourceId: sourceId });
+  syncSlidesShowNowButton();
 }
 
 function clearSongShowNowPresentation() {
   setSharedRendererState({ songShowNowModeActive: false });
   setSharedRendererState({ songShowNowSourceId: null });
+  syncSlidesShowNowButton();
 }
 
 function isCurrentWorkspaceSongShownNow() {
@@ -3853,6 +3855,25 @@ function syncSlidesWorkspaceTitle() {
   }
   const titleBtn = document.getElementById("slidesWorkspaceTitleButton");
   if (titleBtn) titleBtn.disabled = !currentDeck;
+  syncSlidesShowNowButton();
+}
+
+function syncSlidesShowNowButton() {
+  const button = document.getElementById("slidesShowNowBtn");
+  if (!button) return;
+  const live = Boolean(
+    currentDeck &&
+      songShowNowModeActive &&
+      songShowNowSourceId &&
+      currentDeck.id === songShowNowSourceId,
+  );
+  const label = button.querySelector("span");
+  if (label) label.textContent = live ? "Live" : "Show Now";
+  button.disabled = !currentDeck || live;
+  button.classList.toggle("is-live-status", live);
+  button.title = live
+    ? "This deck is live on the audience display"
+    : "Present this deck on the audience display";
 }
 
 function currentDeckIsSongDocument() {
@@ -4628,6 +4649,7 @@ function renderSlideEditorState() {
   }
   const saveBtn = document.getElementById("slidesSaveDeckBtn");
   if (saveBtn) saveBtn.disabled = !hasDeck || !deckDirty;
+  syncSlidesShowNowButton();
   syncSlideUndoRedoButtons();
 
   renderDeckPageStrip();

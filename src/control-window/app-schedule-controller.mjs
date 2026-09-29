@@ -125,11 +125,13 @@ import {
   startTime,
   stopPreviewAudioCue,
   syncMediaLoopState,
+  syncMediaLibraryOperationalMetadata,
   syncPlayPauseIconToControlMedia,
   syncPreviewAudioTrackState,
   updateDynUI,
   updatePreviewCueUI,
   updatePreviewEmptyState,
+  video,
 } from "./app-renderer.mjs";
 
 function nextPlayableQueueItemStageText(fromIndex = currentQueueIndex) {
@@ -210,6 +212,15 @@ function renderQueue() {
   const bibleHint = bibleUiEnabled ? ", or Bible text" : "";
   const separatePreviewCue = isPreparingSeparateCue();
   const selectedQueueIndex = selectedQueueIndexForDisplay();
+  const hasLiveItem =
+    queueIndexInRange(currentQueueIndex) &&
+    queueIndexIsLiveForDisplay(currentQueueIndex);
+  const upNextIndex =
+    separatePreviewCue && queueIndexInRange(previewCueIndex)
+      ? previewCueIndex
+      : hasLiveItem
+        ? nextPlayableQueueIndexAfter(currentQueueIndex)
+        : mediaQueue.findIndex((entry) => isScheduleItemCurrentlyPlayable(entry));
   const visibleQueueItems = [];
   let currentSectionIndex = -1;
   let collapsedSectionIndex = -1;
@@ -255,6 +266,7 @@ function renderQueue() {
 
         const isLive = queueIndexIsLiveForDisplay(index);
         const isCued = separatePreviewCue && index === previewCueIndex;
+        const isUpNext = !isLive && index === upNextIndex;
         const isSelected =
           selectedQueueItems.size > 0
             ? selectedQueueItems.has(item)
@@ -304,6 +316,7 @@ function renderQueue() {
           recentlyAddedQueueItems.has(item) ? "is-newly-added" : "",
           isLive ? "is-live" : "",
           isCued ? "is-cued" : "",
+          isUpNext ? "is-up-next" : "",
           item.pendingMediaUpdate?.status === "ready" ? "queue-item--pending-update" : "",
         ].filter(Boolean).join(" ");
         const cueStartMarkup = hasCueStart
@@ -315,6 +328,9 @@ function renderQueue() {
         }
         if (isCued) {
           badges.push('<span class="state-badge state-badge--cued">Cued</span>');
+        }
+        if (isUpNext) {
+          badges.push('<span class="state-badge state-badge--up-next">Up Next</span>');
         }
         if (item.itemTheme) {
           badges.push('<span class="state-badge" title="This item overrides the project theme">Theme override</span>');
@@ -362,6 +378,12 @@ function renderQueue() {
         const autoStartBadgeMarkup = autoAdvanceEnabled
           ? '<span class="queue-auto-start-badge" title="Starts when the previous item finishes">Auto</span>'
           : "";
+        const liveProgressMarkup = isLive
+          ? '<span class="queue-live-progress" aria-hidden="true"><span class="queue-live-progress__fill"></span></span>'
+          : "";
+        const liveRemainingMarkup = isLive
+          ? '<span class="queue-live-remaining" aria-label="Live item remaining"></span>'
+          : "";
         return `<div class="${classes}" role="listitem" data-queue-index="${index}" draggable="true" ${isSelected ? 'data-selected="true"' : ""} ${isLive ? 'data-live="true"' : ""} ${isCued ? 'data-cued="true"' : ""}>
       <span class="item-icon">${queueTypeIconMarkup(item)}</span>
       <span class="item-text">
@@ -369,16 +391,63 @@ function renderQueue() {
         ${secondaryMarkup}
       </span>
       <span class="queue-item-trailing-actions">
+      ${liveRemainingMarkup}
       ${autoStartBadgeMarkup}
       <button type="button" class="remove-btn" draggable="false" data-queue-remove="${index}" title="Remove from schedule" aria-label="Remove from schedule">✕</button>
       </span>
+      ${liveProgressMarkup}
     </div>`;
       })
       .join("");
   }
   updateClearQueueButtonState();
   updateQueueStartControls();
+  updateScheduleLiveProgress();
   updatePreviewCueUI();
+  syncMediaLibraryOperationalMetadata();
+}
+
+function liveProgressMediaElement() {
+  if (
+    liveAudioQueueIndex === currentQueueIndex &&
+    liveAudio?.src &&
+    liveAudio.src !== ""
+  ) {
+    return liveAudio;
+  }
+  return video;
+}
+
+function compactRundownTime(seconds) {
+  const safe = Math.max(0, Math.floor(Number(seconds) || 0));
+  const minutes = Math.floor(safe / 60);
+  return `${String(minutes).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function updateScheduleLiveProgress() {
+  const row = document.querySelector('.queue-item[data-live="true"]');
+  if (!row) return;
+  const index = Number.parseInt(row.dataset.queueIndex || "", 10);
+  const item = queueIndexInRange(index) ? mediaQueue[index] : null;
+  const mediaEl = liveProgressMediaElement();
+  const mediaDuration = Number(mediaEl?.duration);
+  const duration = Number.isFinite(mediaDuration) && mediaDuration > 0
+    ? mediaDuration
+    : Number.isFinite(item?.duration) && item.duration > 0
+      ? item.duration
+      : 0;
+  const mediaCurrent = Number(mediaEl?.currentTime);
+  const current = Number.isFinite(mediaCurrent) && mediaCurrent >= 0 ? mediaCurrent : 0;
+  const progress = duration > 0
+    ? Math.max(0, Math.min(100, (current / duration) * 100))
+    : 0;
+  row.style.setProperty("--live-progress", `${progress.toFixed(2)}%`);
+  const remaining = row.querySelector(".queue-live-remaining");
+  if (remaining) {
+    remaining.textContent = duration > 0
+      ? `−${compactRundownTime(duration - current)}`
+      : "Live";
+  }
 }
 
 function updateQueueStartControls() {
@@ -1613,6 +1682,12 @@ function installQueueStartControls() {
     if (!queueIndexInRange(index)) return;
     setQueueItemAutoAdvance(index, button.getAttribute("data-queue-start-mode") === "auto");
   });
+  if (!installQueueStartControls.liveProgressTimer) {
+    installQueueStartControls.liveProgressTimer = window.setInterval(
+      updateScheduleLiveProgress,
+      250,
+    );
+  }
 }
 
 function installAddQueueSectionButton() {
@@ -1667,5 +1742,6 @@ export {
   updateClearQueueButtonState,
   updateQueueDropIndicator,
   updateQueueSelectionVisual,
+  updateScheduleLiveProgress,
   updateQueueStartControls,
 };

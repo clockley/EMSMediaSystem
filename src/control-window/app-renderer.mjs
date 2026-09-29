@@ -644,6 +644,7 @@ import {
   recordScheduledMediaPaths,
   resolveMediaLibraryDragItem,
   showMediaLibraryWorkspace,
+  syncMediaLibraryOperationalMetadata,
 } from "./app-media-library-workspace.mjs";
 import {
   advanceQueueAfterMediaWindowClosed,
@@ -933,6 +934,30 @@ function attachElectronBridge() {
     showToast: showGnomeToast,
     showMediaWorkspace,
     revealSchedulePreviewForLibraryPath,
+    scheduleStateForPath: (localPath) => {
+      const item = queueItemForPath(localPath);
+      return {
+        scheduled: Boolean(item),
+        missing: item?.missing === true,
+        changed: Boolean(item?.changedSinceSave || item?.pendingMediaUpdate),
+      };
+    },
+    isPathLive: (localPath) => {
+      const index = findQueueIndexByPath(localPath);
+      return index >= 0 && queueIndexIsLiveForDisplay(index);
+    },
+    showNow: async (localPath) => {
+      let index = findQueueIndexByPath(localPath);
+      if (index < 0) {
+        applyDroppedMediaPaths([localPath], { preserveWorkspace: true });
+        index = findQueueIndexByPath(localPath);
+      }
+      if (index < 0) throw new Error("Media item could not be added to the schedule");
+      await takeQueueItemLive(
+        index,
+        queueItemCueStartTime(mediaQueue[index]),
+      );
+    },
     isLivePresentationActive: () =>
       Boolean(
         isQueuePresentationActive() ||
@@ -4526,6 +4551,7 @@ export {
   setSharedRendererState,
   showGnomeToast,
   showMediaLibraryWorkspace,
+  syncMediaLibraryOperationalMetadata,
   showRendererAlert,
   showRendererConfirm,
   showRendererPrompt,

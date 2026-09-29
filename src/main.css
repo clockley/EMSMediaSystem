@@ -2716,7 +2716,8 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
 }
 
 .controls-overlay[data-timeline-hidden="true"] .time-display,
-.controls-overlay[data-timeline-hidden="true"] .timeline-slider {
+.controls-overlay[data-timeline-hidden="true"] .timeline-slider,
+.controls-overlay[data-timeline-hidden="true"] .transport-timeline-shell {
     display: none;
 }
 
@@ -8106,11 +8107,12 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 }
 
 .queue-item {
+    position: relative;
     display: flex;
     align-items: center;
     padding: 12px 16px;
     border-bottom: 1px solid var(--border-color);
-    transition: background 0.2s ease;
+    transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
 }
 
 .queue-item:last-child {
@@ -8334,11 +8336,11 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 }
 
 .queue-item.is-newly-added {
-    animation: queue-item-added 1.8s ease-out;
+    animation: queue-item-added 160ms ease-out;
 }
 
 @keyframes queue-item-added {
-    0%, 35% {
+    0% {
         box-shadow: inset 0 0 0 3px color-mix(in srgb, white 82%, var(--accent-bg-color));
     }
     100% {
@@ -8349,7 +8351,7 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 @media (prefers-reduced-motion: reduce) {
     .queue-item.is-newly-added {
         animation: none;
-        box-shadow: inset 0 0 0 3px color-mix(in srgb, white 82%, var(--accent-bg-color));
+        box-shadow: none;
     }
 }
 
@@ -8624,7 +8626,9 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 .media-library__kind-badge { position: absolute; inset-inline-end: 6px; bottom: 6px; padding: 2px 6px; border-radius: 5px; background: #000b; color: #fff; font-size: 10px; text-transform: capitalize; }
 .media-library__item-copy { display: flex; flex-direction: column; gap: 3px; padding: 9px 7px 2px; text-align: center; }
 .media-library__item-name { display: -webkit-box; min-height: 2.5em; overflow: hidden; font-size: 13px; font-weight: 600; line-height: 1.25; text-overflow: ellipsis; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.media-library__item-meta { overflow: hidden; color: var(--dim-label-color); font-size: 11px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.media-library__item-meta { overflow: hidden; color: var(--dim-label-color); font-size: 11px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; opacity: .58; transition: opacity 150ms ease; }
+.media-library__item:hover .media-library__item-meta,
+.media-library__item.is-selected .media-library__item-meta { opacity: 1; }
 
 .media-library__item--folder .media-library__thumbnail {
     background: color-mix(in srgb, #f6d32d 16%, #1a1a1e);
@@ -8657,7 +8661,7 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 .media-library__inspect-back svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .media-library__inspect-back:hover { background: color-mix(in srgb, var(--window-fg-color) 9%, transparent); }
 .media-library__inspect-back:focus-visible { outline: 2px solid var(--accent-color, #3584e4); outline-offset: 2px; }
-.media-library__inspect-bar #mediaLibraryAddScheduleBtn { margin-inline-start: auto; }
+.media-library__inspect-actions { display: inline-flex; align-items: center; gap: 7px; margin-inline-start: auto; }
 .media-library__inspect-bar #mediaLibraryCloseDetails { display: none; }
 .media-library__details > .media-library__icon-button { align-self: end; flex: 0 0 auto; }
 .media-library__preview { display: grid; place-items: center; flex: 0 0 auto; aspect-ratio: 16 / 10; border-radius: 10px; overflow: hidden; background: #000; color: #fff; cursor: zoom-in; -webkit-user-drag: none; }
@@ -8783,6 +8787,120 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 .queue-item.is-live.is-selected,
 .queue-item.is-live.is-selected:hover {
     box-shadow: inset 4px 0 var(--destructive-bg-color);
+}
+
+/* Rundown state stays independent from the blue operator selection. */
+.state-badge--up-next {
+    border: 1px solid color-mix(in srgb, var(--accent-bg-color) 45%, transparent);
+    background: transparent;
+    color: var(--accent-bg-color);
+}
+
+.queue-item.is-selected .state-badge--up-next {
+    border-color: color-mix(in srgb, #fff 55%, transparent);
+    color: #fff;
+}
+
+.queue-live-progress {
+    position: absolute;
+    inset-inline: 4px 0;
+    bottom: 0;
+    height: 3px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--destructive-bg-color) 22%, transparent);
+    pointer-events: none;
+}
+
+.queue-live-progress__fill {
+    display: block;
+    width: var(--live-progress, 0%);
+    height: 100%;
+    background: var(--destructive-bg-color);
+}
+
+.queue-live-remaining {
+    font-size: 11px;
+    font-feature-settings: "tnum" 1;
+    color: color-mix(in srgb, currentColor 72%, transparent);
+    white-space: nowrap;
+}
+
+/* The scrubber owns Cue / Next only. Live is a separate read-only readout so
+   clips with different durations are never compared on one percentage scale. */
+.transport-timeline-shell {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    min-width: 80px;
+}
+
+.transport-timeline-shell[data-mode="cue"] .timeline-slider { accent-color: #62a0ea; }
+.transport-position-labels {
+    position: absolute;
+    left: 0;
+    bottom: 25px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 7px;
+    border-radius: 7px;
+    background: rgb(0 0 0 / 78%);
+    color: #fff;
+    font-size: 10px;
+    font-feature-settings: "tnum" 1;
+    white-space: nowrap;
+    pointer-events: none;
+}
+.transport-position-label--cue { color: #99c1f1; font-weight: 800; }
+.transport-position-label--live { color: #ff7b82; font-weight: 800; }
+.transport-position-label--live::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-inline-end: 4px;
+    border-radius: 50%;
+    background: #ed333b;
+}
+.transport-position-labels[hidden] { display: none; }
+
+/* Output preflight lives next to Present, where the decision is made. */
+.output-readiness {
+    display: inline-flex;
+    gap: 3px;
+    padding: 3px;
+    border: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+    border-radius: 8px;
+    -webkit-app-region: no-drag;
+}
+.output-readiness button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 25px;
+    padding: 3px 6px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    font-size: 10px;
+    white-space: nowrap;
+}
+.output-readiness button:hover { background: color-mix(in srgb, CanvasText 9%, transparent); }
+.output-readiness__dot { width: 7px; height: 7px; border-radius: 50%; background: #e5a50a; box-shadow: 0 0 0 1px #0003; }
+.output-readiness button[data-ready="true"] .output-readiness__dot { background: #2ec27e; }
+.output-readiness button[data-ready="false"] { color: color-mix(in srgb, currentColor 72%, transparent); }
+.output-readiness button:disabled { opacity: .52; cursor: not-allowed; }
+
+@media (max-width: 1320px) {
+    .output-readiness button > span:last-child { display: none; }
+    .output-readiness button { padding-inline: 5px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .queue-item,
+    .media-library__item-meta { transition: none; }
 }
 
 .queue-item-dragging {
