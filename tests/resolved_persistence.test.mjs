@@ -63,6 +63,12 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
     },
     mediaQueue: [
       {
+        id: "section-opening",
+        type: "section",
+        name: "Opening Worship",
+        collapsed: true,
+      },
+      {
         path: "song://fixture_long_song",
         name: "Long Song",
         type: "song",
@@ -130,8 +136,15 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
     await rm(sharedBackgroundPath);
     await rm(itemBackgroundPath);
     loaded = await loadEmprojSnapshot(projectPath);
-    const loadedSong = loaded.mediaQueue[0];
-    const loadedBible = loaded.mediaQueue[1];
+    const loadedSection = loaded.mediaQueue[0];
+    const loadedSong = loaded.mediaQueue[1];
+    const loadedBible = loaded.mediaQueue[2];
+    assert.deepEqual(loadedSection, {
+      id: "section-opening",
+      type: "section",
+      name: "Opening Worship",
+      collapsed: true,
+    });
     assert.equal(loadedSong.currentSlideId, "play_v1:1");
     assert.equal(loadedSong.currentSequenceEntryId, "play_v1");
     assert.equal(

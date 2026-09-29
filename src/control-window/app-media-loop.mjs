@@ -707,7 +707,9 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
       ({ item }) =>
         !isQueueItemBible(item) &&
         !isQueueItemSong(item) &&
-        !isQueueItemDeck(item),
+        !isQueueItemDeck(item) &&
+        typeof item.path === "string" &&
+        item.path.length > 0,
     );
   if (fileItems.length === 0) return;
   const preflightItems = fileItems.map(({ item }) => queueItemPreflightCheckPayload(item));

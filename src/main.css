@@ -7951,6 +7951,183 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     background: var(--accent-bg-color-hover);
 }
 
+.queue-item--section {
+    min-height: 48px;
+    padding: 6px 8px 6px 6px;
+    background: color-mix(in srgb, var(--window-fg-color) 7%, var(--card-bg-color));
+    color: var(--window-fg-color);
+    font-weight: 700;
+}
+
+.queue-item--section:hover {
+    background: color-mix(in srgb, var(--window-fg-color) 10%, var(--card-bg-color));
+}
+
+.queue-item--section.is-selected,
+.queue-item--section.is-selected:hover {
+    background: var(--accent-bg-color);
+    color: #ffffff;
+}
+
+.queue-item--section.is-drop-target {
+    box-shadow: inset 0 0 0 2px var(--accent-bg-color);
+}
+
+.queue-item--section.is-selected.is-drop-target {
+    box-shadow: inset 0 0 0 2px #ffffff;
+}
+
+.queue-item--section-child {
+    position: relative;
+    padding-left: 40px;
+}
+
+.queue-item--section-child::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 21px;
+    width: 1px;
+    background: color-mix(in srgb, var(--window-fg-color) 20%, transparent);
+    pointer-events: none;
+}
+
+.queue-item--section-child::after {
+    content: "";
+    position: absolute;
+    inset-inline-start: 21px;
+    top: 50%;
+    width: 10px;
+    height: 1px;
+    background: color-mix(in srgb, var(--window-fg-color) 20%, transparent);
+    pointer-events: none;
+}
+
+.queue-item--section-child-last::before {
+    bottom: 50%;
+}
+
+.queue-item--section-child.is-selected::before,
+.queue-item--section-child.is-selected::after {
+    background: color-mix(in srgb, #ffffff 56%, transparent);
+}
+
+.queue-item--collapsed-preview {
+    box-shadow: inset 3px 0 color-mix(in srgb, var(--accent-bg-color) 60%, transparent);
+}
+
+.section-toggle-btn {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 26px;
+    height: 30px;
+    margin-right: 1px;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    line-height: 1;
+}
+
+.section-toggle-btn:hover {
+    background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.section-toggle-btn:disabled {
+    opacity: 0.28;
+}
+
+.section-toggle-icon {
+    display: block;
+    transition: transform 140ms ease;
+}
+
+.queue-item--section.is-collapsed .section-toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.section-toggle-btn:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
+.queue-item.is-selected .section-toggle-btn:focus-visible {
+    outline-color: #ffffff;
+}
+
+.section-folder-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 22px;
+    height: 30px;
+    margin-right: 6px;
+    color: color-mix(in srgb, var(--accent-bg-color) 74%, currentColor);
+}
+
+.queue-item--section.is-selected .section-folder-icon {
+    color: #ffffff;
+}
+
+.section-text {
+    gap: 1px;
+}
+
+.queue-item--section .item-label {
+    line-height: 1.25;
+}
+
+.section-count {
+    color: color-mix(in srgb, currentColor 66%, transparent);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.section-menu-btn {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    margin-left: 4px;
+    padding: 0;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: inherit;
+    opacity: 0.64;
+}
+
+.section-menu-btn:hover {
+    background: color-mix(in srgb, currentColor 12%, transparent);
+    opacity: 1;
+}
+
+.section-menu-btn:focus-visible,
+.queue-item--section:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: -2px;
+}
+
+.queue-item--section.is-selected .section-menu-btn:focus-visible,
+.queue-item--section.is-selected:focus-visible {
+    outline-color: #ffffff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .section-toggle-icon {
+        transition: none;
+    }
+}
+
 .queue-section.is-media-library-open .queue-item.is-selected {
     background: color-mix(in srgb, var(--window-fg-color) 18%, #1c1c1c);
     color: #f3f3f3;
@@ -8443,7 +8620,7 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 }
 
 .queue-drop-indicator::after {
-    content: "+ " attr(data-label);
+    content: attr(data-label);
     position: absolute;
     inset-inline-start: 8px;
     bottom: 5px;

@@ -90,6 +90,7 @@ import {
   installBibleMediaControls,
   installDisplayChangeHandler,
   installGlobalSlideTransitionControls,
+  installAddQueueSectionButton,
   installMediaQueueListDelegation,
   installQueueStartControls,
   installNetworkItemButton,
@@ -1875,6 +1876,7 @@ function setSBFormMediaPlayer() {
     clearQueueBtn.dataset.clearBound = "1";
     clearQueueBtn.addEventListener("click", onClearMediaQueueClick);
   }
+  installAddQueueSectionButton();
   installMediaQueueListDelegation();
   installQueueStartControls();
   renderQueue();

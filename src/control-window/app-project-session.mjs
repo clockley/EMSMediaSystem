@@ -37,6 +37,7 @@ import {
   isQueueItemSong,
   isQueueItemTransitionCapable,
   isQueuePresentationActive,
+  isScheduleItemCurrentlyPlayable,
   isSongPath,
   liveSourcePinnedModifiedTime,
   loadQueueItemIntoControlWindow,
@@ -297,6 +298,14 @@ function queueItemFingerprintSnapshotFields(item, bibleEntry) {
 }
 
 function buildProjectQueueItemSnapshot(item) {
+  if (item?.type === "section") {
+    return {
+      id: typeof item.id === "string" && item.id.trim() ? item.id : undefined,
+      type: "section",
+      name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : "New Section",
+      collapsed: item.collapsed === true,
+    };
+  }
   const bibleEntry = isQueueItemBible(item)
     ? projectBibleReferenceEntryForQueueItem(item)
     : null;
@@ -526,6 +535,14 @@ function applyProjectStateSnapshot(state, opts = {}) {
             pathEntry: parseBibleQueuePath(rawPath),
           })
         : null;
+      if (x.type === "section") {
+        return {
+          id: typeof x.id === "string" && x.id.trim() ? x.id : `section-${generateProjectGuid()}`,
+          type: "section",
+          name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : "New Section",
+          collapsed: x.collapsed === true,
+        };
+      }
       const itemPath = bibleEntry
         ? bibleQueuePath(bibleEntry.reference, bibleEntry.version)
         : isSongItem
@@ -620,14 +637,22 @@ function applyProjectStateSnapshot(state, opts = {}) {
     .filter(Boolean) });
   Object.assign(bibleDesignerState, resolvedBibleStyleDefaults());
   setSharedRendererState({ selectedQueueAnchorIndex: -1 });
-  setSharedRendererState({ currentQueueIndex: Number.isInteger(state.currentQueueIndex) &&
+  const savedCurrentIndexInRange =
+    Number.isInteger(state.currentQueueIndex) &&
     state.currentQueueIndex >= 0 &&
-    state.currentQueueIndex < mediaQueue.length
+    state.currentQueueIndex < mediaQueue.length;
+  const restoredCurrentIndex = savedCurrentIndexInRange
+    ? isScheduleItemCurrentlyPlayable(mediaQueue[state.currentQueueIndex])
       ? state.currentQueueIndex
-      : -1 });
+      : mediaQueue.findIndex((item, index) =>
+          index > state.currentQueueIndex && isScheduleItemCurrentlyPlayable(item),
+        )
+    : -1;
+  setSharedRendererState({ currentQueueIndex: restoredCurrentIndex >= 0 ? restoredCurrentIndex : -1 });
   setSharedRendererState({ previewCueIndex: Number.isInteger(state.previewCueIndex) &&
     state.previewCueIndex >= 0 &&
-    state.previewCueIndex < mediaQueue.length
+    state.previewCueIndex < mediaQueue.length &&
+    isScheduleItemCurrentlyPlayable(mediaQueue[state.previewCueIndex])
       ? state.previewCueIndex
       : -1 });
   if (
@@ -664,7 +689,11 @@ function applyProjectStateSnapshot(state, opts = {}) {
       const previewIndex =
         currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
           ? currentQueueIndex
-          : 0;
+          : mediaQueue.findIndex((item) => isScheduleItemCurrentlyPlayable(item));
+      if (previewIndex < 0) {
+        scheduleMediaWatchSync();
+        return;
+      }
       try {
         await loadQueueItemIntoControlWindow(mediaQueue[previewIndex], {
           previewLoadToken: nextPreviewLoadToken(),

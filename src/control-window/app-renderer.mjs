@@ -59,6 +59,7 @@ import {
   firstPlayableScheduleIndex,
   isEmbeddedScheduleItem,
   isScheduleItemPlayable,
+  isScheduleSectionItem,
   isScheduleItemVisible,
   nextPlayableScheduleIndex,
   previousPlayableScheduleIndex,
@@ -616,6 +617,7 @@ import {
   enqueuePathsFromFilePicker,
   extractAndFilterDroppedMediaPaths,
   hideScheduleSongContextMenu,
+  installAddQueueSectionButton,
   installMediaQueueListDelegation,
   installQueueStartControls,
   nextPlayableQueueItemStageText,
@@ -1172,6 +1174,10 @@ function isScheduleItemCurrentlyVisible(item) {
 
 function isScheduleItemCurrentlyPlayable(item) {
   return isScheduleItemPlayable(item, scheduleAvailabilityOptions());
+}
+
+function isQueueItemSection(item) {
+  return isScheduleSectionItem(item);
 }
 
 function nextPlayableQueueIndexAfter(fromIndex) {
@@ -2465,6 +2471,9 @@ function insertQueueEntriesAfterSelection(entries) {
 
 function hideQueueDropIndicator() {
   if (queueDropIndicator) queueDropIndicator.hidden = true;
+  document.querySelectorAll(".queue-item--section.is-drop-target").forEach((row) => {
+    row.classList.remove("is-drop-target");
+  });
   queueDropIndicatorIndex = -1;
 }
 
@@ -2621,20 +2630,29 @@ async function captureQueueClearUndoState() {
     }
   }
   queueClearUndoSnapshot = {
-    items: mediaQueue.map((x) => ({
-      path: x.path,
-      name: x.name,
-      type: x.type,
-      cueStartTime: queueItemCueStartTime(x),
-      cueVolume: x.cueVolume,
-      loop: loopEnabledForQueueItem(x),
-      networkSource: x.networkSource && typeof x.networkSource === "object"
-        ? { ...x.networkSource }
-        : undefined,
-      pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
-      transition: normalizeItemSlideTransitionOverride(x.transition),
-      bible: x.bible ? { ...x.bible } : undefined,
-    })),
+    items: mediaQueue.map((x) =>
+      isQueueItemSection(x)
+        ? {
+            id: x.id,
+            name: x.name,
+            type: "section",
+            collapsed: x.collapsed === true,
+          }
+        : {
+            path: x.path,
+            name: x.name,
+            type: x.type,
+            cueStartTime: queueItemCueStartTime(x),
+            cueVolume: x.cueVolume,
+            loop: loopEnabledForQueueItem(x),
+            networkSource: x.networkSource && typeof x.networkSource === "object"
+              ? { ...x.networkSource }
+              : undefined,
+            pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
+            transition: normalizeItemSlideTransitionOverride(x.transition),
+            bible: x.bible ? { ...x.bible } : undefined,
+          },
+    ),
     index: currentQueueIndex,
     cueIndex: previewCueIndex,
     seekTime,
@@ -2749,6 +2767,14 @@ async function restoreQueueClearUndoSnapshot() {
   queueClearUndoSnapshot = null;
 
   mediaQueue = snap.items.map((x) => {
+    if (x.type === "section") {
+      return {
+        id: typeof x.id === "string" && x.id ? x.id : `section-${generateProjectGuid()}`,
+        name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : "New Section",
+        type: "section",
+        collapsed: x.collapsed === true,
+      };
+    }
     const item = {
       path: x.path,
       name: x.name,
@@ -2774,6 +2800,12 @@ async function restoreQueueClearUndoSnapshot() {
   } else if (currentQueueIndex < 0) {
     currentQueueIndex = 0;
   }
+  if (
+    currentQueueIndex >= 0 &&
+    !isScheduleItemCurrentlyPlayable(mediaQueue[currentQueueIndex])
+  ) {
+    currentQueueIndex = firstPlayableQueueIndex();
+  }
 
   // Restore the cued item (the "next" marker) and its per-item start time
   // and volume (embedded in each queue entry).
@@ -2781,6 +2813,7 @@ async function restoreQueueClearUndoSnapshot() {
     typeof snap.cueIndex === "number" &&
     snap.cueIndex >= 0 &&
     snap.cueIndex < mediaQueue.length
+    && isScheduleItemCurrentlyPlayable(mediaQueue[snap.cueIndex])
       ? snap.cueIndex
       : -1;
   if (previewCueIndex >= 0) {
@@ -3966,6 +3999,7 @@ export {
   clearMediaQueue,
   enqueuePathsFromFilePicker,
   extractAndFilterDroppedMediaPaths,
+  installAddQueueSectionButton,
   installMediaQueueListDelegation,
   installQueueStartControls,
   onClearMediaQueueClick,
@@ -4296,6 +4330,7 @@ export {
   imageRegex,
   isLocalAppWindowPresentationActive,
   isQueueItemBible,
+  isQueueItemSection,
   isQueuePresentationActive,
   lastAudienceBibleTextMessage,
   liveTextClearActive,

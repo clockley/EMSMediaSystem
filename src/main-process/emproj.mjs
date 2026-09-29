@@ -52,6 +52,7 @@ const SLIDE_TRANSITION_EFFECTS = new Set([
   "slide-right",
   "zoom",
 ]);
+const DEFAULT_QUEUE_SECTION_LABEL = "New Section";
 const SHA256_HASH_ALG = "sha256";
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 const PROJECT_GUID_RE =
@@ -492,6 +493,23 @@ function queueItemPlaybackStartTime(item) {
     item.cueStartTime > 0
     ? item.cueStartTime
     : 0;
+}
+
+function normalizeQueueSectionLabel(value) {
+  return typeof value === "string" && value.trim()
+    ? value.trim()
+    : DEFAULT_QUEUE_SECTION_LABEL;
+}
+
+function queueSectionFromSequenceItem(item) {
+  if (!item || typeof item !== "object" || item.type !== "section") return null;
+  const result = {
+    type: "section",
+    name: normalizeQueueSectionLabel(item.label || item.name),
+    collapsed: item.collapsed === true,
+  };
+  if (typeof item.id === "string" && item.id.length > 0) result.id = item.id;
+  return result;
 }
 
 function contentLocationForKind(kind) {
@@ -1402,6 +1420,9 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   const mediaQueue = (
     await Promise.all(sequence.map(async (item) => {
       if (!item || typeof item !== "object" || isLegacySlideQueueItem(item)) return null;
+      if (item.type === "section") {
+        return queueSectionFromSequenceItem(item);
+      }
       if (item.type === "scripture" || item.scripture) {
         return buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPaths);
       }
@@ -1464,7 +1485,9 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   ).filter(Boolean);
   for (const item of mediaQueue) {
     if (!item || typeof item !== "object") continue;
-    item.itemTheme = hydrateProjectItemTheme(item.itemTheme);
+    if (item.type === "section") continue;
+    const hydratedItemTheme = hydrateProjectItemTheme(item.itemTheme);
+    if (hydratedItemTheme) item.itemTheme = hydratedItemTheme;
     if (item.bible && typeof item.bible === "object") {
       item.bible.itemTheme = item.itemTheme;
     }
@@ -1836,12 +1859,22 @@ async function saveEmprojSnapshotUnlocked(
   }
 
   for (const item of queue) {
-    if (
-      !item ||
-      isLegacySlideQueueItem(item) ||
-      typeof item.path !== "string" ||
-      item.path.length === 0
-    ) {
+    if (!item || isLegacySlideQueueItem(item)) {
+      continue;
+    }
+    if (item.type === "section") {
+      itemCounter += 1;
+      queueSequence.push({
+        id: typeof item.id === "string" && item.id.length > 0
+          ? item.id
+          : makeId("section", itemCounter),
+        label: normalizeQueueSectionLabel(item.name || item.label),
+        type: "section",
+        collapsed: item.collapsed === true,
+      });
+      continue;
+    }
+    if (typeof item.path !== "string" || item.path.length === 0) {
       continue;
     }
     if (

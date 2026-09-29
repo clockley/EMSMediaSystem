@@ -12,6 +12,16 @@ the Free Software Foundation, either version 3 of the License, or
  */
 
 import {
+  reorderScheduleItemsAtInsertion,
+  scheduleDropPlacementForTarget,
+  scheduleInsertionIndexAfterItem,
+  scheduleSectionBlockDropPlacement,
+  scheduleSectionEndIndex,
+  scheduleSectionIndexForInsertion,
+  scheduleSectionIndexForItem,
+} from "../shared/schedule-item-availability.mjs";
+
+import {
   BIBLE_VERSE_DRAG_MIME,
   MEDIAPLAYER,
   activeMediaWindowContentType,
@@ -35,6 +45,7 @@ import {
   finalizeQueueClearDestructive,
   firstDroppedProjectPath,
   formatCueTime,
+  generateProjectGuid,
   getPathForFile,
   hidePptxPreviewIfNeeded,
   hideQueueDropIndicator,
@@ -48,9 +59,11 @@ import {
   isPreparingSeparateCue,
   isQueueItemAudio,
   isQueueItemBible,
+  isQueueItemSection,
   isQueueItemSong,
   isQueuePlaying,
   isQueuePresentationActive,
+  isScheduleItemCurrentlyPlayable,
   isScheduleItemCurrentlyVisible,
   isVideoPreviewCueActive,
   keepPendingMediaUpdate,
@@ -103,6 +116,7 @@ import {
   showGnomeToast,
   showMediaWorkspace,
   showQueueClearedUndoToast,
+  showRendererPrompt,
   showScheduleBibleContextMenu,
   slideTransitionBadgeMarkup,
   songDragSongId,
@@ -140,6 +154,45 @@ let recentlyAddedQueueItemsTimer = null;
 
 let queueDropIndicator = null;
 
+const DEFAULT_SCHEDULE_SECTION_NAME = "New Section";
+
+function normalizeScheduleSectionName(value) {
+  const name = String(value || "").trim();
+  return name || DEFAULT_SCHEDULE_SECTION_NAME;
+}
+
+function createScheduleSectionEntry(name = DEFAULT_SCHEDULE_SECTION_NAME) {
+  return {
+    id: `section-${generateProjectGuid()}`,
+    type: "section",
+    name: normalizeScheduleSectionName(name),
+    collapsed: false,
+  };
+}
+
+function sectionItemCount(sectionIndex) {
+  if (!queueIndexInRange(sectionIndex) || !isQueueItemSection(mediaQueue[sectionIndex])) {
+    return 0;
+  }
+  let count = 0;
+  for (let index = sectionIndex + 1; index < mediaQueue.length; index += 1) {
+    const item = mediaQueue[index];
+    if (isQueueItemSection(item)) break;
+    if (isScheduleItemCurrentlyVisible(item)) count += 1;
+  }
+  return count;
+}
+
+function sectionChildShouldShowWhenCollapsed(index, item, selectedQueueIndex, separatePreviewCue) {
+  return (
+    queueIndexIsLiveForDisplay(index) ||
+    (separatePreviewCue && index === previewCueIndex) ||
+    (selectedQueueItems.size > 0
+      ? selectedQueueItems.has(item)
+      : index === selectedQueueIndex)
+  );
+}
+
 function renderQueue() {
   const listContainer = document.getElementById("mediaQueueList");
   if (!listContainer) return;
@@ -154,10 +207,37 @@ function renderQueue() {
     selectedQueueItems.add(mediaQueue[selectedQueueAnchorIndex]);
   }
 
-  const visibleQueueItems = mediaQueue
-    .map((item, index) => ({ item, index }))
-    .filter(({ item }) => isScheduleItemCurrentlyVisible(item));
   const bibleHint = bibleUiEnabled ? ", or Bible text" : "";
+  const separatePreviewCue = isPreparingSeparateCue();
+  const selectedQueueIndex = selectedQueueIndexForDisplay();
+  const visibleQueueItems = [];
+  let currentSectionIndex = -1;
+  let collapsedSectionIndex = -1;
+
+  mediaQueue.forEach((item, index) => {
+    if (!isScheduleItemCurrentlyVisible(item)) return;
+    if (isQueueItemSection(item)) {
+      visibleQueueItems.push({
+        item,
+        index,
+        inSection: false,
+        collapsedPreview: false,
+      });
+      currentSectionIndex = index;
+      collapsedSectionIndex = item.collapsed === true ? index : -1;
+      return;
+    }
+    const collapsedPreview =
+      collapsedSectionIndex >= 0 &&
+      sectionChildShouldShowWhenCollapsed(index, item, selectedQueueIndex, separatePreviewCue);
+    if (collapsedSectionIndex >= 0 && !collapsedPreview) return;
+    visibleQueueItems.push({
+      item,
+      index,
+      inSection: currentSectionIndex >= 0,
+      collapsedPreview,
+    });
+  });
 
   if (visibleQueueItems.length === 0) {
     listContainer.innerHTML =
@@ -168,11 +248,8 @@ function renderQueue() {
   } else {
     // Queue order is the primary source of truth. Badges show live/cued
     // state, plus an optional start-offset label for non-zero cue starts.
-    const separatePreviewCue = isPreparingSeparateCue();
-    const selectedQueueIndex = selectedQueueIndexForDisplay();
-
     listContainer.innerHTML = visibleQueueItems
-      .map(({ item, index }) => {
+      .map(({ item, index, inSection, collapsedPreview }, visibleIndex) => {
         const cueStartTime = queueItemCueStartTime(item);
         const hasCueStart = cueStartTime > 0;
 
@@ -182,16 +259,53 @@ function renderQueue() {
           selectedQueueItems.size > 0
             ? selectedQueueItems.has(item)
             : index === selectedQueueIndex;
+        if (isQueueItemSection(item)) {
+          const collapsed = item.collapsed === true;
+          const childCount = sectionItemCount(index);
+          const sectionName = item.name || DEFAULT_SCHEDULE_SECTION_NAME;
+          const childLabel = childCount === 0
+            ? "Empty section"
+            : `${childCount} item${childCount === 1 ? "" : "s"}`;
+          const classes = [
+            "queue-item",
+            "queue-item--section",
+            isSelected ? "is-selected" : "",
+            collapsed ? "is-collapsed" : "",
+            recentlyAddedQueueItems.has(item) ? "is-newly-added" : "",
+          ].filter(Boolean).join(" ");
+          return `<div class="${classes}" role="listitem" tabindex="0" data-queue-index="${index}" draggable="true" ${isSelected ? 'data-selected="true"' : ""}>
+      <button type="button" class="section-toggle-btn" draggable="false" data-queue-section-toggle="${index}" aria-label="${collapsed ? "Expand section" : "Collapse section"}" aria-expanded="${collapsed ? "false" : "true"}" ${childCount === 0 ? "disabled" : ""}>
+        <svg class="section-toggle-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.75 6.25 3.25 3.5 3.25-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span class="section-folder-icon" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 16 16"><path d="M1.75 4.25c0-.83.67-1.5 1.5-1.5h3.1l1.4 1.5h5c.83 0 1.5.67 1.5 1.5v6.5c0 .55-.45 1-1 1h-10.5c-.55 0-1-.45-1-1v-8Z" fill="currentColor" opacity=".24"/><path d="M1.75 5.25h12.5v7c0 .55-.45 1-1 1h-10.5c-.55 0-1-.45-1-1v-7Z" fill="currentColor"/></svg>
+      </span>
+      <span class="item-text section-text">
+        <span class="item-label" title="${escapeHtml(sectionName)}">${escapeHtml(sectionName)}</span>
+        <span class="section-count">${childLabel}</span>
+      </span>
+      <button type="button" class="section-menu-btn" draggable="false" data-queue-section-menu="${index}" title="Section options" aria-label="Options for ${escapeHtml(sectionName)}" aria-haspopup="menu">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r="1.25" fill="currentColor"/><circle cx="8" cy="8" r="1.25" fill="currentColor"/><circle cx="13" cy="8" r="1.25" fill="currentColor"/></svg>
+      </button>
+    </div>`;
+        }
         const autoAdvanceEnabled = item.autoAdvance !== false;
+        const isLastSectionChild =
+          inSection &&
+          (visibleIndex === visibleQueueItems.length - 1 ||
+            isQueueItemSection(visibleQueueItems[visibleIndex + 1]?.item));
 
         const classes = [
           "queue-item",
-          isSelected ? " is-selected" : "",
-          recentlyAddedQueueItems.has(item) ? " is-newly-added" : "",
-          isLive ? " is-live" : "",
-          isCued ? " is-cued" : "",
-          item.pendingMediaUpdate?.status === "ready" ? " queue-item--pending-update" : "",
-        ].join("");
+          inSection ? "queue-item--section-child" : "",
+          isLastSectionChild ? "queue-item--section-child-last" : "",
+          collapsedPreview ? "queue-item--collapsed-preview" : "",
+          isSelected ? "is-selected" : "",
+          recentlyAddedQueueItems.has(item) ? "is-newly-added" : "",
+          isLive ? "is-live" : "",
+          isCued ? "is-cued" : "",
+          item.pendingMediaUpdate?.status === "ready" ? "queue-item--pending-update" : "",
+        ].filter(Boolean).join(" ");
         const cueStartMarkup = hasCueStart
           ? `<span class="item-cue-start">Start @ ${formatCueTime(cueStartTime)}</span>`
           : "";
@@ -271,18 +385,64 @@ function updateQueueStartControls() {
   const controls = document.getElementById("queueStartControls");
   if (!controls) return;
   const index = selectedQueueIndexForDisplay();
-  const hasSelection = queueIndexInRange(index);
-  controls.hidden = !hasSelection;
-  controls.dataset.queueIndex = hasSelection ? String(index) : "";
+  const hasPlayableSelection =
+    queueIndexInRange(index) && isScheduleItemCurrentlyPlayable(mediaQueue[index]);
+  controls.hidden = !hasPlayableSelection;
+  controls.dataset.queueIndex = hasPlayableSelection ? String(index) : "";
   controls.querySelectorAll("[data-queue-start-mode]").forEach((button) => {
     const mode = button.getAttribute("data-queue-start-mode");
     const active =
-      hasSelection &&
+      hasPlayableSelection &&
       (mode === "auto") === (mediaQueue[index].autoAdvance !== false);
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-pressed", active ? "true" : "false");
-    button.disabled = !hasSelection;
+    button.disabled = !hasPlayableSelection;
   });
+}
+
+function setScheduleSectionCollapsed(index, collapsed) {
+  if (!queueIndexInRange(index) || !isQueueItemSection(mediaQueue[index])) return;
+  mediaQueue[index].collapsed = collapsed === true;
+  renderQueue();
+  saveMediaFile();
+}
+
+function toggleScheduleSectionCollapsed(index) {
+  if (!queueIndexInRange(index) || !isQueueItemSection(mediaQueue[index])) return;
+  if (sectionItemCount(index) === 0) return;
+  setScheduleSectionCollapsed(index, mediaQueue[index].collapsed !== true);
+}
+
+async function renameScheduleSection(index) {
+  if (!queueIndexInRange(index) || !isQueueItemSection(mediaQueue[index])) return;
+  const currentName = mediaQueue[index].name || DEFAULT_SCHEDULE_SECTION_NAME;
+  const nextName = await showRendererPrompt("Section name", currentName, {
+    title: "Rename Section",
+    confirmLabel: "Rename",
+    required: true,
+    maxLength: 80,
+  });
+  if (nextName === null) return;
+  const normalized = normalizeScheduleSectionName(nextName);
+  if (normalized === currentName) return;
+  mediaQueue[index].name = normalized;
+  renderQueue();
+  saveMediaFile();
+}
+
+async function addScheduleSectionAfterSelection() {
+  const name = await showRendererPrompt("Section name", DEFAULT_SCHEDULE_SECTION_NAME, {
+    title: "Add Section",
+    confirmLabel: "Add",
+    required: true,
+    maxLength: 80,
+  });
+  if (name === null) return;
+  invalidateQueueUndoToastAfterMutation();
+  const insertIndex = queueInsertionIndexAfterSelection();
+  insertQueueEntriesAt([createScheduleSectionEntry(name)], insertIndex);
+  renderQueue();
+  saveMediaFile();
 }
 
 function fallbackSelectedQueueIndex() {
@@ -313,7 +473,9 @@ function selectedQueueIndexForInsertion() {
 
 function queueInsertionIndexAfterSelection() {
   const selectedIndex = selectedQueueIndexForInsertion();
-  return selectedIndex >= 0 ? Math.min(selectedIndex + 1, mediaQueue.length) : mediaQueue.length;
+  return selectedIndex >= 0
+    ? scheduleInsertionIndexAfterItem(mediaQueue, selectedIndex)
+    : mediaQueue.length;
 }
 
 function extendQueueSelectionTo(index) {
@@ -391,15 +553,33 @@ function insertQueueEntriesAt(entries, insertIndex) {
   return index;
 }
 
-function queueDropInsertIndexFromEvent(list, event) {
+function queueDropPlacementFromEvent(list, event, options = {}) {
   const row = event.target.closest(".queue-item[data-queue-index]");
   if (!row || !list.contains(row)) {
-    return mediaQueue.length;
+    return options.sectionBlock === true
+      ? scheduleSectionBlockDropPlacement(mediaQueue, -1)
+      : scheduleDropPlacementForTarget(mediaQueue, -1);
   }
   const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
-  if (Number.isNaN(idx)) return mediaQueue.length;
+  if (Number.isNaN(idx)) {
+    return options.sectionBlock === true
+      ? scheduleSectionBlockDropPlacement(mediaQueue, -1)
+      : scheduleDropPlacementForTarget(mediaQueue, -1);
+  }
   const rect = row.getBoundingClientRect();
-  return event.clientY > rect.top + rect.height / 2 ? idx + 1 : idx;
+  const afterTarget = event.clientY > rect.top + rect.height / 2;
+  if (options.sectionBlock === true) {
+    return scheduleSectionBlockDropPlacement(mediaQueue, idx, {
+      // A section dropped anywhere on another section's children belongs
+      // after that whole section, never in the middle of its child rows.
+      afterSection: isQueueItemSection(mediaQueue[idx]) ? afterTarget : true,
+    });
+  }
+  return scheduleDropPlacementForTarget(mediaQueue, idx, { afterTarget });
+}
+
+function queueDropInsertIndexFromEvent(list, event) {
+  return queueDropPlacementFromEvent(list, event).insertIndex;
 }
 
 function ensureQueueDropIndicator(list) {
@@ -415,19 +595,51 @@ function ensureQueueDropIndicator(list) {
   return queueDropIndicator;
 }
 
-function updateQueueDropIndicator(list, insertIndex) {
+function updateQueueDropIndicator(list, placementOrIndex, options = {}) {
   const indicator = ensureQueueDropIndicator(list);
+  const insertIndex = Number.isInteger(placementOrIndex)
+    ? placementOrIndex
+    : placementOrIndex?.insertIndex;
+  const safeInsertIndex = Number.isInteger(insertIndex)
+    ? Math.max(0, Math.min(insertIndex, mediaQueue.length))
+    : mediaQueue.length;
+  const sectionIndex = Number.isInteger(placementOrIndex?.sectionIndex)
+    ? placementOrIndex.sectionIndex
+    : scheduleSectionIndexForInsertion(mediaQueue, safeInsertIndex);
+  const placementKind = placementOrIndex?.kind || "";
+  const verb = options.verb === "Move" ? "Move" : "Add";
   const rows = [...list.querySelectorAll(".queue-item[data-queue-index]")];
-  const beforeItem = insertIndex >= 0 && insertIndex < mediaQueue.length ? mediaQueue[insertIndex] : null;
-  indicator.dataset.label = beforeItem?.name
-    ? `Add before “${beforeItem.name}”`
-    : "Add to end of Schedule";
+  const beforeItem = safeInsertIndex < mediaQueue.length ? mediaQueue[safeInsertIndex] : null;
+  const section = sectionIndex >= 0 ? mediaQueue[sectionIndex] : null;
+  const sectionName = section?.name || DEFAULT_SCHEDULE_SECTION_NAME;
+  if (placementKind === "before-section" && section) {
+    indicator.dataset.label = `${verb} before “${sectionName}”`;
+  } else if (placementKind === "after-section" && section) {
+    indicator.dataset.label = `${verb} after “${sectionName}”`;
+  } else if (
+    section &&
+    scheduleSectionEndIndex(mediaQueue, sectionIndex) === safeInsertIndex
+  ) {
+    indicator.dataset.label = `${verb} to end of “${sectionName}”`;
+  } else if (beforeItem?.name) {
+    indicator.dataset.label = `${verb} before “${beforeItem.name}”`;
+  } else {
+    indicator.dataset.label = `${verb} to end of Schedule`;
+  }
+  list.querySelectorAll(".queue-item--section.is-drop-target").forEach((sectionRow) => {
+    sectionRow.classList.remove("is-drop-target");
+  });
+  if (sectionIndex >= 0) {
+    list
+      .querySelector(`.queue-item--section[data-queue-index="${sectionIndex}"]`)
+      ?.classList.add("is-drop-target");
+  }
   if (rows.length === 0) {
     indicator.style.top = "0px";
   } else {
     const nextRow = rows.find((row) => {
       const rowIndex = Number.parseInt(row.getAttribute("data-queue-index"), 10);
-      return Number.isInteger(rowIndex) && rowIndex >= insertIndex;
+      return Number.isInteger(rowIndex) && rowIndex >= safeInsertIndex;
     });
     if (!nextRow) {
       const lastRow = rows[rows.length - 1];
@@ -437,7 +649,7 @@ function updateQueueDropIndicator(list, insertIndex) {
     }
   }
   indicator.hidden = false;
-  setSharedRendererState({ queueDropIndicatorIndex: insertIndex });
+  setSharedRendererState({ queueDropIndicatorIndex: safeInsertIndex });
 }
 
 function updateClearQueueButtonState() {
@@ -454,86 +666,36 @@ function updateClearQueueButtonState() {
   updatePreviewEmptyState();
 }
 
-function reorderMediaQueue(fromIndex, toIndex) {
-  if (
-    fromIndex === toIndex ||
-    fromIndex < 0 ||
-    toIndex < 0 ||
-    fromIndex >= mediaQueue.length ||
-    toIndex >= mediaQueue.length
-  ) {
-    return;
+function reorderQueueEntriesAtInsertIndex(fromIndex, rawInsertIndex, options = {}) {
+  if (!queueIndexInRange(fromIndex) || !Number.isInteger(rawInsertIndex)) return;
+  const sourceIsSection = isQueueItemSection(mediaQueue[fromIndex]);
+  let movingIndexes;
+  if (sourceIsSection) {
+    const endIndex = scheduleSectionEndIndex(mediaQueue, fromIndex);
+    movingIndexes = Array.from(
+      { length: Math.max(0, endIndex - fromIndex) },
+      (_, offset) => fromIndex + offset,
+    );
+  } else if (options.forceSingle === true) {
+    movingIndexes = [fromIndex];
+  } else {
+    const selectedIndexes = mediaQueue
+      .map((item, index) => (selectedQueueItems.has(item) ? index : -1))
+      .filter((index) => index >= 0);
+    const selectionContainsSection = selectedIndexes.some((index) =>
+      isQueueItemSection(mediaQueue[index]),
+    );
+    movingIndexes =
+      selectedIndexes.length > 1 &&
+      selectedIndexes.includes(fromIndex) &&
+      !selectionContainsSection
+        ? selectedIndexes
+        : [fromIndex];
   }
+  if (!movingIndexes.length) return;
 
-  const activePath =
-    currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
-      ? mediaQueue[currentQueueIndex].path
-      : null;
-  const movedItemWasLiveAudio =
-    fromIndex === currentQueueIndex &&
-    (playingMediaAudioOnly ||
-      liveAudio?.paused === false ||
-      isQueueItemAudio(mediaQueue[fromIndex]));
-  const cuePath =
-    previewCueIndex >= 0 && previewCueIndex < mediaQueue.length
-      ? mediaQueue[previewCueIndex].path
-      : null;
-  const selectedItem = queueIndexInRange(selectedQueueAnchorIndex)
-    ? mediaQueue[selectedQueueAnchorIndex]
-    : null;
-
-  const [item] = mediaQueue.splice(fromIndex, 1);
-  mediaQueue.splice(toIndex, 0, item);
-
-  if (activePath !== null) {
-    const ni = mediaQueue.findIndex((q) => q.path === activePath);
-    setSharedRendererState({ currentQueueIndex: ni >= 0 ? ni : -1 });
-  }
-  if (cuePath !== null) {
-    const ci = mediaQueue.findIndex((q) => q.path === cuePath);
-    setSharedRendererState({ previewCueIndex: ci >= 0 ? ci : -1 });
-    // The cue overlay's loaded src hasn't changed — only the index did —
-    // so keep previewCueVideoIndex aligned with the new index instead of
-    // tearing the overlay down.
-    if (previewCueVideoIndex >= 0) {
-      setSharedRendererState({ previewCueVideoIndex: previewCueIndex });
-    }
-  }
-  if (selectedItem) {
-    setSharedRendererState({ selectedQueueAnchorIndex: mediaQueue.findIndex((q) => q === selectedItem) });
-    setSharedRendererState({ queueSelectionRangeAnchorIndex: selectedQueueAnchorIndex });
-  }
-
-  ignoreNextQueueItemClick = true;
-  ignoreQueueItemClicksUntil = performance.now() + 1500;
-  window.setTimeout(() => {
-    ignoreNextQueueItemClick = false;
-  }, 400);
-
-  invalidateQueueUndoToastAfterMutation();
-  renderQueue();
-  // renderQueue() refreshes previous/next status in a single pass.
-  if (movedItemWasLiveAudio) {
-    hidePptxPreviewIfNeeded();
-    restoreCountdownForLiveMedia();
-    refreshLiveAudioControls();
-    syncPlayPauseIconToControlMedia();
-    syncPreviewAudioTrackState();
-  }
-  saveMediaFile();
-}
-
-function reorderSelectedMediaQueue(fromIndex, toIndex) {
-  const selectedIndexes = mediaQueue
-    .map((item, index) => (selectedQueueItems.has(item) ? index : -1))
-    .filter((index) => index >= 0);
-  if (selectedIndexes.length <= 1) {
-    reorderMediaQueue(fromIndex, toIndex);
-    return;
-  }
-  if (!queueIndexInRange(toIndex) || selectedIndexes.includes(toIndex)) return;
-
-  const selected = selectedIndexes.map((index) => mediaQueue[index]);
+  const movingItems = movingIndexes.map((index) => mediaQueue[index]);
+  const movingSet = new Set(movingItems);
   const activeItem = queueIndexInRange(currentQueueIndex) ? mediaQueue[currentQueueIndex] : null;
   const cueItem = queueIndexInRange(previewCueIndex) ? mediaQueue[previewCueIndex] : null;
   const previewAudioItem = queueIndexInRange(previewAudioCueIndex)
@@ -548,21 +710,26 @@ function reorderSelectedMediaQueue(fromIndex, toIndex) {
   const pendingSwitchItem = queueIndexInRange(pendingQueueSwitchIndex)
     ? mediaQueue[pendingQueueSwitchIndex]
     : null;
-  const movedLiveAudio = Boolean(liveAudioItem && selectedQueueItems.has(liveAudioItem));
+  const movedLiveAudio = Boolean(
+    (liveAudioItem && movingSet.has(liveAudioItem)) ||
+    (activeItem &&
+      movingSet.has(activeItem) &&
+      (playingMediaAudioOnly || liveAudio?.paused === false || isQueueItemAudio(activeItem))),
+  );
   const rangeAnchorItem = queueIndexInRange(queueSelectionRangeAnchorIndex)
     ? mediaQueue[queueSelectionRangeAnchorIndex]
-    : selected[0];
+    : movingItems[0];
   const focusItem = queueIndexInRange(selectedQueueAnchorIndex)
     ? mediaQueue[selectedQueueAnchorIndex]
-    : selected[selected.length - 1];
-  const movingDown = selectedIndexes[0] < toIndex;
-  const selectedBeforeOrAtTarget = selectedIndexes.filter((index) => index <= toIndex).length;
-  const remaining = mediaQueue.filter((item) => !selectedQueueItems.has(item));
-  const insertIndex = movingDown
-    ? toIndex - selectedBeforeOrAtTarget + 1
-    : toIndex;
-  remaining.splice(Math.max(0, Math.min(insertIndex, remaining.length)), 0, ...selected);
-  mediaQueue.splice(0, mediaQueue.length, ...remaining);
+    : movingItems[movingItems.length - 1];
+
+  const reordered = reorderScheduleItemsAtInsertion(
+    mediaQueue,
+    movingIndexes,
+    rawInsertIndex,
+  );
+  if (!reordered.changed) return;
+  mediaQueue.splice(0, mediaQueue.length, ...reordered.items);
 
   setSharedRendererState({ currentQueueIndex: activeItem ? mediaQueue.indexOf(activeItem) : -1 });
   setSharedRendererState({ previewCueIndex: cueItem ? mediaQueue.indexOf(cueItem) : -1 });
@@ -589,6 +756,42 @@ function reorderSelectedMediaQueue(fromIndex, toIndex) {
     syncPreviewAudioTrackState();
   }
   saveMediaFile();
+}
+
+function reorderMediaQueue(fromIndex, toIndex) {
+  if (!queueIndexInRange(fromIndex) || !queueIndexInRange(toIndex)) return;
+  if (isQueueItemSection(mediaQueue[fromIndex])) {
+    reorderScheduleSectionBlock(fromIndex, toIndex);
+    return;
+  }
+  const insertIndex = fromIndex < toIndex ? toIndex + 1 : toIndex;
+  reorderQueueEntriesAtInsertIndex(fromIndex, insertIndex, { forceSingle: true });
+}
+
+function reorderScheduleSectionBlock(fromIndex, toIndex) {
+  if (
+    !queueIndexInRange(fromIndex) ||
+    !isQueueItemSection(mediaQueue[fromIndex]) ||
+    !queueIndexInRange(toIndex)
+  ) {
+    return;
+  }
+  const placement = scheduleSectionBlockDropPlacement(mediaQueue, toIndex, {
+    afterSection: toIndex > fromIndex,
+  });
+  reorderQueueEntriesAtInsertIndex(fromIndex, placement.insertIndex, {
+    forceSingle: true,
+  });
+}
+
+function reorderSelectedMediaQueue(fromIndex, toIndex) {
+  if (!queueIndexInRange(fromIndex) || !queueIndexInRange(toIndex)) return;
+  if (isQueueItemSection(mediaQueue[fromIndex])) {
+    reorderScheduleSectionBlock(fromIndex, toIndex);
+    return;
+  }
+  const insertIndex = fromIndex < toIndex ? toIndex + 1 : toIndex;
+  reorderQueueEntriesAtInsertIndex(fromIndex, insertIndex);
 }
 
 function enqueuePathsFromFilePicker(paths, options = {}) {
@@ -828,6 +1031,10 @@ function hideScheduleSongContextMenu() {
   document.getElementById("scheduleSongContextMenu")?.setAttribute("hidden", "");
 }
 
+function hideScheduleSectionContextMenu() {
+  document.getElementById("scheduleSectionContextMenu")?.setAttribute("hidden", "");
+}
+
 function ensureScheduleSongContextMenu() {
   let menu = document.getElementById("scheduleSongContextMenu");
   if (menu) return menu;
@@ -878,6 +1085,7 @@ function showScheduleSongContextMenu(event, index) {
   event.preventDefault();
   event.stopPropagation();
   hideScheduleBibleContextMenu();
+  hideScheduleSectionContextMenu();
   const menu = ensureScheduleSongContextMenu();
   menu._queueIndex = index;
   menu.hidden = false;
@@ -886,6 +1094,82 @@ function showScheduleSongContextMenu(event, index) {
   const menuRect = menu.getBoundingClientRect();
   const left = Math.max(8, Math.min(event.clientX, window.innerWidth - menuRect.width - 8));
   const top = Math.max(8, Math.min(event.clientY, window.innerHeight - menuRect.height - 8));
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+function ensureScheduleSectionContextMenu() {
+  let menu = document.getElementById("scheduleSectionContextMenu");
+  if (menu) return menu;
+
+  menu = document.createElement("div");
+  menu.id = "scheduleSectionContextMenu";
+  menu.className = "song-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  menu.innerHTML = `
+    <button type="button" role="menuitem" data-schedule-section-action="rename">Rename</button>
+    <button type="button" role="menuitem" data-schedule-section-action="toggle">Collapse</button>
+    <div class="song-context-menu__separator" role="separator"></div>
+    <button type="button" role="menuitem" data-schedule-section-action="remove" class="song-context-menu__destructive">Remove Section Header</button>
+  `;
+
+  menu.addEventListener("pointerdown", (event) => event.stopPropagation());
+  menu.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const button = event.target.closest("[data-schedule-section-action]");
+    if (!button) return;
+    const index = menu._queueIndex;
+    const action = button.getAttribute("data-schedule-section-action");
+    hideScheduleSectionContextMenu();
+    if (!queueIndexInRange(index) || !isQueueItemSection(mediaQueue[index])) return;
+    if (action === "rename") {
+      void renameScheduleSection(index);
+    } else if (action === "toggle") {
+      toggleScheduleSectionCollapsed(index);
+    } else if (action === "remove") {
+      removeFromQueue(index);
+    }
+  });
+
+  document.body.appendChild(menu);
+  if (document.body.dataset.scheduleSectionContextMenuBound !== "1") {
+    document.body.dataset.scheduleSectionContextMenuBound = "1";
+    document.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.target.closest?.("#scheduleSectionContextMenu")) return;
+        hideScheduleSectionContextMenu();
+      },
+      true,
+    );
+    window.addEventListener("resize", hideScheduleSectionContextMenu);
+    window.addEventListener("scroll", hideScheduleSectionContextMenu, true);
+  }
+  return menu;
+}
+
+function showScheduleSectionContextMenu(event, index, options = {}) {
+  event.preventDefault();
+  event.stopPropagation();
+  hideScheduleBibleContextMenu();
+  hideScheduleSongContextMenu();
+  const menu = ensureScheduleSectionContextMenu();
+  menu._queueIndex = index;
+  const toggleButton = menu.querySelector('[data-schedule-section-action="toggle"]');
+  if (toggleButton) {
+    toggleButton.textContent = mediaQueue[index]?.collapsed === true ? "Expand" : "Collapse";
+    toggleButton.disabled = sectionItemCount(index) === 0;
+  }
+  menu.hidden = false;
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  const menuRect = menu.getBoundingClientRect();
+  const anchorRect = options.anchorElement?.getBoundingClientRect?.();
+  const requestedLeft = anchorRect ? anchorRect.right - menuRect.width : event.clientX;
+  const requestedTop = anchorRect ? anchorRect.bottom + 4 : event.clientY;
+  const left = Math.max(8, Math.min(requestedLeft, window.innerWidth - menuRect.width - 8));
+  const top = Math.max(8, Math.min(requestedTop, window.innerHeight - menuRect.height - 8));
   menu.style.left = `${Math.round(left)}px`;
   menu.style.top = `${Math.round(top)}px`;
 }
@@ -921,7 +1205,7 @@ function installMediaQueueListDelegation() {
   list.dataset.queueDelegation = "1";
   const scheduleDropRoot = list.closest(".queue-section") || list;
   const queueRowActionSelector =
-    "[data-queue-remove], [data-queue-reload-update], [data-queue-keep-update], [data-queue-apply-update]";
+    "[data-queue-remove], [data-queue-reload-update], [data-queue-keep-update], [data-queue-apply-update], [data-queue-section-toggle], [data-queue-section-menu]";
   list.addEventListener("contextmenu", (event) => {
     if (event.target.closest(queueRowActionSelector)) return;
     const row = event.target.closest(".queue-item[data-queue-index]");
@@ -932,11 +1216,34 @@ function installMediaQueueListDelegation() {
     updateQueueSelectionVisual();
     if (isQueueItemBible(mediaQueue[index])) {
       showScheduleBibleContextMenu(event, index);
+    } else if (isQueueItemSection(mediaQueue[index])) {
+      showScheduleSectionContextMenu(event, index);
     } else if (["song", "deck"].includes(mediaQueue[index]?.type)) {
       showScheduleSongContextMenu(event, index);
     }
   });
   list.addEventListener("click", (e) => {
+    const sectionMenuButton = e.target.closest("[data-queue-section-menu]");
+    if (sectionMenuButton && list.contains(sectionMenuButton)) {
+      e.preventDefault();
+      const index = Number.parseInt(
+        sectionMenuButton.getAttribute("data-queue-section-menu"),
+        10,
+      );
+      if (!queueIndexInRange(index) || !isQueueItemSection(mediaQueue[index])) return;
+      setSelectedQueueAnchor(index, { explicit: true });
+      updateQueueSelectionVisual();
+      showScheduleSectionContextMenu(e, index, { anchorElement: sectionMenuButton });
+      return;
+    }
+    const sectionToggle = e.target.closest("[data-queue-section-toggle]");
+    if (sectionToggle && list.contains(sectionToggle)) {
+      e.preventDefault();
+      toggleScheduleSectionCollapsed(
+        Number.parseInt(sectionToggle.getAttribute("data-queue-section-toggle"), 10),
+      );
+      return;
+    }
     const keepUpdateBtn = e.target.closest("[data-queue-keep-update]");
     if (keepUpdateBtn && list.contains(keepUpdateBtn)) {
       e.preventDefault();
@@ -977,6 +1284,14 @@ function installMediaQueueListDelegation() {
       setSelectedQueueAnchor(idx, { explicit: true });
     }
     updateQueueSelectionVisual();
+    if (isQueueItemSection(mediaQueue[idx])) {
+      e.preventDefault();
+      if (queueItemClickTimer !== null) {
+        window.clearTimeout(queueItemClickTimer);
+        queueItemClickTimer = null;
+      }
+      return;
+    }
     if (e.shiftKey) {
       e.preventDefault();
       if (queueItemClickTimer !== null) {
@@ -1001,6 +1316,35 @@ function installMediaQueueListDelegation() {
     }, 220);
   });
 
+  list.addEventListener("keydown", (event) => {
+    if (event.target.closest("button")) return;
+    const row = event.target.closest(".queue-item--section[data-queue-index]");
+    if (!row || !list.contains(row)) return;
+    const index = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+    if (!queueIndexInRange(index) || !isQueueItemSection(mediaQueue[index])) return;
+    if (event.key === "F2") {
+      event.preventDefault();
+      void renameScheduleSection(index);
+    } else if ((event.key === "Enter" || event.key === " ") && sectionItemCount(index) > 0) {
+      event.preventDefault();
+      toggleScheduleSectionCollapsed(index);
+    } else if (
+      event.key === "ArrowLeft" &&
+      sectionItemCount(index) > 0 &&
+      mediaQueue[index].collapsed !== true
+    ) {
+      event.preventDefault();
+      setScheduleSectionCollapsed(index, true);
+    } else if (
+      event.key === "ArrowRight" &&
+      sectionItemCount(index) > 0 &&
+      mediaQueue[index].collapsed === true
+    ) {
+      event.preventDefault();
+      setScheduleSectionCollapsed(index, false);
+    }
+  });
+
   list.addEventListener("dblclick", (e) => {
     if (e.target.closest(queueRowActionSelector)) {
       return;
@@ -1017,6 +1361,10 @@ function installMediaQueueListDelegation() {
     if (Number.isNaN(idx)) return;
     setSelectedQueueAnchor(idx, { explicit: true });
     updateQueueSelectionVisual();
+    if (isQueueItemSection(mediaQueue[idx])) {
+      toggleScheduleSectionCollapsed(idx);
+      return;
+    }
     void releaseOutputHoldsAndGoLiveQueueIndex(idx).catch((err) => console.error(err));
   });
 
@@ -1030,7 +1378,14 @@ function installMediaQueueListDelegation() {
     e.stopPropagation();
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
-    if (!selectedQueueItems.has(mediaQueue[idx])) {
+    const selectionContainsSection = [...selectedQueueItems].some((item) =>
+      isQueueItemSection(item),
+    );
+    if (
+      !selectedQueueItems.has(mediaQueue[idx]) ||
+      isQueueItemSection(mediaQueue[idx]) ||
+      selectionContainsSection
+    ) {
       setSelectedQueueAnchor(idx, { explicit: true });
     }
     updateQueueSelectionVisual();
@@ -1070,7 +1425,7 @@ function installMediaQueueListDelegation() {
       list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
         el.classList.remove("queue-item-drag-over");
       });
-      updateQueueDropIndicator(list, queueDropInsertIndexFromEvent(list, e));
+      updateQueueDropIndicator(list, queueDropPlacementFromEvent(list, e));
       return;
     }
     if (
@@ -1083,24 +1438,26 @@ function installMediaQueueListDelegation() {
       list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
         el.classList.remove("queue-item-drag-over");
       });
-      updateQueueDropIndicator(list, queueDropInsertIndexFromEvent(list, e));
+      updateQueueDropIndicator(list, queueDropPlacementFromEvent(list, e));
       return;
     }
-    const row = e.target.closest(".queue-item[data-queue-index]");
-    if (!row || !list.contains(row)) return;
+    if (!hasInternalQueueDrag) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
-      if (el !== row) el.classList.remove("queue-item-drag-over");
+      el.classList.remove("queue-item-drag-over");
     });
-    row.classList.add("queue-item-drag-over");
+    updateQueueDropIndicator(
+      list,
+      queueDropPlacementFromEvent(list, e, {
+        sectionBlock: isQueueItemSection(mediaQueue[queueDragFromIndex]),
+      }),
+      { verb: "Move" },
+    );
   });
 
   scheduleDropRoot.addEventListener("dragleave", (e) => {
-    if (
-      queueDragFromIndex < 0 &&
-      (!e.relatedTarget || !scheduleDropRoot.contains(e.relatedTarget))
-    ) {
+    if (!e.relatedTarget || !scheduleDropRoot.contains(e.relatedTarget)) {
       hideQueueDropIndicator();
     }
     const row = e.target.closest(".queue-item[data-queue-index]");
@@ -1123,14 +1480,15 @@ function installMediaQueueListDelegation() {
     if (droppedMediaLibraryItemId && !hasInternalQueueDrag) {
       e.preventDefault();
       e.stopPropagation();
+      const placement = queueDropPlacementFromEvent(list, e);
       hideQueueDropIndicator();
-      const insertIndex = queueDropInsertIndexFromEvent(list, e);
       try {
         const item = await resolveMediaLibraryDragItem(droppedMediaLibraryItemId);
         if (!item?.localPath || item.availability !== "available") {
           showGnomeToast("This media item is not available");
           return;
         }
+        const insertIndex = placement.insertIndex;
         applyDroppedMediaPaths([item.localPath], { insertIndex, preserveWorkspace: true });
       } catch (err) {
         console.error("Failed to schedule Media item:", err);
@@ -1141,9 +1499,9 @@ function installMediaQueueListDelegation() {
     if (droppedSongId && !hasInternalQueueDrag) {
       e.preventDefault();
       e.stopPropagation();
+      const placement = queueDropPlacementFromEvent(list, e);
       hideQueueDropIndicator();
       clearSongDragVisualState();
-      const insertIndex = queueDropInsertIndexFromEvent(list, e);
       try {
         const song = await songsAPI.get(droppedSongId);
         const entry = buildSongQueueEntryFromDeck({
@@ -1152,7 +1510,7 @@ function installMediaQueueListDelegation() {
         });
         if (!entry) return;
         invalidateQueueUndoToastAfterMutation();
-        insertQueueEntriesAt([entry], insertIndex);
+        insertQueueEntriesAt([entry], placement.insertIndex);
         renderQueue();
         saveMediaFile();
         showGnomeToast(`Scheduled ${entry.name}`);
@@ -1165,13 +1523,13 @@ function installMediaQueueListDelegation() {
     if (droppedBibleVersePayload && !hasInternalQueueDrag) {
       e.preventDefault();
       e.stopPropagation();
+      const placement = queueDropPlacementFromEvent(list, e);
       hideQueueDropIndicator();
       clearBibleVerseDragVisualState();
       if (!bibleUiEnabled) {
         showGnomeToast("Bible items are disabled in Preferences");
         return;
       }
-      const insertIndex = queueDropInsertIndexFromEvent(list, e);
       try {
         const entries = await queueEntriesForBibleVerseDragPayload(droppedBibleVersePayload);
         if (!entries.length) {
@@ -1179,7 +1537,7 @@ function installMediaQueueListDelegation() {
           return;
         }
         invalidateQueueUndoToastAfterMutation();
-        insertQueueEntriesAt(entries, insertIndex);
+        insertQueueEntriesAt(entries, placement.insertIndex);
         renderQueue();
         saveMediaFile();
         showGnomeToast(
@@ -1194,18 +1552,19 @@ function installMediaQueueListDelegation() {
       return;
     }
     if (hasInternalQueueDrag) {
-      const row = e.target.closest(".queue-item[data-queue-index]");
-      if (!row || !list.contains(row)) return;
       e.preventDefault();
       e.stopPropagation();
       const from = queueDragFromIndex;
-      const to = Number.parseInt(row.getAttribute("data-queue-index"), 10);
+      const placement = queueDropPlacementFromEvent(list, e, {
+        sectionBlock: isQueueItemSection(mediaQueue[from]),
+      });
+      hideQueueDropIndicator();
       list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
         el.classList.remove("queue-item-drag-over");
       });
       queueDragFromIndex = -1;
-      if (Number.isNaN(to) || Number.isNaN(from)) return;
-      reorderSelectedMediaQueue(from, to);
+      if (Number.isNaN(from)) return;
+      reorderQueueEntriesAtInsertIndex(from, placement.insertIndex);
       return;
     }
 
@@ -1216,7 +1575,7 @@ function installMediaQueueListDelegation() {
     if (hasOSFiles) {
       e.preventDefault();
       e.stopPropagation();
-      const insertIndex = queueDropInsertIndexFromEvent(list, e);
+      const placement = queueDropPlacementFromEvent(list, e);
       hideQueueDropIndicator();
       list.querySelectorAll(".queue-item-drag-over").forEach((el) => {
         el.classList.remove("queue-item-drag-over");
@@ -1232,7 +1591,7 @@ function installMediaQueueListDelegation() {
         return;
       }
       const paths = await extractAndFilterDroppedMediaPaths(e.dataTransfer);
-      applyDroppedMediaPaths(paths, { insertIndex });
+      applyDroppedMediaPaths(paths, { insertIndex: placement.insertIndex });
       return;
     }
     // Neither internal queue drag nor OS file drop.
@@ -1256,6 +1615,19 @@ function installQueueStartControls() {
   });
 }
 
+function installAddQueueSectionButton() {
+  const button = document.getElementById("addQueueSectionBtn");
+  if (!button || button.dataset.addSectionBound === "1") return;
+  button.dataset.addSectionBound = "1";
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    void addScheduleSectionAfterSelection().catch((err) => {
+      console.error("Failed to add schedule section:", err);
+      showGnomeToast("Failed to add section");
+    });
+  });
+}
+
 export {
   applyDroppedMediaPaths,
   clearMediaQueue,
@@ -1269,6 +1641,7 @@ export {
   ignoreNextQueueItemClick,
   ignoreQueueItemClicksUntil,
   insertQueueEntriesAt,
+  installAddQueueSectionButton,
   installMediaQueueListDelegation,
   installQueueStartControls,
   nextPlayableQueueItemStageText,
