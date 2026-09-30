@@ -2734,6 +2734,12 @@ async function sendBibleTextToOutput(entry = bibleDesignerState, expectedRevisio
     message.transition = slideTransitionPayloadForQueueItem(liveQueueItem);
   }
   sendAudienceTextMessage("bible", message);
+  // A newly-created audience window sends its first text message on a short
+  // delay. The earlier updateDynUI() call therefore cannot match the preview
+  // against lastAudienceBibleTextMessage yet, leaving Show Now in its cued
+  // state even though the Scripture is live. Reconcile the operator controls
+  // when the message is actually committed to the audience output.
+  syncBibleOperatorPreviewState();
   return true;
 }
 
