@@ -3,15 +3,15 @@
 This document outlines the EMS Media System's project file format, the slides AST, the database schemas used, the Go sidecars, and the reflink index file.
 
 ## 1. EMS Project File Format
-An EMS project file is a ZIP archive designed to store presentation data, media, and metadata. 
+
+The authoritative layout and open/save rules are in [`spec.md`](./spec.md). Summary:
+
 - **MIME Type**: `application/vnd.ems.project+zip`
-- **Archive Comment**: The ZIP archive contains a JSON payload in the comment field (`application/vnd.ems.project.comment+json`). This comment includes the project's GUID, application version, save timestamp, and crucially, a SHA-256 hash of the `manifest.json`. This hash is verified when the project is opened to ensure data integrity.
-- **File Structure**:
-  - `manifest.json` / `documents.json`: Contains project metadata and the index of slides/songs/assets.
-  - `mimetype`: A plain text file defining the archive MIME type.
-  - `queue.json`: Defines the presentation queue or playlist.
-  - `documents/`: A directory containing legacy slide documents.
-  - Media assets (videos, images, audio) are embedded directly or referenced.
+- **Implementation**: `src/main-process/emproj.mjs`
+- **Archive Comment**: ZIP trailer JSON (`application/vnd.ems.project.comment+json`) with project GUID, app version, save timestamp, and SHA-256 of `manifest.json`.
+- **Members**: `mimetype`, `manifest.json`, `queue.json`, `assets.json`, `outputs.json`, `diagnostics.json`, optional `songs/`, `slides/`, `media/`, `presentations/`. `documents.json` is legacy read-only.
+- **Modes**: Working projects keep cue media as external paths; packed/portable projects embed those files. Theme assets and the output-hold logo are embedded in both modes.
+
 
 ## 2. Slides AST (Abstract Syntax Tree)
 The slides AST is defined by the `ems.slideDeck.v1` schema. It serves as a unified JSON format to represent any presentation document, including songs and standard slide decks.
