@@ -1104,8 +1104,12 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     setSharedRendererState({ audioOnlyFile: false });
     setSharedRendererState({ playingMediaAudioOnly: false });
     const bibleEntry = await resolvedBibleEntryForItem(item);
+    if (!previewRequestStillOwnsMainSurface()) return;
     item.bible = { ...bibleEntry };
-    await loadBibleEntryIntoEditor(bibleEntry);
+    const loaded = await loadBibleEntryIntoEditor(bibleEntry, {
+      previewLoadToken: loadToken,
+    });
+    if (!loaded || !previewRequestStillOwnsMainSurface()) return;
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
     return;
   }
@@ -1638,8 +1642,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     const underLogoHold = Boolean(opts.underLogoHold);
     const clearOutputHold = Boolean(opts.clearOutputHold);
     const resolvedBibleEntry = isBibleItem
-      ? await resolvedBibleEntryForItem(nextItem)
+      ? await resolvedBibleEntryForItem(nextItem, { requireLookup: true })
       : null;
+    if (isBibleItem && !resolvedBibleEntry) return false;
     const scriptureTakeRevision = resolvedBibleEntry
       ? beginScriptureTake(resolvedBibleEntry, {
           item: nextItem,
@@ -1780,8 +1785,10 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     updateDynUI();
     syncPreviewAudioTrackState();
     if (isBibleItem) {
-      const entry = await resolvedBibleEntryForItem(nextItem);
-      const audienceUpdated = await sendBibleTextToOutput(entry, scriptureTakeRevision);
+      const audienceUpdated = await sendBibleTextToOutput(
+        resolvedBibleEntry,
+        scriptureTakeRevision,
+      );
       const lowerThirdUpdated = await updateLowerThirdForSupportedScheduleItem(
         nextItem,
         scriptureTakeRevision,

@@ -253,6 +253,8 @@ function bibleProjectReferenceOnly(scripture = {}, opts = {}) {
       normalizedBibleReference(pathEntry.reference),
     ),
     book: typeof source.book === "string" ? source.book : "",
+    bookAbbreviation:
+      typeof source.bookAbbreviation === "string" ? source.bookAbbreviation : "",
     chapter: Number.isFinite(source.chapter) ? source.chapter : 1,
     verse: Number.isFinite(source.verse) ? source.verse : 0,
     verseEnd: Number.isFinite(source.verseEnd) ? source.verseEnd : 0,

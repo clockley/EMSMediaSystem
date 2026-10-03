@@ -8,10 +8,7 @@ import {
   resolveSongSlides,
   resolvedSongCacheStats,
 } from "../src/shared/song-slides.mjs";
-import {
-  clearResolvedScriptureCache,
-  resolveScriptureSlides,
-} from "../src/shared/scripture-slides.mjs";
+import { resolveScriptureSlides } from "../src/shared/scripture-slides.mjs";
 import {
   renderScriptureForTarget,
   renderSongForTarget,
@@ -374,7 +371,6 @@ test("song queue render normalization preserves lower-third resolution fields", 
 });
 
 test("Scripture prefers verse boundaries and splits an oversized verse by words", async () => {
-  clearResolvedScriptureCache();
   const entry = await readFixture("long-scripture.json");
   const presentation = resolveScriptureSlides(entry, {
     outputSize: { width: 1280, height: 720 },
@@ -402,7 +398,6 @@ test("lower-third Scripture units use at most two lines and normalize attributio
       attribution: { shortText: "Test attribution", text: "Long attribution" },
     },
     {
-      cache: false,
       outputRole: "lowerThird",
       typography: { maxLines: 2 },
       measure: (text) => ({
@@ -432,7 +427,6 @@ test("audience and lower-third Scripture omit a leading verse number without aut
   for (const outputRole of ["audience", "lowerThird"]) {
     const presentation = resolveScriptureSlides(entry, {
       outputRole,
-      cache: false,
       measure: capacityMeasure(500),
     });
     assert.equal(
@@ -458,7 +452,6 @@ test("a single-verse Scripture entry keeps its own verse when a wider selection 
   };
   const presentation = resolveScriptureSlides(entry, {
     outputRole: "audience",
-    cache: false,
     measure: capacityMeasure(500),
   });
   assert.equal(presentation.slides.length, 1);
@@ -471,20 +464,18 @@ test("Scripture autoSplit false preserves one overflowing unit", async () => {
   entry.autoSplit = false;
   const presentation = resolveScriptureSlides(entry, {
     measure: capacityMeasure(20),
-    cache: false,
   });
   assert.equal(presentation.slides.length, 1);
   assert.equal(presentation.slides[0].layout.overflow, true);
   const forcedLowerThird = resolveScriptureSlides(entry, {
     measure: capacityMeasure(20),
-    cache: false,
     forceAutoSplit: true,
   });
   assert.ok(forcedLowerThird.slides.length > 1);
   assert.ok(forcedLowerThird.slides.every((slide) => slide.layout.overflow === false));
 });
 
-test("Scripture direct geometry overrides invalidate the resolved cache", async () => {
+test("Scripture direct geometry overrides produce a different resolved layout", async () => {
   const entry = await readFixture("long-scripture.json");
   const base = resolveScriptureSlides(entry, {
     measure: capacityMeasure(500),
@@ -495,6 +486,53 @@ test("Scripture direct geometry overrides invalidate the resolved cache", async 
     referenceReserve: 200,
   });
   assert.notEqual(base.layoutKey, overridden.layoutKey);
+});
+
+test("Scripture resolver keeps the body paired with its own reference", () => {
+  const first = resolveScriptureSlides({
+    version: "KJV",
+    book: "John",
+    chapter: 3,
+    verse: 16,
+    reference: "John 3:16",
+    text: "First body",
+  }, {
+    measure: capacityMeasure(500),
+  });
+  const second = resolveScriptureSlides({
+    version: "KJV",
+    book: "John",
+    chapter: 3,
+    verse: 17,
+    reference: "John 3:17",
+    text: "Second body",
+  }, {
+    measure: capacityMeasure(500),
+  });
+
+  assert.equal(first.slides[0].referenceText, "John 3:16 KJV");
+  assert.equal(first.slides[0].bodyText, "First body");
+  assert.equal(second.slides[0].referenceText, "John 3:17 KJV");
+  assert.equal(second.slides[0].bodyText, "Second body");
+});
+
+test("Scripture resolver rejects stale verse rows from a previous reference", () => {
+  const presentation = resolveScriptureSlides({
+    version: "KJV",
+    book: "Genesis",
+    chapter: 1,
+    verse: 2,
+    selectedVerses: [2],
+    reference: "Genesis 1:2",
+    text: "The current verse body",
+    verseRows: [{ verseNumber: 2, text: "The old verse body" }],
+  }, {
+    outputRole: "audience",
+    measure: capacityMeasure(500),
+  });
+
+  assert.equal(presentation.slides[0].referenceText, "Genesis 1:2 KJV");
+  assert.equal(presentation.slides[0].bodyText, "The current verse body");
 });
 
 test("Scripture navigation state does not invalidate resolved layout", async () => {
@@ -527,7 +565,6 @@ test("an oversized unbroken Scripture word splits at grapheme boundaries in any 
     text: "short Supercalifragilisticexpialidocious",
     autoSplit: true,
   }, {
-    cache: false,
     measure: capacityMeasure(12),
   });
   assert.ok(presentation.slides.length > 1);
@@ -539,7 +576,6 @@ test("normalize mode applies one group font size", async () => {
   const entry = await readFixture("long-scripture.json");
   entry.autosizeMode = "normalize";
   const presentation = resolveScriptureSlides(entry, {
-    cache: false,
     measure: (text) => ({
       fits: true,
       overflow: false,
@@ -565,7 +601,6 @@ test("Unicode and RTL text remains unchanged through resolution", () => {
     direction: "rtl",
   };
   const resolved = resolveScriptureSlides(entry, {
-    cache: false,
     measure: capacityMeasure(500),
   });
   assert.match(resolved.slides[0].bodyText, /طُوبَى/u);
@@ -637,7 +672,6 @@ test("golden target matrix remains deterministic and non-overflowing", async () 
     const options = {
       outputSize: { width, height },
       measure: capacityMeasure(Math.max(36, Math.round((width * height) / 18000))),
-      cache: false,
     };
     const first = resolveScriptureSlides(entry, options);
     const second = resolveScriptureSlides(entry, options);

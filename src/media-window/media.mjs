@@ -748,7 +748,7 @@ const HLS_PRESENTATION_CONFIG = {
 
 async function createStreamingHls() {
   const { default: Hls } = await import(
-    "../../../node_modules/hls.js/dist/hls.mjs",
+    "../../../node_modules/hls.js/dist/hls.mjs"
   );
   return new Hls(HLS_PRESENTATION_CONFIG);
 }
@@ -3212,7 +3212,9 @@ function applyTextMessage(message) {
     applyLowerThirdBarBackground(shell.box, safeMessage);
   }
   if (shell.body) {
-    const html = renderSongSectionHTML(safeMessage.blocks);
+    const html = safeMessage.contentKind === "scripture"
+      ? ""
+      : renderSongSectionHTML(safeMessage.blocks);
     if (html) {
       shell.body.innerHTML = html;
     } else {

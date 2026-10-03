@@ -48,7 +48,12 @@ INSERT INTO bible_chapter_text (table_name, b, c, verse_count) VALUES
 		cachedBookMetadataByVersion = oldMetadata
 	}()
 
-	exodus := BookMetadata{ID: 2, Name: "Exodus", Testament: "Old Testament"}
+	exodus := BookMetadata{
+		ID:           2,
+		Name:         "Exodus",
+		Abbreviation: "Exod.",
+		Testament:    "Old Testament",
+	}
 	tobit := BookMetadata{ID: 69, Name: "Tobit", Testament: "Apocrypha"}
 	db = testDB
 	cachedVersions = map[string]Version{
@@ -90,6 +95,18 @@ INSERT INTO bible_chapter_text (table_name, b, c, verse_count) VALUES
 	}
 	if len(result.Suggestions) != 0 {
 		t.Fatalf("suggestReferencesResult(\"KJVA\", \"Exo\") suggestions = %#v, want none", result.Suggestions)
+	}
+
+	resolved, err := resolveReferenceData(testDB, "KJV", "Exodus 1:1")
+	if err != nil {
+		t.Fatalf("resolveReferenceData() error = %v", err)
+	}
+	if resolved.BookAbbreviation != exodus.Abbreviation {
+		t.Fatalf(
+			"resolveReferenceData().BookAbbreviation = %q, want %q",
+			resolved.BookAbbreviation,
+			exodus.Abbreviation,
+		)
 	}
 }
 

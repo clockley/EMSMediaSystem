@@ -115,6 +115,7 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
           version: "KJV",
           reference: "John 1:1-3",
           book: "John",
+          bookAbbreviation: "Jn.",
           chapter: 1,
           verse: 1,
           verseEnd: 3,
@@ -158,6 +159,7 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
     assert.equal(loadedBible.currentSlideId, "passage:1");
     assert.equal(loadedBible.bible.currentSlideId, "passage:1");
     assert.equal(loadedBible.bible.currentLowerThirdSlideId, "passage:3");
+    assert.equal(loadedBible.bible.bookAbbreviation, "Jn.");
     assert.equal(loaded.projectThemes.bindings.song, "warm");
     assert.equal(loadedSong.itemTheme.themeId, "warm");
     assert.equal(loadedSong.itemTheme.overrides.audience.typography.fontSize, 72);

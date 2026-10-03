@@ -11,7 +11,6 @@ import {
 } from "./text-measure.mjs";
 
 export const SCRIPTURE_SLIDE_RESOLVER_VERSION = 2;
-const scriptureCache = new Map();
 
 function cleanText(value) {
   return String(value || "").replace(/[ \t]+/g, " ").trim();
@@ -33,12 +32,33 @@ function selectedVerseNumbers(entry) {
 
 export function scriptureVerseRows(entry = {}) {
   if (Array.isArray(entry.verseRows) && entry.verseRows.length > 0) {
-    return entry.verseRows
+    const rows = entry.verseRows
       .map((row, index) => ({
         verseNumber: Math.trunc(Number(row?.verseNumber ?? row?.verse ?? index + 1)),
         text: cleanText(row?.text),
       }))
       .filter((row) => row.verseNumber > 0 && row.text);
+    const textLines = String(entry.text || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const rowsMatchText =
+      textLines.length === 0 ||
+      (textLines.length === rows.length &&
+        textLines.every((line, index) => {
+          const numberedLine = line.match(/^(\d+)[.)]?\s+(.+)$/u);
+          if (
+            numberedLine &&
+            Number.parseInt(numberedLine[1], 10) !== rows[index].verseNumber
+          ) {
+            return false;
+          }
+          return cleanText(numberedLine?.[2] || line) === rows[index].text;
+        }));
+    // verseRows is a denormalized copy used to retain verse boundaries. Older
+    // entries can accidentally carry it across a reference change, so never let
+    // it override a newer text body when the two representations disagree.
+    if (rows.length > 0 && rowsMatchText) return rows;
   }
   const lines = String(entry.text || "")
     .split(/\r?\n/)
@@ -299,7 +319,7 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
     rows,
   });
   const autoSplit = options.forceAutoSplit === true || entry.autoSplit !== false;
-  const layoutKey = resolvedLayoutKey({
+  const layoutRequest = {
     content: { passageKey, sourceRevision, rows },
     target,
     resolvedTheme: options.resolvedTheme,
@@ -315,11 +335,10 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
         (options.measureAt ? "injected" : options.measure ? "custom" : "heuristic"),
       resolverVersion: SCRIPTURE_SLIDE_RESOLVER_VERSION,
     },
-  });
-  let chunks = options.cache !== false ? scriptureCache.get(layoutKey) : null;
-  if (chunks) {
-    chunks = structuredClone(chunks);
-  } else if (!autoSplit) {
+  };
+  const layoutKey = resolvedLayoutKey(layoutRequest);
+  let chunks;
+  if (!autoSplit) {
     const bodyText = rows.length > 0
       ? rows.map((row) => verseText(row, includeVerseNumbers)).join("\n")
       : cleanText(entry.text);
@@ -368,7 +387,6 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
         : [chunk];
     });
     chunks = normalizeGroupLayout(chunks, entry, options, typography);
-    if (options.cache !== false) scriptureCache.set(layoutKey, structuredClone(chunks));
   }
 
   const slides = chunks.map((chunk, chunkIndex) => ({
@@ -414,8 +432,4 @@ export async function resolveScriptureSlidesAfterFonts(entry = {}, options = {})
           documentRef: options.documentRef || globalThis.document,
         })),
   });
-}
-
-export function clearResolvedScriptureCache() {
-  scriptureCache.clear();
 }

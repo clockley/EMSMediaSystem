@@ -181,6 +181,7 @@ import {
 let bibleLowerThirdPreviewSourceKey = "";
 
 let biblePreviewRenderToken = 0;
+let bibleAudienceOutputUpdateToken = 0;
 
 const bibleDesignerState = {
   version: "KJV",
@@ -188,6 +189,7 @@ const bibleDesignerState = {
   reference: "",
   text: "",
   book: "John",
+  bookAbbreviation: "John",
   chapter: 3,
   verse: 0,
   verseEnd: 0,
@@ -374,6 +376,7 @@ async function normalizeBibleReferenceInput(rawReference) {
     if (resolved && !resolved.error && resolved.reference) {
       return {
         book: resolved.book,
+        bookAbbreviation: resolved.bookAbbreviation || "",
         chapter: resolved.chapter,
         verse: resolved.verse || 0,
         verseEnd: resolved.verseEnd || 0,
@@ -456,6 +459,7 @@ async function firstBibleReferenceForVersion(version) {
     return {
       reference: `${book} 1:1`,
       book,
+      bookAbbreviation: String(firstBook.abbreviation || "").trim(),
       chapter: 1,
       verse: 1,
       verseEnd: 0,
@@ -468,7 +472,15 @@ async function firstBibleReferenceForVersion(version) {
 async function selectFirstBibleReferenceForVersion(version) {
   const firstReference = await firstBibleReferenceForVersion(version);
   if (!firstReference) return false;
-  Object.assign(bibleDesignerState, firstReference, { text: "" });
+  Object.assign(bibleDesignerState, firstReference, {
+    text: "",
+    selectedVerses: [],
+    verseRows: [],
+    verseSelector: "",
+    currentSlideId: null,
+    lowerThirdSegmentIndex: 0,
+    currentLowerThirdSlideId: null,
+  });
   bibleVerseSelection.verses.clear();
   bibleVerseSelection.anchor = 0;
   const referenceInput = document.getElementById("bibleReferenceInput");
@@ -607,51 +619,10 @@ function isBibleReferenceSuggestionsOpen() {
   return Boolean(suggestionsEl && suggestionsEl.hidden === false);
 }
 
-// Book abbreviations (e.g. "1 Thess.") are version-independent, so a single
-// lookup fetched once is reused for every version/queue item. This keeps
-// schedule labels short without truncating them mid-word.
-let bibleBookAbbreviationCache = null;
-
-let bibleBookAbbreviationCacheLoading = false;
-
-function requestBibleBookAbbreviationCache() {
-  if (bibleBookAbbreviationCache || bibleBookAbbreviationCacheLoading || !bibleAPI) return;
-  bibleBookAbbreviationCacheLoading = true;
-  bibleAPI
-    .getBookMetadata("KJV")
-    .then((metadata) => {
-      const map = new Map();
-      if (!metadata?.error && Array.isArray(metadata?.books)) {
-        for (const book of metadata.books) {
-          const name = String(book?.name || "").trim();
-          const abbreviation = String(book?.abbreviation || "").trim();
-          if (name && abbreviation) map.set(name.toLowerCase(), abbreviation);
-        }
-      }
-      bibleBookAbbreviationCache = map;
-      renderQueue();
-    })
-    .catch(() => {
-      bibleBookAbbreviationCache = new Map();
-    })
-    .finally(() => {
-      bibleBookAbbreviationCacheLoading = false;
-    });
-}
-
-function bibleBookAbbreviationSync(bookName) {
-  const name = String(bookName || "").trim().toLowerCase();
-  if (!name) return "";
-  if (!bibleBookAbbreviationCache) {
-    requestBibleBookAbbreviationCache();
-    return "";
-  }
-  return bibleBookAbbreviationCache.get(name) || "";
-}
-
 // Schedule-list-only display label: swaps the full book name for its
 // abbreviation (falling back to the full reference when no abbreviation is
-// known) so long references like "1 Thessalonians 1:12" fit the sidebar.
+// supplied by the backend) so long references like "1 Thessalonians 1:12"
+// fit the sidebar without a renderer-side metadata cache.
 function bibleQueueItemDisplayName(item) {
   const fallback = item?.name || "";
   const bible = item?.bible;
@@ -670,7 +641,10 @@ function bibleQueueItemDisplayName(item) {
       ? bible.chapter
       : null;
   if (!book || !chapter) return fallback;
-  const abbreviation = bibleBookAbbreviationSync(book);
+  const abbreviation =
+    String(bible.book || "").trim().toLowerCase() === book.toLowerCase()
+      ? String(bible.bookAbbreviation || "").trim()
+      : "";
   if (!abbreviation || abbreviation.toLowerCase() === book.toLowerCase()) return fallback;
   const selectedVerses = parsedReference.verseSelector
     ? verseNumbersFromSelector(parsedReference.verseSelector, 500)
@@ -1650,8 +1624,16 @@ function isScheduledBiblePresentationActive() {
 }
 
 async function nextBibleVerseEntryFromDesigner() {
-  await syncBibleStateFromControls();
+  if (!(await syncBibleStateFromControls())) return null;
+  const requestedReference = bibleDesignerState.reference;
+  const requestedVersion = bibleDesignerState.version;
   const resolvedEntry = await bibleEntryWithLookupText(bibleDesignerState);
+  if (
+    bibleDesignerState.reference !== requestedReference ||
+    bibleDesignerState.version !== requestedVersion
+  ) {
+    return null;
+  }
   if (resolvedEntry && resolvedEntry !== bibleDesignerState) {
     Object.assign(bibleDesignerState, resolvedEntry);
   }
@@ -1662,22 +1644,31 @@ async function nextBibleVerseEntryFromDesigner() {
     ? bibleDesignerState.chapter
     : parsed.chapter;
   if (!book || !Number.isFinite(chapter) || chapter < 1) return null;
+  const selectedVerses = selectedBibleVerseNumbers();
+  const selectionRequest = {
+    version: bibleDesignerState.version,
+    book,
+    chapter,
+    selectedVerses,
+  };
+  const sourceEntry = { ...bibleDesignerState };
+  const style = getBibleDesignerStyle();
 
   let textData = null;
   try {
-    textData = await bibleAPI.getText(bibleDesignerState.version, book, String(chapter));
+    textData = await bibleAPI.getText(sourceEntry.version, book, String(chapter));
   } catch (err) {
     console.error("Failed to load next Bible verse:", err);
     return null;
   }
+  if (!bibleVerseSelectionRequestMatchesCurrent(selectionRequest)) return null;
   const verses = Array.isArray(textData?.verses) ? textData.verses : [];
-  const selectedVerses = selectedBibleVerseNumbers();
   const selectedEnd = selectedVerses.length ? selectedVerses[selectedVerses.length - 1] : 0;
   const entryEnd =
-    Number.isFinite(bibleDesignerState.verseEnd) && bibleDesignerState.verseEnd > 0
-      ? bibleDesignerState.verseEnd
-      : Number.isFinite(bibleDesignerState.verse) && bibleDesignerState.verse > 0
-        ? bibleDesignerState.verse
+    Number.isFinite(sourceEntry.verseEnd) && sourceEntry.verseEnd > 0
+      ? sourceEntry.verseEnd
+      : Number.isFinite(sourceEntry.verse) && sourceEntry.verse > 0
+        ? sourceEntry.verse
         : 0;
   const currentVerse = Math.max(selectedEnd, entryEnd);
   const nextVerse = currentVerse > 0 ? currentVerse + 1 : 1;
@@ -1685,9 +1676,9 @@ async function nextBibleVerseEntryFromDesigner() {
   if (!text) return null;
 
   return {
-    ...bibleDesignerState,
-    ...getBibleDesignerStyle(),
-    attribution: textData.attribution || bibleAttributionForVersion(bibleDesignerState.version),
+    ...sourceEntry,
+    ...style,
+    attribution: textData.attribution || bibleAttributionForVersion(sourceEntry.version),
     book,
     chapter,
     reference: `${book} ${chapter}:${nextVerse}`,
@@ -1695,6 +1686,9 @@ async function nextBibleVerseEntryFromDesigner() {
     verse: nextVerse,
     verseEnd: 0,
     selectedVerses: [nextVerse],
+    verseRows: [{ verseNumber: nextVerse, text }],
+    verseSelector: String(nextVerse),
+    currentSlideId: null,
     lowerThirdSegmentIndex: 0,
     currentLowerThirdSlideId: null,
   };
@@ -1798,6 +1792,8 @@ function loadRecentScriptures() {
         version: bibleVersionValue(item?.version || "KJV"),
         text: typeof item?.text === "string" ? item.text : "",
         book: typeof item?.book === "string" ? item.book : "",
+        bookAbbreviation:
+          typeof item?.bookAbbreviation === "string" ? item.bookAbbreviation : "",
         chapter: Number.isFinite(item?.chapter) ? item.chapter : 0,
         verse: Number.isFinite(item?.verse) ? item.verse : 0,
         verseEnd: Number.isFinite(item?.verseEnd) ? item.verseEnd : 0,
@@ -1884,6 +1880,8 @@ function rememberRecentScripture(entry) {
     version,
     text: typeof source.text === "string" ? source.text : "",
     book: typeof source.book === "string" ? source.book : "",
+    bookAbbreviation:
+      typeof source.bookAbbreviation === "string" ? source.bookAbbreviation : "",
     chapter: Number.isFinite(source.chapter) ? source.chapter : 0,
     verse: Number.isFinite(source.verse) ? source.verse : 0,
     verseEnd: Number.isFinite(source.verseEnd) ? source.verseEnd : 0,
@@ -1915,6 +1913,14 @@ async function openRecentScripture(item) {
   const referenceInput = document.getElementById("bibleReferenceInput");
   if (referenceInput) referenceInput.value = item.reference;
   const opened = await jumpBibleReferenceToBrowser();
+  if (
+    !opened ||
+    bibleDesignerState.version !== item.version ||
+    normalizeScriptureReference(referenceInput?.value || "") !==
+      normalizeScriptureReference(item.reference)
+  ) {
+    return false;
+  }
   if (opened && typeof item.text === "string" && item.text) {
     Object.assign(bibleDesignerState, {
       version: item.version,
@@ -1922,10 +1928,15 @@ async function openRecentScripture(item) {
       reference: item.reference,
       text: item.text,
       book: item.book || bibleDesignerState.book,
+      bookAbbreviation: item.bookAbbreviation || bibleDesignerState.bookAbbreviation,
       chapter: item.chapter || bibleDesignerState.chapter,
       verse: item.verse || bibleDesignerState.verse,
       verseEnd: item.verseEnd || 0,
       selectedVerses: Array.isArray(item.selectedVerses) ? [...item.selectedVerses] : [],
+      verseRows: [],
+      currentSlideId: null,
+      lowerThirdSegmentIndex: 0,
+      currentLowerThirdSlideId: null,
     });
     setBibleVerseSelectionFromEntry(bibleDesignerState);
     syncBibleSelectorsFromState();
@@ -2064,21 +2075,29 @@ async function lookupBibleReference(reference, version) {
           ? passage.selectedVerses
           : [],
         book: passage.book,
+        bookAbbreviation: passage.bookAbbreviation || "",
         chapter: passage.chapter,
         verse: passage.verse || 0,
         verseEnd: passage.verseEnd || 0,
         verseSelector: passage.verseSelector || "",
+        verseRows: (Array.isArray(passage.verses) ? passage.verses : [])
+          .map((row) => ({
+            verseNumber: Math.trunc(Number(row?.verseNumber ?? row?.verse)),
+            text: String(row?.text || "").trim(),
+          }))
+          .filter((row) => row.verseNumber > 0 && row.text),
       };
     }
   } catch {}
   return null;
 }
 
-async function bibleEntryWithLookupText(entry = bibleDesignerState) {
-  if (!entry?.reference) return entry;
+async function bibleEntryWithLookupText(entry = bibleDesignerState, opts = {}) {
+  const fallbackEntry = opts.requireLookup === true ? null : entry;
+  if (!entry?.reference) return fallbackEntry;
   try {
     const result = await lookupBibleReference(entry.reference, entry.version);
-    if (!result) return entry;
+    if (!result) return fallbackEntry;
     const selectedVerses = Array.isArray(result.selectedVerses)
       ? result.selectedVerses
       : [];
@@ -2099,7 +2118,7 @@ async function bibleEntryWithLookupText(entry = bibleDesignerState) {
       selectedVerses,
     };
   } catch {
-    return entry;
+    return fallbackEntry;
   }
 }
 
@@ -2108,22 +2127,43 @@ async function syncBibleStateFromControls() {
   const referenceInput = document.getElementById("bibleReferenceInput");
   const lookSelect = document.getElementById("bibleLookSelect");
   const nextVersion = versionSelect?.value || bibleDesignerState.version;
+  const requestedReferenceInput = referenceInput?.value || bibleDesignerState.reference;
+  const controlsStillMatchRequest = () =>
+    (versionSelect?.value || bibleDesignerState.version) === nextVersion &&
+    (referenceInput?.value || bibleDesignerState.reference) === requestedReferenceInput;
+  const resolvedReference = await normalizeBibleReferenceInput(
+    requestedReferenceInput,
+  );
+  // Resolving a reference crosses the sidecar boundary. If the operator chose
+  // another reference or translation while it was in flight, this result no
+  // longer owns the controls and must not put the old reference back into state.
+  if (!controlsStillMatchRequest()) return false;
   if (bibleDesignerState.version !== nextVersion) {
     bibleDesignerState.text = "";
+    bibleDesignerState.selectedVerses = [];
+    bibleDesignerState.verseRows = [];
+    bibleDesignerState.verseSelector = "";
+    bibleDesignerState.currentSlideId = null;
+    bibleDesignerState.lowerThirdSegmentIndex = 0;
+    bibleDesignerState.currentLowerThirdSlideId = null;
     persistBibleVersion(nextVersion);
   }
   bibleDesignerState.version = nextVersion;
   bibleDesignerState.look = normalizeScriptureLook(lookSelect?.value || bibleDesignerState.look);
-  const resolvedReference = await normalizeBibleReferenceInput(
-    referenceInput?.value || bibleDesignerState.reference,
-  );
   if (resolvedReference) {
     bibleDesignerState.book = resolvedReference.book;
+    bibleDesignerState.bookAbbreviation = resolvedReference.bookAbbreviation || "";
     bibleDesignerState.chapter = resolvedReference.chapter;
     bibleDesignerState.verse = resolvedReference.verse;
     bibleDesignerState.verseEnd = resolvedReference.verseEnd;
     if (bibleDesignerState.reference !== resolvedReference.reference) {
       bibleDesignerState.text = "";
+      bibleDesignerState.selectedVerses = [];
+      bibleDesignerState.verseRows = [];
+      bibleDesignerState.verseSelector = "";
+      bibleDesignerState.currentSlideId = null;
+      bibleDesignerState.lowerThirdSegmentIndex = 0;
+      bibleDesignerState.currentLowerThirdSlideId = null;
     }
     bibleDesignerState.reference = resolvedReference.reference;
   } else {
@@ -2132,6 +2172,13 @@ async function syncBibleStateFromControls() {
     );
     if (bibleDesignerState.reference !== nextReference) {
       bibleDesignerState.text = "";
+      bibleDesignerState.bookAbbreviation = "";
+      bibleDesignerState.selectedVerses = [];
+      bibleDesignerState.verseRows = [];
+      bibleDesignerState.verseSelector = "";
+      bibleDesignerState.currentSlideId = null;
+      bibleDesignerState.lowerThirdSegmentIndex = 0;
+      bibleDesignerState.currentLowerThirdSlideId = null;
     }
     bibleDesignerState.reference = normalizeScriptureReference(
       referenceInput?.value || bibleDesignerState.reference,
@@ -2145,17 +2192,45 @@ async function syncBibleStateFromControls() {
   );
   syncBibleVersionAttributionDisplay();
   Object.assign(bibleDesignerState, getBibleDesignerStyle());
+  return true;
 }
 
 async function setBiblePreviewText(reference, text, opts = {}) {
-  await syncBibleStateFromControls();
+  if (!(await syncBibleStateFromControls())) return false;
+  if (
+    opts.selectionRequest &&
+    !bibleVerseSelectionRequestMatchesCurrent(opts.selectionRequest)
+  ) {
+    return false;
+  }
+  const requestedReference = normalizeScriptureReference(
+    reference || bibleDesignerState.reference,
+  );
+  const referenceInput = document.getElementById("bibleReferenceInput");
+  if (
+    reference &&
+    normalizeScriptureReference(referenceInput?.value || requestedReference) !== requestedReference
+  ) {
+    return false;
+  }
   const verse = Number.isFinite(opts.verse) ? opts.verse : bibleDesignerState.verse;
   const verseEnd = Number.isFinite(opts.verseEnd) ? opts.verseEnd : bibleDesignerState.verseEnd;
+  const selectedVerses = Array.isArray(opts.selectionRequest?.selectedVerses)
+    ? [...opts.selectionRequest.selectedVerses]
+    : verse > 0
+      ? [verse]
+      : [];
   Object.assign(bibleDesignerState, {
-    reference: normalizeScriptureReference(reference || bibleDesignerState.reference),
+    reference: requestedReference,
     text: text || "",
     verse,
     verseEnd,
+    selectedVerses,
+    verseRows: [],
+    verseSelector: selectedVerses.join(","),
+    currentSlideId: null,
+    lowerThirdSegmentIndex: 0,
+    currentLowerThirdSlideId: null,
     ...getBibleDesignerStyle(),
   });
   applyBiblePreview(bibleDesignerState);
@@ -2171,22 +2246,33 @@ async function setBiblePreviewText(reference, text, opts = {}) {
 // confirmation using the same prompt the media queue uses.
 async function presentBibleSelectionFromDoubleClick(verseNumber, fallbackText) {
   const selectedVerses = selectedBibleVerseNumbers();
+  const selectionRequest = {
+    version: bibleDesignerState.version,
+    book: bibleDesignerState.book,
+    chapter: bibleDesignerState.chapter,
+    selectedVerses,
+  };
   const isMultiSelection = selectedVerses.length > 1;
   const entry = isMultiSelection ? await bibleEntryFromSelectedVerses() : null;
+  if (!bibleVerseSelectionRequestMatchesCurrent(selectionRequest)) return;
   const reference = entry
     ? entry.reference
     : `${bibleDesignerState.book} ${bibleDesignerState.chapter}:${verseNumber}`;
   const referenceInput = document.getElementById("bibleReferenceInput");
   if (referenceInput) referenceInput.value = reference;
 
-  if (entry) {
-    await setBiblePreviewText(entry.reference, entry.text, {
+  const previewApplied = entry
+    ? await setBiblePreviewText(entry.reference, entry.text, {
       verse: entry.verse,
       verseEnd: entry.verseEnd,
+      selectionRequest,
+    })
+    : await setBiblePreviewText(reference, fallbackText, {
+      verse: verseNumber,
+      verseEnd: 0,
+      selectionRequest,
     });
-  } else {
-    await setBiblePreviewText(reference, fallbackText, { verse: verseNumber, verseEnd: 0 });
-  }
+  if (!previewApplied) return;
 
   const presentationActive =
     isQueuePresentationActive() ||
@@ -2291,12 +2377,18 @@ function referenceForSelectedBibleVerses(selectedVerses) {
 async function bibleEntryFromSelectedVerses() {
   const selectedVerses = selectedBibleVerseNumbers();
   if (selectedVerses.length === 0) return null;
+  // Keep all fields in the result tied to the same request. Reading the mutable
+  // designer state again after getText() can combine a newly selected reference
+  // with text returned for the previous chapter or translation.
+  const version = bibleDesignerState.version;
+  const book = bibleDesignerState.book;
+  const chapter = bibleDesignerState.chapter;
   let textData = null;
   try {
     textData = await bibleAPI.getText(
-      bibleDesignerState.version,
-      bibleDesignerState.book,
-      String(bibleDesignerState.chapter),
+      version,
+      book,
+      String(chapter),
     );
   } catch (err) {
     console.error("Failed to load selected Bible verses:", err);
@@ -2316,29 +2408,56 @@ async function bibleEntryFromSelectedVerses() {
           .map(({ verseNumber, text }) => `${verseNumber}. ${text}`)
           .join("\n");
   if (!selectedText) return null;
-  const reference = referenceForSelectedBibleVerses(selectedVerses);
+  const reference = referenceForBibleVerseNumbers(book, chapter, selectedVerses);
   const verseStart = selectedVerses[0];
   const verseEnd = selectedVerses[selectedVerses.length - 1];
   return {
     ...bibleDesignerState,
     ...getBibleDesignerStyle(),
-    attribution: textData.attribution || bibleAttributionForVersion(bibleDesignerState.version),
+    version,
+    book,
+    chapter,
+    attribution: textData.attribution || bibleAttributionForVersion(version),
     reference,
     text: selectedText,
     verse: verseStart,
     verseEnd: verseEnd > verseStart ? verseEnd : 0,
     selectedVerses,
+    verseRows: selectedVerseTexts,
+    verseSelector: selectedVerses.join(","),
+    currentSlideId: null,
+    lowerThirdSegmentIndex: 0,
+    currentLowerThirdSlideId: null,
   };
+}
+
+function bibleVerseSelectionRequestMatchesCurrent(request) {
+  if (!request) return false;
+  const currentVerses = selectedBibleVerseNumbers();
+  const requestedVerses = Array.isArray(request.selectedVerses) ? request.selectedVerses : [];
+  return Boolean(
+    request.version === bibleDesignerState.version &&
+      request.book === bibleDesignerState.book &&
+      Number(request.chapter) === Number(bibleDesignerState.chapter) &&
+      requestedVerses.length === currentVerses.length &&
+      requestedVerses.every((verseNumber, index) => verseNumber === currentVerses[index])
+  );
+}
+
+function bibleEntryMatchesCurrentVerseSelection(entry) {
+  return bibleVerseSelectionRequestMatchesCurrent(entry);
 }
 
 async function bibleEntryForSingleVerse(verseNumber) {
   if (!Number.isFinite(verseNumber) || verseNumber < 1) return null;
+  const sourceEntry = { ...bibleDesignerState };
+  const style = getBibleDesignerStyle();
   let textData = null;
   try {
     textData = await bibleAPI.getText(
-      bibleDesignerState.version,
-      bibleDesignerState.book,
-      String(bibleDesignerState.chapter),
+      sourceEntry.version,
+      sourceEntry.book,
+      String(sourceEntry.chapter),
     );
   } catch (err) {
     console.error("Failed to load Bible verse:", err);
@@ -2348,10 +2467,10 @@ async function bibleEntryForSingleVerse(verseNumber) {
   const text = verses[verseNumber - 1];
   if (!text) return null;
   const entry = {
-    ...bibleDesignerState,
-    ...getBibleDesignerStyle(),
-    attribution: textData.attribution || bibleAttributionForVersion(bibleDesignerState.version),
-    reference: `${bibleDesignerState.book} ${bibleDesignerState.chapter}:${verseNumber}`,
+    ...sourceEntry,
+    ...style,
+    attribution: textData.attribution || bibleAttributionForVersion(sourceEntry.version),
+    reference: `${sourceEntry.book} ${sourceEntry.chapter}:${verseNumber}`,
     text,
     verse: verseNumber,
     verseEnd: 0,
@@ -2359,6 +2478,7 @@ async function bibleEntryForSingleVerse(verseNumber) {
     // being carved out of, so every verse-scoped field has to be narrowed here or
     // each scheduled verse claims the full passage.
     selectedVerses: [verseNumber],
+    verseRows: [{ verseNumber, text }],
     verseSelector: String(verseNumber),
     currentSlideId: null,
     lowerThirdSegmentIndex: 0,
@@ -2450,7 +2570,10 @@ async function bibleEntryFromVerseDragPayload(payload) {
     verse: verseStart,
     verseEnd: verseEnd > verseStart ? verseEnd : 0,
     selectedVerses,
+    verseRows: rows,
+    verseSelector: selectedVerses.join(","),
     look: normalized.look,
+    currentSlideId: null,
     lowerThirdSegmentIndex: 0,
     currentLowerThirdSlideId: null,
   });
@@ -2631,7 +2754,9 @@ async function queueEntriesForBibleScheduleEntry(entry) {
 
 async function applySelectedBibleVersePreview() {
   const selectedEntry = await bibleEntryFromSelectedVerses();
-  if (!selectedEntry) return false;
+  // A later click may have changed the selection while getText() was pending.
+  // Only the request that still describes the current selection may repaint.
+  if (!bibleEntryMatchesCurrentVerseSelection(selectedEntry)) return false;
   Object.assign(bibleDesignerState, selectedEntry);
   const referenceInput = document.getElementById("bibleReferenceInput");
   if (referenceInput) referenceInput.value = selectedEntry.reference;
@@ -2642,9 +2767,19 @@ async function applySelectedBibleVersePreview() {
 }
 
 async function refreshBibleLookupPreview(opts = {}) {
-  await syncBibleStateFromControls();
-  const result = await lookupBibleReference(bibleDesignerState.reference, bibleDesignerState.version);
+  if (!(await syncBibleStateFromControls())) return false;
+  const requestedReference = bibleDesignerState.reference;
+  const requestedVersion = bibleDesignerState.version;
+  const requestedReferenceInput = document.getElementById("bibleReferenceInput")?.value || "";
+  const result = await lookupBibleReference(requestedReference, requestedVersion);
   if (!result) return false;
+  if (
+    bibleDesignerState.reference !== requestedReference ||
+    bibleDesignerState.version !== requestedVersion ||
+    (document.getElementById("bibleReferenceInput")?.value || "") !== requestedReferenceInput
+  ) {
+    return false;
+  }
   Object.assign(bibleDesignerState, result, {
     book: result.book || bibleDesignerState.book,
     chapter: Number.isFinite(result.chapter) ? result.chapter : bibleDesignerState.chapter,
@@ -2661,9 +2796,10 @@ async function refreshBibleLookupPreview(opts = {}) {
 }
 
 async function currentBibleQueueEntry() {
-  await syncBibleStateFromControls();
+  if (!(await syncBibleStateFromControls())) return null;
   const selectedEntry = await bibleEntryFromSelectedVerses();
   if (selectedEntry) {
+    if (!bibleEntryMatchesCurrentVerseSelection(selectedEntry)) return null;
     Object.assign(bibleDesignerState, selectedEntry);
     return queueEntryFromBibleEntry(selectedEntry);
   }
@@ -2675,9 +2811,10 @@ async function currentBibleQueueEntry() {
 }
 
 async function currentBibleTextOnlyEntry() {
-  await syncBibleStateFromControls();
+  if (!(await syncBibleStateFromControls())) return null;
   const selectedEntry = await bibleEntryFromSelectedVerses();
   if (selectedEntry) {
+    if (!bibleEntryMatchesCurrentVerseSelection(selectedEntry)) return null;
     Object.assign(bibleDesignerState, selectedEntry);
   } else {
     const refreshed = await refreshBibleLookupPreview({ liveSync: false });
@@ -2694,12 +2831,19 @@ async function currentBibleTextOnlyEntry() {
 }
 
 async function sendBibleTextToOutput(entry = bibleDesignerState, expectedRevision = null) {
-  const resolvedEntry = await bibleEntryWithLookupText(entry);
+  const updateToken = ++bibleAudienceOutputUpdateToken;
+  // Never put a new reference on screen beside fallback text from an older
+  // entry. If the lookup fails, leave the previous complete Scripture live.
+  const resolvedEntry = await bibleEntryWithLookupText(entry, { requireLookup: true });
+  if (!resolvedEntry || updateToken !== bibleAudienceOutputUpdateToken) return false;
   if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
     return false;
   }
   await waitForScriptureFonts(resolvedEntry);
-  if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
+  if (
+    updateToken !== bibleAudienceOutputUpdateToken ||
+    (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision))
+  ) {
     return false;
   }
   if (appliedPresentationTheme) {
@@ -2715,7 +2859,10 @@ async function sendBibleTextToOutput(entry = bibleDesignerState, expectedRevisio
       sample: cleanBibleVerseTextForDisplay(resolvedEntry.text) || "EMS",
       fontSize: resolvedTheme.typography?.fontSize || resolvedEntry.fontSize,
     });
-    if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
+    if (
+      updateToken !== bibleAudienceOutputUpdateToken ||
+      (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision))
+    ) {
       return false;
     }
   }
@@ -3306,11 +3453,11 @@ function bibleQueueItemBaseEntry(item) {
   };
 }
 
-async function resolveBibleQueueItemEntry(item) {
+async function resolveBibleQueueItemEntry(item, opts = {}) {
   const baseEntry = bibleQueueItemBaseEntry(item);
   if (!baseEntry) return null;
   const pathEntry = parseBibleQueuePath(item.path);
-  const resolvedEntry = await bibleEntryWithLookupText(baseEntry);
+  const resolvedEntry = await bibleEntryWithLookupText(baseEntry, opts);
   if (!resolvedEntry?.reference) return null;
   return {
     ...resolvedEntry,
@@ -3407,6 +3554,8 @@ function projectBibleReferenceOnlyEntry(entry = {}, opts = {}) {
     version: normalizedProjectBibleVersion(source.version, pathEntry.version || "KJV"),
     reference,
     book: typeof source.book === "string" ? source.book : "",
+    bookAbbreviation:
+      typeof source.bookAbbreviation === "string" ? source.bookAbbreviation : "",
     chapter: Number.isFinite(source.chapter) ? source.chapter : 1,
     verse: Number.isFinite(source.verse) ? source.verse : 0,
     verseEnd: Number.isFinite(source.verseEnd) ? source.verseEnd : 0,
@@ -3536,14 +3685,15 @@ function hydrateBibleEntryStyle(entry = {}) {
   };
 }
 
-async function resolvedBibleEntryForItem(item) {
-  const resolvedEntry = await resolveBibleQueueItemEntry(item);
+async function resolvedBibleEntryForItem(item, opts = {}) {
+  const resolvedEntry = await resolveBibleQueueItemEntry(item, opts);
   if (resolvedEntry) {
     return {
       ...hydrateBibleEntryStyle(resolvedEntry),
       transition: item?.transition || DEFAULT_ITEM_SLIDE_TRANSITION,
     };
   }
+  if (opts.requireLookup === true) return null;
   const pathEntry = parseBibleQueuePath(item?.path);
   const baseEntry = {
     ...(item?.bible && typeof item.bible === "object" ? item.bible : {}),
@@ -4174,13 +4324,18 @@ async function showBibleTextNow() {
 }
 
 async function slipstreamBiblePresentation(entry, expectedRevision = null) {
+  const resolvedEntry = await bibleEntryWithLookupText(entry, { requireLookup: true });
+  if (!resolvedEntry) return false;
+  if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
+    return false;
+  }
   const textPayload = audienceTextMessageForSend(
     "bible",
-    buildBibleTextMessage(entry, { look: SCRIPTURE_LOOK_FULLSCREEN }),
+    buildBibleTextMessage(resolvedEntry, { look: SCRIPTURE_LOOK_FULLSCREEN }),
   );
   const slipstreamSuccess = await invoke("slipstream-media-window", {
     isText: true,
-    mediaFile: bibleQueuePath(entry.reference, entry.version),
+    mediaFile: bibleQueuePath(resolvedEntry.reference, resolvedEntry.version),
     textPayload,
   });
   if (!slipstreamSuccess) return false;
@@ -4188,7 +4343,7 @@ async function slipstreamBiblePresentation(entry, expectedRevision = null) {
     return false;
   }
   setSharedRendererState({ activeMediaWindowContentType: "bible" });
-  await sendBibleTextToOutput(entry, expectedRevision);
+  await sendBibleTextToOutput(resolvedEntry, expectedRevision);
   return true;
 }
 
@@ -4857,11 +5012,24 @@ async function applyBibleSearchResult(index) {
   setBibleDesignerVersion(version);
   bibleDesignerState.attribution = bibleAttributionForResult(result);
   bibleDesignerState.book = String(result.book || bibleDesignerState.book || "");
+  bibleDesignerState.bookAbbreviation = String(result.bookAbbreviation || "");
   bibleDesignerState.chapter = Number(result.chapter) || bibleDesignerState.chapter;
   bibleDesignerState.verse = Number.isFinite(verse) && verse > 0 ? verse : 0;
   bibleDesignerState.verseEnd = 0;
   bibleDesignerState.reference = reference;
   bibleDesignerState.text = String(result.text || "");
+  bibleDesignerState.selectedVerses = bibleDesignerState.verse > 0
+    ? [bibleDesignerState.verse]
+    : [];
+  bibleDesignerState.verseRows = bibleDesignerState.verse > 0
+    ? [{ verseNumber: bibleDesignerState.verse, text: bibleDesignerState.text }]
+    : [];
+  bibleDesignerState.verseSelector = bibleDesignerState.verse > 0
+    ? String(bibleDesignerState.verse)
+    : "";
+  bibleDesignerState.currentSlideId = null;
+  bibleDesignerState.lowerThirdSegmentIndex = 0;
+  bibleDesignerState.currentLowerThirdSlideId = null;
   bibleVerseSelection.verses.clear();
   if (bibleDesignerState.verse > 0) {
     bibleVerseSelection.verses.add(bibleDesignerState.verse);
@@ -5100,17 +5268,38 @@ async function jumpBibleReferenceToBrowser() {
   const referenceInput = document.getElementById("bibleReferenceInput");
   hideBibleReferenceSuggestions();
   setBibleNavigatorMode("browse", { runSearch: false });
-  const resolvedReference = await normalizeBibleReferenceInput(referenceInput?.value || "");
+  const requestedReferenceInput = referenceInput?.value || "";
+  const requestedVersion = document.getElementById("bibleVersionSelect")?.value || bibleDesignerState.version;
+  const resolvedReference = await normalizeBibleReferenceInput(requestedReferenceInput);
+  if (
+    (referenceInput?.value || "") !== requestedReferenceInput ||
+    (document.getElementById("bibleVersionSelect")?.value || bibleDesignerState.version) !== requestedVersion
+  ) {
+    return false;
+  }
   if (!resolvedReference) {
     showGnomeToast("Enter a reference like John 3:16");
     return false;
   }
   const nextReference = resolvedReference;
+  const referenceChanged =
+    bibleDesignerState.version !== requestedVersion ||
+    bibleDesignerState.reference !== nextReference.reference;
   bibleDesignerState.book = nextReference.book;
+  bibleDesignerState.bookAbbreviation = nextReference.bookAbbreviation || "";
   bibleDesignerState.chapter = nextReference.chapter;
   bibleDesignerState.verse = nextReference.verse;
   bibleDesignerState.verseEnd = nextReference.verseEnd;
   bibleDesignerState.reference = nextReference.reference;
+  if (referenceChanged) {
+    bibleDesignerState.text = "";
+    bibleDesignerState.selectedVerses = [];
+    bibleDesignerState.verseRows = [];
+    bibleDesignerState.verseSelector = "";
+    bibleDesignerState.currentSlideId = null;
+    bibleDesignerState.lowerThirdSegmentIndex = 0;
+    bibleDesignerState.currentLowerThirdSlideId = null;
+  }
   if (referenceInput) referenceInput.value = nextReference.reference;
   bibleVerseSelection.verses.clear();
   bibleVerseSelection.anchor = 0;
@@ -5413,9 +5602,6 @@ export {
   bibleAttributionText,
   bibleAutosizeGroupScope,
   bibleBackgroundDisplayName,
-  bibleBookAbbreviationCache,
-  bibleBookAbbreviationCacheLoading,
-  bibleBookAbbreviationSync,
   bibleCurrentStylePayload,
   bibleDesignerState,
   bibleEntryForSingleVerse,
@@ -5544,7 +5730,6 @@ export {
   renderBibleSlideNavigator,
   renderBibleVerseList,
   renderRecentScriptures,
-  requestBibleBookAbbreviationCache,
   resolveBibleQueueItemEntry,
   resolveBibleQueueItemEntryShallow,
   resolveStoredBibleVersion,

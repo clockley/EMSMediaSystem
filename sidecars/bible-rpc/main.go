@@ -87,35 +87,37 @@ type PassageVerse struct {
 }
 
 type ReferenceResponse struct {
-	Version        string `json:"version"`
-	Input          string `json:"input,omitempty"`
-	Reference      string `json:"reference"`
-	Book           string `json:"book"`
-	BookID         int    `json:"bookId"`
-	Chapter        int    `json:"chapter"`
-	Verse          int    `json:"verse,omitempty"`
-	VerseEnd       int    `json:"verseEnd,omitempty"`
-	VerseSelector  string `json:"verseSelector,omitempty"`
-	ChapterCount   int    `json:"chapterCount,omitempty"`
-	VerseCount     int    `json:"verseCount,omitempty"`
-	SelectedVerses []int  `json:"selectedVerses,omitempty"`
-	Error          string `json:"error,omitempty"`
+	Version          string `json:"version"`
+	Input            string `json:"input,omitempty"`
+	Reference        string `json:"reference"`
+	Book             string `json:"book"`
+	BookAbbreviation string `json:"bookAbbreviation,omitempty"`
+	BookID           int    `json:"bookId"`
+	Chapter          int    `json:"chapter"`
+	Verse            int    `json:"verse,omitempty"`
+	VerseEnd         int    `json:"verseEnd,omitempty"`
+	VerseSelector    string `json:"verseSelector,omitempty"`
+	ChapterCount     int    `json:"chapterCount,omitempty"`
+	VerseCount       int    `json:"verseCount,omitempty"`
+	SelectedVerses   []int  `json:"selectedVerses,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
 type PassageResponse struct {
-	Version        string           `json:"version"`
-	Attribution    BibleAttribution `json:"attribution"`
-	Reference      string           `json:"reference"`
-	Book           string           `json:"book"`
-	BookID         int              `json:"bookId"`
-	Chapter        int              `json:"chapter"`
-	Verse          int              `json:"verse,omitempty"`
-	VerseEnd       int              `json:"verseEnd,omitempty"`
-	VerseSelector  string           `json:"verseSelector,omitempty"`
-	SelectedVerses []int            `json:"selectedVerses"`
-	Verses         []PassageVerse   `json:"verses"`
-	Text           string           `json:"text"`
-	Error          string           `json:"error,omitempty"`
+	Version          string           `json:"version"`
+	Attribution      BibleAttribution `json:"attribution"`
+	Reference        string           `json:"reference"`
+	Book             string           `json:"book"`
+	BookAbbreviation string           `json:"bookAbbreviation,omitempty"`
+	BookID           int              `json:"bookId"`
+	Chapter          int              `json:"chapter"`
+	Verse            int              `json:"verse,omitempty"`
+	VerseEnd         int              `json:"verseEnd,omitempty"`
+	VerseSelector    string           `json:"verseSelector,omitempty"`
+	SelectedVerses   []int            `json:"selectedVerses"`
+	Verses           []PassageVerse   `json:"verses"`
+	Text             string           `json:"text"`
+	Error            string           `json:"error,omitempty"`
 }
 
 type ReferenceSuggestion struct {
@@ -1070,18 +1072,19 @@ func resolveReferenceData(db *sql.DB, version string, rawReference string) (Refe
 	}
 
 	return ReferenceResponse{
-		Version:        versionInfo.Abbreviation,
-		Input:          rawReference,
-		Reference:      reference,
-		Book:           book.Name,
-		BookID:         book.ID,
-		Chapter:        chapter,
-		Verse:          verse,
-		VerseEnd:       contiguousVerseEnd(selected),
-		VerseSelector:  normalizedSelector,
-		ChapterCount:   chapterCount,
-		VerseCount:     verseCount,
-		SelectedVerses: selected,
+		Version:          versionInfo.Abbreviation,
+		Input:            rawReference,
+		Reference:        reference,
+		Book:             book.Name,
+		BookAbbreviation: book.Abbreviation,
+		BookID:           book.ID,
+		Chapter:          chapter,
+		Verse:            verse,
+		VerseEnd:         contiguousVerseEnd(selected),
+		VerseSelector:    normalizedSelector,
+		ChapterCount:     chapterCount,
+		VerseCount:       verseCount,
+		SelectedVerses:   selected,
 	}, nil
 }
 
@@ -1195,18 +1198,19 @@ func getPassageResult(version, reference string) PassageResponse {
 	}
 
 	return PassageResponse{
-		Version:        resolved.Version,
-		Attribution:    versionInfo.Attribution,
-		Reference:      resolved.Reference,
-		Book:           resolved.Book,
-		BookID:         resolved.BookID,
-		Chapter:        resolved.Chapter,
-		Verse:          resolved.Verse,
-		VerseEnd:       resolved.VerseEnd,
-		VerseSelector:  resolved.VerseSelector,
-		SelectedVerses: resolved.SelectedVerses,
-		Verses:         verses,
-		Text:           passageText(verses),
+		Version:          resolved.Version,
+		Attribution:      versionInfo.Attribution,
+		Reference:        resolved.Reference,
+		Book:             resolved.Book,
+		BookAbbreviation: resolved.BookAbbreviation,
+		BookID:           resolved.BookID,
+		Chapter:          resolved.Chapter,
+		Verse:            resolved.Verse,
+		VerseEnd:         resolved.VerseEnd,
+		VerseSelector:    resolved.VerseSelector,
+		SelectedVerses:   resolved.SelectedVerses,
+		Verses:           verses,
+		Text:             passageText(verses),
 	}
 }
 
