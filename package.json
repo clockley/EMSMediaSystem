@@ -30,7 +30,7 @@
   "devDependencies": {
     "concurrently": "^10.0.5",
     "csso": "^5.0.5",
-    "electron": "^34.0.0",
+    "electron": "^41.10.6",
     "electron-builder": "26.15.7",
     "esbuild": "^0.28.2",
     "html-minifier-terser": "^7.2.0",
