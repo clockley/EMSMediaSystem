@@ -51,6 +51,7 @@
     "zod": "^4.4.3"
   },
   "build": {
+    "extends": "file:build-scripts/versioned-windows-installer.cjs",
     "appId": "com.ejaxmediasystem.app",
     "productName": "EMS Media System",
     "afterPack": "scripts/verify-packaged-bible-assets.cjs",
@@ -86,15 +87,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "src/icon.png",
-      "fileAssociations": [
-        {
-          "ext": "emproj",
-          "name": "EMS Project",
-          "description": "EMS Media System Project",
-          "role": "Editor"
-        }
-      ]
+      "icon": "src/icon.png"
     },
     "linux": {
       "target": [
@@ -104,10 +97,10 @@
       "category": "Audio"
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
       "allowElevation": true,
-      "allowToChangeInstallationDirectory": false
+      "allowToChangeInstallationDirectory": true
     },
     "extraResources": [
       {

@@ -89,6 +89,13 @@ yarn dist-all
 
 Built distributions will be created in the `dist/` directory.
 
+Windows installations are versioned. For example, 6.5.8 and 6.5.9 use
+separate program directories, executables, shortcuts, application identities,
+and uninstall entries. Installing a new release therefore does not uninstall
+or overwrite an older release. User settings and libraries remain shared
+between releases. The assisted Windows installer also lets the user choose a
+different installation directory.
+
 ## Build System Details
 
 The project uses a custom Makefile-based build system accessed through Yarn scripts. **Always use Yarn commands instead of calling Make directly.**
