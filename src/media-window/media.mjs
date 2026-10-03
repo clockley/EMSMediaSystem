@@ -15,7 +15,10 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { getPptxPdfjsConfig } from "../shared/app-pptx-utils.min.mjs";
+import {
+  getPptxContainLayout,
+  getPptxPdfjsConfig,
+} from "../shared/app-pptx-utils.min.mjs";
 import {
   boxFitsMeasurement,
   findLargestFittingFontSize,
@@ -985,7 +988,9 @@ async function activatePptxTarget(data) {
   );
   window._pptxMediaViewer = await PptxViewer.open(arrayBuffer, pptxCanvas, {
     zipLimits: RECOMMENDED_ZIP_LIMITS,
-    fitMode: "contain",
+    // pptx-renderer's contain mode currently fits width only. Render at the
+    // natural slide size and apply a width-and-height contain transform below.
+    fitMode: "none",
     renderMode: "slide",
     pdfjs: getPptxPdfjsConfig(),
     // Single-slide mode is already cheap; list renders use windowed mounting.
@@ -1889,15 +1894,97 @@ async function showPptxSlideInMediaWindow(index, transition = null) {
     });
   });
   await applyPptxContainPolicyMedia();
+  schedulePptxTextInkGuard(pptxCanvas);
   applySlideTransition(pptxCanvas, transition);
+}
+
+function applyPptxTextInkGuard(pptxCanvas) {
+  if (!pptxCanvas) return 0;
+
+  let adjusted = 0;
+  pptxCanvas.querySelectorAll("div").forEach((textBox) => {
+    if (!(textBox instanceof HTMLElement)) return;
+
+    // pptx-renderer creates PowerPoint text layouts as clipped, column-flex
+    // DIVs containing one DIV per paragraph. With some Windows fonts (notably
+    // Arial Bold), glyph ink can extend a few pixels above the CSS line box and
+    // the renderer clips that ink even though the text itself fits the shape.
+    // Preserve clipping semantics, but give glyph paint a small allowance.
+    const isTextLayout =
+      textBox.style.display === "flex" &&
+      textBox.style.flexDirection === "column" &&
+      textBox.style.boxSizing === "border-box" &&
+      Array.from(textBox.children).some(
+        (child) =>
+          child instanceof HTMLElement &&
+          child.tagName === "DIV" &&
+          Boolean(child.textContent?.trim()),
+      );
+    const clipsBothAxes =
+      (textBox.style.overflowX === "hidden" ||
+        textBox.style.overflowX === "clip") &&
+      (textBox.style.overflowY === "hidden" ||
+        textBox.style.overflowY === "clip");
+    if (!isTextLayout || !clipsBothAxes) return;
+
+    textBox.style.overflowX = "clip";
+    textBox.style.overflowY = "clip";
+    textBox.style.overflowClipMargin = "8px";
+    textBox.dataset.emsPptxTextInkGuard = "true";
+    adjusted += 1;
+  });
+  return adjusted;
+}
+
+function schedulePptxTextInkGuard(pptxCanvas) {
+  applyPptxTextInkGuard(pptxCanvas);
+
+  // The renderer performs a second text measurement after layout and again
+  // when web fonts finish loading. Reapply after both points so that its
+  // deferred overflow update cannot restore the clipping bug.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => applyPptxTextInkGuard(pptxCanvas));
+  });
+  document.fonts?.ready
+    ?.then(() => applyPptxTextInkGuard(pptxCanvas))
+    .catch(() => {});
+}
+
+function fitPptxSlidesToMediaCanvas(pptxCanvas, viewer) {
+  const layout = getPptxContainLayout(
+    viewer?.slideWidth,
+    viewer?.slideHeight,
+    pptxCanvas?.clientWidth,
+    pptxCanvas?.clientHeight,
+  );
+  if (!layout || !pptxCanvas) return false;
+
+  let fitted = false;
+  Array.from(pptxCanvas.children).forEach((wrapper) => {
+    const slide = wrapper?.firstElementChild;
+    if (!(slide instanceof HTMLElement)) return;
+    wrapper.style.width = `${layout.displayWidth}px`;
+    wrapper.style.height = `${layout.displayHeight}px`;
+    wrapper.style.flex = "0 0 auto";
+    wrapper.style.margin = "0";
+    slide.style.width = `${viewer.slideWidth}px`;
+    slide.style.height = `${viewer.slideHeight}px`;
+    slide.style.maxWidth = "none";
+    slide.style.maxHeight = "none";
+    slide.style.transform = `scale(${layout.scale})`;
+    slide.style.transformOrigin = "top left";
+    fitted = true;
+  });
+  return fitted;
 }
 
 async function applyPptxContainPolicyMedia() {
   const viewer = window._pptxMediaViewer;
   if (!viewer) return;
   try {
-    await viewer.setFitMode("contain");
+    await viewer.setFitMode("none");
     await viewer.setZoom(100);
+    fitPptxSlidesToMediaCanvas(document.getElementById("pptxCanvas"), viewer);
   } catch {}
 }
 
@@ -3354,7 +3441,9 @@ async function loadMedia() {
     );
     window._pptxMediaViewer = await PptxViewer.open(arrayBuffer, pptxCanvas, {
       zipLimits: RECOMMENDED_ZIP_LIMITS,
-      fitMode: "contain",
+      // Keep renderer fitting disabled; applyPptxContainPolicyMedia accounts
+      // for both dimensions and remains correct on ultrawide outputs.
+      fitMode: "none",
       renderMode: "slide",
       pdfjs: getPptxPdfjsConfig(),
       // Single-slide mode is already cheap; list renders use windowed mounting.

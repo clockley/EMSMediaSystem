@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { getPptxContainLayout } from "../src/shared/app-pptx-utils.mjs";
 
 function functionSource(source, name, nextName) {
-  const start = source.indexOf(`function ${name}(`);
-  const end = source.indexOf(`\nfunction ${nextName}(`, start + 1);
+  const starts = [
+    source.indexOf(`function ${name}(`),
+    source.indexOf(`async function ${name}(`),
+  ].filter((index) => index >= 0);
+  const start = starts.length > 0 ? Math.min(...starts) : -1;
+  const ends = [
+    source.indexOf(`\nfunction ${nextName}(`, start + 1),
+    source.indexOf(`\nasync function ${nextName}(`, start + 1),
+  ].filter((index) => index >= 0);
+  const end = ends.length > 0 ? Math.min(...ends) : -1;
   assert.ok(start >= 0 && end > start, `${name} should exist`);
   return source.slice(start, end);
 }
@@ -89,4 +98,70 @@ test("Media presentation details render PPTX slides without a thumbnail strip", 
   assert.match(source, /slideRenderToken !== presentationSlideRenderToken/);
   assert.match(loader, /openingViewer = new PptxViewer\(viewerHost, viewerOptions\)/);
   assert.match(cleanup, /presentationOpenAbortController\?\.abort/);
+});
+
+test("PowerPoint contain layout respects both output dimensions", () => {
+  assert.deepEqual(getPptxContainLayout(1280, 720, 2560, 1080), {
+    scale: 1.5,
+    displayWidth: 1920,
+    displayHeight: 1080,
+  });
+  assert.deepEqual(getPptxContainLayout(1280, 720, 1024, 768), {
+    scale: 0.8,
+    displayWidth: 1024,
+    displayHeight: 576,
+  });
+  assert.equal(getPptxContainLayout(1280, 720, 0, 1080), null);
+});
+
+test("audience PowerPoint output applies app-owned contain fitting", async () => {
+  const source = await readFile(
+    new URL("../src/media-window/media.mjs", import.meta.url),
+    "utf8",
+  );
+  const fit = functionSource(
+    source,
+    "fitPptxSlidesToMediaCanvas",
+    "applyPptxContainPolicyMedia",
+  );
+  const policy = functionSource(
+    source,
+    "applyPptxContainPolicyMedia",
+    "installPptxIpcHandlers",
+  );
+  assert.match(fit, /getPptxContainLayout\(/);
+  assert.match(fit, /pptxCanvas\?\.clientWidth/);
+  assert.match(fit, /pptxCanvas\?\.clientHeight/);
+  assert.match(fit, /slide\.style\.transform = `scale\(\$\{layout\.scale\}\)`/);
+  assert.match(policy, /viewer\.setFitMode\("none"\)/);
+  assert.match(policy, /fitPptxSlidesToMediaCanvas/);
+  assert.doesNotMatch(source, /fitMode:\s*"contain"/);
+});
+
+test("audience PowerPoint output protects Windows glyph ink from clipping", async () => {
+  const source = await readFile(
+    new URL("../src/media-window/media.mjs", import.meta.url),
+    "utf8",
+  );
+  const guard = functionSource(
+    source,
+    "applyPptxTextInkGuard",
+    "schedulePptxTextInkGuard",
+  );
+  const schedule = functionSource(
+    source,
+    "schedulePptxTextInkGuard",
+    "fitPptxSlidesToMediaCanvas",
+  );
+  const show = functionSource(
+    source,
+    "showPptxSlideInMediaWindow",
+    "applyPptxTextInkGuard",
+  );
+
+  assert.match(guard, /textBox\.style\.flexDirection === "column"/);
+  assert.match(guard, /textBox\.style\.overflowClipMargin = "8px"/);
+  assert.match(guard, /emsPptxTextInkGuard/);
+  assert.match(schedule, /document\.fonts\?\.ready/);
+  assert.match(show, /schedulePptxTextInkGuard\(pptxCanvas\)/);
 });

@@ -30,6 +30,27 @@ export function isSavedPptxSlideIndex(index) {
   return Number.isFinite(index) && index >= 0;
 }
 
+export function getPptxContainLayout(
+  slideWidth,
+  slideHeight,
+  viewportWidth,
+  viewportHeight,
+) {
+  const dimensions = [slideWidth, slideHeight, viewportWidth, viewportHeight];
+  if (!dimensions.every((value) => Number.isFinite(value) && value > 0)) {
+    return null;
+  }
+  const scale = Math.min(
+    viewportWidth / slideWidth,
+    viewportHeight / slideHeight,
+  );
+  return {
+    scale,
+    displayWidth: slideWidth * scale,
+    displayHeight: slideHeight * scale,
+  };
+}
+
 export function getPptxListRenderOptions(slideCount) {
   if (Number.isFinite(slideCount) && slideCount <= PPTX_SMALL_DECK_MAX_SLIDES) {
     return {
