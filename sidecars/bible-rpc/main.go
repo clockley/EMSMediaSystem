@@ -146,6 +146,7 @@ type TextResponse struct {
 	Verse       string           `json:"verse,omitempty"`
 	Text        string           `json:"text,omitempty"`
 	Verses      []string         `json:"verses,omitempty"`
+	VerseRows   []PassageVerse   `json:"verseRows,omitempty"`
 	Error       string           `json:"error,omitempty"`
 }
 
@@ -1055,10 +1056,34 @@ func resolveReferenceData(db *sql.DB, version string, rawReference string) (Refe
 	if verseCount == 0 {
 		return ReferenceResponse{}, fmt.Errorf("chapter not found")
 	}
-
-	selected, err := selectedVersesFromSelector(selector, verseCount)
+	chapterVerses, err := fetchChapterVerses(db, tableName, book.ID, chapter)
 	if err != nil {
 		return ReferenceResponse{}, err
+	}
+	if len(chapterVerses) == 0 {
+		return ReferenceResponse{}, fmt.Errorf("chapter not found")
+	}
+	maxVerse := 0
+	availableVerses := make(map[int]bool, len(chapterVerses))
+	for _, chapterVerse := range chapterVerses {
+		availableVerses[chapterVerse.Verse] = true
+		if chapterVerse.Verse > maxVerse {
+			maxVerse = chapterVerse.Verse
+		}
+	}
+
+	requested, err := selectedVersesFromSelector(selector, maxVerse)
+	if err != nil {
+		return ReferenceResponse{}, err
+	}
+	selected := make([]int, 0, len(requested))
+	for _, verse := range requested {
+		if availableVerses[verse] {
+			selected = append(selected, verse)
+		}
+	}
+	if len(requested) > 0 && len(selected) == 0 {
+		return ReferenceResponse{}, fmt.Errorf("verse not found")
 	}
 	normalizedSelector := verseSelectorFromSelectedVerses(selected)
 	reference := fmt.Sprintf("%s %d", book.Name, chapter)
@@ -1739,6 +1764,7 @@ func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterV
 			verses = append(verses, chapterVerse.Text)
 		}
 		response.Verses = verses
+		response.VerseRows = chapterVerses
 	} else {
 		verseNumber, err := strconv.Atoi(verse)
 		if err != nil {

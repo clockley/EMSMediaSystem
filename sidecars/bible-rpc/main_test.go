@@ -13,6 +13,12 @@ func TestSuggestReferencesUsesOnlyBooksInSelectedVersion(t *testing.T) {
 		t.Fatalf("sql.Open() error = %v", err)
 	}
 	defer testDB.Close()
+	compressed, err := biblestore.CompressChapterVerses([]biblestore.ChapterVerse{
+		{Verse: 1, Text: "Test verse"},
+	})
+	if err != nil {
+		t.Fatalf("CompressChapterVerses() error = %v", err)
+	}
 
 	if _, err := testDB.Exec(`
 CREATE TABLE bible_chapter_text (
@@ -20,13 +26,27 @@ CREATE TABLE bible_chapter_text (
 	b INTEGER NOT NULL,
 	c INTEGER NOT NULL,
 	verse_count INTEGER NOT NULL,
+	t BLOB NOT NULL,
 	PRIMARY KEY (table_name, b, c)
 );
-INSERT INTO bible_chapter_text (table_name, b, c, verse_count) VALUES
-	('source_kjv', 2, 1, 22),
-	('source_kjva', 69, 1, 22);
 `); err != nil {
 		t.Fatalf("create Bible suggestion fixture: %v", err)
+	}
+	for _, row := range []struct {
+		tableName string
+		bookID    int
+	}{
+		{tableName: "source_kjv", bookID: 2},
+		{tableName: "source_kjva", bookID: 69},
+	} {
+		if _, err := testDB.Exec(
+			`INSERT INTO bible_chapter_text (table_name, b, c, verse_count, t) VALUES (?, ?, 1, 1, ?)`,
+			row.tableName,
+			row.bookID,
+			compressed,
+		); err != nil {
+			t.Fatalf("insert Bible suggestion fixture: %v", err)
+		}
 	}
 
 	oldDB := db
@@ -255,5 +275,96 @@ INSERT INTO bible_chapter_text (table_name, b, c, verse_count, t) VALUES
 	const want = "In the beginning God created the heavens and the earth."
 	if verses[0].Text != want {
 		t.Fatalf("fetchChapterVerses()[0].Text = %q, want %q", verses[0].Text, want)
+	}
+}
+
+func TestOmittedVerseNumbersRemainAddressable(t *testing.T) {
+	testDB, err := sql.Open(sqliteDriverName, ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer testDB.Close()
+
+	compressed, err := biblestore.CompressChapterVerses([]biblestore.ChapterVerse{
+		{Verse: 36, Text: "Verse 36"},
+		{Verse: 38, Text: "Verse 38"},
+		{Verse: 39, Text: "Verse 39"},
+		{Verse: 40, Text: "Verse 40"},
+	})
+	if err != nil {
+		t.Fatalf("CompressChapterVerses() error = %v", err)
+	}
+
+	if _, err := testDB.Exec(`
+CREATE TABLE bible_chapter_text (
+	table_name TEXT NOT NULL,
+	b INTEGER NOT NULL,
+	c INTEGER NOT NULL,
+	verse_count INTEGER NOT NULL,
+	t BLOB NOT NULL,
+	PRIMARY KEY (table_name, b, c)
+);
+`); err != nil {
+		t.Fatalf("create optimized chapter table: %v", err)
+	}
+	for chapter := 1; chapter <= 8; chapter++ {
+		if _, err := testDB.Exec(
+			`INSERT INTO bible_chapter_text (table_name, b, c, verse_count, t) VALUES ('t_web', 44, ?, 4, ?)`,
+			chapter,
+			compressed,
+		); err != nil {
+			t.Fatalf("insert Acts %d fixture: %v", chapter, err)
+		}
+	}
+
+	oldVersions := cachedVersions
+	oldBooks := cachedBooks
+	oldBookDetails := cachedBookDetails
+	oldBookOrder := cachedBookOrder
+	oldAliases := cachedAliases
+	oldAliasKeys := cachedAliasKeys
+	oldMetadata := cachedBookMetadataByVersion
+	defer func() {
+		cachedVersions = oldVersions
+		cachedBooks = oldBooks
+		cachedBookDetails = oldBookDetails
+		cachedBookOrder = oldBookOrder
+		cachedAliases = oldAliases
+		cachedAliasKeys = oldAliasKeys
+		cachedBookMetadataByVersion = oldMetadata
+	}()
+
+	acts := BookMetadata{ID: 44, Name: "Acts", Abbreviation: "Acts", Testament: "New Testament"}
+	cachedVersions = map[string]Version{
+		"WEB": {Abbreviation: "WEB", Version: "World English Bible", TableName: "t_web"},
+	}
+	cachedBooks = map[string]int{"Acts": acts.ID}
+	cachedBookDetails = map[int]BookMetadata{acts.ID: acts}
+	cachedBookOrder = []BookMetadata{acts}
+	cachedAliases = map[string]string{"acts": "Acts"}
+	cachedAliasKeys = []string{"acts"}
+	cachedBookMetadataByVersion = make(map[string]BookMetadataResponse)
+
+	chapter, err := fetchText(testDB, "WEB", "Acts", acts.ID, "8")
+	if err != nil {
+		t.Fatalf("fetchText() error = %v", err)
+	}
+	if len(chapter.VerseRows) != 4 || chapter.VerseRows[1].Verse != 38 || chapter.VerseRows[3].Verse != 40 {
+		t.Fatalf("fetchText().VerseRows = %#v, want source verse numbers 36, 38, 39, 40", chapter.VerseRows)
+	}
+	if len(chapter.Verses) != 4 || chapter.Verses[1] != "Verse 38" {
+		t.Fatalf("fetchText().Verses = %#v, want compatible text array", chapter.Verses)
+	}
+
+	resolved, err := resolveReferenceData(testDB, "WEB", "Acts 8:40")
+	if err != nil {
+		t.Fatalf("resolveReferenceData(Acts 8:40) error = %v", err)
+	}
+	if resolved.Reference != "Acts 8:40" || len(resolved.SelectedVerses) != 1 || resolved.SelectedVerses[0] != 40 {
+		t.Fatalf("resolveReferenceData(Acts 8:40) = %#v", resolved)
+	}
+
+	if _, err := resolveReferenceData(testDB, "WEB", "Acts 8:37"); err == nil {
+		t.Fatal("resolveReferenceData(Acts 8:37) error = nil, want omitted verse error")
 	}
 }

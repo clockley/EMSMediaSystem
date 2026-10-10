@@ -13,6 +13,8 @@ the Free Software Foundation, either version 3 of the License, or
  * renderer entry point.
  */
 
+import { bibleTextVerseRows } from "../shared/app-bible-reference-utils.mjs";
+
 import {
   DEFAULT_ITEM_SLIDE_TRANSITION,
   SCRIPTURE_ABSOLUTE_MIN_BODY_FONT_SIZE,
@@ -1662,7 +1664,7 @@ async function nextBibleVerseEntryFromDesigner() {
     return null;
   }
   if (!bibleVerseSelectionRequestMatchesCurrent(selectionRequest)) return null;
-  const verses = Array.isArray(textData?.verses) ? textData.verses : [];
+  const verseRows = bibleTextVerseRows(textData);
   const selectedEnd = selectedVerses.length ? selectedVerses[selectedVerses.length - 1] : 0;
   const entryEnd =
     Number.isFinite(sourceEntry.verseEnd) && sourceEntry.verseEnd > 0
@@ -1671,9 +1673,10 @@ async function nextBibleVerseEntryFromDesigner() {
         ? sourceEntry.verse
         : 0;
   const currentVerse = Math.max(selectedEnd, entryEnd);
-  const nextVerse = currentVerse > 0 ? currentVerse + 1 : 1;
-  const text = verses[nextVerse - 1];
-  if (!text) return null;
+  const nextRow = verseRows.find((row) => row.verseNumber > currentVerse);
+  if (!nextRow) return null;
+  const nextVerse = nextRow.verseNumber;
+  const text = nextRow.text;
 
   return {
     ...sourceEntry,
@@ -2394,13 +2397,16 @@ async function bibleEntryFromSelectedVerses() {
     console.error("Failed to load selected Bible verses:", err);
     return null;
   }
-  const verses = Array.isArray(textData?.verses) ? textData.verses : [];
+  const verseTextByNumber = new Map(
+    bibleTextVerseRows(textData).map((row) => [row.verseNumber, row.text]),
+  );
   const selectedVerseTexts = selectedVerses
-    .filter((verseNumber) => verseNumber >= 1 && verseNumber <= verses.length)
     .map((verseNumber) => ({
       verseNumber,
-      text: verses[verseNumber - 1],
-    }));
+      text: verseTextByNumber.get(verseNumber),
+    }))
+    .filter((row) => typeof row.text === "string" && row.text);
+  if (selectedVerseTexts.length !== selectedVerses.length) return null;
   const selectedText =
     selectedVerseTexts.length === 1
       ? selectedVerseTexts[0].text
@@ -2463,8 +2469,9 @@ async function bibleEntryForSingleVerse(verseNumber) {
     console.error("Failed to load Bible verse:", err);
     return null;
   }
-  const verses = Array.isArray(textData?.verses) ? textData.verses : [];
-  const text = verses[verseNumber - 1];
+  const text = bibleTextVerseRows(textData).find(
+    (row) => row.verseNumber === verseNumber,
+  )?.text;
   if (!text) return null;
   const entry = {
     ...sourceEntry,
@@ -2542,11 +2549,13 @@ async function bibleEntryFromVerseDragPayload(payload) {
     console.error("Failed to load dragged Bible verses:", err);
     return null;
   }
-  const verses = Array.isArray(textData?.verses) ? textData.verses : [];
+  const verseTextByNumber = new Map(
+    bibleTextVerseRows(textData).map((row) => [row.verseNumber, row.text]),
+  );
   const rows = normalized.verses
     .map((verseNumber) => ({
       verseNumber,
-      text: verses[verseNumber - 1],
+      text: verseTextByNumber.get(verseNumber),
     }))
     .filter((row) => typeof row.text === "string" && row.text.trim());
   if (!rows.length) return null;
@@ -2642,11 +2651,13 @@ async function bibleVerseRowsForEntry(entry = {}) {
     console.error("Failed to load Bible verses for autofit split:", err);
     return [];
   }
-  const verses = Array.isArray(textData?.verses) ? textData.verses : [];
+  const verseTextByNumber = new Map(
+    bibleTextVerseRows(textData).map((row) => [row.verseNumber, row.text]),
+  );
   return selectedVerses
     .map((verseNumber) => ({
       verseNumber,
-      text: verses[verseNumber - 1],
+      text: verseTextByNumber.get(verseNumber),
     }))
     .filter((row) => typeof row.text === "string" && row.text.trim());
 }
@@ -5210,7 +5221,7 @@ async function renderBibleVerseList() {
     console.error("Failed to load Bible chapter:", err);
   }
   if (requestId !== bibleVerseListRequestId) return;
-  const verses = Array.isArray(textData?.verses) ? textData.verses : [];
+  const verseRows = bibleTextVerseRows(textData);
 
   const existingButtons = Array.from(list.children);
   if (
@@ -5222,7 +5233,7 @@ async function renderBibleVerseList() {
     existingButtons.length = 0;
   }
 
-  if (!verses.length) {
+  if (!verseRows.length) {
     list.innerHTML =
       '<div class="list-placeholder"><span class="list-placeholder-title">No verses found</span></div>';
     return;
@@ -5230,10 +5241,9 @@ async function renderBibleVerseList() {
 
   list.setAttribute("aria-multiselectable", "true");
 
-  const numVerses = verses.length;
+  const numVerses = verseRows.length;
   for (let index = 0; index < numVerses; index++) {
-    const verseText = verses[index];
-    const verseNumber = index + 1;
+    const { verseNumber, text: verseText } = verseRows[index];
     const isSelected = bibleVerseNumberIsSelected(verseNumber);
     let button = existingButtons[index];
 

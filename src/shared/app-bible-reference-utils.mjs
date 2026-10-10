@@ -49,3 +49,22 @@ export function normalizeScriptureReference(input) {
     .replace(/\s*,\s*/g, ",")
     .replace(/\s+/g, " ");
 }
+
+export function bibleTextVerseRows(response) {
+  const explicitRows = Array.isArray(response?.verseRows) ? response.verseRows : [];
+  if (explicitRows.length > 0) {
+    return explicitRows
+      .map((row) => ({
+        verseNumber: Math.trunc(Number(row?.verseNumber ?? row?.verse)),
+        text: typeof row?.text === "string" ? row.text : "",
+      }))
+      .filter((row) => row.verseNumber > 0 && row.text);
+  }
+
+  return (Array.isArray(response?.verses) ? response.verses : [])
+    .map((text, index) => ({
+      verseNumber: index + 1,
+      text: typeof text === "string" ? text : "",
+    }))
+    .filter((row) => row.text);
+}
