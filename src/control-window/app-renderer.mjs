@@ -3123,16 +3123,15 @@ async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
     isActiveMediaWindow() ||
     isLocalAppWindowPresentationActive() ||
     Boolean(isPlaying);
-  if (!presentationActive && !isQueueItemAudio(item)) {
-    await onQueueItemActivate(index);
-    return;
-  }
-  if (!(await confirmLiveSwitchAccepted(item))) return;
-
   const itemStart =
     queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
       ? startTime
       : queueItemCueStartTime(mediaQueue[index]);
+  if (!presentationActive) {
+    return takeQueueItemLive(index, itemStart);
+  }
+  if (!(await confirmLiveSwitchAccepted(item))) return;
+
   await takeQueueItemLive(index, itemStart);
 }
 
@@ -3156,7 +3155,6 @@ async function onQueueItemActivate(index) {
   if (!isActiveMediaWindow() && !isLocalPresentation) {
     const activateIndex = index;
     const item = mediaQueue[activateIndex];
-    await clearLowerThirdForUnsupportedMediaSource(item);
     hideMediaLibraryWorkspaceForSchedulePreview();
     if (!isQueueItemBible(item)) hideBibleWorkspace();
     if (!isQueueItemSong(item) || isQueueItemDeck(item)) hideSongsWorkspace();
@@ -3196,7 +3194,10 @@ function revealSchedulePreviewForLibraryPath(localPath) {
     if (normalizeMediaPathForCompare(mediaQueue[index]?.path) !== normalized) continue;
     hideMediaLibraryWorkspaceForSchedulePreview();
     syncPreviewStackSurface();
-    void onQueueItemActivate(index);
+    void onQueueItemActivate(index).catch((error) => {
+      console.error("Failed to reveal the scheduled media preview:", error);
+      showGnomeToast(error?.message || "Could not load the scheduled item");
+    });
     return true;
   }
   return false;

@@ -75,6 +75,7 @@ import {
   mediaLibraryDragIsActive,
   mediaLibraryItemIdFromDataTransfer,
   mediaQueue,
+  nextPreviewLoadToken,
   nextPlayableQueueIndexAfter,
   onQueueItemActivate,
   openProjectByPath,
@@ -148,6 +149,14 @@ let ignoreQueueItemClicksUntil = 0;
 
 let queueItemClickTimer = null;
 
+const SCHEDULE_DOUBLE_CLICK_WINDOW_MS = 650;
+
+let lastQueueItemClick = null;
+
+let queueItemLiveTakeInFlight = false;
+
+let lastQueueItemLiveTakeRequest = null;
+
 let queueDragFromIndex = -1;
 
 const recentlyAddedQueueItems = new Set();
@@ -161,6 +170,41 @@ const DEFAULT_SCHEDULE_SECTION_NAME = "New Section";
 function normalizeScheduleSectionName(value) {
   const name = String(value || "").trim();
   return name || DEFAULT_SCHEDULE_SECTION_NAME;
+}
+
+function cancelPendingQueueItemActivation() {
+  if (queueItemClickTimer === null) return;
+  window.clearTimeout(queueItemClickTimer);
+  queueItemClickTimer = null;
+}
+
+function requestQueueItemLiveFromDoubleClick(index) {
+  if (!queueIndexInRange(index)) return;
+  const item = mediaQueue[index];
+  if (!item || isQueueItemSection(item)) return;
+  const requestTime = performance.now();
+  if (
+    queueItemLiveTakeInFlight ||
+    (lastQueueItemLiveTakeRequest?.item === item &&
+      requestTime - lastQueueItemLiveTakeRequest.time <= SCHEDULE_DOUBLE_CLICK_WINDOW_MS)
+  ) {
+    return;
+  }
+
+  // A first click may already have started an asynchronous preview load before
+  // the user's second click arrives. Invalidate it immediately so it cannot
+  // repaint the workspace or shared preview while the live take is starting.
+  nextPreviewLoadToken();
+  lastQueueItemLiveTakeRequest = { item, time: requestTime };
+  queueItemLiveTakeInFlight = true;
+  void releaseOutputHoldsAndGoLiveQueueIndex(index)
+    .catch((error) => {
+      console.error("Failed to take the selected schedule item live:", error);
+      showGnomeToast(error?.message || "Could not take the selected item live");
+    })
+    .finally(() => {
+      queueItemLiveTakeInFlight = false;
+    });
 }
 
 function createScheduleSectionEntry(name = DEFAULT_SCHEDULE_SECTION_NAME) {
@@ -1347,41 +1391,51 @@ function installMediaQueueListDelegation() {
     if (!row || !list.contains(row)) return;
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
     if (Number.isNaN(idx)) return;
+    const item = mediaQueue[idx];
+    const clickTime = performance.now();
+    const isRepeatedItemClick = Boolean(
+      !e.shiftKey &&
+        !isQueueItemSection(item) &&
+        lastQueueItemClick?.item === item &&
+        clickTime - lastQueueItemClick.time <= SCHEDULE_DOUBLE_CLICK_WINDOW_MS,
+    );
     if (e.shiftKey) {
       extendQueueSelectionTo(idx);
     } else {
       setSelectedQueueAnchor(idx, { explicit: true });
     }
     updateQueueSelectionVisual();
-    if (isQueueItemSection(mediaQueue[idx])) {
+    if (isQueueItemSection(item)) {
       e.preventDefault();
-      if (queueItemClickTimer !== null) {
-        window.clearTimeout(queueItemClickTimer);
-        queueItemClickTimer = null;
-      }
+      cancelPendingQueueItemActivation();
+      lastQueueItemClick = null;
       return;
     }
     if (e.shiftKey) {
       e.preventDefault();
-      if (queueItemClickTimer !== null) {
-        window.clearTimeout(queueItemClickTimer);
-        queueItemClickTimer = null;
-      }
+      cancelPendingQueueItemActivation();
+      lastQueueItemClick = null;
       return;
     }
+    if (isRepeatedItemClick) {
+      e.preventDefault();
+      cancelPendingQueueItemActivation();
+      lastQueueItemClick = null;
+      requestQueueItemLiveFromDoubleClick(idx);
+      return;
+    }
+    lastQueueItemClick = { item, time: clickTime };
     if (e.detail > 1) {
-      if (queueItemClickTimer !== null) {
-        window.clearTimeout(queueItemClickTimer);
-        queueItemClickTimer = null;
-      }
+      cancelPendingQueueItemActivation();
       return;
     }
-    if (queueItemClickTimer !== null) {
-      window.clearTimeout(queueItemClickTimer);
-    }
+    cancelPendingQueueItemActivation();
+    const activationItem = item;
     queueItemClickTimer = window.setTimeout(() => {
       queueItemClickTimer = null;
-      void onQueueItemActivate(idx).catch((error) => {
+      const activationIndex = mediaQueue.indexOf(activationItem);
+      if (activationIndex < 0) return;
+      void onQueueItemActivate(activationIndex).catch((error) => {
         console.error("Failed to load the selected schedule item:", error);
         showGnomeToast(error?.message || "Could not load the selected schedule item");
       });
@@ -1423,10 +1477,7 @@ function installMediaQueueListDelegation() {
     }
     e.preventDefault();
     e.stopPropagation();
-    if (queueItemClickTimer !== null) {
-      window.clearTimeout(queueItemClickTimer);
-      queueItemClickTimer = null;
-    }
+    cancelPendingQueueItemActivation();
     const row = e.target.closest(".queue-item[data-queue-index]");
     if (!row || !list.contains(row)) return;
     const idx = Number.parseInt(row.getAttribute("data-queue-index"), 10);
@@ -1437,15 +1488,15 @@ function installMediaQueueListDelegation() {
       toggleScheduleSectionCollapsed(idx);
       return;
     }
-    void releaseOutputHoldsAndGoLiveQueueIndex(idx).catch((error) => {
-      console.error("Failed to take the selected schedule item live:", error);
-      showGnomeToast(error?.message || "Could not take the selected item live");
-    });
+    lastQueueItemClick = null;
+    requestQueueItemLiveFromDoubleClick(idx);
   });
 
   list.addEventListener("dragstart", (e) => {
     const row = e.target.closest(".queue-item[data-queue-index]");
     if (!row || !list.contains(row)) return;
+    cancelPendingQueueItemActivation();
+    lastQueueItemClick = null;
     if (e.target.closest(queueRowActionSelector)) {
       e.preventDefault();
       return;

@@ -316,6 +316,49 @@ test("text output is validated before a media window is reported live", async ()
   assert.match(createWindow, /const sent = await sendSongTextToOutput\(queueItem\)/);
 });
 
+test("schedule double-click survives a preview row rebuild", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-schedule-controller.mjs", import.meta.url),
+    "utf8",
+  );
+  const clickStart = source.indexOf('list.addEventListener("click"');
+  const clickEnd = source.indexOf('\n  list.addEventListener("keydown"', clickStart);
+  const clickHandler = source.slice(clickStart, clickEnd);
+  const takeStart = source.indexOf("function requestQueueItemLiveFromDoubleClick(");
+  const takeEnd = source.indexOf("\nfunction createScheduleSectionEntry", takeStart);
+  const takeRequest = source.slice(takeStart, takeEnd);
+
+  assert.match(clickHandler, /lastQueueItemClick\?\.item === item/);
+  assert.match(clickHandler, /SCHEDULE_DOUBLE_CLICK_WINDOW_MS/);
+  assert.match(clickHandler, /requestQueueItemLiveFromDoubleClick\(idx\)/);
+  assert.match(clickHandler, /const activationIndex = mediaQueue\.indexOf\(activationItem\)/);
+  assert.match(takeRequest, /nextPreviewLoadToken\(\)/);
+  assert.match(takeRequest, /queueItemLiveTakeInFlight/);
+});
+
+test("preview-only schedule selection does not clear a live lower third", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-renderer.mjs", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("async function onQueueItemActivate(");
+  const end = source.indexOf("\nfunction revealSchedulePreviewForLibraryPath", start);
+  const activation = source.slice(start, end);
+  assert.doesNotMatch(activation, /clearLowerThirdForUnsupportedMediaSource/);
+});
+
+test("playing a cue while idle starts the selected schedule item", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-renderer.mjs", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("async function switchQueueItemLiveWithConfirmation(");
+  const end = source.indexOf("\nasync function onQueueItemActivate", start);
+  const switchLive = source.slice(start, end);
+  assert.match(switchLive, /if \(!presentationActive\) \{\s*return takeQueueItemLive\(index, itemStart\)/);
+  assert.doesNotMatch(switchLive, /if \(!presentationActive[\s\S]*onQueueItemActivate/);
+});
+
 test("native decks keep the PowerPoint-like slides workspace", async () => {
   const workspaceSource = await readFile(
     new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url),

@@ -1725,7 +1725,20 @@ async function advanceToNextScheduledBibleText() {
     showGnomeToast("No next scheduled Bible text");
     return false;
   }
-  const nextEntry = await resolvedBibleEntryForItem(mediaQueue[nextIndex]);
+  let nextEntry = null;
+  try {
+    nextEntry = await resolvedBibleEntryForItem(mediaQueue[nextIndex], {
+      requireLookup: true,
+    });
+  } catch (error) {
+    console.error("Failed to load the next scheduled Bible text:", error);
+    showGnomeToast(error?.message || "Could not load the next scheduled Bible text");
+    return false;
+  }
+  if (!nextEntry) {
+    showGnomeToast("Could not load the next scheduled Bible text");
+    return false;
+  }
   mediaQueue[nextIndex] = {
     ...mediaQueue[nextIndex],
     path: bibleQueuePath(nextEntry.reference, nextEntry.version),

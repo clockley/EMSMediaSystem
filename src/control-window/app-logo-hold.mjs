@@ -266,12 +266,17 @@ async function releaseOutputHoldsAndGoLiveQueueIndex(index, startTime = 0) {
   if (!isCurrentLiveItem && !(await confirmLiveSwitchAccepted(item))) return;
 
   await releaseOutputHoldsForRecovery();
-  setSelectedQueueAnchor(index);
+  const currentIndex = mediaQueue.indexOf(item);
+  if (currentIndex < 0) {
+    showGnomeToast("The selected schedule item is no longer available");
+    return false;
+  }
+  setSelectedQueueAnchor(currentIndex);
   const itemStart =
     queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
       ? startTime
       : queueItemCueStartTime(item);
-  await takeQueueItemLive(index, itemStart, { skipLogoHoldPrep: true });
+  return takeQueueItemLive(currentIndex, itemStart, { skipLogoHoldPrep: true });
 }
 
 async function recoverOutputHoldsToSongSection(sectionId, options = {}) {
