@@ -77,7 +77,7 @@ export class SongsRpcClient {
   }
 
   async ensureStarted() {
-    if (this.child && !this.child.killed) return;
+    if (this.child && !this.child.killed && this.child.exitCode === null) return;
     if (this.startPromise) return this.startPromise;
     this.startPromise = this.start();
     try {
@@ -108,16 +108,19 @@ export class SongsRpcClient {
       
       if (!existsSync(binaryPath) && !this.app?.isPackaged) {
           spawnPath = "go";
-          spawnArgs = ["run", "emsmediasystem/songs-rpc", "-db", databasePath];
-          const cwd = path.join(this.devRoot, "sidecars", "songs-rpc");
+          spawnArgs = ["run", ".", "-db", databasePath];
+          const cwd = path.resolve(this.devRoot, "..", "sidecars", "songs-rpc");
           this.child = spawn(spawnPath, spawnArgs, { cwd });
       } else {
           this.child = spawn(spawnPath, spawnArgs);
       }
 
       const child = this.child;
+      this.buffer = "";
       let recentStderr = "";
-      child.stdout.on("data", (data) => this.handleData(data));
+      child.stdout.on("data", (data) => {
+        if (this.child === child) this.handleData(data);
+      });
       child.stderr.on("data", (data) => {
         const text = data.toString();
         recentStderr = `${recentStderr}${text}`.slice(-4096);

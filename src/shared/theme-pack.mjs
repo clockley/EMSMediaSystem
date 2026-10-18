@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "crypto";
 import { createWriteStream } from "fs";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "fs/promises";
 import path from "path";
+import { Transform } from "stream";
 import { pipeline } from "stream/promises";
 import yauzl from "yauzl";
 import yazl from "yazl";
@@ -15,6 +16,7 @@ export const THEME_PACK_SCHEMA = "ems.theme-pack.v1";
 const MAX_ENTRIES = 256;
 const MAX_ENTRY_BYTES = 256 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
+const MAX_METADATA_BYTES = 16 * 1024 * 1024;
 const sha256 = data => createHash("sha256").update(data).digest("hex");
 const canonical = value => `${JSON.stringify(value, null, 2)}\n`;
 
@@ -30,18 +32,111 @@ const openZip = filePath => new Promise((resolve, reject) =>
   yauzl.open(filePath, { lazyEntries: true, decodeStrings: true, validateEntrySizes: true },
     (error, zip) => error ? reject(error) : resolve(zip)));
 
-function entryBuffer(zip, entry) {
-  return new Promise((resolve, reject) => zip.openReadStream(entry, (error, stream) => {
-    if (error) return reject(error);
-    const chunks = []; let size = 0;
-    stream.on("data", chunk => {
-      size += chunk.length;
-      if (size > MAX_ENTRY_BYTES) stream.destroy(new Error("Theme-pack entry is too large"));
-      else chunks.push(chunk);
+function openEntryStream(zip, entry) {
+  return new Promise((resolve, reject) => {
+    zip.openReadStream(entry, (error, stream) => error ? reject(error) : resolve(stream));
+  });
+}
+
+async function inspectEntry(zip, entry, { capture = false } = {}) {
+  const stream = await openEntryStream(zip, entry);
+  const hash = createHash("sha256");
+  const chunks = capture ? [] : null;
+  const maxBytes = capture ? MAX_METADATA_BYTES : MAX_ENTRY_BYTES;
+  let size = 0;
+  for await (const chunk of stream) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      stream.destroy();
+      throw new Error(capture ? "Theme-pack metadata is too large" : "Theme-pack entry is too large");
+    }
+    hash.update(chunk);
+    if (chunks) chunks.push(chunk);
+  }
+  return {
+    size,
+    sha256: hash.digest("hex"),
+    ...(chunks ? { buffer: Buffer.concat(chunks) } : {}),
+  };
+}
+
+async function extractThemePackAssets(packPath, theme, staging, manifest) {
+  const targets = new Map();
+  for (const asset of theme.assets) {
+    const archivePath = safeArchivePath(asset.path);
+    if (!archivePath.startsWith("assets/")) {
+      throw new Error(`Theme asset must be under assets/: ${asset.id}`);
+    }
+    targets.set(archivePath, {
+      destination: path.join(staging, archivePath),
+      integrity: manifest.files?.[archivePath],
     });
-    stream.once("error", reject);
-    stream.once("end", () => resolve(Buffer.concat(chunks)));
-  }));
+  }
+
+  const zip = await openZip(packPath);
+  const extracted = new Set();
+  try {
+    await new Promise((resolve, reject) => {
+      zip.on("entry", async entry => {
+        try {
+          const name = safeArchivePath(entry.fileName);
+          const target = targets.get(name);
+          if (!target) {
+            zip.readEntry();
+            return;
+          }
+          if (extracted.has(name)) throw new Error(`Duplicate theme-pack entry: ${name}`);
+          const unixType = (entry.externalFileAttributes >>> 16) & 0o170000;
+          if (name.endsWith("/") || unixType === 0o120000) {
+            throw new Error("Theme pack contains a directory or symlink");
+          }
+          if (entry.uncompressedSize > MAX_ENTRY_BYTES) {
+            throw new Error("Theme-pack entry is too large");
+          }
+          await mkdir(path.dirname(target.destination), { recursive: true });
+          const stream = await openEntryStream(zip, entry);
+          const hash = createHash("sha256");
+          let size = 0;
+          const verifier = new Transform({
+            transform(chunk, _encoding, callback) {
+              size += chunk.length;
+              if (size > MAX_ENTRY_BYTES) {
+                callback(new Error("Theme-pack entry is too large"));
+                return;
+              }
+              hash.update(chunk);
+              callback(null, chunk);
+            },
+          });
+          await pipeline(
+            stream,
+            verifier,
+            createWriteStream(target.destination, { flags: "wx" }),
+          );
+          const digest = hash.digest("hex");
+          if (digest !== target.integrity?.sha256?.toLowerCase()) {
+            throw new Error(`Theme-pack hash mismatch: ${name}`);
+          }
+          if (
+            target.integrity?.size !== undefined &&
+            target.integrity.size !== size
+          ) {
+            throw new Error(`Theme-pack size mismatch: ${name}`);
+          }
+          extracted.add(name);
+          zip.readEntry();
+        } catch (error) { reject(error); }
+      });
+      zip.once("error", reject);
+      zip.once("end", resolve);
+      zip.readEntry();
+    });
+  } finally {
+    zip.close();
+  }
+  for (const name of targets.keys()) {
+    if (!extracted.has(name)) throw new Error(`Theme-pack asset is missing: ${name}`);
+  }
 }
 
 export async function exportThemePack({ theme, themeDir, destination, app = {}, metadata = {} }) {
@@ -86,7 +181,11 @@ export async function exportThemePack({ theme, themeDir, destination, app = {}, 
 }
 
 export async function inspectThemePack(packPath) {
-  const zip = await openZip(packPath); const entries = new Map(); let count = 0; let total = 0;
+  const zip = await openZip(packPath);
+  const entries = new Map();
+  const metadata = new Map();
+  let count = 0;
+  let total = 0;
   try {
     await new Promise((resolve, reject) => {
       zip.on("entry", async entry => {
@@ -98,17 +197,21 @@ export async function inspectThemePack(packPath) {
           if (entry.uncompressedSize > MAX_ENTRY_BYTES) throw new Error("Theme-pack entry is too large");
           total += entry.uncompressedSize; if (total > MAX_TOTAL_BYTES) throw new Error("Theme pack is too large");
           if (entries.has(name)) throw new Error(`Duplicate theme-pack entry: ${name}`);
-          entries.set(name, await entryBuffer(zip, entry)); zip.readEntry();
+          const capture = ["mimetype", "manifest.json", "theme.json"].includes(name);
+          const inspected = await inspectEntry(zip, entry, { capture });
+          entries.set(name, { size: inspected.size, sha256: inspected.sha256 });
+          if (inspected.buffer) metadata.set(name, inspected.buffer);
+          zip.readEntry();
         } catch (error) { reject(error); }
       });
       zip.once("error", reject); zip.once("end", resolve); zip.readEntry();
     });
   } finally { zip.close(); }
-  if (entries.get("mimetype")?.toString("utf8").trim() !== THEME_PACK_MIME_TYPE) throw new Error("Invalid theme-pack MIME type");
+  if (metadata.get("mimetype")?.toString("utf8").trim() !== THEME_PACK_MIME_TYPE) throw new Error("Invalid theme-pack MIME type");
   let manifest; let theme;
   try {
-    manifest = JSON.parse(entries.get("manifest.json")?.toString("utf8") || "");
-    theme = normalizeTheme(JSON.parse(entries.get("theme.json")?.toString("utf8") || ""));
+    manifest = JSON.parse(metadata.get("manifest.json")?.toString("utf8") || "");
+    theme = normalizeTheme(JSON.parse(metadata.get("theme.json")?.toString("utf8") || ""));
   } catch (error) { throw new Error(`Invalid theme-pack metadata: ${error.message}`); }
   if (manifest.schema !== THEME_PACK_SCHEMA || manifest.themeId !== theme.id) throw new Error("Theme-pack manifest does not match its theme");
   const declared = manifest.files && typeof manifest.files === "object" ? manifest.files : {};
@@ -116,9 +219,15 @@ export async function inspectThemePack(packPath) {
     if (!["mimetype", "manifest.json"].includes(name) && !declared[name]) throw new Error(`Undeclared theme-pack file: ${name}`);
   }
   for (const [name, integrity] of Object.entries(declared)) {
-    safeArchivePath(name); const data = entries.get(name);
-    if (!data) throw new Error(`Missing theme-pack file: ${name}`);
-    if (!/^[a-f0-9]{64}$/i.test(integrity?.sha256 || "") || sha256(data) !== integrity.sha256.toLowerCase()) throw new Error(`Theme-pack hash mismatch: ${name}`);
+    safeArchivePath(name); const inspected = entries.get(name);
+    if (!inspected) throw new Error(`Missing theme-pack file: ${name}`);
+    if (!/^[a-f0-9]{64}$/i.test(integrity?.sha256 || "") || inspected.sha256 !== integrity.sha256.toLowerCase()) throw new Error(`Theme-pack hash mismatch: ${name}`);
+    if (
+      integrity?.size !== undefined &&
+      (!Number.isSafeInteger(integrity.size) || integrity.size < 0 || integrity.size !== inspected.size)
+    ) {
+      throw new Error(`Theme-pack size mismatch: ${name}`);
+    }
   }
   if (manifest.themeRevision !== themeRevision(theme)) throw new Error("Theme-pack revision mismatch");
   for (const asset of theme.assets) {
@@ -143,11 +252,7 @@ export async function importThemePack(packPath, library, { conflict = "copy" } =
   let installed = false;
   try {
     await mkdir(path.join(staging, "assets"), { recursive: true });
-    for (const asset of theme.assets) {
-      const destination = path.join(staging, safeArchivePath(asset.path));
-      await mkdir(path.dirname(destination), { recursive: true });
-      await writeFile(destination, inspected.entries.get(asset.path), { flag: "wx" });
-    }
+    await extractThemePackAssets(packPath, theme, staging, inspected.manifest);
     await writeFile(path.join(staging, "theme.json"), canonical(theme), { flag: "wx" });
     if (existing && conflict === "replace") {
       backupDir = path.join(targetParent, `.ems-theme-backup-${randomUUID()}`);

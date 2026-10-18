@@ -809,6 +809,18 @@ export async function readEmprojProjectGuid(projectPath) {
   const entryHashes = new Map();
   const archiveBudget = createProjectArchiveBudget();
   await new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      try { zipfile.close(); } catch {}
+      reject(err);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
     zipfile.on("entry", async (entry) => {
       try {
         const inZipPath = assertSafeArchivePath(entry.fileName);
@@ -848,11 +860,11 @@ export async function readEmprojProjectGuid(projectPath) {
         }
         zipfile.readEntry();
       } catch (err) {
-        reject(err);
+        fail(err);
       }
     });
-    zipfile.once("error", reject);
-    zipfile.once("end", resolve);
+    zipfile.once("error", fail);
+    zipfile.once("end", finish);
     zipfile.readEntry();
   });
 
@@ -1183,6 +1195,18 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   const archiveBudget = createProjectArchiveBudget();
 
   await new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      try { zipfile.close(); } catch {}
+      reject(err);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
     zipfile.on("entry", async (entry) => {
       try {
         const inZipPath = assertSafeArchivePath(entry.fileName);
@@ -1232,11 +1256,11 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
         }
         zipfile.readEntry();
       } catch (err) {
-        reject(err);
+        fail(err);
       }
     });
-    zipfile.once("error", reject);
-    zipfile.once("end", resolve);
+    zipfile.once("error", fail);
+    zipfile.once("end", finish);
     zipfile.readEntry();
   });
 

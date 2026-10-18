@@ -224,9 +224,25 @@ export class SlidesStore {
     const destination = this._deckPath(storageId);
     await writeFileAtomic(destination, JSON.stringify(out, null, 2), "utf8");
     if (existing && existing.filePath !== destination) {
-      await rm(existing.filePath, { force: true });
+      try {
+        await this._removeDeckFile(existing.filePath);
+      } catch (error) {
+        try {
+          await this._removeDeckFile(destination);
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            "Failed to migrate the deck and remove the incomplete replacement",
+          );
+        }
+        throw error;
+      }
     }
     return summarizeDeck(out);
+  }
+
+  async _removeDeckFile(filePath) {
+    await rm(filePath, { force: true });
   }
 
   save(deck) {
@@ -241,7 +257,7 @@ export class SlidesStore {
     if (!id) return false;
     const existing = await this._findDeckRecord(id);
     if (!existing) return false;
-    await rm(existing.filePath, { force: true });
+    await this._removeDeckFile(existing.filePath);
     return true;
   }
 
@@ -277,8 +293,13 @@ export class SlidesStore {
     const exists = folders.find((f) => f.name === trimmed);
     if (exists) return exists;
     const folder = { id: shortId("folder"), name: trimmed };
-    folders.push(folder);
-    await this._persistFolders();
+    this._foldersCache = [...folders, folder];
+    try {
+      await this._persistFolders();
+    } catch (error) {
+      this._foldersCache = folders;
+      throw error;
+    }
     return folder;
   }
 
@@ -290,10 +311,18 @@ export class SlidesStore {
     const trimmed = String(name || "").trim();
     if (!trimmed) throw new Error("Folder name required");
     const folders = await this._loadFolders();
-    const folder = folders.find((f) => f.id === id);
-    if (!folder) return null;
-    folder.name = trimmed;
-    await this._persistFolders();
+    const folderIndex = folders.findIndex((f) => f.id === id);
+    if (folderIndex < 0) return null;
+    const folder = { ...folders[folderIndex], name: trimmed };
+    this._foldersCache = folders.map((entry, index) =>
+      index === folderIndex ? folder : entry,
+    );
+    try {
+      await this._persistFolders();
+    } catch (error) {
+      this._foldersCache = folders;
+      throw error;
+    }
     return folder;
   }
 

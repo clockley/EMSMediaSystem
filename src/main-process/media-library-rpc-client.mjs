@@ -55,7 +55,7 @@ export class MediaLibraryRpcClient {
   }
 
   async ensureStarted() {
-    if (this.child && !this.child.killed) return;
+    if (this.child && !this.child.killed && this.child.exitCode === null) return;
     if (this.startPromise) return this.startPromise;
     this.startPromise = this.start();
     try { await this.startPromise; } finally { this.startPromise = null; }
@@ -70,8 +70,11 @@ export class MediaLibraryRpcClient {
       const cwd = fallback ? path.resolve(this.devRoot, "..", "sidecars", "media-library-rpc") : undefined;
       const child = spawn(command, args, cwd ? { cwd } : undefined);
       this.child = child;
+      this.buffer = "";
       let stderr = "";
-      child.stdout.on("data", (data) => this.handleData(data));
+      child.stdout.on("data", (data) => {
+        if (this.child === child) this.handleData(data);
+      });
       child.stderr.on("data", (data) => { stderr = `${stderr}${data}`.slice(-4096); console.error(`[Media Library RPC] ${data}`); });
       child.on("error", (error) => { if (this.child === child) this.reset(error); reject(error); });
       child.on("exit", (code) => {

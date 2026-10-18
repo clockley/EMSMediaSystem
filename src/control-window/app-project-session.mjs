@@ -473,7 +473,9 @@ function applyProjectStateSnapshot(state, opts = {}) {
           ? state.project.created
           : new Date().toISOString();
     currentProjectStorageMode = state.projectStorageMode === "packed" ? "packed" : "working";
-    await syncActiveProjectPathToMain(nextProjectPath);
+    if (opts.deferMainActivation !== true) {
+      await syncActiveProjectPathToMain(nextProjectPath);
+    }
 
   if (Number.isInteger(state.currentMode)) {
     restoreOperatingMode(state.currentMode);
@@ -637,17 +639,25 @@ function applyProjectStateSnapshot(state, opts = {}) {
     .filter(Boolean) });
   Object.assign(bibleDesignerState, resolvedBibleStyleDefaults());
   setSharedRendererState({ selectedQueueAnchorIndex: -1 });
+  const firstPlayableIndex = mediaQueue.findIndex((item) =>
+    isScheduleItemCurrentlyPlayable(item),
+  );
   const savedCurrentIndexInRange =
     Number.isInteger(state.currentQueueIndex) &&
     state.currentQueueIndex >= 0 &&
     state.currentQueueIndex < mediaQueue.length;
-  const restoredCurrentIndex = savedCurrentIndexInRange
-    ? isScheduleItemCurrentlyPlayable(mediaQueue[state.currentQueueIndex])
-      ? state.currentQueueIndex
-      : mediaQueue.findIndex((item, index) =>
-          index > state.currentQueueIndex && isScheduleItemCurrentlyPlayable(item),
-        )
-    : -1;
+  let restoredCurrentIndex = firstPlayableIndex;
+  if (
+    savedCurrentIndexInRange &&
+    isScheduleItemCurrentlyPlayable(mediaQueue[state.currentQueueIndex])
+  ) {
+    restoredCurrentIndex = state.currentQueueIndex;
+  } else if (savedCurrentIndexInRange) {
+    const nextPlayableIndex = mediaQueue.findIndex((item, index) =>
+      index > state.currentQueueIndex && isScheduleItemCurrentlyPlayable(item),
+    );
+    if (nextPlayableIndex >= 0) restoredCurrentIndex = nextPlayableIndex;
+  }
   setSharedRendererState({ currentQueueIndex: restoredCurrentIndex >= 0 ? restoredCurrentIndex : -1 });
   setSharedRendererState({ previewCueIndex: Number.isInteger(state.previewCueIndex) &&
     state.previewCueIndex >= 0 &&
@@ -655,15 +665,6 @@ function applyProjectStateSnapshot(state, opts = {}) {
     isScheduleItemCurrentlyPlayable(mediaQueue[state.previewCueIndex])
       ? state.previewCueIndex
       : -1 });
-  if (
-    currentMode === MEDIAPLAYER &&
-    mediaQueue.length > 0 &&
-    currentQueueIndex < 0 &&
-    previewCueIndex < 0 &&
-    !isQueuePresentationActive()
-  ) {
-    setSharedRendererState({ currentQueueIndex: 0 });
-  }
   if (
     !isQueuePresentationActive() &&
     previewCueIndex >= 0 &&
@@ -918,9 +919,25 @@ async function openProjectDialog() {
 async function openProjectByPath(filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) return false;
   const project = await invoke("read-project-file", filePath);
-  const parsed = JSON.parse(project.data);
-  if (!(await applyProjectStateSnapshot({ ...parsed, projectPath: filePath }))) {
-    throw new Error("Project does not contain a valid queue.");
+  let committed = false;
+  try {
+    const parsed = JSON.parse(project.data);
+    if (!(
+      await applyProjectStateSnapshot(
+        { ...parsed, projectPath: filePath },
+        { deferMainActivation: true },
+      )
+    )) {
+      throw new Error("Project does not contain a valid queue.");
+    }
+    await invoke("commit-project-file-open", { openToken: project.openToken });
+    committed = true;
+  } finally {
+    if (!committed && project?.openToken) {
+      await invoke("discard-project-file-open", { openToken: project.openToken }).catch(
+        (error) => console.error("Failed to discard an unopened project:", error),
+      );
+    }
   }
   const bibleTranslationWarningShown = await fallbackUnavailableBibleTranslationsOnLoad();
   await refreshMissingFlagsAndWarn();

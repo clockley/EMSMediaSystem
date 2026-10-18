@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -156,6 +157,113 @@ func TestLibraryOwnsDatabaseScanningSearchRecentAndThumbnails(t *testing.T) {
 		t.Fatalf("missing item=%#v err=%v", missing, err)
 	}
 	assertThumbnailRemoved(t, service, item.ID, thumb.Output)
+}
+
+func TestSourceScanDoesNotBlockLibraryQueriesDuringFilesystemWalk(t *testing.T) {
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "source")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, filepath.Join(sourceRoot, "still-visible.png"))
+
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := service.AddSource(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanSource(source.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	originalWalk := service.walkDir
+	walkStarted := make(chan struct{})
+	releaseWalk := make(chan struct{})
+	service.walkDir = func(root string, visit fs.WalkDirFunc) error {
+		close(walkStarted)
+		<-releaseWalk
+		return originalWalk(root, visit)
+	}
+	scanDone := make(chan error, 1)
+	go func() {
+		_, scanErr := service.ScanSource(source.ID)
+		scanDone <- scanErr
+	}()
+	<-walkStarted
+
+	queryDone := make(chan error, 1)
+	go func() {
+		result, queryErr := service.Query(queryOptions{SourceID: source.ID, Limit: 10})
+		if queryErr == nil && result.Total != 1 {
+			queryErr = fmt.Errorf("query total while scanning = %d", result.Total)
+		}
+		queryDone <- queryErr
+	}()
+
+	select {
+	case queryErr := <-queryDone:
+		if queryErr != nil {
+			close(releaseWalk)
+			<-scanDone
+			t.Fatal(queryErr)
+		}
+	case <-time.After(time.Second):
+		close(releaseWalk)
+		<-scanDone
+		t.Fatal("media library query was blocked by the filesystem scan")
+	}
+	close(releaseWalk)
+	if scanErr := <-scanDone; scanErr != nil {
+		t.Fatal(scanErr)
+	}
+}
+
+func TestFolderQueriesEscapeSQLLikeWildcards(t *testing.T) {
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "source")
+	for _, folder := range []string{"Week_1", "WeekA1", "Set%2", "SetZZ2"} {
+		if err := os.MkdirAll(filepath.Join(sourceRoot, folder), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writePNG(t, filepath.Join(sourceRoot, folder, folder+".png"))
+	}
+
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := service.AddSource(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanSource(source.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, folder := range []string{"Week_1", "Set%2"} {
+		result, err := service.Query(queryOptions{
+			SourceID: source.ID,
+			ParentID: folder,
+			Limit:    10,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Total != 1 || len(result.Items) != 1 || result.Items[0].ParentID != folder {
+			t.Fatalf("folder %q matched unrelated items: %#v", folder, result.Items)
+		}
+	}
 }
 
 func TestIncompleteScanPreservesExistingMediaAndThumbnails(t *testing.T) {

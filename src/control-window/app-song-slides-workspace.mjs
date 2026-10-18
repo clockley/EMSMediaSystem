@@ -3138,10 +3138,7 @@ async function renderSongSectionPreview(section) {
   }
   syncSongLowerThirdForSection(section);
   } catch (err) {
-     try {
-       window.electron?.ipcRenderer?.send("log-to-file", `[ERROR] in renderSongSectionPreview: ${err.message}\n${err.stack}`);
-     } catch (e) {}
-     console.error(err);
+    console.error(err);
   }
 }
 

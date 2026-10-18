@@ -158,6 +158,7 @@ type thumbnailResult struct {
 
 type libraryService struct {
 	mu              sync.Mutex
+	scanMu          sync.Mutex
 	db              *sql.DB
 	databasePath    string
 	thumbnailPath   string
@@ -279,7 +280,7 @@ func (s *libraryService) createSchemaLocked() error {
 }
 
 func (s *libraryService) ensureReadyLocked() error {
-	if s.db == nil {
+	if s.closed || s.db == nil {
 		return fmt.Errorf("media library is not initialized")
 	}
 	return nil
@@ -561,8 +562,15 @@ func (s *libraryService) AddSource(folderPath string) (sourceView, error) {
 }
 
 func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
 	if err := s.ensureReadyLocked(); err != nil {
 		return sourceView{}, err
 	}
@@ -615,6 +623,9 @@ func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
 		existing[key] = id
 	}
 	rows.Close()
+	excludedRoots := append([]string(nil), s.excludedRoots...)
+	s.mu.Unlock()
+	locked = false
 
 	found := make([]scannedItem, 0)
 	directories := make([]string, 0)
@@ -638,7 +649,7 @@ func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
 				}
 				return nil
 			}
-			for _, excluded := range s.excludedRoots {
+			for _, excluded := range excludedRoots {
 				if pathInside(excluded, localPath) {
 					if entry.IsDir() {
 						return filepath.SkipDir
@@ -695,6 +706,15 @@ func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
 	})
 	if err != nil {
 		recordScanProblem(source.RootLocator, err)
+	}
+
+	s.mu.Lock()
+	locked = true
+	if err := s.ensureReadyLocked(); err != nil {
+		return sourceView{}, err
+	}
+	if _, err := s.sourceLocked(sourceID); err != nil {
+		return sourceView{}, err
 	}
 
 	tx, err := s.db.Begin()
@@ -1097,6 +1117,10 @@ func ftsQuery(query string) string {
 	return strings.Join(quoted, " AND ")
 }
 
+func escapeLikePattern(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(value)
+}
+
 func (s *libraryService) Query(raw queryOptions) (queryResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1117,8 +1141,8 @@ func (s *libraryService) Query(raw queryOptions) (queryResult, error) {
 		args = append(args, options.SourceID)
 	}
 	if options.ParentID != "" {
-		where = append(where, "(i.parent_id=? OR i.parent_id LIKE ?)")
-		args = append(args, options.ParentID, options.ParentID+"/%")
+		where = append(where, `(i.parent_id=? OR i.parent_id LIKE ? ESCAPE '\')`)
+		args = append(args, options.ParentID, escapeLikePattern(options.ParentID)+"/%")
 	}
 	if len(options.Kinds) > 0 {
 		placeholders := make([]string, len(options.Kinds))

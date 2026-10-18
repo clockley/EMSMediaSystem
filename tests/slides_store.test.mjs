@@ -64,6 +64,28 @@ test("legacy decks are looked up by exact embedded ID and migrate safely", async
   });
 });
 
+test("failed legacy migration removes the conflicting replacement", async () => {
+  await withStore(async (store, root) => {
+    await mkdir(root, { recursive: true });
+    const legacy = deck("legacy/custom", "Legacy");
+    const legacyPath = path.join(root, "legacy_custom.ems-slide.json");
+    await writeFile(legacyPath, JSON.stringify(legacy), "utf8");
+    const removeDeckFile = store._removeDeckFile.bind(store);
+    store._removeDeckFile = async filePath => {
+      if (filePath === legacyPath) throw new Error("injected legacy removal failure");
+      return removeDeckFile(filePath);
+    };
+
+    await assert.rejects(
+      store.save({ ...legacy, title: "Replacement" }),
+      /injected legacy removal failure/,
+    );
+
+    assert.deepEqual(await readdir(root), [path.basename(legacyPath)]);
+    assert.equal((await store.get(legacy.id)).title, "Legacy");
+  });
+});
+
 test("duplicate gets a distinct generated ID and remains independently addressable", async () => {
   await withStore(async (store) => {
     const original = await store.save(deck(null, "Original"));
@@ -102,6 +124,28 @@ test("corrupt folder metadata is preserved before a new folder file is written",
       JSON.parse(await readFile(path.join(root, ".folders.json"), "utf8")).folders[0].name,
       "Recovered",
     );
+  });
+});
+
+test("failed folder writes do not mutate the in-memory folder cache", async () => {
+  await withStore(async (store) => {
+    const originalPersist = store._persistFolders.bind(store);
+    store._persistFolders = async () => {
+      throw new Error("injected folder write failure");
+    };
+    await assert.rejects(store.createFolder("Phantom"), /injected folder write failure/);
+    assert.deepEqual(await store.listFolders(), []);
+
+    store._persistFolders = originalPersist;
+    const folder = await store.createFolder("Original");
+    store._persistFolders = async () => {
+      throw new Error("injected folder rename failure");
+    };
+    await assert.rejects(
+      store.renameFolder(folder.id, "Phantom Rename"),
+      /injected folder rename failure/,
+    );
+    assert.equal((await store.listFolders())[0].name, "Original");
   });
 });
 

@@ -3760,6 +3760,8 @@ async function handleShowRelinkSummaryDialog(event, opts = {}) {
 
 let activeProjectSnapshot = null;
 let activeProjectOperationQueue = Promise.resolve();
+const pendingProjectLoadsBySender = new Map();
+const pendingProjectLoadCleanupSenders = new Set();
 
 function enqueueActiveProjectOperation(operation) {
   const run = activeProjectOperationQueue.catch(() => {}).then(operation);
@@ -3792,27 +3794,109 @@ async function reconcileStagingFromSnapshot(snapshot, opts = {}) {
   });
 }
 
-async function handleReadProjectFile(_, filePath) {
+async function cleanupPendingProjectLoad(pending) {
+  if (!pending?.snapshot) return;
+  await cleanupExtractedProjectMedia(pending.snapshot).catch((error) => {
+    console.error("Failed to clean up a pending project load:", error);
+  });
+}
+
+async function discardPendingProjectLoadForSender(senderId, openToken = "") {
+  const pending = pendingProjectLoadsBySender.get(senderId);
+  if (!pending || (openToken && pending.openToken !== openToken)) return false;
+  pendingProjectLoadsBySender.delete(senderId);
+  await cleanupPendingProjectLoad(pending);
+  return true;
+}
+
+function watchPendingProjectLoadSender(webContents) {
+  const senderId = webContents?.id;
+  if (!Number.isInteger(senderId) || pendingProjectLoadCleanupSenders.has(senderId)) return;
+  pendingProjectLoadCleanupSenders.add(senderId);
+  webContents.once("destroyed", () => {
+    pendingProjectLoadCleanupSenders.delete(senderId);
+    void discardPendingProjectLoadForSender(senderId);
+  });
+}
+
+async function handleReadProjectFile(event, filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) {
     throw new Error("Invalid project path");
   }
   const snapshot = await loadEmprojSnapshot(filePath);
-  const previousSnapshot = activeProjectSnapshot;
-  activeProjectSnapshot = snapshot;
-  if (previousSnapshot) {
-    await cleanupExtractedProjectMedia(previousSnapshot).catch(() => {});
+  let data;
+  try {
+    data = JSON.stringify(snapshot);
+  } catch (error) {
+    await cleanupExtractedProjectMedia(snapshot).catch(() => {});
+    throw error;
   }
-  activeProjectPath = filePath;
-  activeProjectGuid = projectGuidFromSnapshot(snapshot);
-  await getStagingIndex().removeProjectsAtPathExcept(filePath, activeProjectGuid)
-    .then(async (result) => {
-      for (const snapshotId of result.eligibleSnapshotIds || []) {
-        await deleteStagedSnapshotsById(mediaStagingDir(), snapshotId);
-      }
+  const senderId = event?.sender?.id;
+  if (!Number.isInteger(senderId)) {
+    await cleanupExtractedProjectMedia(snapshot).catch(() => {});
+    throw new Error("Project open request has no renderer owner");
+  }
+  const pending = {
+    openToken: randomUUID(),
+    filePath,
+    snapshot,
+  };
+  const previousPending = pendingProjectLoadsBySender.get(senderId);
+  pendingProjectLoadsBySender.set(senderId, pending);
+  watchPendingProjectLoadSender(event.sender);
+  await cleanupPendingProjectLoad(previousPending);
+  return { filePath, data, openToken: pending.openToken };
+}
+
+async function handleCommitProjectFileOpen(event, payload = {}) {
+  const senderId = event?.sender?.id;
+  const openToken = typeof payload?.openToken === "string" ? payload.openToken : "";
+  const pending = pendingProjectLoadsBySender.get(senderId);
+  if (!pending || !openToken || pending.openToken !== openToken) {
+    throw new Error("Project open request is no longer pending");
+  }
+  pendingProjectLoadsBySender.delete(senderId);
+
+  const previousSnapshot = activeProjectSnapshot;
+  activeProjectSnapshot = pending.snapshot;
+  activeProjectPath = pending.filePath;
+  activeProjectGuid = projectGuidFromSnapshot(pending.snapshot);
+
+  if (previousSnapshot && previousSnapshot !== pending.snapshot) {
+    await cleanupExtractedProjectMedia(previousSnapshot).catch((error) => {
+      console.error("Failed to clean up the previous project media:", error);
     });
-  await reconcileStagingFromSnapshot(snapshot, { detectProtected: false });
-  await writeSettings({ lastOpenedProjectPath: filePath });
-  return { filePath, data: JSON.stringify(snapshot) };
+  }
+  try {
+    const result = await getStagingIndex().removeProjectsAtPathExcept(
+      pending.filePath,
+      activeProjectGuid,
+    );
+    for (const snapshotId of result.eligibleSnapshotIds || []) {
+      await deleteStagedSnapshotsById(mediaStagingDir(), snapshotId);
+    }
+    await reconcileStagingFromSnapshot(pending.snapshot, { detectProtected: false });
+  } catch (error) {
+    console.error("Failed to reconcile staging after opening a project:", error);
+  }
+  await writeSettings({ lastOpenedProjectPath: pending.filePath }).catch((error) => {
+    console.error("Failed to remember the opened project path:", error);
+  });
+  return {
+    ok: true,
+    filePath: pending.filePath,
+    projectGuid: activeProjectGuid,
+  };
+}
+
+async function handleDiscardProjectFileOpen(event, payload = {}) {
+  const senderId = event?.sender?.id;
+  const openToken = typeof payload?.openToken === "string" ? payload.openToken : "";
+  return {
+    discarded: Number.isInteger(senderId)
+      ? await discardPendingProjectLoadForSender(senderId, openToken)
+      : false,
+  };
 }
 
 async function handleWriteProjectFile(_, payload) {
@@ -5414,6 +5498,10 @@ function setIPC() {
   ipcMain.handle("show-relink-summary-dialog", handleShowRelinkSummaryDialog);
   ipcMain.handle("read-project-file", (...args) =>
     enqueueActiveProjectOperation(() => handleReadProjectFile(...args)));
+  ipcMain.handle("commit-project-file-open", (...args) =>
+    enqueueActiveProjectOperation(() => handleCommitProjectFileOpen(...args)));
+  ipcMain.handle("discard-project-file-open", (...args) =>
+    enqueueActiveProjectOperation(() => handleDiscardProjectFileOpen(...args)));
   ipcMain.handle("write-project-file", (...args) =>
     enqueueActiveProjectOperation(() => handleWriteProjectFile(...args)));
   ipcMain.handle("save-autosave-project-state", (...args) =>
@@ -5649,10 +5737,6 @@ function setIPC() {
       currentTime: seekTime,
       timestamp: Date.now(),
     });
-  });
-  ipcMain.on("log-to-file", (event, data) => {
-    writeFile('/home/christian/EMSMediaSystem/derived/renderer_log.txt', data + "\n", { flag: 'a' })
-      .catch(err => console.error("failed to log to file", err));
   });
   ipcMain.on("minimize-window", (event) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -5896,6 +5980,10 @@ app.on("before-quit", (event) => {
     activeProjectSnapshot = null;
     cleanupTasks.push(cleanupExtractedProjectMedia(snapshotToClean));
   }
+  for (const pending of pendingProjectLoadsBySender.values()) {
+    cleanupTasks.push(cleanupPendingProjectLoad(pending));
+  }
+  pendingProjectLoadsBySender.clear();
   void Promise.allSettled(cleanupTasks).finally(() => {
     app.quit();
   });

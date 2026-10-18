@@ -10,10 +10,11 @@ const PROJECT_GUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const STAGED_SNAPSHOT_FILENAME_RE = /^([a-f0-9]{16})(\.[^.]+)?$/i;
 
-function emptyIndex({ recoveryRequired = false } = {}) {
+function emptyIndex({ recoveryRequired = false, recoverySnapshotIds = [] } = {}) {
   return {
     schemaVersion: STAGING_INDEX_SCHEMA_VERSION,
     recoveryRequired,
+    recoverySnapshotIds: sortedUnique(recoverySnapshotIds, normalizeSnapshotId),
     snapshots: {},
     projects: {},
   };
@@ -114,9 +115,28 @@ function normalizeIndex(raw) {
   return {
     schemaVersion: STAGING_INDEX_SCHEMA_VERSION,
     recoveryRequired: raw.recoveryRequired === true,
+    recoverySnapshotIds: sortedUnique(
+      raw.recoverySnapshotIds,
+      normalizeSnapshotId,
+    ).filter((snapshotId) => !snapshots[snapshotId]),
     snapshots,
     projects,
   };
+}
+
+async function snapshotIdsOnDisk(stagingDir) {
+  const entries = await readdir(stagingDir);
+  return sortedUnique(
+    entries.map((entry) => snapshotIdFromStagedFilename(entry)),
+    normalizeSnapshotId,
+  );
+}
+
+function snapshotHeldForRecovery(index, snapshotId) {
+  return (
+    index.recoveryRequired === true ||
+    index.recoverySnapshotIds?.includes(snapshotId)
+  );
 }
 
 async function atomicWriteJson(filePath, data) {
@@ -168,6 +188,21 @@ export class StagingIndex {
             throw new Error("Unsupported or invalid staging index metadata");
           }
           this.index = normalizeIndex(raw);
+          if (this.index.recoveryRequired) {
+            try {
+              this.index.recoverySnapshotIds = sortedUnique(
+                [
+                  ...(this.index.recoverySnapshotIds || []),
+                  ...(await snapshotIdsOnDisk(this.stagingDir)),
+                ],
+                normalizeSnapshotId,
+              ).filter((snapshotId) => !this.index.snapshots[snapshotId]);
+              this.index.recoveryRequired = false;
+            } catch {
+              // Keep global recovery protection until the staging directory
+              // can be inventoried safely on a later startup.
+            }
+          }
         } catch (err) {
           if (err?.code !== "ENOENT") {
             const backupPath = `${this.filePath}.bak-${Date.now()}-${randomUUID()}`;
@@ -176,7 +211,13 @@ export class StagingIndex {
               "Staging index could not be read; preserving staged files until recovery:",
               err,
             );
-            this.index = emptyIndex({ recoveryRequired: true });
+            try {
+              this.index = emptyIndex({
+                recoverySnapshotIds: await snapshotIdsOnDisk(this.stagingDir),
+              });
+            } catch {
+              this.index = emptyIndex({ recoveryRequired: true });
+            }
           } else {
             this.index = emptyIndex();
           }
@@ -239,6 +280,8 @@ export class StagingIndex {
       snapshot.refCount = snapshot.projectGuids.length;
       snapshot.lastPinnedMs = now;
       this.index.snapshots[id] = snapshot;
+      this.index.recoverySnapshotIds = (this.index.recoverySnapshotIds || [])
+        .filter((snapshotId) => snapshotId !== id);
 
       await this.saveLoadedIndex();
       return { ok: true };
@@ -292,6 +335,8 @@ export class StagingIndex {
       const protectedBy = new Set(snapshot.protectedBy || []);
 
       if (nextIds.has(snapshotId)) {
+        this.index.recoverySnapshotIds = (this.index.recoverySnapshotIds || [])
+          .filter((recoveryId) => recoveryId !== snapshotId);
         projectGuids.add(guid);
         if (hasProtectedSnapshotIds) {
           if (nextProtectedIds.has(snapshotId)) protectedBy.add(guid);
@@ -310,7 +355,9 @@ export class StagingIndex {
 
       if (snapshotDeletionEligible(snapshot)) {
         delete this.index.snapshots[snapshotId];
-        if (!this.index.recoveryRequired) eligibleSnapshotIds.push(snapshotId);
+        if (!snapshotHeldForRecovery(this.index, snapshotId)) {
+          eligibleSnapshotIds.push(snapshotId);
+        }
       } else {
         this.index.snapshots[snapshotId] = snapshot;
       }
@@ -339,12 +386,14 @@ export class StagingIndex {
     });
     return {
       ...result,
-      eligibleSnapshotIds: this.index.recoveryRequired
-        ? []
-        : sortedUnique(
-            [...(result.eligibleSnapshotIds || []), ...snapshotIds],
-            normalizeSnapshotId,
-          ).filter((snapshotId) => !this.index.snapshots[snapshotId]),
+      eligibleSnapshotIds: sortedUnique(
+        [...(result.eligibleSnapshotIds || []), ...snapshotIds],
+        normalizeSnapshotId,
+      ).filter(
+        (snapshotId) =>
+          !this.index.snapshots[snapshotId] &&
+          !snapshotHeldForRecovery(this.index, snapshotId),
+      ),
     };
   }
 
@@ -435,6 +484,7 @@ export class StagingIndex {
       }
       const snapshotId = snapshotIdFromStagedFilename(entry);
       if (!snapshotId) continue;
+      if (snapshotHeldForRecovery(this.index, snapshotId)) continue;
       const snapshot = this.index.snapshots[snapshotId];
       if (snapshotDeletionEligible(snapshot)) orphanIds.add(snapshotId);
     }

@@ -26,7 +26,9 @@ test(".emtheme round trip includes verified assets and handles ID collisions", a
   assert.equal(exported.manifest.schema, THEME_PACK_SCHEMA);
   const inspected = await inspectThemePack(packPath);
   assert.equal(inspected.theme.name, "Shared Theme");
-  assert.deepEqual(inspected.entries.get(asset.path), await readFile(sourceAsset));
+  assert.equal(inspected.entries.get(asset.path).size, (await stat(sourceAsset)).size);
+  assert.match(inspected.entries.get(asset.path).sha256, /^[a-f0-9]{64}$/);
+  assert.equal(Buffer.isBuffer(inspected.entries.get(asset.path)), false);
 
   const destinationLibrary = await new ThemeLibrary(path.join(root, "destination")).init();
   const first = await importThemePack(packPath, destinationLibrary);
