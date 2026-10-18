@@ -268,6 +268,54 @@ test("reference-only scheduled songs are hydrated before audience output", async
   assert.match(loadScheduledSong, /item\.songSnapshot = songSnapshot/);
 });
 
+test("Show Now slipstreams songs and decks over an existing non-song output", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url),
+    "utf8",
+  );
+  const helperStart = source.indexOf("async function slipstreamSongTextToOutput(");
+  const helperEnd = source.indexOf("\nfunction liveSongAudienceTextMessageForClear", helperStart);
+  const helper = source.slice(helperStart, helperEnd);
+  const songStart = source.indexOf("async function showSongTextNow(");
+  const songEnd = source.indexOf("\nasync function insertSongInSchedule", songStart);
+  const deckStart = source.indexOf("async function showCurrentDeckNow(");
+  const deckEnd = source.indexOf("\nfunction scheduleCurrentDeck", deckStart);
+
+  assert.match(helper, /invoke\("slipstream-media-window"/);
+  assert.match(helper, /isText: true/);
+  assert.match(source.slice(songStart, songEnd), /slipstreamSongTextToOutput\(transientEntry\)/);
+  assert.match(source.slice(deckStart, deckEnd), /slipstreamSongTextToOutput\(entry\)/);
+});
+
+test("scheduled song preview loads do not commit stale workspace identity", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("async function loadSongItemIntoWorkspace(");
+  const end = source.indexOf("\nfunction queueItemDeckId", start);
+  const loadScheduledSong = source.slice(start, end);
+  const firstTokenCheck = loadScheduledSong.indexOf('typeof token === "number"');
+  const identityCommit = loadScheduledSong.indexOf("currentSongQueueItem = item || null");
+
+  assert.ok(firstTokenCheck >= 0 && firstTokenCheck < identityCommit);
+  assert.match(loadScheduledSong, /previewLoadToken: token/);
+});
+
+test("text output is validated before a media window is reported live", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-media-runtime.mjs", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("async function createMediaWindow(");
+  const end = source.indexOf("\nexport {", start);
+  const createWindow = source.slice(start, end);
+
+  assert.match(createWindow, /resolvedBibleEntryForItem\(textQueueItem, \{\s*requireLookup: true/);
+  assert.match(createWindow, /!resolvedSongPresentation\(textQueueItem\)\?\.message/);
+  assert.match(createWindow, /const sent = await sendSongTextToOutput\(queueItem\)/);
+});
+
 test("native decks keep the PowerPoint-like slides workspace", async () => {
   const workspaceSource = await readFile(
     new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url),

@@ -163,6 +163,7 @@ import {
   resolveQueueItemMediaPath,
   resolveQueuePresentationVideo,
   resolvedBibleEntryForItem,
+  resolvedSongPresentation,
   scheduleAutosaveProjectState,
   scheduleMediaWatchSync,
   scripturePresentation,
@@ -2158,6 +2159,27 @@ async function createMediaWindow(options) {
   );
   const isImgFile = !isTextItem && isImg(mediaFile);
   const isPptxFile = !isTextItem && pptxRegex.test(mediaFile);
+  const textQueueItem = isTextItem
+    ? textItem || mediaQueue[currentQueueIndex]
+    : null;
+  let resolvedBibleTextEntry = options?.resolvedBibleEntry || null;
+  if (isTextItem && isQueueItemBible(textQueueItem) && !resolvedBibleTextEntry) {
+    resolvedBibleTextEntry = await resolvedBibleEntryForItem(textQueueItem, {
+      requireLookup: true,
+    });
+    if (!resolvedBibleTextEntry) {
+      showGnomeToast("Could not load the scheduled Scripture text");
+      return false;
+    }
+  }
+  if (
+    isTextItem &&
+    isQueueItemSong(textQueueItem) &&
+    !resolvedSongPresentation(textQueueItem)?.message
+  ) {
+    showGnomeToast("Could not load the scheduled song");
+    return false;
+  }
   const pptxStartSlide = isPptxFile
     ? pptxStartSlideForItem({ path: mediaFile, type: "pptx" })
     : 0;
@@ -2297,9 +2319,14 @@ async function createMediaWindow(options) {
         }
         const queueItem = textItem || mediaQueue[currentQueueIndex];
         if (isQueueItemSong(queueItem)) {
-          await sendSongTextToOutput(queueItem);
+          const sent = await sendSongTextToOutput(queueItem);
+          if (!sent) showGnomeToast("Could not display the scheduled song");
         } else {
-          const entry = await resolvedBibleEntryForItem(queueItem);
+          const entry = resolvedBibleTextEntry;
+          if (!entry) {
+            showGnomeToast("Could not load the scheduled Scripture text");
+            return;
+          }
           await sendBibleTextToOutput(entry, options?.presentationRevision ?? null);
         }
         syncAudienceOutputHoldAfterPresentationStart();

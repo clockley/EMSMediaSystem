@@ -1755,7 +1755,10 @@ function renderAudienceLayer(layer) {
   }
   if (layer === "clearText") {
     const textCanvas = document.getElementById("textCanvas");
-    if (textCanvas) textCanvas.style.visibility = audienceCompositorState.layers.clearText ? "hidden" : "";
+    // Clear Text is rendered by sending a presentation payload with its text
+    // objects removed. Hiding the whole canvas would also hide the background
+    // image/video and non-text slide graphics that must remain visible.
+    if (textCanvas) textCanvas.style.visibility = "";
   }
 }
 
@@ -3355,7 +3358,18 @@ function installTextHandlers() {
   if (textIpcHandlersInstalled) return;
   textIpcHandlersInstalled = true;
   ipcRenderer.on("update-text", (evt, message) => {
-    applyTextMessage(message);
+    if (!isText) {
+      isText = true;
+      isPptx = false;
+      isImg = false;
+      teardownPptxViewer();
+      teardownImageElement();
+      teardownVideoElement();
+      setProjectionVideoVisible(false);
+    }
+    activateTextTarget({ textPayload: message });
+    const textCanvas = document.getElementById("textCanvas");
+    if (textCanvas) textCanvas.style.visibility = "";
   });
   ipcRenderer.on("clear-lower-third-text", (_evt, payload = {}) => {
     applyTextMessage({

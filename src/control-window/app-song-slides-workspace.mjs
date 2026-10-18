@@ -2589,17 +2589,21 @@ function isCurrentWorkspaceSongShownNow() {
 }
 
 async function loadSongItemIntoWorkspace(item, token) {
-  currentSongQueueItem = item || null;
-  currentSongSlideId = item?.currentSlideId || item?.render?.currentSlideId || null;
-  currentSongSequenceEntryId =
-    item?.currentSequenceEntryId ||
-    item?.sequence?.currentSequenceEntryId ||
-    item?.render?.currentSequenceEntryId ||
-    null;
+  if (typeof token === "number" && !isCurrentPreviewLoad(token)) return false;
+  const commitWorkspaceIdentity = () => {
+    currentSongQueueItem = item || null;
+    currentSongSlideId = item?.currentSlideId || item?.render?.currentSlideId || null;
+    currentSongSequenceEntryId =
+      item?.currentSequenceEntryId ||
+      item?.sequence?.currentSequenceEntryId ||
+      item?.render?.currentSequenceEntryId ||
+      null;
+  };
   if (item?.deckSnapshot) {
     const deck = normalizeSlideDeck(item.deckSnapshot);
     const songSnapshot = deckToTransientSong(deck);
     if (!songSnapshot) return false;
+    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return false;
     // Audience output resolves directly from the scheduled item, not from the
     // workspace globals populated below. Keep legacy deck-backed entries
     // renderable even when they were saved without a parallel song snapshot.
@@ -2609,25 +2613,30 @@ async function loadSongItemIntoWorkspace(item, token) {
       ...item,
       songSnapshot,
     });
+    commitWorkspaceIdentity();
     currentSongRenderState = mergeSongRenderState(songRenderStateFromSongDocument(deck), itemRender);
     currentSongSectionId = itemRender.currentSectionId || item?.source?.pageId || null;
-    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return false;
-    await loadSongIntoWorkspace(deck, { render: currentSongRenderState });
-    return true;
+    return (await loadSongIntoWorkspace(deck, {
+      render: currentSongRenderState,
+      previewLoadToken: token,
+    })) !== false;
   }
   if (item?.songSnapshot) {
     const sourceDocument = item.songSnapshot;
     const songSnapshot = transientSongFromSongDocument(sourceDocument);
     if (!songSnapshot) return false;
+    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return false;
     // Some older projects stored a deck document in songSnapshot. Normalize
     // the runtime field so the audience resolver always receives ems.song.v1.
     item.songSnapshot = songSnapshot;
     const itemRender = songRenderFromItem({ ...item, songSnapshot });
+    commitWorkspaceIdentity();
     currentSongRenderState = itemRender;
     currentSongSectionId = itemRender.currentSectionId || null;
-    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return false;
-    await loadSongIntoWorkspace(sourceDocument, { render: itemRender });
-    return true;
+    return (await loadSongIntoWorkspace(sourceDocument, {
+      render: itemRender,
+      previewLoadToken: token,
+    })) !== false;
   }
   const librarySongId = item?.source?.songId || parseSongQueuePath(item?.path);
   if (librarySongId) {
@@ -2649,10 +2658,13 @@ async function loadSongItemIntoWorkspace(item, token) {
       songId: librarySongId,
     };
     const itemRender = songRenderFromItem({ ...item, songSnapshot });
+    commitWorkspaceIdentity();
     currentSongRenderState = mergeSongRenderState(songRenderStateFromSongDocument(song), itemRender);
     currentSongSectionId = itemRender.currentSectionId || null;
-    await loadSongIntoWorkspace(song, { render: itemRender });
-    return true;
+    return (await loadSongIntoWorkspace(song, {
+      render: itemRender,
+      previewLoadToken: token,
+    })) !== false;
   }
   return false;
 }
@@ -2859,6 +2871,12 @@ async function loadDeckQueueItemIntoWorkspace(item, token) {
 }
 
 async function loadSongIntoWorkspace(song, opts = {}) {
+  if (
+    typeof opts.previewLoadToken === "number" &&
+    !isCurrentPreviewLoad(opts.previewLoadToken)
+  ) {
+    return false;
+  }
   const sourceDocument = song || null;
   currentWorkspaceSongDeck = sourceDocument
     ? songDeckDocumentFromSongDocument(sourceDocument, opts.render || currentSongRenderState)
@@ -2941,6 +2959,12 @@ async function loadSongIntoWorkspace(song, opts = {}) {
   }
 
   const inLibrary = await checkIfSongInLibrary(currentWorkspaceSong.id);
+  if (
+    typeof opts.previewLoadToken === "number" &&
+    !isCurrentPreviewLoad(opts.previewLoadToken)
+  ) {
+    return false;
+  }
   const saveToLibraryBtn = document.getElementById("songsSaveToLibraryBtn");
   if (saveToLibraryBtn) {
     saveToLibraryBtn.hidden = inLibrary;
@@ -3518,7 +3542,7 @@ async function sendSongTextToOutput(item = null) {
     },
   );
   const presentation = resolvedSongPresentation(sourceItem);
-  if (!presentation?.message) return;
+  if (!presentation?.message) return false;
   const message = { ...presentation.message };
   const transitionItem =
     item && isQueueItemTransitionCapable(item)
@@ -3530,6 +3554,36 @@ async function sendSongTextToOutput(item = null) {
     message.transition = slideTransitionPayloadForQueueItem(transitionItem);
   }
   sendAudienceTextMessage("song", message);
+  return true;
+}
+
+async function slipstreamSongTextToOutput(item) {
+  const sourceItem = songItemForAudienceResolution(item);
+  await waitForTextFonts(
+    [
+      sourceItem?.resolvedTheme?.typography?.fontFamily,
+      sourceItem?.render?.fontFamily || sourceItem?.songSnapshot?.defaultRender?.fontFamily,
+    ],
+    {
+      documentRef: globalThis.document,
+      sample: sourceItem?.songSnapshot?.title || "EMS",
+      fontSize: sourceItem?.render?.fontSize,
+    },
+  );
+  const presentation = resolvedSongPresentation(sourceItem);
+  if (!presentation?.message) return false;
+  const transition = slideTransitionPayloadForQueueItem(item);
+  const switched = await invoke("slipstream-media-window", {
+    isText: true,
+    mediaFile: item?.path || "",
+    textPayload: audienceTextMessageForSend("song", {
+      ...presentation.message,
+      transition,
+    }),
+    transition,
+  });
+  if (!switched) return false;
+  return sendSongTextToOutput(item);
 }
 
 function liveSongAudienceTextMessageForClear() {
@@ -3545,37 +3599,79 @@ function liveSongAudienceTextMessageForClear() {
 }
 
 async function clearLiveSongText({ quiet = false } = {}) {
-  if (!hasLiveAudienceTextPresentation("song")) {
+  const audienceLive = hasLiveAudienceTextPresentation("song");
+  const lowerThirdLive = Boolean(
+    isBibleLowerThirdFeatureEnabled() &&
+      bibleLowerThirdOutputActive &&
+      activeLowerThirdContentType === "song",
+  );
+  if (!audienceLive && !lowerThirdLive) {
     if (!quiet) showGnomeToast("No song text is live");
     return false;
   }
-  const message = liveSongAudienceTextMessageForClear();
-  if (!message) {
-    if (!quiet) showGnomeToast("Could not clear song text");
-    return false;
+
+  let cleared = false;
+  if (audienceLive) {
+    const message = liveSongAudienceTextMessageForClear();
+    if (message) {
+      const clearedMessage = clearTextFromPresentationMessage(message);
+      sendAudienceTextMessage("song", clearedMessage, {
+        remember: false,
+        clearToggle: false,
+      });
+      cleared = true;
+    }
   }
-  const clearedMessage = clearTextFromPresentationMessage(message);
-  sendAudienceTextMessage("song", clearedMessage, {
-    remember: false,
-    clearToggle: false,
-  });
-  if (!quiet) showGnomeToast("Song text cleared");
-  return true;
+  if (lowerThirdLive) {
+    const message = lastLowerThirdBibleTextMessage || buildSongLowerThirdMessage();
+    sendBibleLowerThirdTextMessage(
+      clearTextFromPresentationMessage({ ...message, outputRole: "lower-third" }),
+      { remember: false, clearToggle: false },
+    );
+    cleared = true;
+  }
+  if (cleared) {
+    if (!quiet) showGnomeToast("Song text cleared");
+    return true;
+  }
+  if (!quiet) showGnomeToast("Could not clear song text");
+  return false;
 }
 
 async function restoreLiveSongText({ quiet = false } = {}) {
-  if (!hasLiveAudienceTextPresentation("song")) {
+  const audienceLive = hasLiveAudienceTextPresentation("song");
+  const lowerThirdLive = Boolean(
+    isBibleLowerThirdFeatureEnabled() &&
+      bibleLowerThirdOutputActive &&
+      activeLowerThirdContentType === "song",
+  );
+  if (!audienceLive && !lowerThirdLive) {
     if (!quiet) showGnomeToast("No song text is live");
     return false;
   }
-  const message = lastAudienceSongTextMessage || liveSongAudienceTextMessageForClear();
-  if (!message) {
-    if (!quiet) showGnomeToast("Could not restore song text");
-    return false;
+
+  let restored = false;
+  if (audienceLive) {
+    const message = lastAudienceSongTextMessage || liveSongAudienceTextMessageForClear();
+    if (message) {
+      sendAudienceTextMessage("song", message, { respectLiveTextClearState: false });
+      restored = true;
+    }
   }
-  sendAudienceTextMessage("song", message, { respectLiveTextClearState: false });
-  if (!quiet) showGnomeToast("Song text restored");
-  return true;
+  if (lowerThirdLive) {
+    const message = {
+      ...(lastLowerThirdBibleTextMessage || buildSongLowerThirdMessage()),
+      outputRole: "lower-third",
+    };
+    sendBibleLowerThirdTextMessage(message, { respectLiveTextClearState: false });
+    restored = true;
+  }
+  if (restored) {
+    if (!quiet) showGnomeToast("Song text restored");
+    return true;
+  }
+  if (!quiet) showGnomeToast("Could not restore song text");
+  return false;
 }
 
 async function syncActiveScheduledSongPresentation() {
@@ -3585,19 +3681,16 @@ async function syncActiveScheduledSongPresentation() {
     if (!isCurrentWorkspaceSongShownNow()) return false;
     const item = currentSongPresentationItem();
     if (!item) return false;
-    await sendSongTextToOutput(item);
-    return true;
+    return sendSongTextToOutput(item);
   }
   const item = mediaQueue[liveIndex];
   if (!isQueueItemSong(item)) {
     if (!isCurrentWorkspaceSongShownNow()) return false;
     const currentItem = currentSongPresentationItem();
     if (!currentItem) return false;
-    await sendSongTextToOutput(currentItem);
-    return true;
+    return sendSongTextToOutput(currentItem);
   }
-  await sendSongTextToOutput(item);
-  return true;
+  return sendSongTextToOutput(item);
 }
 
 async function showSongTextNow() {
@@ -3618,33 +3711,24 @@ async function showSongTextNow() {
   if (!transientEntry) return false;
 
   try {
+    const audienceStarted = isActiveMediaWindow()
+      ? activeMediaWindowContentType === "song"
+        ? await sendSongTextToOutput(transientEntry)
+        : await slipstreamSongTextToOutput(transientEntry)
+      : await createMediaWindow({
+          textItem: transientEntry,
+          transientText: true,
+          songItem: true,
+        });
+    if (!audienceStarted) {
+      showGnomeToast("No song output started");
+      return false;
+    }
     setSharedRendererState({ mediaPlaybackEndedPending: false });
     setSharedRendererState({ pendingQueueSwitchIndex: null });
     setSharedRendererState({ pendingQueueSwitchStartTime: 0 });
     setSharedRendererState({ userStopPresentationPending: false });
     setSharedRendererState({ currentQueueIndex: -1 });
-
-    if (isActiveMediaWindow() && activeMediaWindowContentType === "song") {
-      await sendSongTextToOutput(transientEntry);
-      setSharedRendererState({ isPlaying: true });
-      setSharedRendererState({ isQueuePlaying: false });
-      setSharedRendererState({ activeMediaWindowContentType: "song" });
-      markSongShowNowPresentation(transientEntry);
-      setSharedRendererState({ isActiveMediaWindowCache: true });
-      updateDynUI();
-      renderQueue();
-      return true;
-    }
-
-    const audienceStarted = await createMediaWindow({
-      textItem: transientEntry,
-      transientText: true,
-      songItem: true,
-    });
-    if (!audienceStarted) {
-      showGnomeToast("No song output started");
-      return false;
-    }
     setSharedRendererState({ activeMediaWindowContentType: "song" });
     setSharedRendererState({ isPlaying: true });
     setSharedRendererState({ isQueuePlaying: false });
@@ -7354,34 +7438,24 @@ async function showCurrentDeckNow() {
       currentSongSlideId = entry.currentSlideId || entry.render?.currentSlideId || null;
     }
     if (typeof currentSongQueueItem !== "undefined") currentSongQueueItem = entry;
+    const started = isActiveMediaWindow()
+      ? activeMediaWindowContentType === "song"
+        ? await sendSongTextToOutput(entry)
+        : await slipstreamSongTextToOutput(entry)
+      : await createMediaWindow({
+          textItem: entry,
+          transientText: true,
+          songItem: true,
+        });
+    if (!started) {
+      showGnomeToast("No output started");
+      return;
+    }
     if (typeof mediaPlaybackEndedPending !== "undefined") setSharedRendererState({ mediaPlaybackEndedPending: false });
     if (typeof pendingQueueSwitchIndex !== "undefined") setSharedRendererState({ pendingQueueSwitchIndex: null });
     if (typeof pendingQueueSwitchStartTime !== "undefined") setSharedRendererState({ pendingQueueSwitchStartTime: 0 });
     if (typeof userStopPresentationPending !== "undefined") setSharedRendererState({ userStopPresentationPending: false });
     if (typeof currentQueueIndex !== "undefined") setSharedRendererState({ currentQueueIndex: -1 });
-
-    if (typeof isActiveMediaWindow === "function" && isActiveMediaWindow() && activeMediaWindowContentType === "song") {
-      await sendSongTextToOutput(entry);
-      if (typeof isPlaying !== "undefined") setSharedRendererState({ isPlaying: true });
-      if (typeof isQueuePlaying !== "undefined") setSharedRendererState({ isQueuePlaying: false });
-      setSharedRendererState({ activeMediaWindowContentType: "song" });
-      if (typeof markSongShowNowPresentation === "function") {
-        markSongShowNowPresentation(entry);
-      }
-      if (typeof isActiveMediaWindowCache !== "undefined") setSharedRendererState({ isActiveMediaWindowCache: true });
-      if (typeof updateDynUI === "function") updateDynUI();
-      if (typeof renderQueue === "function") renderQueue();
-      return;
-    }
-    const started = await createMediaWindow({
-      textItem: entry,
-      transientText: true,
-      songItem: true,
-    });
-    if (!started) {
-      showGnomeToast("No output started");
-      return;
-    }
     setSharedRendererState({ activeMediaWindowContentType: "song" });
     if (typeof isPlaying !== "undefined") setSharedRendererState({ isPlaying: true });
     if (typeof isQueuePlaying !== "undefined") setSharedRendererState({ isQueuePlaying: false });
@@ -8447,6 +8521,7 @@ import {
   applyOperatorSelectionContrast,
   applyScriptureRenderToPreview,
   arrangementSequenceEntries,
+  audienceTextMessageForSend,
   bibleDesignerState,
   bibleLowerThirdLiveCueKey,
   bibleLowerThirdOutputActive,
@@ -8495,6 +8570,7 @@ import {
   isSongsWorkspaceVisible,
   itemThemeForRole,
   lastAudienceSongTextMessage,
+  lastLowerThirdBibleTextMessage,
   liveThemeFields,
   lowerThirdKeyOnlyMessage,
   lowerThirdOutputUpdateToken,

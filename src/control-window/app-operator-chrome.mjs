@@ -1615,7 +1615,18 @@ function installIPCHandler() {
     void handleMediaPreviewRtcSignal(event, message);
   });
   on("remoteplaypause", handlePlayPause);
-  on("media-window-closed", handleMediaWindowClosed);
+  on("media-window-closed", (event, id) => {
+    void handleMediaWindowClosed(event, id).catch((error) => {
+      console.error("Failed to recover after the audience window closed:", error);
+      setSharedRendererState({ isPlaying: false });
+      setSharedRendererState({ isQueuePlaying: false });
+      setSharedRendererState({ isActiveMediaWindowCache: false });
+      setSharedRendererState({ activeMediaWindowContentType: null });
+      showGnomeToast(error?.message || "Could not recover the live presentation");
+      updateDynUI();
+      renderQueue();
+    });
+  });
   on("media-window-closed", () => {
     resetBiblePreviewMediaWindowSize();
     syncBiblePreviewOutputScale();
@@ -2098,7 +2109,10 @@ function shortcutHandler(event) {
   const liveCommand = editing || event.key === "F8" ? null : commandForShortcut(event);
   if (liveCommand) {
     event.preventDefault();
-    void executeLiveCommand(liveCommand);
+    void executeLiveCommand(liveCommand).catch((error) => {
+      console.error("Failed to execute live command:", error);
+      showGnomeToast(error?.message || "The live command failed");
+    });
     return;
   }
   if (handleOutputHoldShortcut(event)) return;

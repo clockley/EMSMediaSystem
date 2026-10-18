@@ -94,6 +94,51 @@ test("leaving text output clears the audience Clear Text compositor layer", asyn
   );
 });
 
+test("Clear Text removes text payloads without hiding audience graphics", async () => {
+  const [liveOutputs, media] = await Promise.all([
+    readFile(new URL("../src/control-window/app-live-outputs.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/media-window/media.mjs", import.meta.url), "utf8"),
+  ]);
+  const clearStart = liveOutputs.indexOf("function clearTextFromPresentationMessage(");
+  const clearEnd = liveOutputs.indexOf("\nfunction shouldApplyLiveTextClearState", clearStart);
+  const clearMessage = liveOutputs.slice(clearStart, clearEnd);
+  const renderStart = media.indexOf("function renderAudienceLayer(");
+  const renderEnd = media.indexOf("\nipcRenderer.on(\"audience-output-command\"", renderStart);
+  const renderLayer = media.slice(renderStart, renderEnd);
+
+  assert.match(clearMessage, /nonTextPresentationObjects\(message\.slideObjects\)/);
+  assert.match(renderLayer, /textCanvas\.style\.visibility = ""/);
+  assert.doesNotMatch(renderLayer, /clearText \? "hidden"/);
+});
+
+test("Clear Text also clears and restores a live song lower third", async () => {
+  const [liveOutputs, songs] = await Promise.all([
+    readFile(new URL("../src/control-window/app-live-outputs.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url), "utf8"),
+  ]);
+  const clearLiveStart = liveOutputs.indexOf("async function clearLiveText()");
+  const clearLiveEnd = liveOutputs.indexOf("\nfunction mediaSourceSupportsLowerThird", clearLiveStart);
+  const clearLive = liveOutputs.slice(clearLiveStart, clearLiveEnd);
+  const songClearStart = songs.indexOf("async function clearLiveSongText(");
+  const songClearEnd = songs.indexOf("\nasync function syncActiveScheduledSongPresentation", songClearStart);
+  const songClear = songs.slice(songClearStart, songClearEnd);
+
+  assert.match(clearLive, /hasLiveLowerThirdText\("song"\)/);
+  assert.match(songClear, /activeLowerThirdContentType === "song"/);
+  assert.match(songClear, /sendBibleLowerThirdTextMessage\(/);
+  assert.match(songClear, /respectLiveTextClearState: false/);
+});
+
+test("audience and lower-third output status track separate content kinds", async () => {
+  const main = await readFile(new URL("../src/main-process/main.mjs", import.meta.url), "utf8");
+  assert.match(main, /let audienceContentKind = "none";\s*let lowerThirdContentKind = "none";/);
+  assert.match(
+    main,
+    /lowerThird:[\s\S]*content: lowerThirdWindow[\s\S]*\? lowerThirdContentKind : "none"/,
+  );
+  assert.match(main, /ipcMain\.on\("update-lower-third-text"[\s\S]*lowerThirdContentKind =/);
+});
+
 test("audience renderer declares fixed background, content, alert, and hold slots", async () => {
   const html = await readFile(new URL("../src/media-window/media.html", import.meta.url), "utf8");
   const positions = ["liveBackgroundLayer", "textCanvas", "audienceAlertLayer", "outputHoldOverlay"].map((id) => html.indexOf(`id="${id}"`));

@@ -935,11 +935,13 @@ async function takeQueueItemLive(index, startTime = 0, opts = {}) {
   setSharedRendererState({ isQueuePlaying: true });
   setSharedRendererState({ isPlaying: true });
   updateDynUI();
-  await playCurrentQueueItem({
+  const started = await playCurrentQueueItem({
     preservePreviewSeek: false,
     startTime: safeStart,
   });
+  if (started === false) return false;
   clearCueAfterTake(index);
+  return true;
 }
 
 async function stopQueuePresentationUserClosed() {
@@ -1343,11 +1345,21 @@ async function playCurrentQueueItem(opts) {
   setSharedRendererState({ mediaPlaybackEndedPending: false });
   setSharedRendererState({ itc: performance.now() * 0.001 });
   const item = mediaQueue[currentQueueIndex];
-  if (!item) {
+  const failPlaybackStart = (message, error = null) => {
+    if (error) console.error("Failed to start scheduled playback:", error);
+    setSharedRendererState({ isPlaying: false });
     setSharedRendererState({ isQueuePlaying: false });
-    setSharedRendererState({ currentQueueIndex: -1 });
+    setSharedRendererState({ isActiveMediaWindowCache: false });
+    setSharedRendererState({ activeMediaWindowContentType: null });
+    send("set-output-content-status", "none");
+    if (message) showGnomeToast(message);
+    updateDynUI();
     renderQueue();
-    return;
+    return false;
+  };
+  if (!item) {
+    setSharedRendererState({ currentQueueIndex: -1 });
+    return failPlaybackStart("");
   }
   if (!isScheduleItemCurrentlyPlayable(item)) {
     const next = nextPlayableQueueIndexAfter(currentQueueIndex);
@@ -1358,40 +1370,49 @@ async function playCurrentQueueItem(opts) {
       return playCurrentQueueItem(opts);
     }
     showGnomeToast("No playable items in the schedule");
-    setSharedRendererState({ isQueuePlaying: false });
-    setSharedRendererState({ isPlaying: false });
-    renderQueue();
-    updateDynUI();
-    return;
+    return failPlaybackStart("");
   }
   if (queueItemNeedsPendingUpdateApproval(item)) {
     showGnomeToast("Reload the changed media file before taking it live");
-    setSharedRendererState({ isQueuePlaying: false });
-    setSharedRendererState({ isPlaying: false });
-    renderQueue();
-    updateDynUI();
-    return;
-  }
-
-  await clearLowerThirdForUnsupportedMediaSource(item);
-  if (!isQueueItemBible(item) && scripturePresentation.state.status !== "idle") {
-    scripturePresentation.dispatch({ type: "STOPPED" });
+    return failPlaybackStart("");
   }
 
   const itemIsNetworkPresentationVideo =
     !isQueueItemAudio(item) &&
     (isNetworkStreamSource(item.path) || Boolean(item.networkSource));
-  await loadQueueItemIntoControlWindow(item, {
-    ...(opts || {}),
-    skipNetworkPreviewLoad: itemIsNetworkPresentationVideo,
-  });
+  try {
+    await clearLowerThirdForUnsupportedMediaSource(item);
+    if (!isQueueItemBible(item) && scripturePresentation.state.status !== "idle") {
+      scripturePresentation.dispatch({ type: "STOPPED" });
+    }
+    await loadQueueItemIntoControlWindow(item, {
+      ...(opts || {}),
+      skipNetworkPreviewLoad: itemIsNetworkPresentationVideo,
+    });
+  } catch (error) {
+    return failPlaybackStart(
+      error?.message || "Could not load the scheduled item",
+      error,
+    );
+  }
   renderQueue();
 
   setSharedRendererState({ isPlaying: true });
   updateDynUI();
 
   if (isQueueItemBible(item)) {
-    const entry = await resolvedBibleEntryForItem(item);
+    let entry = null;
+    try {
+      entry = await resolvedBibleEntryForItem(item, { requireLookup: true });
+    } catch (error) {
+      return failPlaybackStart(
+        error?.message || "Could not load the scheduled Scripture text",
+        error,
+      );
+    }
+    if (!entry) {
+      return failPlaybackStart("Could not load the scheduled Scripture text");
+    }
     const wantsAudience = hasAudienceOutputSelected();
     const wantsLowerThird = hasLowerThirdOutputSelected();
     const presentationRevision = beginScriptureTake(entry, {
@@ -1405,7 +1426,11 @@ async function playCurrentQueueItem(opts) {
       presentationRevision,
     );
     const audienceStarted = wantsAudience
-      ? await createMediaWindow({ textItem: item, presentationRevision })
+      ? await createMediaWindow({
+          textItem: item,
+          presentationRevision,
+          resolvedBibleEntry: entry,
+        })
       : false;
     confirmScriptureTake(presentationRevision, {
       audience: audienceStarted,
@@ -1418,7 +1443,7 @@ async function playCurrentQueueItem(opts) {
       updateDynUI();
       renderQueue();
     }
-    return;
+    return audienceStarted || lowerThirdStarted;
   }
 
   if (isQueueItemSong(item)) {
@@ -1433,23 +1458,19 @@ async function playCurrentQueueItem(opts) {
       updateDynUI();
       renderQueue();
     }
-    return;
+    return audienceStarted || lowerThirdStarted;
   }
 
   void syncStageContentFromQueueItem(item).catch(() => {});
 
   if (!audioOnlyFile && !hasAudienceOutputSelected()) {
-    showGnomeToast("Choose an audience output display");
-    setSharedRendererState({ isPlaying: false });
-    setSharedRendererState({ isQueuePlaying: false });
-    updateDynUI();
-    renderQueue();
-    return;
+    return failPlaybackStart("Choose an audience output display");
   }
 
   const iM = isImg(mediaFile);
   if (iM) {
-    await createMediaWindow();
+    const started = await createMediaWindow();
+    if (!started) return failPlaybackStart("");
     if (localVideo) {
       localVideo.currentTime = 0;
       if (!localVideo.paused) {
@@ -1457,7 +1478,7 @@ async function playCurrentQueueItem(opts) {
         localVideo.load();
       }
     }
-    return;
+    return true;
   }
 
   // Audio-only items (detected via metadata or by file extension) play
@@ -1469,7 +1490,7 @@ async function playCurrentQueueItem(opts) {
       await closeActiveMediaWindowNow();
     }
     await playAudioOnlyLocally(opts?.startTime);
-    return;
+    return true;
   }
 
   const projectionVideo = resolveQueuePresentationVideo();
@@ -1477,12 +1498,14 @@ async function playCurrentQueueItem(opts) {
     queueItemSupportsCueStartTime(item) && Number.isFinite(opts?.startTime)
       ? validMediaStartTime(opts.startTime)
       : queueItemCueStartTime(item);
-  await createMediaWindow({
+  const started = await createMediaWindow({
     startTime:
       requestedProjectionStart > 0
         ? requestedProjectionStart
         : validMediaStartTime(projectionVideo?.currentTime),
   });
+  if (!started) return failPlaybackStart("");
+  return true;
 }
 
 async function advanceQueueAfterMediaWindowClosed() {
@@ -1692,6 +1715,10 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
         },
       );
     }
+    const resolvedSongAudiencePresentation = isSongItem
+      ? resolvedSongPresentation(resolvedSongItem)
+      : null;
+    if (isSongItem && !resolvedSongAudiencePresentation?.message) return false;
     const slipstreamData = isBibleItem
       ? {
           isText: true,
@@ -1711,7 +1738,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
             isText: true,
             mediaFile: nextItem.path,
             textPayload: audienceTextMessageForSend("song", {
-              ...(resolvedSongPresentation(resolvedSongItem)?.message || {}),
+              ...resolvedSongAudiencePresentation.message,
               transition: slideTransitionPayloadForQueueItem(nextItem),
             }),
             transition: slideTransitionPayloadForQueueItem(nextItem),
@@ -1771,7 +1798,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     setSharedRendererState({ isQueuePlaying: true });
     setSharedRendererState({ bibleShowNowModeActive: false });
     clearSongShowNowPresentation();
-    setSharedRendererState({ activeMediaWindowContentType: classifyPresentationType(nextItem) });
+    const nextContentType = classifyPresentationType(nextItem);
+    setSharedRendererState({ activeMediaWindowContentType: nextContentType });
+    send("set-output-content-status", nextContentType);
     setSharedRendererState({ isActiveMediaWindowCache: true });
     setSharedRendererState({ isPlaying: true });
     resetCountdownSync();
@@ -1945,66 +1974,85 @@ async function handleMediaWindowClosed(event, id) {
     updateDynUI();
     setSharedRendererState({ isActiveMediaWindowCache: false });
 
-    setSharedRendererState({ currentQueueIndex: idx });
-    setSelectedQueueAnchor(idx);
-    // Switching live items through a window close/reopen cycle is the fallback
-    // for transitions slipstream cannot do in place, so it needs the same
-    // lower-third handling the slipstream and direct-play paths perform.
-    await clearLowerThirdForUnsupportedMediaSource(mediaQueue[idx]);
-    await loadQueueItemIntoControlWindow(mediaQueue[idx], {
-      preservePreviewSeek: false,
-      startTime: switchStartTime,
-    });
-    renderQueue();
+    try {
+      setSharedRendererState({ currentQueueIndex: idx });
+      setSelectedQueueAnchor(idx);
+      // Switching live items through a window close/reopen cycle is the fallback
+      // for transitions slipstream cannot do in place, so it needs the same
+      // lower-third handling the slipstream and direct-play paths perform.
+      await clearLowerThirdForUnsupportedMediaSource(mediaQueue[idx]);
+      await loadQueueItemIntoControlWindow(mediaQueue[idx], {
+        preservePreviewSeek: false,
+        startTime: switchStartTime,
+      });
+      renderQueue();
 
-    setSharedRendererState({ isPlaying: true });
-    updateDynUI();
+      setSharedRendererState({ isPlaying: true });
+      updateDynUI();
 
-    const iM = isImg(mediaFile);
-    if (iM) {
-      await createMediaWindow();
-      if (localVideo) {
-        localVideo.currentTime = 0;
-        if (!localVideo.paused) {
-          localVideo.removeAttribute("src");
-          localVideo.load();
+      const iM = isImg(mediaFile);
+      if (iM) {
+        await createMediaWindow();
+        if (localVideo) {
+          localVideo.currentTime = 0;
+          if (!localVideo.paused) {
+            localVideo.removeAttribute("src");
+            localVideo.load();
+          }
         }
+      } else if (isQueueItemBible(mediaQueue[idx])) {
+        const entry = await resolvedBibleEntryForItem(mediaQueue[idx], {
+          requireLookup: true,
+        });
+        if (!entry) throw new Error("Could not load the scheduled Scripture text");
+        const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(mediaQueue[idx]);
+        const audienceStarted = hasAudienceOutputSelected()
+          ? await createMediaWindow({
+              textItem: mediaQueue[idx],
+              resolvedBibleEntry: entry,
+            })
+          : false;
+        if (!audienceStarted && !lowerThirdStarted) {
+          showGnomeToast("Choose an output display");
+          setSharedRendererState({ isPlaying: false });
+          setSharedRendererState({ isQueuePlaying: false });
+          updateDynUI();
+          renderQueue();
+          return;
+        }
+      } else if (isQueueItemSong(mediaQueue[idx])) {
+        const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(mediaQueue[idx]);
+        const audienceStarted = hasAudienceOutputSelected()
+          ? await createMediaWindow({ textItem: mediaQueue[idx], songItem: true })
+          : false;
+        if (!audienceStarted && !lowerThirdStarted) {
+          showGnomeToast("Choose an output display");
+          setSharedRendererState({ isPlaying: false });
+          setSharedRendererState({ isQueuePlaying: false });
+          updateDynUI();
+          renderQueue();
+          return;
+        }
+      } else if (
+        audioOnlyFile ||
+        classifyQueueMediaType(mediaQueue[idx].path) === "audio"
+      ) {
+        await playAudioOnlyLocally(switchStartTime);
+      } else {
+        await createMediaWindow();
       }
-    } else if (isQueueItemBible(mediaQueue[idx])) {
-      const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(mediaQueue[idx]);
-      const audienceStarted = hasAudienceOutputSelected()
-        ? await createMediaWindow({ textItem: mediaQueue[idx] })
-        : false;
-      if (!audienceStarted && !lowerThirdStarted) {
-        showGnomeToast("Choose an output display");
-        setSharedRendererState({ isPlaying: false });
-        setSharedRendererState({ isQueuePlaying: false });
-        updateDynUI();
-        renderQueue();
-        return;
-      }
-    } else if (isQueueItemSong(mediaQueue[idx])) {
-      const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(mediaQueue[idx]);
-      const audienceStarted = hasAudienceOutputSelected()
-        ? await createMediaWindow({ textItem: mediaQueue[idx], songItem: true })
-        : false;
-      if (!audienceStarted && !lowerThirdStarted) {
-        showGnomeToast("Choose an output display");
-        setSharedRendererState({ isPlaying: false });
-        setSharedRendererState({ isQueuePlaying: false });
-        updateDynUI();
-        renderQueue();
-        return;
-      }
-    } else if (
-      audioOnlyFile ||
-      classifyQueueMediaType(mediaQueue[idx].path) === "audio"
-    ) {
-      await playAudioOnlyLocally(switchStartTime);
-    } else {
-      await createMediaWindow();
+      clearCueAfterTake(idx);
+    } catch (error) {
+      console.error("Failed to switch the live schedule item after closing the output:", error);
+      setSharedRendererState({ isPlaying: false });
+      setSharedRendererState({ isQueuePlaying: false });
+      setSharedRendererState({ isActiveMediaWindowCache: false });
+      setSharedRendererState({ activeMediaWindowContentType: null });
+      send("set-output-content-status", "none");
+      updateDynUI();
+      renderQueue();
+      showGnomeToast(error?.message || "Could not load the selected schedule item");
     }
-    clearCueAfterTake(idx);
     return;
   }
 

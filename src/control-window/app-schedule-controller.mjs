@@ -1381,7 +1381,10 @@ function installMediaQueueListDelegation() {
     }
     queueItemClickTimer = window.setTimeout(() => {
       queueItemClickTimer = null;
-      void onQueueItemActivate(idx);
+      void onQueueItemActivate(idx).catch((error) => {
+        console.error("Failed to load the selected schedule item:", error);
+        showGnomeToast(error?.message || "Could not load the selected schedule item");
+      });
     }, 220);
   });
 
@@ -1434,7 +1437,10 @@ function installMediaQueueListDelegation() {
       toggleScheduleSectionCollapsed(idx);
       return;
     }
-    void releaseOutputHoldsAndGoLiveQueueIndex(idx).catch((err) => console.error(err));
+    void releaseOutputHoldsAndGoLiveQueueIndex(idx).catch((error) => {
+      console.error("Failed to take the selected schedule item live:", error);
+      showGnomeToast(error?.message || "Could not take the selected item live");
+    });
   });
 
   list.addEventListener("dragstart", (e) => {

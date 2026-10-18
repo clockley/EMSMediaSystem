@@ -14,6 +14,7 @@ the Free Software Foundation, either version 3 of the License, or
 import {
   __dirname,
   STREAMPLAYER,
+  activeLowerThirdContentType,
   activeMediaWindowContentType,
   applyLowerThirdOutputPreferences,
   applyOutputHoldPreferences,
@@ -222,8 +223,14 @@ async function releaseOutputHoldsForRecovery() {
   if (liveTextClearActive) {
     const hasBibleText =
       hasLiveAudienceTextPresentation("bible") ||
-      (isBibleLowerThirdFeatureEnabled() && bibleLowerThirdOutputActive);
-    const hasSongText = hasLiveAudienceTextPresentation("song");
+      (isBibleLowerThirdFeatureEnabled() &&
+        bibleLowerThirdOutputActive &&
+        activeLowerThirdContentType === "bible");
+    const hasSongText =
+      hasLiveAudienceTextPresentation("song") ||
+      (isBibleLowerThirdFeatureEnabled() &&
+        bibleLowerThirdOutputActive &&
+        activeLowerThirdContentType === "song");
     if (hasBibleText) {
       changed = (await restoreLiveBibleText({ quiet: true })) || changed;
     }

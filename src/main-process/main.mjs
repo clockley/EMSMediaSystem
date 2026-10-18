@@ -279,6 +279,7 @@ let stageSessionId = randomUUID();
 const stageLayerCommands = new Map();
 let stageHealth = "inactive";
 let audienceContentKind = "none";
+let lowerThirdContentKind = "none";
 let audienceHoldMode = "none";
 let audienceHoldPayload = null;
 let audienceWindowOverlayOnly = false;
@@ -942,6 +943,7 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
       lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
       lowerThirdWindow.setFullScreen(true);
       lowerThirdWindow.setBackgroundColor(backgroundColor);
+      publishOutputStatus();
       return lowerThirdWindow.id;
     }
 
@@ -961,19 +963,23 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
       },
     });
     lowerThirdWindow = createdLowerThirdWindow;
+    lowerThirdContentKind = "none";
     createdLowerThirdWindow.setIgnoreMouseEvents(true);
     await createdLowerThirdWindow.loadFile("derived/src/media-window/media.prod.html");
     createdLowerThirdWindow.on("closed", () => {
       if (lowerThirdWindow === createdLowerThirdWindow) {
         lowerThirdWindow = null;
+        lowerThirdContentKind = "none";
         if (win && !win.isDestroyed()) {
           win.webContents.send("lower-third-window-closed");
         }
+        publishOutputStatus();
       }
     });
     settings.set("lastLowerThirdDisplayIndex", targetSelection.value).catch((error) => {
       console.error("Error saving lower third display preference:", error);
     });
+    publishOutputStatus();
     return createdLowerThirdWindow.id;
   });
 }
@@ -995,7 +1001,7 @@ function currentOutputStatus() {
     lowerThird: {
       window: lowerThirdWindow && !lowerThirdWindow.isDestroyed() ? "open" : "closed",
       display: settings.getSync("lastLowerThirdDisplayIndex") || "",
-      content: lowerThirdWindow && !lowerThirdWindow.isDestroyed() ? audienceContentKind : "none",
+      content: lowerThirdWindow && !lowerThirdWindow.isDestroyed() ? lowerThirdContentKind : "none",
       health: lowerThirdWindow && !lowerThirdWindow.isDestroyed() ? "ok" : "inactive",
     },
     stage: {
@@ -1300,9 +1306,14 @@ async function clearLowerThirdRendererNow(payload = {}) {
         : "#00ff00";
   lowerThirdWindow.setBackgroundColor(chromaKeyColor);
   try {
-    return await lowerThirdWindow.webContents.executeJavaScript(
+    const cleared = await lowerThirdWindow.webContents.executeJavaScript(
       `Boolean(window.emsClearLowerThird?.(${JSON.stringify({ chromaKeyColor })}))`,
     );
+    if (cleared) {
+      lowerThirdContentKind = "none";
+      publishOutputStatus();
+    }
+    return cleared;
   } catch (error) {
     if (!lowerThirdWindow.isDestroyed()) {
       console.error("Failed to clear lower-third renderer:", error);
@@ -5427,6 +5438,20 @@ function setIPC() {
         if (data?.isText !== true) {
           await clearLowerThirdRendererNow({});
         }
+        audienceContentKind = data?.isText === true
+          ? String(
+              data?.textPayload?.contentKind ||
+                data?.textPayload?.resolvedPresentation?.contentKind ||
+                "text",
+            )
+          : data?.isPptx === true
+            ? "pptx"
+            : data?.isImg === true
+              ? "image"
+              : "video";
+        sendOutputLayer("audience", "content", { kind: audienceContentKind });
+        setAudienceWindowTransparent(false);
+        publishOutputStatus();
       } catch (err) {
         if (!targetMediaWindow.isDestroyed()) {
           console.error("Failed to slipstream media window:", err);
@@ -5468,8 +5493,18 @@ function setIPC() {
       }
       lowerThirdWindow.webContents.send("update-text", message);
     }
+    lowerThirdContentKind = message?.clearLowerThird === true
+      ? "none"
+      : String(
+          message?.contentKind ||
+            message?.resolvedPresentation?.contentKind ||
+            "text",
+        );
+    publishOutputStatus();
   });
   ipcMain.on("clear-lower-third-text", (_event, payload = {}) => {
+    lowerThirdContentKind = "none";
+    publishOutputStatus();
     if (!lowerThirdWindow || lowerThirdWindow.isDestroyed()) return;
     const chromaKeyColor =
       typeof payload?.chromaKeyColor === "string" &&

@@ -785,7 +785,8 @@ function updateClearLiveTextButtonState() {
 async function clearLiveText() {
   const hasBibleText =
     hasLiveAudienceTextPresentation("bible") || hasLiveLowerThirdText("bible");
-  const hasSongText = hasLiveAudienceTextPresentation("song");
+  const hasSongText =
+    hasLiveAudienceTextPresentation("song") || hasLiveLowerThirdText("song");
   if (!hasBibleText && !hasSongText) {
     showGnomeToast("No live text to clear");
     updateClearLiveTextButtonState();
@@ -808,7 +809,10 @@ async function clearLiveText() {
   }
   if (changed) {
     setSharedRendererState({ liveTextClearActive: !restoringText });
-    send("set-audience-clear-state", liveTextClearActive);
+    const hasAudienceText =
+      hasLiveAudienceTextPresentation("bible") ||
+      hasLiveAudienceTextPresentation("song");
+    send("set-audience-clear-state", liveTextClearActive && hasAudienceText);
     showGnomeToast(restoringText ? "Live text restored" : "Live text cleared");
   } else {
     showGnomeToast(restoringText ? "Could not restore live text" : "Could not clear live text");
