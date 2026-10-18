@@ -11,7 +11,7 @@ call into it.
 */
 
 import { randomUUID } from "crypto";
-import { mkdir, readdir, readFile, rm, stat } from "fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat } from "fs/promises";
 import path from "path";
 import writeFileAtomic from "write-file-atomic";
 
@@ -153,9 +153,23 @@ export class SlidesStore {
         this._foldersCache = parsed.folders;
         return this._foldersCache;
       }
-    } catch {}
-    this._foldersCache = [];
-    return this._foldersCache;
+      const invalid = new TypeError("Slide folder metadata must contain a folders array");
+      invalid.code = "EMS_INVALID_SLIDE_FOLDERS";
+      throw invalid;
+    } catch (err) {
+      if (err?.code === "ENOENT") {
+        this._foldersCache = [];
+        return this._foldersCache;
+      }
+      if (err instanceof SyntaxError || err?.code === "EMS_INVALID_SLIDE_FOLDERS") {
+        const backupPath = `${this.foldersFile}.corrupt-${Date.now()}-${randomUUID()}`;
+        await rename(this.foldersFile, backupPath);
+        console.error(`SlidesStore: preserved corrupt folder metadata at ${backupPath}`, err);
+        this._foldersCache = [];
+        return this._foldersCache;
+      }
+      throw err;
+    }
   }
 
   async _persistFolders() {
@@ -225,14 +239,10 @@ export class SlidesStore {
 
   async _delete(id) {
     if (!id) return false;
-    try {
-      const existing = await this._findDeckRecord(id);
-      if (!existing) return false;
-      await rm(existing.filePath, { force: true });
-      return true;
-    } catch {
-      return false;
-    }
+    const existing = await this._findDeckRecord(id);
+    if (!existing) return false;
+    await rm(existing.filePath, { force: true });
+    return true;
   }
 
   duplicate(id, { title = null } = {}) {
@@ -293,18 +303,37 @@ export class SlidesStore {
 
   async _deleteFolder(id) {
     const folders = await this._loadFolders();
-    const before = folders.length;
-    this._foldersCache = folders.filter((f) => f.id !== id);
-    if (this._foldersCache.length === before) return false;
-    await this._persistFolders();
-    // Clear folderId from any deck in this folder.
-    const summaries = await this.list({});
-    for (const s of summaries) {
-      if (s.folderId !== id) continue;
-      const deck = await this.get(s.id);
-      if (!deck) continue;
-      deck.folderId = null;
-      await this._save(deck);
+    const remainingFolders = folders.filter((f) => f.id !== id);
+    if (remainingFolders.length === folders.length) return false;
+    const affectedRecords = (await this._deckRecords()).filter(
+      ({ deck }) => deck.folderId === id,
+    );
+    const updatedRecords = [];
+    const rollbackDecks = async () => {
+      const rollbackResults = await Promise.allSettled(
+        updatedRecords.map(({ deck }) => this._save(deck)),
+      );
+      return rollbackResults
+        .filter((result) => result.status === "rejected")
+        .map((result) => result.reason);
+    };
+    try {
+      for (const record of affectedRecords) {
+        await this._save({ ...record.deck, folderId: null });
+        updatedRecords.push(record);
+      }
+      this._foldersCache = remainingFolders;
+      await this._persistFolders();
+    } catch (error) {
+      this._foldersCache = folders;
+      const rollbackErrors = await rollbackDecks();
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          "Failed to delete the folder and restore all affected decks",
+        );
+      }
+      throw error;
     }
     return true;
   }
@@ -317,8 +346,7 @@ export class SlidesStore {
     const deck = await this.get(deckId);
     if (!deck) return null;
     deck.folderId = folderId || null;
-    await this._save(deck);
-    return summarizeDeck(deck);
+    return this._save(deck);
   }
 
   async stats() {

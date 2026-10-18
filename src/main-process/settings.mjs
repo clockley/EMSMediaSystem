@@ -22,19 +22,25 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-import { readFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync, renameSync } from 'fs';
 
 // Memory cache
 const cache = {
     data: null,
     dirPath: null,
     filePath: null,
-    isDirty: false
+    isDirty: false,
+    writeBlocked: false,
+    loadError: null
 };
 
 function init(settingsDirPath) {
     cache.dirPath = settingsDirPath;
     cache.filePath = `${settingsDirPath}/settings.json`;
+    cache.data = null;
+    cache.isDirty = false;
+    cache.writeBlocked = false;
+    cache.loadError = null;
     loadSettings();
 }
 
@@ -93,15 +99,42 @@ function loadSettings() {
         }
 
         const data = readFileSync(filePath, 'utf-8');
-        cache.data = JSON.parse(data);
+        const parsed = JSON.parse(data);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            const invalid = new TypeError('Settings file must contain a JSON object');
+            invalid.code = 'EMS_INVALID_SETTINGS';
+            throw invalid;
+        }
+        cache.data = parsed;
         return cache.data;
     } catch (err) {
+        const filePath = getSettingsFilePath();
+        const isCorrupt = err instanceof SyntaxError || err?.code === 'EMS_INVALID_SETTINGS';
+        if (isCorrupt) {
+            const backupPath = `${filePath}.corrupt-${Date.now()}-${process.pid}`;
+            try {
+                renameSync(filePath, backupPath);
+                console.error(`Settings file was corrupt and was preserved at ${backupPath}:`, err);
+            } catch (backupError) {
+                cache.writeBlocked = true;
+                cache.loadError = backupError;
+                console.error('Settings file was corrupt and could not be preserved; writes are disabled:', backupError);
+            }
+        } else if (err?.code !== 'ENOENT') {
+            cache.writeBlocked = true;
+            cache.loadError = err;
+            console.error('Settings file could not be read; writes are disabled to preserve it:', err);
+        }
         cache.data = {};
         return cache.data;
     }
 }
 
 async function saveSettings(data) {
+    if (cache.writeBlocked) {
+        const detail = cache.loadError?.message ? `: ${cache.loadError.message}` : '';
+        throw new Error(`Settings writes are disabled because the existing file could not be read safely${detail}`);
+    }
     const filePath = getSettingsFilePath();
     const dirPath = getSettingsDirPath();
 

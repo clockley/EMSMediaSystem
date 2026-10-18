@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "fs/promises";
 import { randomUUID } from "crypto";
 import path from "path";
-import { isValidMediaFileHash } from "../shared/media-file-hash.min.mjs";
+import { isValidMediaFileHash } from "../shared/media-file-hash.mjs";
 
 export const STAGING_INDEX_FILENAME = "staging-index.json";
 export const STAGING_INDEX_SCHEMA_VERSION = 1;
@@ -10,9 +10,10 @@ const PROJECT_GUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const STAGED_SNAPSHOT_FILENAME_RE = /^([a-f0-9]{16})(\.[^.]+)?$/i;
 
-function emptyIndex() {
+function emptyIndex({ recoveryRequired = false } = {}) {
   return {
     schemaVersion: STAGING_INDEX_SCHEMA_VERSION,
+    recoveryRequired,
     snapshots: {},
     projects: {},
   };
@@ -112,6 +113,7 @@ function normalizeIndex(raw) {
 
   return {
     schemaVersion: STAGING_INDEX_SCHEMA_VERSION,
+    recoveryRequired: raw.recoveryRequired === true,
     snapshots,
     projects,
   };
@@ -157,15 +159,27 @@ export class StagingIndex {
         await mkdir(this.stagingDir, { recursive: true });
         try {
           const raw = JSON.parse(await readFile(this.filePath, "utf8"));
+          if (
+            !raw ||
+            typeof raw !== "object" ||
+            Array.isArray(raw) ||
+            raw.schemaVersion !== STAGING_INDEX_SCHEMA_VERSION
+          ) {
+            throw new Error("Unsupported or invalid staging index metadata");
+          }
           this.index = normalizeIndex(raw);
         } catch (err) {
           if (err?.code !== "ENOENT") {
-            const backupPath = `${this.filePath}.bak`;
-            await rm(backupPath, { force: true }).catch(() => {});
+            const backupPath = `${this.filePath}.bak-${Date.now()}-${randomUUID()}`;
             await rename(this.filePath, backupPath).catch(() => {});
-            console.error("Staging index was corrupt; starting with an empty index:", err);
+            console.error(
+              "Staging index could not be read; preserving staged files until recovery:",
+              err,
+            );
+            this.index = emptyIndex({ recoveryRequired: true });
+          } else {
+            this.index = emptyIndex();
           }
-          this.index = emptyIndex();
         }
         this.loaded = true;
         return this.index;
@@ -296,7 +310,7 @@ export class StagingIndex {
 
       if (snapshotDeletionEligible(snapshot)) {
         delete this.index.snapshots[snapshotId];
-        eligibleSnapshotIds.push(snapshotId);
+        if (!this.index.recoveryRequired) eligibleSnapshotIds.push(snapshotId);
       } else {
         this.index.snapshots[snapshotId] = snapshot;
       }
@@ -325,10 +339,12 @@ export class StagingIndex {
     });
     return {
       ...result,
-      eligibleSnapshotIds: sortedUnique(
-        [...(result.eligibleSnapshotIds || []), ...snapshotIds],
-        normalizeSnapshotId,
-      ).filter((snapshotId) => !this.index.snapshots[snapshotId]),
+      eligibleSnapshotIds: this.index.recoveryRequired
+        ? []
+        : sortedUnique(
+            [...(result.eligibleSnapshotIds || []), ...snapshotIds],
+            normalizeSnapshotId,
+          ).filter((snapshotId) => !this.index.snapshots[snapshotId]),
     };
   }
 
@@ -376,14 +392,11 @@ export class StagingIndex {
         }
         continue;
       }
-      let exists = false;
+      let info;
       try {
-        const info = await stat(projectPath);
-        exists = info.isFile();
-      } catch {
-        exists = false;
-      }
-      if (!exists) {
+        info = await stat(projectPath);
+      } catch { continue; }
+      if (!info?.isFile()) {
         const result = await this.removeProjectLoaded(projectGuid);
         eligibleSnapshotIds.push(...(result.eligibleSnapshotIds || []));
         continue;
@@ -392,9 +405,11 @@ export class StagingIndex {
       try {
         actualGuid = normalizeProjectGuid(await readProjectGuid(projectPath));
       } catch {
-        actualGuid = "";
+        // A temporary read, permission, or mount failure is not proof that the
+        // project disappeared. Keep its references and try again next startup.
+        continue;
       }
-      if (!actualGuid || actualGuid !== projectGuid) {
+      if (actualGuid && actualGuid !== projectGuid) {
         const result = await this.removeProjectLoaded(projectGuid);
         eligibleSnapshotIds.push(...(result.eligibleSnapshotIds || []));
       }
@@ -405,6 +420,7 @@ export class StagingIndex {
 
   async orphanSnapshotIdsOnDisk() {
     await this.load();
+    if (this.index.recoveryRequired) return [];
     let entries = [];
     try {
       entries = await readdir(this.stagingDir);

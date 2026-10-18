@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "crypto";
 import { createWriteStream } from "fs";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "fs/promises";
-import os from "os";
 import path from "path";
 import { pipeline } from "stream/promises";
 import yauzl from "yauzl";
@@ -135,7 +134,13 @@ export async function importThemePack(packPath, library, { conflict = "copy" } =
   if (existing && conflict === "reject") throw new Error(`Theme already exists: ${theme.id}`);
   if (existing && conflict === "copy") theme = { ...theme, id: `theme_${randomUUID().replace(/-/g, "")}`, name: `${theme.name} (Imported)` };
   const targetDir = library.themeDir(theme.id);
-  const staging = await mkdtemp(path.join(os.tmpdir(), "ems-theme-import-"));
+  const targetParent = path.dirname(targetDir);
+  await mkdir(targetParent, { recursive: true });
+  // Keep staging on the destination filesystem so the final rename remains
+  // atomic even when the OS temp directory is mounted on another device.
+  const staging = await mkdtemp(path.join(targetParent, ".ems-theme-import-"));
+  let backupDir = "";
+  let installed = false;
   try {
     await mkdir(path.join(staging, "assets"), { recursive: true });
     for (const asset of theme.assets) {
@@ -144,11 +149,24 @@ export async function importThemePack(packPath, library, { conflict = "copy" } =
       await writeFile(destination, inspected.entries.get(asset.path), { flag: "wx" });
     }
     await writeFile(path.join(staging, "theme.json"), canonical(theme), { flag: "wx" });
-    if (existing && conflict === "replace") await rm(targetDir, { recursive: true, force: true });
-    await mkdir(path.dirname(targetDir), { recursive: true });
-    await rename(staging, targetDir); await library.rebuildIndex();
+    if (existing && conflict === "replace") {
+      backupDir = path.join(targetParent, `.ems-theme-backup-${randomUUID()}`);
+      await rename(targetDir, backupDir);
+    }
+    await rename(staging, targetDir);
+    installed = true;
+    await library.rebuildIndex();
+    if (backupDir) await rm(backupDir, { recursive: true, force: true });
     return { theme, importedAsCopy: existing && conflict === "copy", manifest: inspected.manifest };
   } catch (error) {
-    await rm(staging, { recursive: true, force: true }).catch(() => {}); throw error;
+    await rm(staging, { recursive: true, force: true }).catch(() => {});
+    if (installed) {
+      await rm(targetDir, { recursive: true, force: true }).catch(() => {});
+    }
+    if (backupDir) {
+      await rename(backupDir, targetDir).catch(() => {});
+      await library.rebuildIndex().catch(() => {});
+    }
+    throw error;
   }
 }

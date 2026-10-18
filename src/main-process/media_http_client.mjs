@@ -100,7 +100,7 @@ export class MediaHttpClient {
   }
 
   async ensureStarted() {
-    if (this.child && !this.child.killed) return;
+    if (this.child && !this.child.killed && this.child.exitCode === null) return;
     if (this.startPromise) return this.startPromise;
     this.startPromise = this.start();
     try {
@@ -135,7 +135,11 @@ export class MediaHttpClient {
       if (message) console.error(`[media-http] ${message}`);
     });
     child.on("error", (err) => {
-      if (this.child === child) this.rejectAll(err);
+      if (this.child !== child) return;
+      this.child = null;
+      this.readyInfo = null;
+      this.urlCache.clear();
+      this.rejectAll(err);
     });
     child.on("exit", (code, signal) => {
       if (this.child !== child) return;

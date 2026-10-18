@@ -58,7 +58,7 @@ import { ThemeLibrary } from "../shared/theme-manager.min.mjs";
 import { EMS_SAFE_DEFAULT_THEME } from "../shared/theme-resolver.min.mjs";
 import { exportThemePack, importThemePack } from "../shared/theme-pack.min.mjs";
 import { importThemeAsset, resolveManagedThemeAsset } from "../shared/theme-assets.min.mjs";
-import { isWindowTiled } from "../shared/window-layout.min.mjs";
+import { isWindowOnConnectedDisplay, isWindowTiled } from "../shared/window-layout.min.mjs";
 import settings from "./settings.min.mjs";
 import {
   loadEmprojSnapshot,
@@ -109,6 +109,7 @@ const isDevMode = process.env.ems_dev === "true";
 const openDevConsole = process.env.ems_dev_console === "true";
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
+let wasLowerThirdDisplayDisconnected = false;
 let aboutWindow = null;
 let helpWindow = null;
 let queueSwitchDialogWindow = null;
@@ -154,9 +155,53 @@ const slidesStore = new SlidesStore({
 });
 const themeLibrary = new ThemeLibrary(path.join(app.getPath("userData"), "themes"));
 let themeLibraryReady = null;
+const pendingThemeAssetsBySender = new Map();
 function readyThemeLibrary() {
   themeLibraryReady ||= themeLibrary.init();
   return themeLibraryReady;
+}
+
+function trackPendingThemeAsset(senderId, themeId, assetId, assetPath) {
+  if (!Number.isInteger(senderId) || !themeId || !assetId || !assetPath) return;
+  let senderAssets = pendingThemeAssetsBySender.get(senderId);
+  if (!senderAssets) {
+    senderAssets = new Map();
+    pendingThemeAssetsBySender.set(senderId, senderAssets);
+  }
+  let themeAssets = senderAssets.get(themeId);
+  if (!themeAssets) {
+    themeAssets = new Map();
+    senderAssets.set(themeId, themeAssets);
+  }
+  themeAssets.set(assetId, assetPath);
+}
+
+async function settlePendingThemeAssets(senderId, themeId, committedAssetIds = new Set()) {
+  const senderAssets = pendingThemeAssetsBySender.get(senderId);
+  const themeAssets = senderAssets?.get(themeId);
+  if (!themeAssets) return;
+  for (const [assetId, assetPath] of [...themeAssets]) {
+    if (committedAssetIds.has(assetId)) {
+      themeAssets.delete(assetId);
+      continue;
+    }
+    try {
+      await rm(assetPath, { force: true });
+      themeAssets.delete(assetId);
+    } catch (error) {
+      console.error("Failed to remove discarded theme asset:", error);
+    }
+  }
+  if (themeAssets.size === 0) senderAssets.delete(themeId);
+  if (senderAssets.size === 0) pendingThemeAssetsBySender.delete(senderId);
+}
+
+async function cleanupPendingThemeAssetsForSender(senderId) {
+  const senderAssets = pendingThemeAssetsBySender.get(senderId);
+  if (!senderAssets) return;
+  for (const themeId of [...senderAssets.keys()]) {
+    await settlePendingThemeAssets(senderId, themeId);
+  }
 }
 
 function getActiveThemeId() {
@@ -852,14 +897,11 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
 
     const createdMediaWindow = new BrowserWindow(finalWindowOptions);
     const createdAsOverlayOnly = requestedOverlayOnly;
+    let creationComplete = false;
     mediaWindow = createdMediaWindow;
     audienceWindowOverlayOnly = createdAsOverlayOnly;
     audienceHealth = "starting";
-    applyMediaWindowPresentationMode(createdMediaWindow);
-    //mediaWindow.openDevTools()
-    await createdMediaWindow.loadFile("derived/src/media-window/media.prod.html");
-    installTimeRemainingMessagePort();
-    createdMediaWindow.on("closed", () => {
+    const releaseMediaWindow = () => {
       const closedId = createdMediaWindow.id;
       const wasActiveMediaWindow = mediaWindow === createdMediaWindow;
       if (wasActiveMediaWindow) {
@@ -867,14 +909,30 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
         audienceHealth = "inactive";
         audienceContentKind = "none";
         stopMediaPlaybackPowerHint();
-        if (!createdAsOverlayOnly && !audienceWindowOverlayOnly && !suppressNextMediaClosedNotification && win && !win.isDestroyed()) {
+        if (creationComplete && !createdAsOverlayOnly && !audienceWindowOverlayOnly && !suppressNextMediaClosedNotification && win && !win.isDestroyed()) {
           win.webContents.send("media-window-closed", closedId);
         }
         suppressNextMediaClosedNotification = false;
         audienceWindowOverlayOnly = false;
         publishOutputStatus();
       }
-    });
+    };
+    createdMediaWindow.once("closed", releaseMediaWindow);
+
+    try {
+      applyMediaWindowPresentationMode(createdMediaWindow);
+      //mediaWindow.openDevTools()
+      await createdMediaWindow.loadFile("derived/src/media-window/media.prod.html");
+      if (createdMediaWindow.isDestroyed() || mediaWindow !== createdMediaWindow) {
+        throw new Error("Audience output closed while it was loading");
+      }
+      creationComplete = true;
+      installTimeRemainingMessagePort();
+    } catch (error) {
+      if (!createdMediaWindow.isDestroyed()) createdMediaWindow.destroy();
+      releaseMediaWindow();
+      throw error;
+    }
 
     // Store a stable display selector; older numeric settings still load as indexes.
     settings.set("lastDisplayIndex", targetSelection.value).catch((error) => {
@@ -930,18 +988,32 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
     });
     lowerThirdWindow = createdLowerThirdWindow;
     lowerThirdContentKind = "none";
-    createdLowerThirdWindow.setIgnoreMouseEvents(true);
-    await createdLowerThirdWindow.loadFile("derived/src/media-window/media.prod.html");
-    createdLowerThirdWindow.on("closed", () => {
+    wasLowerThirdDisplayDisconnected = false;
+    let creationComplete = false;
+    const releaseLowerThirdWindow = () => {
       if (lowerThirdWindow === createdLowerThirdWindow) {
         lowerThirdWindow = null;
         lowerThirdContentKind = "none";
-        if (win && !win.isDestroyed()) {
+        wasLowerThirdDisplayDisconnected = false;
+        if (creationComplete && win && !win.isDestroyed()) {
           win.webContents.send("lower-third-window-closed");
         }
         publishOutputStatus();
       }
-    });
+    };
+    createdLowerThirdWindow.once("closed", releaseLowerThirdWindow);
+    try {
+      createdLowerThirdWindow.setIgnoreMouseEvents(true);
+      await createdLowerThirdWindow.loadFile("derived/src/media-window/media.prod.html");
+      if (createdLowerThirdWindow.isDestroyed() || lowerThirdWindow !== createdLowerThirdWindow) {
+        throw new Error("Lower-third output closed while it was loading");
+      }
+      creationComplete = true;
+    } catch (error) {
+      if (!createdLowerThirdWindow.isDestroyed()) createdLowerThirdWindow.destroy();
+      releaseLowerThirdWindow();
+      throw error;
+    }
     settings.set("lastLowerThirdDisplayIndex", targetSelection.value).catch((error) => {
       console.error("Error saving lower third display preference:", error);
     });
@@ -1197,17 +1269,30 @@ async function handleCreateStageWindow(_event, displayIndex) {
       },
     });
     stageWindow = created;
-    stageHealth = "ok";
-    created.setAlwaysOnTop(true, "screen-saver");
-    await created.loadFile("derived/src/stage-window/stage.prod.html");
-    await settings.set(STAGE_DISPLAY_KEY, targetSelection.value);
-    created.on("closed", () => {
-      if (stageWindow === created) stageWindow = null;
-      stageHealth = "inactive";
-      stageLayerCommands.delete("privateMessage");
-      stageLayerCommands.delete("alert");
-      publishOutputStatus();
-    });
+    stageHealth = "starting";
+    const releaseStageWindow = () => {
+      if (stageWindow === created) {
+        stageWindow = null;
+        stageHealth = "inactive";
+        stageLayerCommands.delete("privateMessage");
+        stageLayerCommands.delete("alert");
+        publishOutputStatus();
+      }
+    };
+    created.once("closed", releaseStageWindow);
+    try {
+      created.setAlwaysOnTop(true, "screen-saver");
+      await created.loadFile("derived/src/stage-window/stage.prod.html");
+      await settings.set(STAGE_DISPLAY_KEY, targetSelection.value);
+      if (created.isDestroyed() || stageWindow !== created) {
+        throw new Error("Stage output closed while it was loading");
+      }
+      stageHealth = "ok";
+    } catch (error) {
+      if (!created.isDestroyed()) created.destroy();
+      releaseStageWindow();
+      throw error;
+    }
     for (const [layer, payload] of restorableStageLayers) {
       sendOutputLayer("stage", layer, payload);
     }
@@ -1293,13 +1378,7 @@ async function handleDisplayChange() {
 
   if (stageWindow && !stageWindow.isDestroyed()) {
     const bounds = stageWindow.getBounds();
-    const stageDisplayStillConnected = currentDisplays.some(
-      (display) =>
-        bounds.x >= display.bounds.x &&
-        bounds.y >= display.bounds.y &&
-        bounds.x < display.bounds.x + display.bounds.width &&
-        bounds.y < display.bounds.y + display.bounds.height,
-    );
+    const stageDisplayStillConnected = isWindowOnConnectedDisplay(bounds, currentDisplays);
     // Never fail a disconnected confidence display over to the audience or
     // primary monitor: close it and require an explicit operator selection.
     if (!stageDisplayStillConnected) stageWindow.close();
@@ -1314,6 +1393,22 @@ async function handleDisplayChange() {
     }
   }
 
+  if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
+    const currentBounds = lowerThirdWindow.getBounds();
+    const isOnValidDisplay = isWindowOnConnectedDisplay(currentBounds, currentDisplays);
+    const savedDisplay = settings.getSync("lastLowerThirdDisplayIndex");
+    const targetSelection = resolveDisplaySelection(savedDisplay);
+    if (!isOnValidDisplay || !targetSelection) {
+      wasLowerThirdDisplayDisconnected = true;
+      lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(screen.getPrimaryDisplay()));
+      lowerThirdWindow.setFullScreen(true);
+    } else if (wasLowerThirdDisplayDisconnected) {
+      lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
+      lowerThirdWindow.setFullScreen(true);
+      wasLowerThirdDisplayDisconnected = false;
+    }
+  }
+
   if (mediaWindow && !mediaWindow.isDestroyed()) {
     const currentBounds = mediaWindow.getBounds();
     const currentDisplayIndex = settings.getSync("lastDisplayIndex");
@@ -1325,13 +1420,7 @@ async function handleDisplayChange() {
       };
     }
 
-    const isOnValidDisplay = currentDisplays.some(
-      (display) =>
-        currentBounds.x >= display.bounds.x &&
-        currentBounds.y >= display.bounds.y &&
-        currentBounds.x < display.bounds.x + display.bounds.width &&
-        currentBounds.y < display.bounds.y + display.bounds.height,
-    );
+    const isOnValidDisplay = isWindowOnConnectedDisplay(currentBounds, currentDisplays);
 
     if (!isOnValidDisplay) {
       wasDisplayDisconnected = true;
@@ -2092,6 +2181,7 @@ function handleSetLowerThirdDisplayIndex(event, index) {
     }
     lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
     lowerThirdWindow.setFullScreen(true);
+    wasLowerThirdDisplayDisconnected = false;
   }
 }
 
@@ -2349,7 +2439,11 @@ function createThemeManagerWindow(parentWindow, requestedContext = {}) {
       preload: path.join(derivedSrcDir, "dialogs", "theme_manager_preload.min.mjs"),
     },
   });
-  themeManagerWindow.once("closed", () => { themeManagerWindow = null; });
+  const themeManagerSenderId = themeManagerWindow.webContents.id;
+  themeManagerWindow.once("closed", () => {
+    themeManagerWindow = null;
+    void cleanupPendingThemeAssetsForSender(themeManagerSenderId);
+  });
   ipcMain.once(THEME_MANAGER_CLOSE_CHANNEL, () => {
     if (themeManagerWindow && !themeManagerWindow.isDestroyed()) themeManagerWindow.close();
   });
@@ -5599,10 +5693,15 @@ function setIPC() {
     const themes = [{ id: EMS_SAFE_DEFAULT_THEME.id, name: EMS_SAFE_DEFAULT_THEME.name, description: "Built-in fallback theme", source: "built-in", revision: "built-in", theme: EMS_SAFE_DEFAULT_THEME }, ...userThemes];
     return { themes, activeThemeId: getActiveThemeId() };
   });
-  ipcMain.handle("themes:save", async (_event, theme) => {
+  ipcMain.handle("themes:save", async (event, theme) => {
     await readyThemeLibrary();
     if (theme?.id === EMS_SAFE_DEFAULT_THEME.id) throw new Error("Built-in themes cannot be modified");
     const saved = await themeLibrary.save(stripThemeRuntimeAssetUrls(theme));
+    await settlePendingThemeAssets(
+      event.sender.id,
+      saved.theme.id,
+      new Set((saved.theme.assets || []).map((asset) => asset?.id).filter(Boolean)),
+    );
     return { ...saved, theme: await hydrateThemeAssetUrls(saved.theme), source: "user" };
   });
   ipcMain.handle("themes:chooseBackgroundAsset", async (event, id, rawContext = {}) => {
@@ -5636,6 +5735,9 @@ function setIPC() {
       { type: "image" },
     );
     const managedPath = await resolveManagedThemeAsset(themeLibrary.themeDir(id), asset);
+    if (managedPath) {
+      trackPendingThemeAsset(event.sender.id, id, asset.id, managedPath);
+    }
     return {
       canceled: false,
       asset: { ...asset, assetUrl: managedPath ? pathToFileURL(managedPath).href : "" },

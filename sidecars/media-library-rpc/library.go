@@ -896,6 +896,7 @@ func (s *libraryService) AddFiles(paths []string) ([]itemView, error) {
 	}
 	items := []itemView{}
 	ids := []string{}
+	thumbnailPaths := []string{}
 	for _, rawPath := range paths {
 		localPath, err := canonicalPath(rawPath)
 		if err != nil {
@@ -905,9 +906,24 @@ func (s *libraryService) AddFiles(paths []string) ([]itemView, error) {
 		var transientID string
 		_ = tx.QueryRow(`SELECT id FROM items WHERE source_id=? AND path_key=?`, recentSourceID, pathKey(localPath)).Scan(&transientID)
 		if transientID != "" {
-			_, _ = tx.Exec(`DELETE FROM recent_activity WHERE item_id=?`, transientID)
-			_, _ = tx.Exec(`DELETE FROM items_fts WHERE item_id=?`, transientID)
-			_, _ = tx.Exec(`DELETE FROM items WHERE id=?`, transientID)
+			paths, deleteErr := deleteThumbnailsTx(tx, `item_id=?`, transientID)
+			if deleteErr != nil {
+				_ = tx.Rollback()
+				return nil, deleteErr
+			}
+			thumbnailPaths = append(thumbnailPaths, paths...)
+			if _, deleteErr = tx.Exec(`DELETE FROM recent_activity WHERE item_id=?`, transientID); deleteErr != nil {
+				_ = tx.Rollback()
+				return nil, deleteErr
+			}
+			if _, deleteErr = tx.Exec(`DELETE FROM items_fts WHERE item_id=?`, transientID); deleteErr != nil {
+				_ = tx.Rollback()
+				return nil, deleteErr
+			}
+			if _, deleteErr = tx.Exec(`DELETE FROM items WHERE id=?`, transientID); deleteErr != nil {
+				_ = tx.Rollback()
+				return nil, deleteErr
+			}
 		}
 		item, err := upsertItemTx(tx, addedFilesSourceID, localPath, false)
 		if err != nil {
@@ -933,6 +949,7 @@ func (s *libraryService) AddFiles(paths []string) ([]itemView, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.removeThumbnailFiles(thumbnailPaths)
 	s.notifyChange(change)
 	return items, nil
 }
@@ -1247,9 +1264,23 @@ func (s *libraryService) RecordActivity(input activityInput) (*activityResult, e
 		_ = tx.Rollback()
 		return nil, err
 	}
-	_, _ = tx.Exec(`DELETE FROM recent_activity WHERE item_id IN (SELECT item_id FROM recent_activity ORDER BY last_used_at DESC LIMIT -1 OFFSET ?)`, maxRecentItems)
-	_, _ = tx.Exec(`DELETE FROM items_fts WHERE item_id IN (SELECT id FROM items WHERE transient=1 AND id NOT IN (SELECT item_id FROM recent_activity))`)
-	_, _ = tx.Exec(`DELETE FROM items WHERE transient=1 AND id NOT IN (SELECT item_id FROM recent_activity)`)
+	if _, err = tx.Exec(`DELETE FROM recent_activity WHERE item_id IN (SELECT item_id FROM recent_activity ORDER BY last_used_at DESC LIMIT -1 OFFSET ?)`, maxRecentItems); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	thumbnailPaths, err := deleteThumbnailsTx(tx, `item_id IN (SELECT id FROM items WHERE transient=1 AND id NOT IN (SELECT item_id FROM recent_activity))`)
+	if err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	if _, err = tx.Exec(`DELETE FROM items_fts WHERE item_id IN (SELECT id FROM items WHERE transient=1 AND id NOT IN (SELECT item_id FROM recent_activity))`); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	if _, err = tx.Exec(`DELETE FROM items WHERE transient=1 AND id NOT IN (SELECT item_id FROM recent_activity)`); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
 	change, err := recordChangeTx(tx, "recent-changed", []string{itemID})
 	if err == nil {
 		err = tx.Commit()
@@ -1259,6 +1290,7 @@ func (s *libraryService) RecordActivity(input activityInput) (*activityResult, e
 	if err != nil {
 		return nil, err
 	}
+	s.removeThumbnailFiles(thumbnailPaths)
 	s.notifyChange(change)
 	return &activityResult{ItemID: itemID, LastUsedAt: now}, nil
 }

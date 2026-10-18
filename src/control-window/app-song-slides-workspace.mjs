@@ -4533,7 +4533,8 @@ async function deleteCurrentDeck() {
     return;
   }
   try {
-    await slidesAPI.delete(currentDeck.id);
+    const deleted = await slidesAPI.delete(currentDeck.id);
+    if (!deleted) throw new Error("The deck could not be found in the slide library");
     currentDeck = null;
     currentDeckPageId = null;
     clearSlideUndoHistory();

@@ -45,6 +45,12 @@ const SCRIPTURE_DEFAULT_AUTOSIZE_MODE = SCRIPTURE_AUTOSIZE_FIT;
 const SLIDE_TRANSITION_INHERIT = "inherit";
 const SLIDE_TRANSITION_NONE = "none";
 const DEFAULT_SLIDE_TRANSITION_DURATION_MS = 350;
+const MAX_PROJECT_ARCHIVE_ENTRIES = 10_000;
+const MAX_PROJECT_METADATA_ENTRY_BYTES = 128 * 1024 * 1024;
+const MAX_PROJECT_ARCHIVE_ENTRY_BYTES = 128 * 1024 * 1024 * 1024;
+const MAX_PROJECT_ARCHIVE_TOTAL_BYTES = 256 * 1024 * 1024 * 1024;
+const activeExtractedProjectRoots = new Set();
+const extractedProjectRootBySnapshot = new WeakMap();
 const SLIDE_TRANSITION_EFFECTS = new Set([
   SLIDE_TRANSITION_NONE,
   "fade",
@@ -709,11 +715,54 @@ function statModifiedTime(info) {
 
 function openZip(zipPath) {
   return new Promise((resolve, reject) => {
-    yauzl.open(zipPath, { lazyEntries: true, autoClose: true }, (err, zipfile) => {
+    yauzl.open(
+      zipPath,
+      { lazyEntries: true, autoClose: true, validateEntrySizes: true },
+      (err, zipfile) => {
       if (err) return reject(err);
       resolve(zipfile);
-    });
+      },
+    );
   });
+}
+
+function createProjectArchiveBudget() {
+  return { entries: 0, totalBytes: 0 };
+}
+
+function isBufferedProjectArchivePath(inZipPath) {
+  return (
+    inZipPath === "mimetype" ||
+    inZipPath === "manifest.json" ||
+    inZipPath === "queue.json" ||
+    inZipPath === "assets.json" ||
+    inZipPath === "outputs.json" ||
+    inZipPath === "diagnostics.json" ||
+    inZipPath === PROJECT_DOCUMENTS_INDEX_PATH ||
+    (inZipPath.startsWith("songs/") && inZipPath.endsWith(".json")) ||
+    (inZipPath.startsWith("slides/") && inZipPath.endsWith(".json"))
+  );
+}
+
+function accountProjectArchiveEntry(budget, entry, inZipPath) {
+  budget.entries += 1;
+  if (budget.entries > MAX_PROJECT_ARCHIVE_ENTRIES) {
+    throw new Error("Project archive contains too many entries");
+  }
+  const size = Number(entry?.uncompressedSize);
+  if (!Number.isSafeInteger(size) || size < 0) {
+    throw new Error(`Project archive entry has an invalid size: ${inZipPath}`);
+  }
+  if (size > MAX_PROJECT_ARCHIVE_ENTRY_BYTES) {
+    throw new Error(`Project archive entry is too large: ${inZipPath}`);
+  }
+  if (isBufferedProjectArchivePath(inZipPath) && size > MAX_PROJECT_METADATA_ENTRY_BYTES) {
+    throw new Error(`Project metadata entry is too large: ${inZipPath}`);
+  }
+  budget.totalBytes += size;
+  if (budget.totalBytes > MAX_PROJECT_ARCHIVE_TOTAL_BYTES) {
+    throw new Error("Project archive expands beyond the supported size limit");
+  }
 }
 
 function openZipReadStream(zipfile, entry) {
@@ -725,10 +774,18 @@ function openZipReadStream(zipfile, entry) {
   });
 }
 
-async function readEntryBuffer(zipfile, entry) {
+async function readEntryBuffer(zipfile, entry, maxBytes = MAX_PROJECT_METADATA_ENTRY_BYTES) {
   const rs = await openZipReadStream(zipfile, entry);
   const chunks = [];
-  for await (const chunk of rs) chunks.push(chunk);
+  let totalBytes = 0;
+  for await (const chunk of rs) {
+    totalBytes += chunk.length;
+    if (totalBytes > maxBytes) {
+      rs.destroy(new Error("Project metadata entry exceeded its size limit"));
+      throw new Error("Project metadata entry exceeded its size limit");
+    }
+    chunks.push(chunk);
+  }
   return Buffer.concat(chunks);
 }
 
@@ -750,10 +807,12 @@ export async function readEmprojProjectGuid(projectPath) {
   }
   const rootFiles = new Map();
   const entryHashes = new Map();
+  const archiveBudget = createProjectArchiveBudget();
   await new Promise((resolve, reject) => {
     zipfile.on("entry", async (entry) => {
       try {
         const inZipPath = assertSafeArchivePath(entry.fileName);
+        accountProjectArchiveEntry(archiveBudget, entry, inZipPath);
         if (inZipPath.endsWith("/")) {
           zipfile.readEntry();
           return;
@@ -1093,9 +1152,15 @@ function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths
 
 export async function loadEmprojSnapshot(projectPath) {
   const extractRoot = await mkdtemp(path.join(os.tmpdir(), "ems-emproj-"));
+  activeExtractedProjectRoots.add(path.resolve(extractRoot));
   try {
-    return await readEmprojSnapshotInto(projectPath, extractRoot);
+    const snapshot = await readEmprojSnapshotInto(projectPath, extractRoot);
+    if (snapshot && typeof snapshot === "object") {
+      extractedProjectRootBySnapshot.set(snapshot, path.resolve(extractRoot));
+    }
+    return snapshot;
   } catch (err) {
+    activeExtractedProjectRoots.delete(path.resolve(extractRoot));
     await rm(extractRoot, { recursive: true, force: true }).catch(() => {});
     throw err;
   }
@@ -1115,11 +1180,13 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   const songFiles = new Map();
   const deckFiles = new Map();
   const entryHashes = new Map();
+  const archiveBudget = createProjectArchiveBudget();
 
   await new Promise((resolve, reject) => {
     zipfile.on("entry", async (entry) => {
       try {
         const inZipPath = assertSafeArchivePath(entry.fileName);
+        accountProjectArchiveEntry(archiveBudget, entry, inZipPath);
         if (inZipPath.endsWith("/")) {
           zipfile.readEntry();
           return;
@@ -2365,18 +2432,24 @@ async function saveEmprojSnapshotUnlocked(
     })),
   ];
 
-  await addZipFromBuffersAndFiles(
-    tmpPath,
-    zipBuffers,
-    fileEntries,
-    archiveComment,
-  );
+  let installed = false;
   try {
-    await copyFile(projectPath, bakPath);
-  } catch {
-    // No prior file.
+    await addZipFromBuffersAndFiles(
+      tmpPath,
+      zipBuffers,
+      fileEntries,
+      archiveComment,
+    );
+    try {
+      await copyFile(projectPath, bakPath);
+    } catch (err) {
+      if (err?.code !== "ENOENT") throw err;
+    }
+    await rename(tmpPath, projectPath);
+    installed = true;
+  } finally {
+    if (!installed) await rm(tmpPath, { force: true }).catch(() => {});
   }
-  await rename(tmpPath, projectPath);
   return {
     ok: true,
     filePath: projectPath,
@@ -2405,7 +2478,6 @@ export function saveEmprojSnapshot(projectPath, snapshot, appInfo = {}, opts = {
 
 export async function cleanupExtractedProjectMedia(snapshot) {
   const queue = Array.isArray(snapshot?.mediaQueue) ? snapshot.mediaQueue : [];
-  const marker = `${path.sep}ems-emproj-`;
   const candidates = [];
   const addCandidate = value => {
     if (typeof value !== "string" || !value) return;
@@ -2448,18 +2520,31 @@ export async function cleanupExtractedProjectMedia(snapshot) {
   for (const themeSnapshot of Object.values(snapshot?.projectThemes?.snapshots || {})) {
     collectTheme(themeSnapshot?.theme);
   }
-  let root = "";
-  for (const entryPath of candidates) {
-    const idx = entryPath.indexOf(marker);
-    if (idx < 0) continue;
-    const sepIdx = entryPath.indexOf(path.sep, idx + marker.length);
-    root = sepIdx >= 0 ? entryPath.slice(0, sepIdx) : entryPath;
-    break;
+  const roots = new Set();
+  const snapshotRoot =
+    snapshot && typeof snapshot === "object"
+      ? extractedProjectRootBySnapshot.get(snapshot)
+      : "";
+  if (snapshotRoot && activeExtractedProjectRoots.has(snapshotRoot)) {
+    roots.add(snapshotRoot);
   }
-  if (!root || root.length < marker.length) return;
-  try {
-    await rm(root, { recursive: true, force: true });
-  } catch {
-    // best-effort temp cleanup
+  for (const entryPath of candidates) {
+    const resolvedEntryPath = path.resolve(entryPath);
+    for (const activeRoot of activeExtractedProjectRoots) {
+      if (
+        resolvedEntryPath === activeRoot ||
+        resolvedEntryPath.startsWith(`${activeRoot}${path.sep}`)
+      ) {
+        roots.add(activeRoot);
+      }
+    }
+  }
+  for (const root of roots) {
+    try {
+      await rm(root, { recursive: true, force: true });
+      activeExtractedProjectRoots.delete(root);
+    } catch {
+      // best-effort temp cleanup
+    }
   }
 }

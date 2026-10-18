@@ -358,3 +358,92 @@ func TestDroppedPathsAreClassifiedWithoutFolderProbeErrors(t *testing.T) {
 		t.Fatalf("items=%#v", result.Items)
 	}
 }
+
+func TestPromotingRecentItemRemovesThumbnailRowsAndFiles(t *testing.T) {
+	root := t.TempDir()
+	imagePath := filepath.Join(root, "promoted.png")
+	writePNG(t, imagePath)
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	activity, err := service.RecordActivity(activityInput{LocalPath: imagePath, ActionKind: "previewed"})
+	if err != nil || activity == nil {
+		t.Fatalf("activity=%#v err=%v", activity, err)
+	}
+	thumb, err := service.Thumbnail(thumbnailRequest{ItemID: activity.ItemID, Size: 96})
+	if err != nil || !thumb.OK {
+		t.Fatalf("thumbnail=%#v err=%v", thumb, err)
+	}
+	items, err := service.AddFiles([]string{imagePath})
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items=%#v err=%v", items, err)
+	}
+	assertThumbnailRemoved(t, service, activity.ItemID, thumb.Output)
+}
+
+func TestRecentEvictionRemovesThumbnailRowsAndFiles(t *testing.T) {
+	root := t.TempDir()
+	victimPath := filepath.Join(root, "victim.png")
+	triggerPath := filepath.Join(root, "trigger.png")
+	writePNG(t, victimPath)
+	writePNG(t, triggerPath)
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	victim, err := service.RecordActivity(activityInput{LocalPath: victimPath, ActionKind: "previewed"})
+	if err != nil || victim == nil {
+		t.Fatalf("victim=%#v err=%v", victim, err)
+	}
+	thumb, err := service.Thumbnail(thumbnailRequest{ItemID: victim.ItemID, Size: 96})
+	if err != nil || !thumb.OK {
+		t.Fatalf("thumbnail=%#v err=%v", thumb, err)
+	}
+	if _, err := service.db.Exec(`UPDATE recent_activity SET last_used_at='0000-01-01T00:00:00Z' WHERE item_id=?`, victim.ItemID); err != nil {
+		t.Fatal(err)
+	}
+	baseTime := time.Now().Add(time.Minute)
+	for index := 0; index < maxRecentItems-1; index++ {
+		id := newID()
+		localPath := filepath.Join(root, "synthetic", id+".png")
+		_, err = service.db.Exec(`INSERT INTO items(id,source_id,provider_item_id,parent_id,kind,display_name,file_name,mime_type,size_bytes,modified_at,content_identity,availability,local_path,path_key,transient)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`, id, recentSourceID, localPath, "", "image", id, id+".png", "image/png", 1,
+			baseTime.Format(time.RFC3339Nano), "synthetic", "available", localPath, pathKey(localPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = service.db.Exec(`INSERT INTO recent_activity(item_id,action_kind,project_id,last_used_at,retention_state) VALUES(?,?,?,?,?)`,
+			id, "previewed", "", baseTime.Add(time.Duration(index)*time.Second).Format(time.RFC3339Nano), "transient")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(2 * time.Millisecond)
+	trigger, err := service.RecordActivity(activityInput{LocalPath: triggerPath, ActionKind: "previewed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recentCount int
+	var victimActivityCount int
+	if err := service.db.QueryRow(`SELECT COUNT(*) FROM recent_activity`).Scan(&recentCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.db.QueryRow(`SELECT COUNT(*) FROM recent_activity WHERE item_id=?`, victim.ItemID).Scan(&victimActivityCount); err != nil {
+		t.Fatal(err)
+	}
+	if recentCount != maxRecentItems || victimActivityCount != 0 {
+		var triggerActivityCount int
+		_ = service.db.QueryRow(`SELECT COUNT(*) FROM recent_activity WHERE item_id=?`, trigger.ItemID).Scan(&triggerActivityCount)
+		t.Fatalf("recent count=%d victim activity count=%d trigger activity count=%d", recentCount, victimActivityCount, triggerActivityCount)
+	}
+	assertThumbnailRemoved(t, service, victim.ItemID, thumb.Output)
+}

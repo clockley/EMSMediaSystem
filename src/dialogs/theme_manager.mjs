@@ -1,4 +1,4 @@
-import { themeSafeMargin } from "../shared/theme-editor-values.min.mjs";
+import { themeBackdropCornerRadius, themeSafeMargin } from "../shared/theme-editor-values.min.mjs";
 
 const api = window.themeManager;
 let records = [];
@@ -6,6 +6,7 @@ let activeThemeId = null;
 let selectedId = null;
 let original = null;
 let draft = null;
+const pendingAssetIdsByTheme = new Map();
 const initialParams = new URLSearchParams(window.location.search);
 let outputRole = initialParams.get("outputRole") === "lowerThird" ? "lowerThird" : "audience";
 let applyContext = {
@@ -21,6 +22,45 @@ const profile = () => draft?.profiles?.[$("tmKind").value]?.[outputRole];
 const isBuiltIn = () => records.find(item => item.id === selectedId)?.source === "built-in";
 const isDirty = () => original && draft && JSON.stringify(original) !== JSON.stringify(draft);
 const isSelectedActive = () => Boolean(selectedId) && selectedId === activeThemeId;
+
+function rememberPendingAsset(themeId, assetId) {
+  if (!themeId || !assetId) return;
+  let ids = pendingAssetIdsByTheme.get(themeId);
+  if (!ids) {
+    ids = new Set();
+    pendingAssetIdsByTheme.set(themeId, ids);
+  }
+  ids.add(assetId);
+}
+
+function referencedThemeAssetIds(theme) {
+  const ids = new Set();
+  const visit = value => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "assetId" && typeof child === "string" && child) ids.add(child);
+      else visit(child);
+    }
+  };
+  visit(theme?.profiles);
+  return ids;
+}
+
+function pruneDiscardedPendingAssets(theme) {
+  const pendingIds = pendingAssetIdsByTheme.get(theme?.id);
+  if (!Array.isArray(theme?.assets)) return;
+  const referencedIds = referencedThemeAssetIds(theme);
+  theme.assets = theme.assets.filter(
+    asset => (
+      referencedIds.has(asset?.id) ||
+      (!pendingIds?.has(asset?.id) && !["image", "video"].includes(asset?.type))
+    ),
+  );
+}
 
 function applyOpenContext(context = {}) {
   const contentKind = ["song", "scripture", "text"].includes(context?.contentKind)
@@ -194,7 +234,7 @@ function renderPreview() {
   if (outputRole === "lowerThird") { frame.style.cssText = `left:${left}%;right:${right}%;bottom:8%;height:24%;justify-content:flex-start;text-align:${target.typography?.align || "left"}`; text.innerHTML = "Amazing grace, how sweet the sound"; $("tmPreviewReference").textContent = "Sample Song"; }
   else { frame.style.cssText = `left:${left}%;right:${right}%;top:${themeSafeMargin(margins.top)*100}%;bottom:${themeSafeMargin(margins.bottom)*100}%;text-align:${target.typography?.align || "center"}`; text.innerHTML = $("tmKind").value === "scripture" ? "The light shines in the darkness" : $("tmKind").value === "text" ? "Welcome to today’s service" : "Amazing grace<br>How sweet the sound"; $("tmPreviewReference").textContent = $("tmKind").value === "scripture" ? "John 1:5" : "Sample Song · Verse 1"; }
   plate.style.background = target.backdrop?.enabled ? target.backdrop?.background?.color || "#101010" : "transparent";
-  plate.style.borderRadius = `${Number(target.backdrop?.cornerRadius) || 8}px`;
+  plate.style.borderRadius = `${themeBackdropCornerRadius(target.backdrop?.cornerRadius)}px`;
   plate.style.color = target.typography?.color || "#ffffff"; plate.style.fontFamily = target.typography?.fontFamily || draft.tokens?.fontFamily || "sans-serif";
   plate.style.fontSize = `${Math.max(12, (Number(target.typography?.fontSize) || 64) * .34)}px`; plate.style.fontWeight = target.typography?.fontWeight || 700;
   plate.style.textAlign = target.typography?.align || "center";
@@ -208,6 +248,7 @@ async function chooseAudienceBackground() {
   if (applyContext.scope !== "item") {
     draft.assets ||= [];
     draft.assets = [...draft.assets.filter(asset => asset.id !== result.asset.id), result.asset];
+    rememberPendingAsset(draft.id, result.asset.id);
   }
   for (const kind of ["song", "scripture", "text"]) {
     const target = ensureProfile(kind, "audience");
@@ -275,7 +316,9 @@ async function apply() {
   try {
     let appliedName = draft.name;
     if (dirty && !isBuiltIn()) {
+      pruneDiscardedPendingAssets(draft);
       const result = await api.save(draft);
+      pendingAssetIdsByTheme.delete(result.theme.id);
       // Saving commits the draft. Mark it clean before reload() reselects the
       // theme, otherwise selectTheme() mistakes the just-saved changes for
       // unsaved work and opens the discard confirmation.

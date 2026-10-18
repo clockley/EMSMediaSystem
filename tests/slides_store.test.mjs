@@ -73,3 +73,71 @@ test("duplicate gets a distinct generated ID and remains independently addressab
     assert.equal((await store.get(copy.id)).title, "Original (Copy)");
   });
 });
+
+test("moving a deck returns the timestamp that was persisted", async () => {
+  await withStore(async (store) => {
+    const saved = await store.save(deck(null, "Move Me"));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const moved = await store.moveToFolder(saved.id, "folder_one");
+    const persisted = await store.get(saved.id);
+    assert.equal(moved.folderId, "folder_one");
+    assert.equal(moved.updatedAt, persisted.updatedAt);
+    assert.notEqual(moved.updatedAt, saved.updatedAt);
+  });
+});
+
+test("corrupt folder metadata is preserved before a new folder file is written", async () => {
+  await withStore(async (store, root) => {
+    await mkdir(root, { recursive: true });
+    await writeFile(path.join(root, ".folders.json"), "{broken", "utf8");
+
+    assert.deepEqual(await store.listFolders(), []);
+    await store.createFolder("Recovered");
+
+    const entries = await readdir(root);
+    const backup = entries.find((entry) => entry.startsWith(".folders.json.corrupt-"));
+    assert.ok(backup, "the unreadable metadata should be retained as a backup");
+    assert.equal(await readFile(path.join(root, backup), "utf8"), "{broken");
+    assert.equal(
+      JSON.parse(await readFile(path.join(root, ".folders.json"), "utf8")).folders[0].name,
+      "Recovered",
+    );
+  });
+});
+
+test("folder deletion rolls deck changes back when one deck cannot be updated", async () => {
+  await withStore(async (store) => {
+    const folder = await store.createFolder("Service");
+    const first = await store.save({ ...deck(null, "First"), folderId: folder.id });
+    const second = await store.save({ ...deck(null, "Second"), folderId: folder.id });
+    const originalSave = store._save.bind(store);
+    let clearAttempts = 0;
+    store._save = async candidate => {
+      if (candidate.folderId === null && ++clearAttempts === 2) {
+        throw new Error("injected deck write failure");
+      }
+      return originalSave(candidate);
+    };
+
+    await assert.rejects(store.deleteFolder(folder.id), /injected deck write failure/);
+
+    assert.equal((await store.get(first.id)).folderId, folder.id);
+    assert.equal((await store.get(second.id)).folderId, folder.id);
+    assert.equal((await store.listFolders()).some((entry) => entry.id === folder.id), true);
+  });
+});
+
+test("deck deletion propagates filesystem errors", async () => {
+  await withStore(async (store, root) => {
+    await mkdir(root, { recursive: true });
+    const directoryPath = path.join(root, "not-a-deck-file");
+    await mkdir(directoryPath);
+    store._findDeckRecord = async () => ({
+      deck: deck("legacy"),
+      filePath: directoryPath,
+      fileName: path.basename(directoryPath),
+    });
+
+    await assert.rejects(store.delete("legacy"), /directory|operation not permitted|EISDIR/i);
+  });
+});
