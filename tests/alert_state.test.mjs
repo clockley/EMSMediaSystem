@@ -72,6 +72,15 @@ test("nursery identifiers coexist, expire, and remove independently", () => {
   assert.equal(expireNurseryAlerts(state, 201).alerts.length, 0);
 });
 
+test("nursery alerts with a zero duration remain until explicitly removed", () => {
+  const persistent = addNurseryAlert(createNurseryAlertsState(), { id: "persistent", identifier: "42", durationMs: 0 }, 1000);
+  assert.equal(persistent.alerts[0].expiresAt, null);
+  assert.equal(expireNurseryAlerts(persistent, 999999).alerts.length, 1);
+
+  const timed = addNurseryAlert(createNurseryAlertsState(), { identifier: "17" }, 1000);
+  assert.equal(timed.alerts[0].expiresAt, 16000);
+});
+
 test("nursery alerts preserve valid custom colors and reject invalid color input", () => {
   let state = addNurseryAlert(createNurseryAlertsState(), {
     identifier: "42",

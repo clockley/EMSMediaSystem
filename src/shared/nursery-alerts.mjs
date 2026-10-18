@@ -14,7 +14,10 @@ export function addNurseryAlert(state, input, now = Date.now()) {
   const current = state?.schema === NURSERY_ALERTS_SCHEMA ? state : createNurseryAlertsState();
   const identifier = String(input?.identifier || input?.message || "").trim().slice(0, 50);
   if (!identifier) throw new TypeError("A nursery identifier is required");
-  const durationMs = Math.max(0, Math.min(300000, Number(input?.durationMs) || 15000));
+  const parsedDuration = Number(input?.durationMs);
+  const durationMs = input?.durationMs !== null && input?.durationMs !== "" && Number.isFinite(parsedDuration)
+    ? Math.max(0, Math.min(300000, parsedDuration))
+    : 15000;
   const alert = {
     id: String(input?.id || `nursery-${now}-${current.revision + 1}`),
     identifier,

@@ -4,8 +4,10 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -104,6 +106,25 @@ func TestLibraryOwnsDatabaseScanningSearchRecentAndThumbnails(t *testing.T) {
 	if err != nil || cached.Output != thumb.Output {
 		t.Fatalf("thumbnail cache miss: %#v %v", cached, err)
 	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(imagePath, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanSource(source.ID); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := service.Thumbnail(thumbnailRequest{ItemID: item.ID, Size: 96})
+	if err != nil || !replacement.OK || replacement.Output == thumb.Output {
+		t.Fatalf("replacement thumbnail=%#v old=%#v err=%v", replacement, thumb, err)
+	}
+	if _, err := os.Stat(thumb.Output); !os.IsNotExist(err) {
+		t.Fatalf("superseded thumbnail still exists at %s (err=%v)", thumb.Output, err)
+	}
+	var thumbnailRows int
+	if err := service.db.QueryRow(`SELECT COUNT(*) FROM thumbnails WHERE item_id=? AND size_class=?`, item.ID, 96).Scan(&thumbnailRows); err != nil || thumbnailRows != 1 {
+		t.Fatalf("thumbnail rows=%d err=%v", thumbnailRows, err)
+	}
+	thumb = replacement
 
 	activity, err := service.RecordActivity(activityInput{ItemID: item.ID, ActionKind: "previewed"})
 	if err != nil || activity == nil {
@@ -135,6 +156,76 @@ func TestLibraryOwnsDatabaseScanningSearchRecentAndThumbnails(t *testing.T) {
 		t.Fatalf("missing item=%#v err=%v", missing, err)
 	}
 	assertThumbnailRemoved(t, service, item.ID, thumb.Output)
+}
+
+func TestIncompleteScanPreservesExistingMediaAndThumbnails(t *testing.T) {
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "source")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	imagePath := filepath.Join(sourceRoot, "preserved.png")
+	writePNG(t, imagePath)
+
+	service := newLibraryService(nil)
+	var denyImage atomic.Bool
+	service.walkDir = func(root string, visit fs.WalkDirFunc) error {
+		return filepath.WalkDir(root, func(localPath string, entry fs.DirEntry, walkErr error) error {
+			if denyImage.Load() && localPath == imagePath {
+				return visit(localPath, entry, fs.ErrPermission)
+			}
+			return visit(localPath, entry, walkErr)
+		})
+	}
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := service.AddSource(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanSource(source.ID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Query(queryOptions{SourceID: source.ID, Limit: 10})
+	if err != nil || result.Total != 1 {
+		t.Fatalf("query=%#v err=%v", result, err)
+	}
+	item := result.Items[0]
+	thumb, err := service.Thumbnail(thumbnailRequest{ItemID: item.ID, Size: 96})
+	if err != nil || !thumb.OK {
+		t.Fatalf("thumbnail=%#v err=%v", thumb, err)
+	}
+
+	denyImage.Store(true)
+	partial, err := service.ScanSource(source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partial.Status != "error" || partial.Error == "" {
+		t.Fatalf("partial source=%#v", partial)
+	}
+	preserved, err := service.GetItem(item.ID)
+	if err != nil || preserved == nil || preserved.Availability != "available" {
+		t.Fatalf("preserved item=%#v err=%v", preserved, err)
+	}
+	if _, err := os.Stat(thumb.Output); err != nil {
+		t.Fatalf("thumbnail was removed after incomplete scan: %v", err)
+	}
+	var thumbnailRows int
+	if err := service.db.QueryRow(`SELECT COUNT(*) FROM thumbnails WHERE item_id=?`, item.ID).Scan(&thumbnailRows); err != nil || thumbnailRows != 1 {
+		t.Fatalf("thumbnail rows=%d err=%v", thumbnailRows, err)
+	}
+
+	denyImage.Store(false)
+	recovered, err := service.ScanSource(source.ID)
+	if err != nil || recovered.Status != "ready" || recovered.Error != "" {
+		t.Fatalf("recovered source=%#v err=%v", recovered, err)
+	}
 }
 
 func TestExplicitRemovalDeletesThumbnailRowsAndFiles(t *testing.T) {

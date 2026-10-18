@@ -58,6 +58,7 @@ import { ThemeLibrary } from "../shared/theme-manager.min.mjs";
 import { EMS_SAFE_DEFAULT_THEME } from "../shared/theme-resolver.min.mjs";
 import { exportThemePack, importThemePack } from "../shared/theme-pack.min.mjs";
 import { importThemeAsset, resolveManagedThemeAsset } from "../shared/theme-assets.min.mjs";
+import { isWindowTiled } from "../shared/window-layout.min.mjs";
 import settings from "./settings.min.mjs";
 import {
   loadEmprojSnapshot,
@@ -367,24 +368,7 @@ async function checkHelpWindowState() {
     return;
   }
 
-  // Check if window is actually tiled/snapped
-  // A window is considered tiled if it touches TWO or more edges
-  const touchingLeft = bounds.x === 0;
-  const touchingTop = bounds.y === 0;
-  const touchingRight = bounds.x + bounds.width === targetScreen.bounds.width;
-  const touchingBottom =
-    bounds.y + bounds.height === targetScreen.bounds.height;
-
-  const edgeCount = [
-    touchingLeft,
-    touchingTop,
-    touchingRight,
-    touchingBottom,
-  ].filter(Boolean).length;
-
-  const isTiled = edgeCount >= 2; // Only consider it tiled if touching multiple edges
-
-  helpWindow.webContents.send("window-maximized", isTiled);
+  helpWindow.webContents.send("window-maximized", isWindowTiled(bounds, targetScreen.bounds));
 }
 
 async function checkWindowState() {
@@ -397,24 +381,7 @@ async function checkWindowState() {
     return;
   }
 
-  // Check if window is actually tiled/snapped
-  // A window is considered tiled if it touches TWO or more edges
-  const touchingLeft = bounds.x === 0;
-  const touchingTop = bounds.y === 0;
-  const touchingRight = bounds.x + bounds.width === targetScreen.bounds.width;
-  const touchingBottom =
-    bounds.y + bounds.height === targetScreen.bounds.height;
-
-  const edgeCount = [
-    touchingLeft,
-    touchingTop,
-    touchingRight,
-    touchingBottom,
-  ].filter(Boolean).length;
-
-  const isTiled = edgeCount >= 2; // Only consider it tiled if touching multiple edges
-
-  win.webContents.send("window-maximized", isTiled);
+  win.webContents.send("window-maximized", isWindowTiled(bounds, targetScreen.bounds));
 }
 
 function lateInit() {
@@ -479,10 +446,9 @@ function createWindow() {
   win.on("unmaximize", handleMaximizeChange.bind(null, false));
   wireMainWindowCloseAutosave(win);
 
-  win.on("closed", async () => {
+  win.on("closed", () => {
     win = null;
     app.quit();
-    await settings.flush();
   });
 
   measurePerformanceAsync(
@@ -5822,7 +5788,7 @@ app.on("before-quit", (event) => {
   atemService.stop();
   mediaWatcher.closeAll();
   mediaLibrary.close();
-  const cleanupTasks = [cleanupMediaStagingDir()];
+  const cleanupTasks = [cleanupMediaStagingDir(), settings.flush()];
   if (activeProjectSnapshot) {
     const snapshotToClean = activeProjectSnapshot;
     activeProjectSnapshot = null;

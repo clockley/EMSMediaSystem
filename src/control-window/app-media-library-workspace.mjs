@@ -440,9 +440,9 @@ function renderSources() {
     button.setAttribute("aria-current", source.id === state.sourceId ? "page" : "false");
     button.innerHTML = `${sourceIcon(source)}<span></span><i class="media-library__source-status" data-status="${source.status}"></i>`;
     button.querySelector("span").textContent = source.displayName;
-    const statusLabel = source.status === "offline" ? "Offline" : source.status === "indexing" ? "Indexing" : "Ready";
+    const statusLabel = source.status === "offline" ? "Offline" : source.status === "indexing" ? "Indexing" : source.status === "error" ? "Scan incomplete" : "Ready";
     const status = button.querySelector(".media-library__source-status");
-    status.title = statusLabel;
+    status.title = source.error || statusLabel;
     status.setAttribute("aria-label", `Source status: ${statusLabel}`);
     row.appendChild(button);
     if (source.id !== "added-files") {
@@ -465,11 +465,14 @@ function renderSources() {
   element("mediaLibraryAllCount").textContent = state.snapshot.counts?.all ?? "";
   const indexing = state.snapshot.sources.filter((source) => source.status === "indexing");
   const offline = state.snapshot.sources.filter((source) => source.status === "offline");
+  const scanErrors = state.snapshot.sources.filter((source) => source.status === "error");
   const indexStatus = element("mediaLibraryIndexStatus");
   indexStatus.textContent = indexing.length
     ? `Indexing ${indexing.map((source) => source.displayName).join(", ")}…`
     : offline.length
       ? `${offline.length} source${offline.length === 1 ? " is" : "s are"} offline`
+      : scanErrors.length
+        ? `${scanErrors.length} source scan${scanErrors.length === 1 ? " is" : "s are"} incomplete; existing media was preserved`
       : "";
   indexStatus.hidden = !indexStatus.textContent;
 }

@@ -1,3 +1,5 @@
+import { themeSafeMargin } from "../shared/theme-editor-values.min.mjs";
+
 const api = window.themeManager;
 let records = [];
 let activeThemeId = null;
@@ -129,7 +131,7 @@ function fillEditor() {
     : "None";
   $("tmChooseBackground").disabled = isBuiltIn() && applyContext.scope !== "item";
   $("tmClearBackground").disabled = background.type !== "image";
-  $("tmSafeMargin").value = Math.round((Number(target.canvas.safeMargins.left) || .06) * 100);
+  $("tmSafeMargin").value = Math.round(themeSafeMargin(target.canvas.safeMargins.left) * 100);
   $("tmBackdrop").checked = target.backdrop.enabled === true;
   $("tmBackdropColor").value = color(target.backdrop.background.color, "#101010");
   $("tmTransition").value = ["none", "fade", "slide-left", "slide-right", "zoom"].includes(target.transition.type) ? target.transition.type : "fade";
@@ -188,9 +190,9 @@ function renderPreview() {
     : "none";
   preview.style.backgroundSize = background.fit || "cover";
   preview.style.backgroundPosition = background.position || "center";
-  const margins = target.canvas?.safeMargins || {}; const left = (Number(margins.left) || .06) * 100; const right = (Number(margins.right) || .06) * 100;
+  const margins = target.canvas?.safeMargins || {}; const left = themeSafeMargin(margins.left) * 100; const right = themeSafeMargin(margins.right) * 100;
   if (outputRole === "lowerThird") { frame.style.cssText = `left:${left}%;right:${right}%;bottom:8%;height:24%;justify-content:flex-start;text-align:${target.typography?.align || "left"}`; text.innerHTML = "Amazing grace, how sweet the sound"; $("tmPreviewReference").textContent = "Sample Song"; }
-  else { frame.style.cssText = `left:${left}%;right:${right}%;top:${(Number(margins.top)||.06)*100}%;bottom:${(Number(margins.bottom)||.06)*100}%;text-align:${target.typography?.align || "center"}`; text.innerHTML = $("tmKind").value === "scripture" ? "The light shines in the darkness" : $("tmKind").value === "text" ? "Welcome to today’s service" : "Amazing grace<br>How sweet the sound"; $("tmPreviewReference").textContent = $("tmKind").value === "scripture" ? "John 1:5" : "Sample Song · Verse 1"; }
+  else { frame.style.cssText = `left:${left}%;right:${right}%;top:${themeSafeMargin(margins.top)*100}%;bottom:${themeSafeMargin(margins.bottom)*100}%;text-align:${target.typography?.align || "center"}`; text.innerHTML = $("tmKind").value === "scripture" ? "The light shines in the darkness" : $("tmKind").value === "text" ? "Welcome to today’s service" : "Amazing grace<br>How sweet the sound"; $("tmPreviewReference").textContent = $("tmKind").value === "scripture" ? "John 1:5" : "Sample Song · Verse 1"; }
   plate.style.background = target.backdrop?.enabled ? target.backdrop?.background?.color || "#101010" : "transparent";
   plate.style.borderRadius = `${Number(target.backdrop?.cornerRadius) || 8}px`;
   plate.style.color = target.typography?.color || "#ffffff"; plate.style.fontFamily = target.typography?.fontFamily || draft.tokens?.fontFamily || "sans-serif";

@@ -8489,6 +8489,7 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     font-style: normal;
 }
 .media-library__source-status[data-status="indexing"] { background: #f6d32d; }
+.media-library__source-status[data-status="error"] { background: #ff7800; }
 .media-library__source-status[data-status="offline"] { background: #e01b24; }
 .media-library__index-status { padding: 8px 8px 4px; color: var(--dim-label-color); font-size: 11px; line-height: 1.35; }
 .media-library__index-status[hidden] { display: none; }

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -105,15 +106,26 @@ func (s *libraryService) rememberThumbnail(item itemView, size int, output strin
 	if s.db == nil || s.closed {
 		return false
 	}
-	var availability string
-	if err := s.db.QueryRow(`SELECT availability FROM items WHERE id=?`, item.ID).Scan(&availability); err != nil || availability != "available" {
+	var availability, contentIdentity string
+	if err := s.db.QueryRow(`SELECT availability, content_identity FROM items WHERE id=?`, item.ID).Scan(&availability, &contentIdentity); err != nil || availability != "available" || contentIdentity != item.ContentIdentity {
 		return false
 	}
-	_, err := s.db.Exec(`INSERT INTO thumbnails(item_id,size_class,cache_path,generation_version,source_fingerprint,created_at)
+	var previousPath string
+	err := s.db.QueryRow(`SELECT cache_path FROM thumbnails WHERE item_id=? AND size_class=?`, item.ID, size).Scan(&previousPath)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	_, err = s.db.Exec(`INSERT INTO thumbnails(item_id,size_class,cache_path,generation_version,source_fingerprint,created_at)
 		VALUES(?,?,?,1,?,?) ON CONFLICT(item_id,size_class) DO UPDATE SET cache_path=excluded.cache_path,
 		source_fingerprint=excluded.source_fingerprint,created_at=excluded.created_at`, item.ID, size, output,
 		item.ContentIdentity, time.Now().UTC().Format(time.RFC3339Nano))
-	return err == nil
+	if err != nil {
+		return false
+	}
+	if previousPath != "" && pathKey(previousPath) != pathKey(output) {
+		s.removeThumbnailFiles([]string{previousPath})
+	}
+	return true
 }
 
 // deleteThumbnailsTx removes thumbnail records matching a caller-supplied item

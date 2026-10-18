@@ -167,6 +167,7 @@ type libraryService struct {
 	watchedBySource map[string]map[string]struct{}
 	ownersByDir     map[string]map[string]struct{}
 	rescanTimers    map[string]*time.Timer
+	walkDir         func(string, fs.WalkDirFunc) error
 	stop            chan struct{}
 	closed          bool
 }
@@ -177,6 +178,7 @@ func newLibraryService(notify func(changeRecord)) *libraryService {
 		watchedBySource: make(map[string]map[string]struct{}),
 		ownersByDir:     make(map[string]map[string]struct{}),
 		rescanTimers:    make(map[string]*time.Timer),
+		walkDir:         filepath.WalkDir,
 		stop:            make(chan struct{}),
 	}
 }
@@ -616,8 +618,17 @@ func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
 
 	found := make([]scannedItem, 0)
 	directories := make([]string, 0)
-	err = filepath.WalkDir(source.RootLocator, func(localPath string, entry fs.DirEntry, walkErr error) error {
+	scanIncomplete := false
+	scanProblem := ""
+	recordScanProblem := func(localPath string, problem error) {
+		scanIncomplete = true
+		if scanProblem == "" {
+			scanProblem = fmt.Sprintf("Incomplete scan at %s: %v", localPath, problem)
+		}
+	}
+	err = s.walkDir(source.RootLocator, func(localPath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			recordScanProblem(localPath, walkErr)
 			return nil
 		}
 		if localPath != source.RootLocator {
@@ -636,7 +647,11 @@ func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
 				}
 			}
 		}
-		relative, _ := filepath.Rel(source.RootLocator, localPath)
+		relative, relativeErr := filepath.Rel(source.RootLocator, localPath)
+		if relativeErr != nil {
+			recordScanProblem(localPath, relativeErr)
+			return nil
+		}
 		if entry.IsDir() {
 			if relative != "." && len(strings.Split(filepath.ToSlash(relative), "/")) > maxScanDepth {
 				return filepath.SkipDir
@@ -644,15 +659,20 @@ func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
 			directories = append(directories, localPath)
 			return nil
 		}
-		if len(found) >= maxFilesPerSource {
-			return nil
-		}
 		class, ok := classifyMedia(entry.Name())
 		if !ok {
 			return nil
 		}
-		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
+		if len(found) >= maxFilesPerSource {
+			recordScanProblem(localPath, fmt.Errorf("source exceeds the %d-file scan limit", maxFilesPerSource))
+			return filepath.SkipAll
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			recordScanProblem(localPath, infoErr)
+			return nil
+		}
+		if !info.Mode().IsRegular() {
 			return nil
 		}
 		key := pathKey(localPath)
@@ -674,16 +694,19 @@ func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
 		return nil
 	})
 	if err != nil {
-		return sourceView{}, err
+		recordScanProblem(source.RootLocator, err)
 	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
 		return sourceView{}, err
 	}
-	if _, err = tx.Exec(`UPDATE items SET availability='missing' WHERE source_id=?`, sourceID); err != nil {
-		_ = tx.Rollback()
-		return sourceView{}, err
+	thumbnailPaths := []string{}
+	if !scanIncomplete {
+		if _, err = tx.Exec(`UPDATE items SET availability='missing' WHERE source_id=?`, sourceID); err != nil {
+			_ = tx.Rollback()
+			return sourceView{}, err
+		}
 	}
 	for _, item := range found {
 		_, err = tx.Exec(`INSERT INTO items(id, source_id, provider_item_id, parent_id, kind, display_name, file_name, mime_type,
@@ -706,22 +729,28 @@ func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
 			return sourceView{}, err
 		}
 	}
-	thumbnailPaths, err := deleteThumbnailsTx(tx,
-		`item_id IN (SELECT id FROM items WHERE source_id=? AND availability='missing')`, sourceID)
-	if err != nil {
-		_ = tx.Rollback()
-		return sourceView{}, err
+	if !scanIncomplete {
+		thumbnailPaths, err = deleteThumbnailsTx(tx,
+			`item_id IN (SELECT id FROM items WHERE source_id=? AND availability='missing')`, sourceID)
+		if err != nil {
+			_ = tx.Rollback()
+			return sourceView{}, err
+		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var count int64
 	_ = tx.QueryRow(`SELECT COUNT(*) FROM items WHERE source_id=?`, sourceID).Scan(&count)
-	_, err = tx.Exec(`UPDATE sources SET status='ready', error='', last_sync_at=?, item_count=? WHERE id=?`, now, count, sourceID)
+	status, sourceError, changeKind := "ready", "", "source-scanned"
+	if scanIncomplete {
+		status, sourceError, changeKind = "error", scanProblem, "source-scan-incomplete"
+	}
+	_, err = tx.Exec(`UPDATE sources SET status=?, error=?, last_sync_at=?, item_count=? WHERE id=?`, status, sourceError, now, count, sourceID)
 	ids := make([]string, 0, len(found)+1)
 	ids = append(ids, sourceID)
 	for _, item := range found {
 		ids = append(ids, item.ID)
 	}
-	change, changeErr := recordChangeTx(tx, "source-scanned", ids)
+	change, changeErr := recordChangeTx(tx, changeKind, ids)
 	if err == nil {
 		err = changeErr
 	}
