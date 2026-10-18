@@ -2598,34 +2598,63 @@ async function loadSongItemIntoWorkspace(item, token) {
     null;
   if (item?.deckSnapshot) {
     const deck = normalizeSlideDeck(item.deckSnapshot);
+    const songSnapshot = deckToTransientSong(deck);
+    if (!songSnapshot) return false;
+    // Audience output resolves directly from the scheduled item, not from the
+    // workspace globals populated below. Keep legacy deck-backed entries
+    // renderable even when they were saved without a parallel song snapshot.
+    item.deckSnapshot = deck;
+    item.songSnapshot = songSnapshot;
     const itemRender = songRenderFromItem({
       ...item,
-      songSnapshot: deckToTransientSong(deck),
+      songSnapshot,
     });
     currentSongRenderState = mergeSongRenderState(songRenderStateFromSongDocument(deck), itemRender);
     currentSongSectionId = itemRender.currentSectionId || item?.source?.pageId || null;
-    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return;
+    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return false;
     await loadSongIntoWorkspace(deck, { render: currentSongRenderState });
-    return;
+    return true;
   }
   if (item?.songSnapshot) {
-    const songSnapshot = transientSongFromSongDocument(item.songSnapshot);
+    const sourceDocument = item.songSnapshot;
+    const songSnapshot = transientSongFromSongDocument(sourceDocument);
+    if (!songSnapshot) return false;
+    // Some older projects stored a deck document in songSnapshot. Normalize
+    // the runtime field so the audience resolver always receives ems.song.v1.
+    item.songSnapshot = songSnapshot;
     const itemRender = songRenderFromItem({ ...item, songSnapshot });
     currentSongRenderState = itemRender;
     currentSongSectionId = itemRender.currentSectionId || null;
-    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return;
-    await loadSongIntoWorkspace(item.songSnapshot, { render: itemRender });
-    return;
+    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return false;
+    await loadSongIntoWorkspace(sourceDocument, { render: itemRender });
+    return true;
   }
-  if (item?.source?.songId) {
-    const song = await songsAPI.get(item.source.songId);
-    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return;
+  const librarySongId = item?.source?.songId || parseSongQueuePath(item?.path);
+  if (librarySongId) {
+    const song = await songsAPI.get(librarySongId);
+    if (typeof token === "number" && !isCurrentPreviewLoad(token)) return false;
     const songSnapshot = transientSongFromSongDocument(song);
+    if (!songSnapshot) return false;
+    // Reference-only schedule entries can still occur in legacy/autosaved
+    // projects. Loading one used to populate only the operator workspace;
+    // createMediaWindow later resolved the untouched queue item, found no
+    // snapshot, and sent no text or background at all to the audience window.
+    item.songSnapshot = songSnapshot;
+    if (isSlideDeckDocument(song)) {
+      item.deckSnapshot = normalizeSlideDeck(song);
+    }
+    item.source = {
+      ...(item.source && typeof item.source === "object" ? item.source : {}),
+      kind: item.source?.kind || "library",
+      songId: librarySongId,
+    };
     const itemRender = songRenderFromItem({ ...item, songSnapshot });
     currentSongRenderState = mergeSongRenderState(songRenderStateFromSongDocument(song), itemRender);
     currentSongSectionId = itemRender.currentSectionId || null;
     await loadSongIntoWorkspace(song, { render: itemRender });
+    return true;
   }
+  return false;
 }
 
 function queueItemDeckId(item) {

@@ -231,6 +231,12 @@ async function releaseOutputHoldsForRecovery() {
       changed = (await restoreLiveSongText({ quiet: true })) || changed;
     }
     setSharedRendererState({ liveTextClearActive: false });
+    // The audience renderer keeps the clear-text state in a separate
+    // compositor layer. Updating the local flag (and even sending restored
+    // song text) does not make that layer visible again, so a queue take after
+    // Clear Text could leave the newly selected song hidden on the audience
+    // display. Keep both sides in sync before taking the next item live.
+    send("set-audience-clear-state", false);
     updateClearLiveTextButtonState();
     changed = true;
   }

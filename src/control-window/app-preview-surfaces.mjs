@@ -530,10 +530,9 @@ async function restorePreviewToLiveOutput(index) {
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
     setMediaCountdownText("");
-    
-    await loadSongItemIntoWorkspace(item, token);
-    
-    if (!isCurrentPreviewLoad(token)) return;
+    const loaded = await loadSongItemIntoWorkspace(item, token);
+
+    if (!loaded || !isCurrentPreviewLoad(token)) return;
     showSongsWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
     syncMediaLoopState({ notify: false });

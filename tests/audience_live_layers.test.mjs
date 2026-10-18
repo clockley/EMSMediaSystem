@@ -63,6 +63,37 @@ test("background switches without replacing resolved text content", () => {
   assert.equal(state.layers.media.sourceUrl, "file:///two.jpg");
 });
 
+test("taking a scheduled item after Clear Text reveals audience text again", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-logo-hold.mjs", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("async function releaseOutputHoldsForRecovery()");
+  const end = source.indexOf(
+    "\nasync function releaseOutputHoldsAndGoLiveQueueIndex",
+    start,
+  );
+  const recovery = source.slice(start, end);
+
+  assert.match(recovery, /setSharedRendererState\(\{ liveTextClearActive: false \}\)/);
+  assert.match(recovery, /send\("set-audience-clear-state", false\)/);
+});
+
+test("leaving text output clears the audience Clear Text compositor layer", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-live-outputs.mjs", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("function updateClearLiveTextButtonState()");
+  const end = source.indexOf("\nasync function clearLiveText()", start);
+  const update = source.slice(start, end);
+
+  assert.match(
+    update,
+    /if \(!available && liveTextClearActive\)[\s\S]*setSharedRendererState\(\{ liveTextClearActive: false \}\)[\s\S]*send\("set-audience-clear-state", false\)/,
+  );
+});
+
 test("audience renderer declares fixed background, content, alert, and hold slots", async () => {
   const html = await readFile(new URL("../src/media-window/media.html", import.meta.url), "utf8");
   const positions = ["liveBackgroundLayer", "textCanvas", "audienceAlertLayer", "outputHoldOverlay"].map((id) => html.indexOf(`id="${id}"`));

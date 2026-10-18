@@ -754,12 +754,18 @@ function hasLiveAudienceTextPresentation(type) {
 }
 
 function updateClearLiveTextButtonState() {
-  const button = document.getElementById("clearLiveTextButton");
-  if (!button) return;
   const available = canClearLiveText();
   if (!available && liveTextClearActive) {
     setSharedRendererState({ liveTextClearActive: false });
+    // Clear Text is also tracked by the audience compositor. When the live
+    // item changes to video, image, or another non-text source, the local
+    // toggle becomes unavailable, but the compositor layer must be cleared as
+    // well. Otherwise that stale layer hides the whole text canvas when the
+    // next song is slipstreamed into the existing audience window.
+    send("set-audience-clear-state", false);
   }
+  const button = document.getElementById("clearLiveTextButton");
+  if (!button) return;
   const textHidden = available && liveTextClearActive;
   const label = document.getElementById("clearLiveTextButtonLabel");
   const buttonLabel = textHidden ? "Show Text" : "Clear Text";

@@ -250,6 +250,24 @@ test("song editor stays on the lyric WYSIWYG, not the slides canvas", async () =
   assert.doesNotMatch(openSongEditor, /loadDeckIntoWorkspace\(/);
 });
 
+test("reference-only scheduled songs are hydrated before audience output", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url),
+    "utf8",
+  );
+  const start = source.indexOf("async function loadSongItemIntoWorkspace(");
+  assert.ok(start >= 0, "loadSongItemIntoWorkspace should exist");
+  const end = source.indexOf("\nfunction queueItemDeckId(", start);
+  const loadScheduledSong = source.slice(start, end);
+
+  assert.match(
+    loadScheduledSong,
+    /const librarySongId = item\?\.source\?\.songId \|\| parseSongQueuePath\(item\?\.path\)/,
+  );
+  assert.match(loadScheduledSong, /const song = await songsAPI\.get\(librarySongId\)/);
+  assert.match(loadScheduledSong, /item\.songSnapshot = songSnapshot/);
+});
+
 test("native decks keep the PowerPoint-like slides workspace", async () => {
   const workspaceSource = await readFile(
     new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url),

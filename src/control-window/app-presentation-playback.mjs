@@ -785,10 +785,9 @@ async function loadQueueItemIntoPreviewCue(index) {
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
     setMediaCountdownText("");
-    
-    await loadSongItemIntoWorkspace(item, token);
-    
-    if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+    const loaded = await loadSongItemIntoWorkspace(item, token);
+
+    if (!loaded || !isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
     showSongsWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemImage(item)) {
@@ -1142,7 +1141,10 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     }
     setSharedRendererState({ audioOnlyFile: false });
     setSharedRendererState({ playingMediaAudioOnly: false });
-    await loadSongItemIntoWorkspace(item, loadToken);
+    const loaded = await loadSongItemIntoWorkspace(item, loadToken);
+    if (!loaded) {
+      throw new Error(`Could not resolve scheduled song: ${item.name || item.path || "Song"}`);
+    }
     showSongsWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
     return;
