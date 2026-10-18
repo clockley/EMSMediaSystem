@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [templates, bibleWorkspace, songWorkspace, css] = await Promise.all([
+const [templates, bibleWorkspace, workspaceShell, songWorkspace, css] = await Promise.all([
   readFile(new URL("../src/shared/app-ui-templates.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/control-window/app-bible-workspace.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../src/control-window/app-workspace-shell.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/main.css", import.meta.url), "utf8"),
 ]);
@@ -23,6 +24,23 @@ test("single lower-third cues suppress duplicate lists and navigation", () => {
   assert.match(songWorkspace, /list\.hidden = count <= 1/);
   assert.match(bibleWorkspace, /prevButton\.hidden = segmentCount <= 1/);
   assert.match(songWorkspace, /prev\.hidden = count <= 1/);
+});
+
+test("translation changes preserve an available chapter or verse before falling back", () => {
+  const selector = bibleWorkspace.slice(
+    bibleWorkspace.indexOf("async function selectBibleReferenceForVersion"),
+    bibleWorkspace.indexOf("function positionBibleReferenceSuggestionsOverlay"),
+  );
+  assert.match(selector, /normalizeBibleReferenceInput\(preferredReference, version\)/);
+  assert.match(selector, /if \(!resolvedReference\) \{\s*return selectFirstBibleReferenceForVersion\(version\)/);
+  assert.match(selector, /Object\.assign\(bibleDesignerState, resolvedReference/);
+
+  const changeHandler = workspaceShell.slice(
+    workspaceShell.indexOf('versionSelect.addEventListener("change"'),
+    workspaceShell.indexOf('document.getElementById("bibleBrowseModeBtn"'),
+  );
+  assert.match(changeHandler, /const preferredReference = referenceInput\?\.value \|\| bibleDesignerState\.reference/);
+  assert.match(changeHandler, /selectBibleReferenceForVersion\(selectedVersion, preferredReference\)/);
 });
 
 test("operator previews and schedule rows have distinct Live and Cued treatments", () => {

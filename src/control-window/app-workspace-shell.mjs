@@ -148,7 +148,7 @@ import {
   scheduleBibleSearch,
   scheduleCurrentDeck,
   scheduleSongPreviewRerender,
-  selectFirstBibleReferenceForVersion,
+  selectBibleReferenceForVersion,
   selectLiveLayersPage,
   send,
   sendStageLayer,
@@ -1666,10 +1666,19 @@ function installBibleMediaControls() {
   });
   versionSelect.addEventListener("change", () => {
     void (async () => {
-      setBibleDesignerVersion(versionSelect.value, { syncControls: false });
+      const preferredReference = referenceInput?.value || bibleDesignerState.reference;
+      const selectedVersion = setBibleDesignerVersion(versionSelect.value, {
+        syncControls: false,
+      });
       hideBibleReferenceSuggestions();
       syncBibleVersionAttributionDisplay();
-      await selectFirstBibleReferenceForVersion(bibleDesignerState.version);
+      await selectBibleReferenceForVersion(selectedVersion, preferredReference);
+      if (
+        bibleDesignerState.version !== selectedVersion ||
+        versionSelect.value !== selectedVersion
+      ) {
+        return;
+      }
       await refreshBibleBrowser();
       if (bibleSearchState.active && bibleSearchState.scope === "current") {
         scheduleBibleSearch(0);

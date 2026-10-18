@@ -369,10 +369,13 @@ let bibleVerseDragPayload = null;
 
 const BIBLE_VERSE_DRAG_MIME = "application/x-ems-bible-verses";
 
-async function normalizeBibleReferenceInput(rawReference) {
+async function normalizeBibleReferenceInput(
+  rawReference,
+  version = bibleDesignerState.version || DEFAULT_BIBLE_VERSION,
+) {
   try {
     const resolved = await bibleAPI.resolveReference(
-      bibleDesignerState.version || "KJV",
+      version,
       rawReference,
     );
     if (resolved && !resolved.error && resolved.reference) {
@@ -382,6 +385,12 @@ async function normalizeBibleReferenceInput(rawReference) {
         chapter: resolved.chapter,
         verse: resolved.verse || 0,
         verseEnd: resolved.verseEnd || 0,
+        verseSelector: String(resolved.verseSelector || ""),
+        selectedVerses: Array.isArray(resolved.selectedVerses)
+          ? resolved.selectedVerses.filter(
+              (verse) => Number.isFinite(verse) && verse > 0,
+            )
+          : [],
         reference: resolved.reference,
       };
     }
@@ -474,6 +483,12 @@ async function firstBibleReferenceForVersion(version) {
 async function selectFirstBibleReferenceForVersion(version) {
   const firstReference = await firstBibleReferenceForVersion(version);
   if (!firstReference) return false;
+  if (
+    normalizedProjectBibleVersion(bibleDesignerState.version) !==
+    normalizedProjectBibleVersion(version)
+  ) {
+    return false;
+  }
   Object.assign(bibleDesignerState, firstReference, {
     text: "",
     selectedVerses: [],
@@ -487,6 +502,45 @@ async function selectFirstBibleReferenceForVersion(version) {
   bibleVerseSelection.anchor = 0;
   const referenceInput = document.getElementById("bibleReferenceInput");
   if (referenceInput) referenceInput.value = firstReference.reference;
+  return true;
+}
+
+async function selectBibleReferenceForVersion(version, preferredReference) {
+  const resolvedReference = normalizeScriptureReference(preferredReference || "")
+    ? await normalizeBibleReferenceInput(preferredReference, version)
+    : null;
+  if (
+    normalizedProjectBibleVersion(bibleDesignerState.version) !==
+    normalizedProjectBibleVersion(version)
+  ) {
+    return false;
+  }
+  if (!resolvedReference) {
+    return selectFirstBibleReferenceForVersion(version);
+  }
+
+  const selectedVerses = resolvedReference.selectedVerses.length > 0
+    ? resolvedReference.selectedVerses
+    : resolvedReference.verse > 0
+      ? [resolvedReference.verse]
+      : [];
+  Object.assign(bibleDesignerState, resolvedReference, {
+    text: "",
+    selectedVerses,
+    verseRows: [],
+    verseSelector:
+      resolvedReference.verseSelector || selectedVerses.join(","),
+    currentSlideId: null,
+    lowerThirdSegmentIndex: 0,
+    currentLowerThirdSlideId: null,
+  });
+  bibleVerseSelection.verses.clear();
+  for (const verse of selectedVerses) {
+    bibleVerseSelection.verses.add(verse);
+  }
+  bibleVerseSelection.anchor = selectedVerses[0] || 0;
+  const referenceInput = document.getElementById("bibleReferenceInput");
+  if (referenceInput) referenceInput.value = resolvedReference.reference;
   return true;
 }
 
@@ -5769,6 +5823,7 @@ export {
   scripturePresentation,
   scripturePresentationSource,
   scrollBibleViewerToCurrentVerse,
+  selectBibleReferenceForVersion,
   selectFirstBibleReferenceForVersion,
   selectScriptureResolvedSlide,
   selectedBibleVerseNumbers,
