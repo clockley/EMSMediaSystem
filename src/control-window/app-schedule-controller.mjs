@@ -20,6 +20,7 @@ import {
   scheduleSectionIndexForInsertion,
   scheduleSectionIndexForItem,
 } from "../shared/schedule-item-availability.mjs";
+import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
 
 import {
   BIBLE_VERSE_DRAG_MIME,
@@ -820,9 +821,11 @@ function reorderQueueEntriesAtInsertIndex(fromIndex, rawInsertIndex, options = {
   const boundaryItem = queueIndexInRange(manualBoundaryPauseIndex)
     ? mediaQueue[manualBoundaryPauseIndex]
     : null;
-  const pendingSwitchItem = queueIndexInRange(pendingQueueSwitchIndex)
-    ? mediaQueue[pendingQueueSwitchIndex]
-    : null;
+  const pendingSwitchItem =
+    audiencePlaybackCoordinator.pendingCloseItem() ||
+    (queueIndexInRange(pendingQueueSwitchIndex)
+      ? mediaQueue[pendingQueueSwitchIndex]
+      : null);
   const movedLiveAudio = Boolean(
     (liveAudioItem && movingSet.has(liveAudioItem)) ||
     (activeItem &&
@@ -984,6 +987,7 @@ function applyDroppedMediaPaths(paths, options = {}) {
 }
 
 function clearMediaQueue() {
+  audiencePlaybackCoordinator.cancel();
   stopPreviewAudioCue();
   clearVideoPreviewCueOverlay();
   setSharedRendererState({ mediaQueue: [] });
@@ -1004,6 +1008,9 @@ function clearMediaQueue() {
 
 async function onClearMediaQueueClick() {
   if (mediaQueue.length === 0) return;
+  // Invalidate before the undo snapshot awaits storage. A transition that was
+  // already loading must never commit into the queue we are about to clear.
+  audiencePlaybackCoordinator.cancel();
   setSharedRendererState({ pendingQueueSwitchIndex: null });
   setSharedRendererState({ pendingQueueSwitchStartTime: 0 });
   await captureQueueClearUndoState();
@@ -1026,6 +1033,10 @@ async function onClearMediaQueueClick() {
 function removeFromQueue(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   const removedItem = mediaQueue[index];
+  if (audiencePlaybackCoordinator.isTransitioningItem(removedItem)) {
+    showGnomeToast("Wait for the live transition to finish before removing this item");
+    return;
+  }
   const removedCurrentItem = index === currentQueueIndex;
   if (removedCurrentItem && isQueuePresentationActive()) {
     showGnomeToast("Stop the presentation to remove the current item");
@@ -1033,6 +1044,11 @@ function removeFromQueue(index) {
   }
   invalidateQueueUndoToastAfterMutation();
   mediaQueue.splice(index, 1);
+  const pendingSwitchItem = audiencePlaybackCoordinator.pendingCloseItem();
+  if (pendingSwitchItem) {
+    const pendingIndex = mediaQueue.indexOf(pendingSwitchItem);
+    setSharedRendererState({ pendingQueueSwitchIndex: pendingIndex >= 0 ? pendingIndex : null });
+  }
   selectedQueueItems.delete(removedItem);
   if (selectedQueueAnchorIndex === index) {
     setSharedRendererState({ selectedQueueAnchorIndex: mediaQueue.length > 0 ? Math.min(index, mediaQueue.length - 1) : -1 });

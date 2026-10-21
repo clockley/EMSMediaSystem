@@ -208,6 +208,10 @@ import {
   waitForLoadedMetadata,
   waitForMediaMetadata,
 } from "./app-renderer.mjs";
+import {
+  audiencePlaybackCoordinator,
+  createAudiencePlaybackId,
+} from "../shared/playback-transition-coordinator.mjs";
 
 var pidSeeking = false;
 
@@ -569,6 +573,12 @@ function refreshPreviewControlsForCurrentMedia() {
 }
 
 async function handlePlaybackState(event, playbackState) {
+  if (
+    playbackState?.playbackId &&
+    !audiencePlaybackCoordinator.matchesActivePlayback(playbackState)
+  ) {
+    return;
+  }
   if (!video) {
     return;
   }
@@ -1097,6 +1107,7 @@ async function playMedia(e) {
     mediaPlayerInputState.filePaths.length === 0
   ) {
     if (isPlaying) {
+      audiencePlaybackCoordinator.cancel();
       setSharedRendererState({ isPlaying: false });
       setSharedRendererState({ isQueuePlaying: false });
       setSharedRendererState({ mediaPlaybackEndedPending: false });
@@ -1164,6 +1175,7 @@ async function playMedia(e) {
   } else {
     // The header button reads "Stop" while a presentation is live; keep that
     // action terminal even if another queue item is cued.
+    audiencePlaybackCoordinator.cancel();
     setSharedRendererState({ mediaPlaybackEndedPending: false });
     setSharedRendererState({ pendingQueueSwitchIndex: null });
     setSharedRendererState({ pendingQueueSwitchStartTime: 0 });
@@ -2079,6 +2091,12 @@ async function playAudioOnlyLocally(startOverride = null) {
 
 async function createMediaWindow(options) {
   const seekOnly = options && options.seekOnly === true;
+  const transitionToken = options?.transitionToken;
+  const transitionStillOwnsItem = () =>
+    !transitionToken ||
+    (audiencePlaybackCoordinator.owns(transitionToken) &&
+      (!isQueuePlaybackContext || transitionToken.item === mediaQueue[currentQueueIndex]) &&
+      audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue) >= 0);
   const hasExplicitStartTime =
     typeof options?.startTime === "number" &&
     Number.isFinite(options.startTime) &&
@@ -2100,6 +2118,7 @@ async function createMediaWindow(options) {
     ? mediaQueue[currentQueueIndex]
     : null;
   const ts = await invoke("get-system-time");
+  if (!transitionStillOwnsItem()) return false;
   let birth =
     ts.systemTime +
     (Date.now() - ts.ipcTimestamp) * 0.001 +
@@ -2116,6 +2135,7 @@ async function createMediaWindow(options) {
   if (!textItem && isQueuePlaybackContext) {
     if (!isQueueItemBible(presentationQueueItem) && !isQueueItemSong(presentationQueueItem)) {
       projectionMediaFile = await resolveQueueItemMediaPath(presentationQueueItem);
+      if (!transitionStillOwnsItem()) return false;
     }
   }
   var liveStreamMode = textItem ? false : isLiveStream(mediaFile);
@@ -2263,6 +2283,11 @@ async function createMediaWindow(options) {
 
   const startupSyncNeeded =
     autoPlayEnabled && !liveStreamAtLiveEdge && !isTextItem && !isImgFile && !isPptxFile;
+  if (!transitionStillOwnsItem()) return false;
+  const playbackId = options?.playbackId || createAudiencePlaybackId();
+  windowOptions.webPreferences.additionalArguments.push(
+    `__audience-playback=${playbackId}`,
+  );
   setSharedRendererState({ isActiveMediaWindowCache: true });
   setSharedRendererState({ activeResolvedMediaFile: projectionMediaFile });
   setSharedRendererState({ activePreviewResolvedMediaFile: projectionMediaFile });
@@ -2276,15 +2301,24 @@ async function createMediaWindow(options) {
       if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
       return false;
     }
+    if (!transitionStillOwnsItem()) {
+      send("close-media-window", 0);
+      setSharedRendererState({ isActiveMediaWindowCache: false });
+      if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
+      return false;
+    }
     // A new clip is now live in a freshly created window: open a new
     // end-of-clip epoch so its natural end is claimed exactly once.
-    beginLiveMediaWindowEpoch();
+    beginLiveMediaWindowEpoch(playbackId);
     queueBiblePreviewMediaWindowSizeRefresh();
   } catch (err) {
     setSharedRendererState({ isActiveMediaWindowCache: false });
     setSharedRendererState({ activeMediaWindowContentType: null });
     if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
-    throw err;
+    if (!transitionStillOwnsItem()) return false;
+    console.error("Failed to start audience output:", err);
+    showGnomeToast(err?.message || "Could not start the audience output");
+    return false;
   }
   setSharedRendererState({ activeMediaWindowContentType: isTextItem
     ? options?.songItem || isQueueItemSong(textItem) || isQueueItemSong(mediaQueue[currentQueueIndex])

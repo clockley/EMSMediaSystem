@@ -1647,7 +1647,12 @@ function installIPCHandler() {
   on("media-source-changed", (_event, payload) => {
     markQueueItemMediaUpdate(payload);
   });
-  on("media-playback-ended", async (event, endedMediaFile) => {
+  on("media-playback-ended", async (event, endedPayload) => {
+    const endEvent =
+      endedPayload && typeof endedPayload === "object"
+        ? endedPayload
+        : { mediaFile: String(endedPayload || ""), playbackId: "" };
+    const endedMediaFile = endEvent.mediaFile || "";
     tracePlayback(
       "media-playback-ended IN",
       "ended=" + (endedMediaFile || ""),
@@ -1655,6 +1660,7 @@ function installIPCHandler() {
       "idx=" + currentQueueIndex,
       "epoch=" + liveMediaWindowEpoch,
       "consumed=" + consumedMediaWindowEndEpoch,
+      "playbackId=" + (endEvent.playbackId || ""),
     );
     if (userStopPresentationPending) {
       setSharedRendererState({ mediaPlaybackEndedPending: false });
@@ -1682,7 +1688,7 @@ function installIPCHandler() {
     // exactly one transition happens per clip: a duplicate/stale end that
     // arrives after the control side already advanced is ignored here, which is
     // what previously let the finished clip replay or the queue skip/desync.
-    if (!claimMediaWindowEnd()) {
+    if (!claimMediaWindowEnd(endEvent)) {
       tracePlayback("media-playback-ended DROP duplicate (epoch consumed)");
       return;
     }

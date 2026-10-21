@@ -88,6 +88,8 @@ var autoPlay = false;
 var seekOnly = false;
 var logoHoldOnly = false;
 var debugPlayback = false;
+let audiencePlaybackId =
+  argv.find((arg) => String(arg).startsWith("__audience-playback="))?.split("=")[1] || "";
 let pptxIpcHandlersInstalled = false;
 let textIpcHandlersInstalled = false;
 let ipcHandlersInstalled = false;
@@ -648,13 +650,17 @@ async function playVideoWithStartupBuffer(errorContext = "Video playback did not
   if (liveStreamMode) {
     await waitForMediaStartBuffer(video);
   }
-  return video.play().catch((error) => {
+  try {
+    await video.play();
+    return true;
+  } catch (error) {
     if (typeof errorContext === "string" && errorContext.length > 0) {
       reportProjectionError(errorContext, error);
     }
     markPlaybackStateStable();
     playbackStateUpdate();
-  });
+    return false;
+  }
 }
 
 function cueStartTimeWithinDuration(mediaEl, requestedStartTime) {
@@ -1041,7 +1047,8 @@ async function activateVideoTarget(data) {
     playbackStateUpdate();
     return;
   }
-  await playVideoWithStartupBuffer(null);
+  const started = await playVideoWithStartupBuffer("Projection video playback did not start");
+  if (!started) throw new Error("Projection video playback did not start");
 }
 
 /**
@@ -1096,15 +1103,8 @@ async function startLiveStreamPlayback(url) {
   // A non-live-edge stream (e.g. YouTube VOD) behaves like a finite clip, so it
   // gets the full playback wiring (remaining time, end-of-media). A true live
   // edge only needs end-of-media handling for unexpected stops.
-  if (!streamActsAsLiveEdge) {
-    installVideoPlaybackWiring();
-  } else {
-    video.onended = () => {
-      if (loopFile || video.loop) return;
-      setProjectionVideoVisible(false);
-      ipcRenderer.send("media-playback-ended", mediaFile);
-    };
-  }
+  if (!streamActsAsLiveEdge) installVideoPlaybackWiring();
+  else bindProjectionVideoEndHandler();
 
   if (hlsInstance) {
     const hlsEvents = hlsInstance.constructor?.Events;
@@ -1134,7 +1134,8 @@ async function startLiveStreamPlayback(url) {
     () => selectPreferredNativeAudioTrack(video),
     { once: true },
   );
-  await playVideoWithStartupBuffer("Live stream playback did not start");
+  const started = await playVideoWithStartupBuffer("Live stream playback did not start");
+  if (!started) throw new Error("Live stream playback did not start");
 }
 
 /**
@@ -1152,6 +1153,9 @@ async function applySlipstream(data) {
     "isImg=" + !!data?.isImg,
     "isPptx=" + !!data?.isPptx,
   );
+  const nextPlaybackId = String(data?.playbackId || "");
+  if (!nextPlaybackId) throw new TypeError("Slipstream playback identity is required");
+  audiencePlaybackId = nextPlaybackId;
   hideStreamStatus();
   if (data?.clearOutputHold === true) {
     applyOutputHold({ mode: OUTPUT_HOLD_NONE, transitionDurationMs: 0 });
@@ -1193,6 +1197,7 @@ async function applySlipstream(data) {
   }
 
   reapplyOutputHoldIfActive();
+  return { playbackId: audiencePlaybackId };
 }
 
 window.emsApplySlipstream = applySlipstream;
@@ -2074,6 +2079,9 @@ function playbackStateUpdate() {
     playing: !video.paused,
     syncPhase: playbackSyncPhase,
     pauseIntent: consumePauseSyncIntent(),
+    playbackId: audiencePlaybackId,
+    audienceSessionId,
+    sourceGeneration: videoSourceGeneration,
   };
   ipcRenderer.send("playback-state-change", playbackState);
   if (strtvl != null) {
@@ -2089,8 +2097,46 @@ function playbackStateUpdate() {
  * guard ensures the listeners are only attached once, while the persistent
  * handlers always read the current `mediaFile` / `loopFile` globals.
  */
+function bindProjectionVideoEndHandler() {
+  if (!video) return;
+  const playbackId = audiencePlaybackId;
+  const endedMediaFile = mediaFile;
+  const sourceGeneration = videoSourceGeneration;
+  video.onended = () => {
+    // An ended task queued for the outgoing resource can run after a source
+    // replacement. Require both the captured source identity and the element's
+    // current ended state before it is allowed to advance the schedule.
+    if (
+      sourceGeneration !== videoSourceGeneration ||
+      playbackId !== audiencePlaybackId ||
+      !video.ended
+    ) {
+      return;
+    }
+    tracePlayback(
+      "video.onended",
+      "file=" + endedMediaFile,
+      "loopFile=" + loopFile,
+      "video.loop=" + video.loop,
+      "t=" + video.currentTime,
+      "dur=" + video.duration,
+      "playbackId=" + playbackId,
+    );
+    if (loopFile || video.loop) return;
+    setProjectionVideoVisible(false);
+    ipcRenderer.send("media-playback-ended", {
+      mediaFile: endedMediaFile,
+      playbackId,
+      audienceSessionId,
+      sourceGeneration,
+    });
+  };
+}
+
 function installVideoPlaybackWiring() {
-  if (videoPlaybackWiringInstalled || !video) return;
+  if (!video) return;
+  bindProjectionVideoEndHandler();
+  if (videoPlaybackWiringInstalled) return;
   videoPlaybackWiringInstalled = true;
 
   navigator.mediaSession.setActionHandler("play", playMediaSessionHandler);
@@ -2111,20 +2157,6 @@ function installVideoPlaybackWiring() {
     markPlaybackStateStable();
     playbackStateUpdate(event);
   });
-
-  video.onended = () => {
-    tracePlayback(
-      "video.onended",
-      "file=" + mediaFile,
-      "loopFile=" + loopFile,
-      "video.loop=" + video.loop,
-      "t=" + video.currentTime,
-      "dur=" + video.duration,
-    );
-    if (loopFile || video.loop) return;
-    setProjectionVideoVisible(false);
-    ipcRenderer.send("media-playback-ended", mediaFile);
-  };
 
   sendRemainingTime(video);
   video.addEventListener("pause", () => {
@@ -3519,13 +3551,13 @@ async function loadMedia() {
   installVideoPlaybackWiring();
 
   if (autoPlay) {
-    void playVideoWithStartupBuffer(null);
+    const started = await playVideoWithStartupBuffer("Projection video playback did not start");
+    if (!started) throw new Error("Projection video playback did not start");
   }
 }
 
 async function bootstrapMediaWindow() {
   await waitForDomReady();
-  ipcRenderer.send("audience-output-ready");
   video = window.api?.video ?? document.getElementById("bigPlayer");
   if (!video) {
     throw new Error("Projection media element #bigPlayer was not found.");
@@ -3539,14 +3571,27 @@ async function bootstrapMediaWindow() {
   if (argv.includes("__alertOverlayOnly=true")) {
     document.body.classList.add("is-transparent-output");
     video.hidden = true;
+    ipcRenderer.send("audience-output-ready", {
+      playbackId: audiencePlaybackId,
+      audienceSessionId,
+    });
     return;
   }
   if (disableContentTransitions) document.body.classList.add("disable-content-transitions");
   await loadMedia();
+  ipcRenderer.send("audience-output-ready", {
+    playbackId: audiencePlaybackId,
+    audienceSessionId,
+  });
 }
 
 bootstrapMediaWindow().catch((error) => {
   reportProjectionError("Failed to load projection media", error);
+  ipcRenderer.send("audience-output-failed", {
+    playbackId: audiencePlaybackId,
+    audienceSessionId,
+    message: error?.message || String(error),
+  });
 });
 
 function renderSongSectionHTML(blocks) {

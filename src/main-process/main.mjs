@@ -336,6 +336,72 @@ let alertTimer = null;
 let backgroundState = createBackgroundState();
 const outputLayerRevisions = new Map();
 let mediaWindowCreatePromise = null;
+const AUDIENCE_BOOTSTRAP_TIMEOUT_MS = 60000;
+
+function additionalArgumentValue(args, prefix) {
+  const match = Array.isArray(args)
+    ? args.find((arg) => String(arg).startsWith(prefix))
+    : null;
+  return match ? String(match).slice(prefix.length) : "";
+}
+
+function waitForAudienceOutputBootstrap(targetWindow, expectedPlaybackId) {
+  const targetWebContents = targetWindow.webContents;
+  let settled = false;
+  let timer = null;
+  let resolvePromise;
+  let rejectPromise;
+
+  const cleanup = () => {
+    if (timer !== null) clearTimeout(timer);
+    ipcMain.removeListener("audience-output-ready", handleReady);
+    ipcMain.removeListener("audience-output-failed", handleFailure);
+    targetWindow.removeListener("closed", handleClosed);
+  };
+  const settle = (callback, value) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    callback(value);
+  };
+  const payloadMatches = (event, payload) =>
+    event.sender === targetWebContents &&
+    (!expectedPlaybackId || payload?.playbackId === expectedPlaybackId);
+  const handleReady = (event, payload) => {
+    if (!payloadMatches(event, payload)) return;
+    settle(resolvePromise, payload || {});
+  };
+  const handleFailure = (event, payload) => {
+    if (!payloadMatches(event, payload)) return;
+    settle(
+      rejectPromise,
+      new Error(payload?.message || "Audience output failed to initialize"),
+    );
+  };
+  const handleClosed = () => {
+    settle(rejectPromise, new Error("Audience output closed while it was loading"));
+  };
+
+  const promise = new Promise((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+    ipcMain.on("audience-output-ready", handleReady);
+    ipcMain.on("audience-output-failed", handleFailure);
+    targetWindow.on("closed", handleClosed);
+    timer = setTimeout(() => {
+      settle(reject, new Error("Audience output timed out while starting"));
+    }, AUDIENCE_BOOTSTRAP_TIMEOUT_MS);
+  });
+
+  return {
+    promise,
+    cancel() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+    },
+  };
+}
 let windowBounds = measurePerformance("Getting window bounds", getWindowBounds);
 let win = null;
 const mediaWatcher = new MediaWatcher({
@@ -847,12 +913,17 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
   }
   const requestedOverlayOnly = windowOptions?.webPreferences?.additionalArguments?.includes("__alertOverlayOnly=true") === true;
   if (mediaWindow && !mediaWindow.isDestroyed()) {
-    if (audienceWindowOverlayOnly && !requestedOverlayOnly) {
-      const overlayWindow = mediaWindow;
+    if (!requestedOverlayOnly) {
+      // create-media-window is the fresh-window activation path. Reusing an
+      // existing content renderer here would acknowledge arguments it never
+      // received (cue, loop, volume and playback identity). In-place changes
+      // belong exclusively to slipstream-media-window; recover stale control
+      // state by replacing the window and honoring the complete argument set.
+      const previousWindow = mediaWindow;
       suppressNextMediaClosedNotification = true;
       await new Promise((resolve) => {
-        overlayWindow.once("closed", resolve);
-        overlayWindow.close();
+        previousWindow.once("closed", resolve);
+        previousWindow.close();
       });
     } else {
       const targetSelection = resolveDisplaySelection(displayIndex);
@@ -918,6 +989,20 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       }
     };
     createdMediaWindow.once("closed", releaseMediaWindow);
+    const expectedPlaybackId = additionalArgumentValue(
+      finalWindowOptions.webPreferences.additionalArguments,
+      "__audience-playback=",
+    );
+    const bootstrap = waitForAudienceOutputBootstrap(
+      createdMediaWindow,
+      expectedPlaybackId,
+    );
+    // Attach both branches immediately so a fast renderer failure cannot become
+    // an unhandled rejection while Electron is still resolving loadFile().
+    const bootstrapResult = bootstrap.promise.then(
+      (payload) => ({ payload, error: null }),
+      (error) => ({ payload: null, error }),
+    );
 
     try {
       applyMediaWindowPresentationMode(createdMediaWindow);
@@ -926,9 +1011,12 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       if (createdMediaWindow.isDestroyed() || mediaWindow !== createdMediaWindow) {
         throw new Error("Audience output closed while it was loading");
       }
+      const { error: bootstrapError } = await bootstrapResult;
+      if (bootstrapError) throw bootstrapError;
       creationComplete = true;
       installTimeRemainingMessagePort();
     } catch (error) {
+      bootstrap.cancel();
       if (!createdMediaWindow.isDestroyed()) createdMediaWindow.destroy();
       releaseMediaWindow();
       throw error;
@@ -1475,6 +1563,15 @@ function handleRemotePlayPause(_, arg) {
 }
 
 function handlePlaybackStateChange(event, playbackState) {
+  if (
+    !mediaWindow ||
+    mediaWindow.isDestroyed() ||
+    event.sender !== mediaWindow.webContents ||
+    (playbackState?.audienceSessionId &&
+      playbackState.audienceSessionId !== audienceSessionId)
+  ) {
+    return;
+  }
   if (win) {
     win.webContents.send("update-playback-state", playbackState);
   }
@@ -5556,6 +5653,15 @@ function setIPC() {
   ipcMain.on("close-media-window", handleCloseMediaWindow);
   ipcMain.handle("close-media-window-now", handleCloseMediaWindowNow);
   ipcMain.on("media-playback-ended", (event, endedMediaFile) => {
+    if (
+      !mediaWindow ||
+      mediaWindow.isDestroyed() ||
+      event.sender !== mediaWindow.webContents ||
+      (endedMediaFile?.audienceSessionId &&
+        endedMediaFile.audienceSessionId !== audienceSessionId)
+    ) {
+      return;
+    }
     // The window stays visible with its black native backing between queue
     // items; the renderer hides its <video>/<img> until the next item is ready.
     // Calling mediaWindow.hide() here would trigger Electron #50250, where
@@ -5575,12 +5681,13 @@ function setIPC() {
     console.log("[playback-trace]", message);
   });
   ipcMain.handle("slipstream-media-window", async (event, data) => {
+    assertControlSender(event);
     const targetMediaWindow = mediaWindow;
     if (targetMediaWindow && !targetMediaWindow.isDestroyed()) {
       applyMediaWindowPresentationMode(targetMediaWindow);
       targetMediaWindow.setSkipTaskbar(false);
       try {
-        await targetMediaWindow.webContents.executeJavaScript(
+        const activation = await targetMediaWindow.webContents.executeJavaScript(
           `window.emsApplySlipstream(${JSON.stringify(data)})`,
         );
         if (data?.isText !== true) {
@@ -5606,7 +5713,10 @@ function setIPC() {
         }
         return false;
       }
-      return true;
+      return {
+        ok: true,
+        playbackId: activation?.playbackId || data?.playbackId || "",
+      };
     }
     return false;
   });
@@ -5693,13 +5803,31 @@ function setIPC() {
     assertControlSender(event);
     sendOutputLayer("audience", "clearText", active === true ? { active: true } : null);
   });
-  ipcMain.on("audience-output-ready", (event) => {
-    if (!mediaWindow || event.sender !== mediaWindow.webContents) return;
+  ipcMain.on("audience-output-ready", (event, payload) => {
+    if (
+      !mediaWindow ||
+      event.sender !== mediaWindow.webContents ||
+      (payload?.audienceSessionId && payload.audienceSessionId !== audienceSessionId)
+    ) {
+      return;
+    }
     audienceHealth = "ok";
     setAudienceWindowTransparent(audienceContentKind === "none");
     if (backgroundState.current) applyBackgroundState();
     routeLiveAlert();
     if (audienceHoldPayload) sendOutputLayer("audience", "hold", audienceHoldPayload);
+    publishOutputStatus();
+  });
+  ipcMain.on("audience-output-failed", (event, payload) => {
+    if (
+      !mediaWindow ||
+      event.sender !== mediaWindow.webContents ||
+      (payload?.audienceSessionId && payload.audienceSessionId !== audienceSessionId)
+    ) {
+      return;
+    }
+    audienceHealth = "degraded";
+    console.error("[media-window]", payload?.message || "Audience output failed to initialize");
     publishOutputStatus();
   });
   ipcMain.on("audience-output-ack", (event, acknowledgement) => {

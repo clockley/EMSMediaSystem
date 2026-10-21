@@ -238,6 +238,10 @@ import {
   waitForTextFonts,
 } from "./app-renderer.mjs";
 import { hideMediaLibraryWorkspaceForSchedulePreview } from "./app-media-library-workspace.mjs";
+import {
+  audiencePlaybackCoordinator,
+  createAudiencePlaybackId,
+} from "../shared/playback-transition-coordinator.mjs";
 
 function isAudioPreviewCueActive() {
   const cue = currentPreviewCue();
@@ -871,7 +875,7 @@ async function takeQueueItemLive(index, startTime = 0, opts = {}) {
     }
     return takeQueueItemLive(next, startTime, opts);
   }
-  if (pendingQueueSwitchIndex !== null) return;
+  if (pendingQueueSwitchIndex !== null || queueSlipstreamTransitionInProgress) return;
   if (
     !opts.skipLogoHoldPrep &&
     isAudienceLogoHoldActive() &&
@@ -890,6 +894,9 @@ async function takeQueueItemLive(index, startTime = 0, opts = {}) {
     queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
       ? startTime
       : 0;
+  const transitionToken = audiencePlaybackCoordinator.begin(item, {
+    startTime: safeStart,
+  });
   if (queueItemSupportsCueStartTime(item)) {
     item.cueStartTime = normalizedQueueItemCueStartTime(item, safeStart);
   } else {
@@ -918,33 +925,62 @@ async function takeQueueItemLive(index, startTime = 0, opts = {}) {
       startTime: safeStart,
       clearCue: true,
       clearOutputHold: opts.skipLogoHoldPrep === true || opts.clearOutputHold === true,
+      transitionToken,
     });
     if (switchedInPlace) {
       return;
     }
-    if (queueSlipstreamTransitionInProgress) {
+    if (
+      queueSlipstreamTransitionInProgress ||
+      !audiencePlaybackCoordinator.owns(transitionToken)
+    ) {
       return;
     }
-    setSharedRendererState({ pendingQueueSwitchIndex: index });
+    const currentTargetIndex = audiencePlaybackCoordinator.indexOf(
+      transitionToken,
+      mediaQueue,
+    );
+    if (currentTargetIndex < 0) return;
+    audiencePlaybackCoordinator.setPendingClose(transitionToken, safeStart);
+    setSharedRendererState({ pendingQueueSwitchIndex: currentTargetIndex });
     setSharedRendererState({ pendingQueueSwitchStartTime: safeStart });
     await closeActiveMediaWindowNow();
     return;
   }
 
-  setSharedRendererState({ currentQueueIndex: index });
+  const currentTargetIndex = audiencePlaybackCoordinator.indexOf(
+    transitionToken,
+    mediaQueue,
+  );
+  if (currentTargetIndex < 0) return;
+  setSharedRendererState({ currentQueueIndex: currentTargetIndex });
   setSharedRendererState({ isQueuePlaying: true });
   setSharedRendererState({ isPlaying: true });
   updateDynUI();
   const started = await playCurrentQueueItem({
     preservePreviewSeek: false,
     startTime: safeStart,
+    transitionToken,
   });
-  if (started === false) return false;
-  clearCueAfterTake(index);
+  if (started === false) {
+    if (audiencePlaybackCoordinator.owns(transitionToken)) {
+      audiencePlaybackCoordinator.cancel();
+    }
+    return false;
+  }
+  if (!audiencePlaybackCoordinator.owns(transitionToken)) {
+    return false;
+  }
+  const committedIndex = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+  if (committedIndex < 0) return false;
+  setSharedRendererState({ currentQueueIndex: committedIndex });
+  clearCueAfterTake(committedIndex);
+  audiencePlaybackCoordinator.complete(transitionToken);
   return true;
 }
 
 async function stopQueuePresentationUserClosed() {
+  audiencePlaybackCoordinator.cancel();
   stopLiveAudioPresentation();
   scripturePresentation.dispatch({ type: "STOPPED" });
   setSharedRendererState({ activeMediaWindowContentType: null });
@@ -1021,7 +1057,8 @@ async function stopQueuePresentationUserClosed() {
   syncPreviewMediaAfterPresentationStateChange();
 }
 
-function beginLiveMediaWindowEpoch() {
+function beginLiveMediaWindowEpoch(playbackId) {
+  audiencePlaybackCoordinator.activatePlayback(playbackId);
   setSharedRendererState({ liveMediaWindowEpoch: liveMediaWindowEpoch + (1) });
   tracePlayback(
     "beginLiveMediaWindowEpoch",
@@ -1031,8 +1068,11 @@ function beginLiveMediaWindowEpoch() {
   );
 }
 
-function claimMediaWindowEnd() {
-  if (consumedMediaWindowEndEpoch === liveMediaWindowEpoch) {
+function claimMediaWindowEnd(payload) {
+  if (
+    !audiencePlaybackCoordinator.claimPlaybackEnd(payload) ||
+    consumedMediaWindowEndEpoch === liveMediaWindowEpoch
+  ) {
     return false;
   }
   setSharedRendererState({ consumedMediaWindowEndEpoch: liveMediaWindowEpoch });
@@ -1345,6 +1385,12 @@ async function playCurrentQueueItem(opts) {
   setSharedRendererState({ mediaPlaybackEndedPending: false });
   setSharedRendererState({ itc: performance.now() * 0.001 });
   const item = mediaQueue[currentQueueIndex];
+  const transitionToken = opts?.transitionToken;
+  const transitionStillOwnsItem = () =>
+    !transitionToken ||
+    (audiencePlaybackCoordinator.owns(transitionToken) &&
+      transitionToken.item === item &&
+      audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue) >= 0);
   const failPlaybackStart = (message, error = null) => {
     if (error) console.error("Failed to start scheduled playback:", error);
     setSharedRendererState({ isPlaying: false });
@@ -1389,6 +1435,7 @@ async function playCurrentQueueItem(opts) {
       ...(opts || {}),
       skipNetworkPreviewLoad: itemIsNetworkPresentationVideo,
     });
+    if (!transitionStillOwnsItem()) return false;
   } catch (error) {
     return failPlaybackStart(
       error?.message || "Could not load the scheduled item",
@@ -1430,6 +1477,7 @@ async function playCurrentQueueItem(opts) {
           textItem: item,
           presentationRevision,
           resolvedBibleEntry: entry,
+          transitionToken,
         })
       : false;
     confirmScriptureTake(presentationRevision, {
@@ -1449,7 +1497,7 @@ async function playCurrentQueueItem(opts) {
   if (isQueueItemSong(item)) {
     const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(item);
     const audienceStarted = hasAudienceOutputSelected()
-      ? await createMediaWindow({ textItem: item, songItem: true })
+      ? await createMediaWindow({ textItem: item, songItem: true, transitionToken })
       : false;
     if (!audienceStarted && !lowerThirdStarted) {
       showGnomeToast("Choose an output display");
@@ -1469,7 +1517,7 @@ async function playCurrentQueueItem(opts) {
 
   const iM = isImg(mediaFile);
   if (iM) {
-    const started = await createMediaWindow();
+    const started = await createMediaWindow({ transitionToken });
     if (!started) return failPlaybackStart("");
     if (localVideo) {
       localVideo.currentTime = 0;
@@ -1503,6 +1551,7 @@ async function playCurrentQueueItem(opts) {
       requestedProjectionStart > 0
         ? requestedProjectionStart
         : validMediaStartTime(projectionVideo?.currentTime),
+    transitionToken,
   });
   if (!started) return failPlaybackStart("");
   return true;
@@ -1533,33 +1582,69 @@ async function advanceQueueAfterMediaWindowClosed() {
         await pauseQueuePresentationAtBoundary(cue.index);
         return;
       }
-      setSharedRendererState({ currentQueueIndex: cue.index });
-      setSelectedQueueAnchor(cue.index);
-      renderQueue();
-      await new Promise((r) => setTimeout(r, 100));
-      setSharedRendererState({ isPlaying: true });
-      updateDynUI();
-      await playCurrentQueueItem({
-        preservePreviewSeek: false,
+      const transitionToken = audiencePlaybackCoordinator.begin(cue.item, {
         startTime: cue.startTime,
       });
-      clearCueAfterTake(cue.index);
+      await new Promise((r) => setTimeout(r, 100));
+      if (!audiencePlaybackCoordinator.owns(transitionToken)) return;
+      const targetIndex = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+      if (targetIndex < 0) return;
+      setSharedRendererState({ currentQueueIndex: targetIndex });
+      setSelectedQueueAnchor(targetIndex);
+      renderQueue();
+      setSharedRendererState({ isPlaying: true });
+      updateDynUI();
+      const started = await playCurrentQueueItem({
+        preservePreviewSeek: false,
+        startTime: cue.startTime,
+        transitionToken,
+      });
+      if (!started) {
+        if (audiencePlaybackCoordinator.owns(transitionToken)) {
+          audiencePlaybackCoordinator.cancel();
+        }
+        return;
+      }
+      if (!audiencePlaybackCoordinator.owns(transitionToken)) return;
+      const committedIndex = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+      if (committedIndex < 0) return;
+      setSharedRendererState({ currentQueueIndex: committedIndex });
+      clearCueAfterTake(committedIndex);
+      audiencePlaybackCoordinator.complete(transitionToken);
       return;
     }
 
     const nextIndex = nextQueueBoundaryIndex();
     if (nextIndex >= 0 && shouldAutoTransitionToIndex(nextIndex)) {
-      setSharedRendererState({ currentQueueIndex: nextIndex });
-      setSelectedQueueAnchor(nextIndex);
-      const item = mediaQueue[currentQueueIndex];
-      renderQueue();
-      await new Promise((r) => setTimeout(r, 100));
-      setSharedRendererState({ isPlaying: true });
-      updateDynUI();
-      await playCurrentQueueItem({
-        preservePreviewSeek: false,
+      const item = mediaQueue[nextIndex];
+      const transitionToken = audiencePlaybackCoordinator.begin(item, {
         startTime: queueItemCueStartTime(item),
       });
+      await new Promise((r) => setTimeout(r, 100));
+      if (!audiencePlaybackCoordinator.owns(transitionToken)) return;
+      const targetIndex = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+      if (targetIndex < 0) return;
+      setSharedRendererState({ currentQueueIndex: targetIndex });
+      setSelectedQueueAnchor(targetIndex);
+      renderQueue();
+      setSharedRendererState({ isPlaying: true });
+      updateDynUI();
+      const started = await playCurrentQueueItem({
+        preservePreviewSeek: false,
+        startTime: queueItemCueStartTime(item),
+        transitionToken,
+      });
+      if (!started) {
+        if (audiencePlaybackCoordinator.owns(transitionToken)) {
+          audiencePlaybackCoordinator.cancel();
+        }
+        return;
+      }
+      if (!audiencePlaybackCoordinator.owns(transitionToken)) return;
+      const committedIndex = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+      if (committedIndex < 0) return;
+      setSharedRendererState({ currentQueueIndex: committedIndex });
+      audiencePlaybackCoordinator.complete(transitionToken);
       return;
     }
     // No more auto-advanceable items: stop at the boundary. An in-range index
@@ -1582,8 +1667,26 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     "activeWindow=" + isActiveMediaWindow(),
   );
   if (queueSlipstreamTransitionInProgress) return false;
-  const nextItem = index >= 0 && index < mediaQueue.length ? mediaQueue[index] : null;
-  if (nextItem && !isScheduleItemCurrentlyPlayable(nextItem)) return false;
+  const requestedItem = index >= 0 && index < mediaQueue.length ? mediaQueue[index] : null;
+  const transitionToken = opts.transitionToken || (
+    requestedItem
+      ? audiencePlaybackCoordinator.begin(requestedItem, { startTime: opts.startTime })
+      : null
+  );
+  if (!transitionToken || !audiencePlaybackCoordinator.owns(transitionToken)) return false;
+  const transitionWasSupplied = Boolean(opts.transitionToken);
+  const abandonStandaloneTransition = () => {
+    if (!transitionWasSupplied && audiencePlaybackCoordinator.owns(transitionToken)) {
+      audiencePlaybackCoordinator.cancel();
+    }
+    return false;
+  };
+  const nextItem = transitionToken.item;
+  index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+  if (index < 0) return abandonStandaloneTransition();
+  if (nextItem && !isScheduleItemCurrentlyPlayable(nextItem)) {
+    return abandonStandaloneTransition();
+  }
   const allowBibleInPlaceSwitch =
     Boolean(nextItem) &&
     isQueueItemBible(nextItem) &&
@@ -1604,18 +1707,18 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     !allowSongInPlaceSwitch &&
     !allowLogoHoldStaging
   ) {
-    return false;
+    return abandonStandaloneTransition();
   }
-  if (!isActiveMediaWindow()) return false;
-  if (index < 0 || index >= mediaQueue.length) return false;
+  if (!isActiveMediaWindow()) return abandonStandaloneTransition();
+  if (index < 0 || index >= mediaQueue.length) return abandonStandaloneTransition();
   // Live streams are not slipstreamed. Fall back to the normal close/reopen
   // cycle whether we're leaving a stream or switching into one.
   if (activeLiveStream || isLiveStream(mediaFile) || isLiveStream(nextItem.path)) {
-    return false;
+    return abandonStandaloneTransition();
   }
   if (queueItemNeedsPendingUpdateApproval(nextItem)) {
     showGnomeToast("Reload the changed media file before taking it live");
-    return false;
+    return abandonStandaloneTransition();
   }
 
   setSharedRendererState({ queueSlipstreamTransitionInProgress: true });
@@ -1628,7 +1731,6 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
   // forwarding stays off for the whole transition.
   beginPreviewForwardingSuppression();
   try {
-    const nextItem = mediaQueue[index];
     const nextType = nextItem.type || classifyQueueMediaType(nextItem.path);
     const isImgFile = isImg(nextItem.path);
     const isPptxFile = isQueueItemPptx(nextItem);
@@ -1637,6 +1739,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     const resolvedNextPath = isBibleItem || isSongItem
       ? nextItem.path
       : await resolveQueueItemMediaPath(nextItem);
+    if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
 
     // Load the target into the preview before deciding. Extension checks catch
     // obvious audio files, but metadata is authoritative for "audio-only"
@@ -1652,10 +1755,14 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       startTime: requestedStart,
       presentationTakeover: true,
     });
+    if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
+    index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+    if (index < 0) return false;
     resolveQueuePresentationVideo();
 
     // Audio must play in the local preview — destroy the media window as usual.
     if (!isImgFile && !isPptxFile && !isBibleItem && !isSongItem && (nextType === "audio" || audioOnlyFile)) {
+      audiencePlaybackCoordinator.setPendingClose(transitionToken, requestedStart);
       setSharedRendererState({ pendingQueueSwitchIndex: index });
       setSharedRendererState({ pendingQueueSwitchStartTime: requestedStart });
       setSharedRendererState({ mediaPlaybackEndedPending: false });
@@ -1763,7 +1870,14 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       startupSyncStarted = true;
     }
 
-    const slipstreamSuccess = await invoke("slipstream-media-window", slipstreamData);
+    if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
+    index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+    if (index < 0) return false;
+    const playbackId = createAudiencePlaybackId();
+    slipstreamData.playbackId = playbackId;
+    const slipstreamResult = await invoke("slipstream-media-window", slipstreamData);
+    const slipstreamSuccess =
+      slipstreamResult === true || slipstreamResult?.ok === true;
     resolveQueuePresentationVideo();
     if (!slipstreamSuccess) {
       if (startupSyncStarted) finishProjectionPlaybackStartupSync();
@@ -1775,6 +1889,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       }
       return false;
     }
+    if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
+    index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+    if (index < 0) return false;
     if (
       scriptureTakeRevision !== null &&
       !scripturePresentation.isCurrentRevision(scriptureTakeRevision)
@@ -1791,7 +1908,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     // A new clip is now live: open a fresh end-of-clip epoch so its natural end
     // can be claimed exactly once (and any late end from the clip we just left
     // is ignored).
-    beginLiveMediaWindowEpoch();
+    beginLiveMediaWindowEpoch(slipstreamResult?.playbackId || playbackId);
     setSharedRendererState({ mediaPlaybackEndedPending: false });
     setSharedRendererState({ currentQueueIndex: index });
     setSelectedQueueAnchor(index);
@@ -1813,6 +1930,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     setSharedRendererState({ audioOnlyFile: false });
     setSharedRendererState({ playingMediaAudioOnly: false });
     await clearLowerThirdForUnsupportedMediaSource(nextItem);
+    if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
     updateDynUI();
     syncPreviewAudioTrackState();
     if (isBibleItem) {
@@ -1834,8 +1952,11 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     } else {
       void syncStageContentFromQueueItem(nextItem).catch(() => {});
     }
+    if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
     syncAudienceOutputHoldAfterPresentationStart();
     renderQueue();
+    index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+    if (index < 0) return false;
     if (opts.clearCue !== false) {
       clearCueAfterTake(index);
     }
@@ -1847,23 +1968,42 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       await playLivePreviewMirrorSafely("slipstream preview play");
     }
 
+    if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
+    audiencePlaybackCoordinator.complete(transitionToken);
     return true;
   } catch (err) {
     if (startupSyncStarted) finishProjectionPlaybackStartupSync();
     throw err;
   } finally {
+    if (
+      !transitionWasSupplied &&
+      audiencePlaybackCoordinator.owns(transitionToken) &&
+      audiencePlaybackCoordinator.pendingCloseItem() !== nextItem
+    ) {
+      audiencePlaybackCoordinator.cancel();
+    }
     endPreviewForwardingSuppression();
     setSharedRendererState({ queueSlipstreamTransitionInProgress: false });
   }
 }
 
 async function trySlipstreamNextQueueItem() {
+  const attemptTransition = async (index, options) => {
+    try {
+      const transitioned = await slipstreamQueueItemAtIndex(index, options);
+      if (!transitioned) audiencePlaybackCoordinator.cancel();
+      return transitioned;
+    } catch (error) {
+      audiencePlaybackCoordinator.cancel();
+      throw error;
+    }
+  };
   const cue = currentPreviewCue();
   if (cue) {
     if (!shouldAutoTransitionToIndex(cue.index)) {
       return false;
     }
-    return slipstreamQueueItemAtIndex(cue.index, {
+    return attemptTransition(cue.index, {
       startTime: cue.startTime,
       clearCue: true,
     });
@@ -1873,7 +2013,7 @@ async function trySlipstreamNextQueueItem() {
     return false;
   }
   const nextItem = mediaQueue[nextIndex];
-  return slipstreamQueueItemAtIndex(nextIndex, {
+  return attemptTransition(nextIndex, {
     startTime: queueItemCueStartTime(nextItem),
   });
 }
@@ -1941,6 +2081,7 @@ async function handleMediaWindowClosed(event, id) {
   }
 
   if (pendingQueueClearPostClose) {
+    audiencePlaybackCoordinator.cancel();
     setSharedRendererState({ pendingQueueClearPostClose: false });
     setSharedRendererState({ userStopPresentationPending: false });
     setSharedRendererState({ mediaPlaybackEndedPending: false });
@@ -1955,6 +2096,7 @@ async function handleMediaWindowClosed(event, id) {
   }
 
   if (userStopPresentationPending) {
+    audiencePlaybackCoordinator.cancel();
     setSharedRendererState({ userStopPresentationPending: false });
     setSharedRendererState({ mediaPlaybackEndedPending: false });
     setSharedRendererState({ pendingQueueSwitchIndex: null });
@@ -1963,9 +2105,8 @@ async function handleMediaWindowClosed(event, id) {
     return;
   }
 
-  if (pendingQueueSwitchIndex !== null) {
-    const idx = pendingQueueSwitchIndex;
-    const switchStartTime = pendingQueueSwitchStartTime;
+  const pendingSwitch = audiencePlaybackCoordinator.consumePendingClose(mediaQueue);
+  if (pendingQueueSwitchIndex !== null || pendingSwitch) {
     setSharedRendererState({ pendingQueueSwitchIndex: null });
     setSharedRendererState({ pendingQueueSwitchStartTime: 0 });
     setSharedRendererState({ mediaPlaybackEndedPending: false });
@@ -1974,17 +2115,34 @@ async function handleMediaWindowClosed(event, id) {
     updateDynUI();
     setSharedRendererState({ isActiveMediaWindowCache: false });
 
+    if (!pendingSwitch) {
+      audiencePlaybackCoordinator.cancel();
+      setSharedRendererState({ isQueuePlaying: false });
+      renderQueue();
+      return;
+    }
+
+    let idx = pendingSwitch.index;
+    const item = pendingSwitch.item;
+    const transitionToken = pendingSwitch.token;
+    const switchStartTime = pendingSwitch.startTime;
+
     try {
       setSharedRendererState({ currentQueueIndex: idx });
       setSelectedQueueAnchor(idx);
       // Switching live items through a window close/reopen cycle is the fallback
       // for transitions slipstream cannot do in place, so it needs the same
       // lower-third handling the slipstream and direct-play paths perform.
-      await clearLowerThirdForUnsupportedMediaSource(mediaQueue[idx]);
-      await loadQueueItemIntoControlWindow(mediaQueue[idx], {
+      await clearLowerThirdForUnsupportedMediaSource(item);
+      await loadQueueItemIntoControlWindow(item, {
         preservePreviewSeek: false,
         startTime: switchStartTime,
       });
+      if (!audiencePlaybackCoordinator.owns(transitionToken)) return;
+      idx = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+      if (idx < 0) return;
+      setSharedRendererState({ currentQueueIndex: idx });
+      setSelectedQueueAnchor(idx);
       renderQueue();
 
       setSharedRendererState({ isPlaying: true });
@@ -1992,7 +2150,8 @@ async function handleMediaWindowClosed(event, id) {
 
       const iM = isImg(mediaFile);
       if (iM) {
-        await createMediaWindow();
+        const started = await createMediaWindow({ transitionToken });
+        if (!started) throw new Error("Could not start the audience output");
         if (localVideo) {
           localVideo.currentTime = 0;
           if (!localVideo.paused) {
@@ -2000,16 +2159,18 @@ async function handleMediaWindowClosed(event, id) {
             localVideo.load();
           }
         }
-      } else if (isQueueItemBible(mediaQueue[idx])) {
-        const entry = await resolvedBibleEntryForItem(mediaQueue[idx], {
+      } else if (isQueueItemBible(item)) {
+        const entry = await resolvedBibleEntryForItem(item, {
           requireLookup: true,
         });
         if (!entry) throw new Error("Could not load the scheduled Scripture text");
-        const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(mediaQueue[idx]);
+        if (!audiencePlaybackCoordinator.owns(transitionToken)) return;
+        const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(item);
         const audienceStarted = hasAudienceOutputSelected()
           ? await createMediaWindow({
-              textItem: mediaQueue[idx],
+              textItem: item,
               resolvedBibleEntry: entry,
+              transitionToken,
             })
           : false;
         if (!audienceStarted && !lowerThirdStarted) {
@@ -2020,10 +2181,10 @@ async function handleMediaWindowClosed(event, id) {
           renderQueue();
           return;
         }
-      } else if (isQueueItemSong(mediaQueue[idx])) {
-        const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(mediaQueue[idx]);
+      } else if (isQueueItemSong(item)) {
+        const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(item);
         const audienceStarted = hasAudienceOutputSelected()
-          ? await createMediaWindow({ textItem: mediaQueue[idx], songItem: true })
+          ? await createMediaWindow({ textItem: item, songItem: true, transitionToken })
           : false;
         if (!audienceStarted && !lowerThirdStarted) {
           showGnomeToast("Choose an output display");
@@ -2035,14 +2196,21 @@ async function handleMediaWindowClosed(event, id) {
         }
       } else if (
         audioOnlyFile ||
-        classifyQueueMediaType(mediaQueue[idx].path) === "audio"
+        classifyQueueMediaType(item.path) === "audio"
       ) {
         await playAudioOnlyLocally(switchStartTime);
       } else {
-        await createMediaWindow();
+        const started = await createMediaWindow({ transitionToken });
+        if (!started) throw new Error("Could not start the audience output");
       }
+      if (!audiencePlaybackCoordinator.owns(transitionToken)) return;
+      idx = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+      if (idx < 0) return;
+      setSharedRendererState({ currentQueueIndex: idx });
       clearCueAfterTake(idx);
+      audiencePlaybackCoordinator.complete(transitionToken);
     } catch (error) {
+      audiencePlaybackCoordinator.cancel();
       console.error("Failed to switch the live schedule item after closing the output:", error);
       setSharedRendererState({ isPlaying: false });
       setSharedRendererState({ isQueuePlaying: false });
