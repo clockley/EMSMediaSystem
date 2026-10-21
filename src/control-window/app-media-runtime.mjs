@@ -573,9 +573,12 @@ function refreshPreviewControlsForCurrentMedia() {
 }
 
 async function handlePlaybackState(event, playbackState) {
+  const stagedActivation =
+    playbackState?.playbackId &&
+    audiencePlaybackCoordinator.matchesStagedPlayback(playbackState);
   if (
     playbackState?.playbackId &&
-    !audiencePlaybackCoordinator.matchesActivePlayback(playbackState)
+    !audiencePlaybackCoordinator.matchesExpectedPlayback(playbackState)
   ) {
     return;
   }
@@ -583,8 +586,9 @@ async function handlePlaybackState(event, playbackState) {
     return;
   }
   if (
-    activeMediaWindowContentType === "bible" ||
-    activeMediaWindowContentType === "song" ||
+    (!stagedActivation &&
+      (activeMediaWindowContentType === "bible" ||
+        activeMediaWindowContentType === "song")) ||
     isBiblePath(mediaFile) ||
     isSongPath(mediaFile)
   ) {
@@ -2288,6 +2292,11 @@ async function createMediaWindow(options) {
   windowOptions.webPreferences.additionalArguments.push(
     `__audience-playback=${playbackId}`,
   );
+  // create-media-window resolves only after the audience renderer has loaded
+  // and started the source. Its authoritative playback-state therefore arrives
+  // before this function can commit the new epoch; stage the identity now so
+  // the selected preview can consume that state instead of dropping it.
+  const stagedPlaybackId = audiencePlaybackCoordinator.stagePlayback(playbackId);
   setSharedRendererState({ isActiveMediaWindowCache: true });
   setSharedRendererState({ activeResolvedMediaFile: projectionMediaFile });
   setSharedRendererState({ activePreviewResolvedMediaFile: projectionMediaFile });
@@ -2297,11 +2306,13 @@ async function createMediaWindow(options) {
   try {
     const windowId = await invoke("create-media-window", windowOptions, selectedDisplay);
     if (!windowId) {
+      audiencePlaybackCoordinator.discardStagedPlayback(stagedPlaybackId);
       setSharedRendererState({ isActiveMediaWindowCache: false });
       if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
       return false;
     }
     if (!transitionStillOwnsItem()) {
+      audiencePlaybackCoordinator.discardStagedPlayback(stagedPlaybackId);
       send("close-media-window", 0);
       setSharedRendererState({ isActiveMediaWindowCache: false });
       if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
@@ -2312,6 +2323,7 @@ async function createMediaWindow(options) {
     beginLiveMediaWindowEpoch(playbackId);
     queueBiblePreviewMediaWindowSizeRefresh();
   } catch (err) {
+    audiencePlaybackCoordinator.discardStagedPlayback(stagedPlaybackId);
     setSharedRendererState({ isActiveMediaWindowCache: false });
     setSharedRendererState({ activeMediaWindowContentType: null });
     if (startupSyncNeeded) finishProjectionPlaybackStartupSync();

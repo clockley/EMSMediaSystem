@@ -5686,8 +5686,9 @@ function setIPC() {
     if (targetMediaWindow && !targetMediaWindow.isDestroyed()) {
       applyMediaWindowPresentationMode(targetMediaWindow);
       targetMediaWindow.setSkipTaskbar(false);
+      let activation = null;
       try {
-        const activation = await targetMediaWindow.webContents.executeJavaScript(
+        activation = await targetMediaWindow.webContents.executeJavaScript(
           `window.emsApplySlipstream(${JSON.stringify(data)})`,
         );
         if (data?.isText !== true) {

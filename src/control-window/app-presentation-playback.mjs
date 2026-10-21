@@ -1058,7 +1058,9 @@ async function stopQueuePresentationUserClosed() {
 }
 
 function beginLiveMediaWindowEpoch(playbackId) {
-  audiencePlaybackCoordinator.activatePlayback(playbackId);
+  if (!audiencePlaybackCoordinator.commitStagedPlayback(playbackId)) {
+    audiencePlaybackCoordinator.activatePlayback(playbackId);
+  }
   setSharedRendererState({ liveMediaWindowEpoch: liveMediaWindowEpoch + (1) });
   tracePlayback(
     "beginLiveMediaWindowEpoch",
@@ -1723,6 +1725,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
 
   setSharedRendererState({ queueSlipstreamTransitionInProgress: true });
   let startupSyncStarted = false;
+  let stagedPlaybackId = "";
   // Staging the next item rewrites #preview's source and seeks it to the new
   // cue point. Those pause/seek events would otherwise be forwarded to the
   // projection as play-ctl / timeGoto-message commands describing a clip that is
@@ -1875,6 +1878,11 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     if (index < 0) return false;
     const playbackId = createAudiencePlaybackId();
     slipstreamData.playbackId = playbackId;
+    // The audience renderer emits its first stable playback-state event while
+    // emsApplySlipstream is still running. Stage the identity before invoking
+    // it so that event can take ownership of the selected preview immediately;
+    // commit it only after the renderer confirms activation.
+    stagedPlaybackId = audiencePlaybackCoordinator.stagePlayback(playbackId);
     const slipstreamResult = await invoke("slipstream-media-window", slipstreamData);
     const slipstreamSuccess =
       slipstreamResult === true || slipstreamResult?.ok === true;
@@ -1975,6 +1983,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     if (startupSyncStarted) finishProjectionPlaybackStartupSync();
     throw err;
   } finally {
+    audiencePlaybackCoordinator.discardStagedPlayback(stagedPlaybackId);
     if (
       !transitionWasSupplied &&
       audiencePlaybackCoordinator.owns(transitionToken) &&
@@ -1988,6 +1997,11 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
 }
 
 async function trySlipstreamNextQueueItem() {
+  // A natural-end IPC from the outgoing clip can arrive while an operator- or
+  // cue-driven slipstream is already activating the replacement. That event
+  // belongs to the transition in flight; starting another attempt would make
+  // attemptTransition cancel the valid transition and strand its preview.
+  if (queueSlipstreamTransitionInProgress) return false;
   const attemptTransition = async (index, options) => {
     try {
       const transitioned = await slipstreamQueueItemAtIndex(index, options);

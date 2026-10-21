@@ -24,6 +24,12 @@ class PlaybackTransitionCoordinator {
 
   #activePlaybackEndConsumed = false;
 
+  // The audience renderer begins emitting playback state before the IPC call
+  // that created/swapped it can resolve. Keep that prospective identity
+  // separate from the last committed playback so state from the new source is
+  // accepted during activation without prematurely committing the transition.
+  #stagedPlaybackId = "";
+
   begin(item, options = {}) {
     if (!item || typeof item !== "object") {
       throw new TypeError("A playback transition requires a queue item");
@@ -102,6 +108,47 @@ class PlaybackTransitionCoordinator {
     this.#generation += 1;
     this.#transition = null;
     this.#pendingClose = null;
+    this.#stagedPlaybackId = "";
+  }
+
+  stagePlayback(playbackId) {
+    const normalized = String(playbackId || "");
+    if (!normalized) {
+      throw new TypeError("A staged audience playback requires a non-empty identity");
+    }
+    this.#stagedPlaybackId = normalized;
+    return normalized;
+  }
+
+  stagedPlaybackId() {
+    return this.#stagedPlaybackId;
+  }
+
+  matchesStagedPlayback(payload) {
+    const playbackId = String(payload?.playbackId || "");
+    return Boolean(playbackId && playbackId === this.#stagedPlaybackId);
+  }
+
+  matchesExpectedPlayback(payload) {
+    const playbackId = String(payload?.playbackId || "");
+    const expectedPlaybackId = this.#stagedPlaybackId || this.#activePlaybackId;
+    return Boolean(playbackId && playbackId === expectedPlaybackId);
+  }
+
+  commitStagedPlayback(playbackId = this.#stagedPlaybackId) {
+    const normalized = String(playbackId || "");
+    if (!normalized || normalized !== this.#stagedPlaybackId) return false;
+    this.#stagedPlaybackId = "";
+    this.#activePlaybackId = normalized;
+    this.#activePlaybackEndConsumed = false;
+    return true;
+  }
+
+  discardStagedPlayback(playbackId = this.#stagedPlaybackId) {
+    const normalized = String(playbackId || "");
+    if (!normalized || normalized !== this.#stagedPlaybackId) return false;
+    this.#stagedPlaybackId = "";
+    return true;
   }
 
   activatePlayback(playbackId) {
@@ -109,6 +156,7 @@ class PlaybackTransitionCoordinator {
     if (!normalized) {
       throw new TypeError("An audience playback requires a non-empty identity");
     }
+    this.#stagedPlaybackId = "";
     this.#activePlaybackId = normalized;
     this.#activePlaybackEndConsumed = false;
     return normalized;
@@ -131,7 +179,11 @@ class PlaybackTransitionCoordinator {
   }
 
   claimPlaybackEnd(payload) {
-    if (!this.matchesActivePlayback(payload) || this.#activePlaybackEndConsumed) {
+    if (
+      this.#stagedPlaybackId ||
+      !this.matchesActivePlayback(payload) ||
+      this.#activePlaybackEndConsumed
+    ) {
       return false;
     }
     this.#activePlaybackEndConsumed = true;

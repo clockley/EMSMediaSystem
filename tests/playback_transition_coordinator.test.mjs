@@ -16,6 +16,14 @@ const mainSource = await readFile(
   new URL("../src/main-process/main.mjs", import.meta.url),
   "utf8",
 );
+const controlMediaSource = await readFile(
+  new URL("../src/control-window/app-media-runtime.mjs", import.meta.url),
+  "utf8",
+);
+const presentationPlaybackSource = await readFile(
+  new URL("../src/control-window/app-presentation-playback.mjs", import.meta.url),
+  "utf8",
+);
 
 function declaredFunction(name) {
   const match = mediaSource.match(
@@ -84,6 +92,47 @@ test("end events are claimed once by playback identity, even for the same path",
   assert.equal(coordinator.claimPlaybackEnd(first), false);
   assert.equal(coordinator.claimPlaybackEnd(second), true);
   assert.equal(coordinator.claimPlaybackEnd(second), false);
+});
+
+test("a staged replacement owns playback-state before activation commits", () => {
+  const coordinator = new PlaybackTransitionCoordinator();
+  coordinator.activatePlayback("playback-old");
+  coordinator.stagePlayback("playback-selected");
+
+  assert.equal(
+    coordinator.matchesExpectedPlayback({ playbackId: "playback-old" }),
+    false,
+  );
+  assert.equal(
+    coordinator.matchesExpectedPlayback({ playbackId: "playback-selected" }),
+    true,
+  );
+  assert.equal(
+    coordinator.claimPlaybackEnd({ playbackId: "playback-old" }),
+    false,
+    "the outgoing clip cannot advance the queue while its replacement activates",
+  );
+
+  assert.equal(coordinator.commitStagedPlayback("playback-selected"), true);
+  assert.equal(coordinator.activePlaybackId(), "playback-selected");
+  assert.equal(
+    coordinator.matchesActivePlayback({ playbackId: "playback-selected" }),
+    true,
+  );
+});
+
+test("discarding a failed activation restores the committed playback as expected", () => {
+  const coordinator = new PlaybackTransitionCoordinator();
+  coordinator.activatePlayback("playback-live");
+  coordinator.stagePlayback("playback-failed");
+
+  assert.equal(coordinator.discardStagedPlayback("playback-failed"), true);
+  assert.equal(coordinator.stagedPlaybackId(), "");
+  assert.equal(
+    coordinator.matchesExpectedPlayback({ playbackId: "playback-live" }),
+    true,
+  );
+  assert.equal(coordinator.activePlaybackId(), "playback-live");
 });
 
 test("audience playback identities are unique", () => {
@@ -169,6 +218,26 @@ test("main process rejects playback IPC from a non-active audience renderer", ()
   );
 });
 
+test("slipstream activation result remains in scope for the handler response", () => {
+  const handlerStart = mainSource.indexOf(
+    'ipcMain.handle("slipstream-media-window"',
+  );
+  const handlerEnd = mainSource.indexOf(
+    '\n  ipcMain.on("vlcl"',
+    handlerStart,
+  );
+  const handler = mainSource.slice(handlerStart, handlerEnd);
+  const declaration = handler.indexOf("let activation = null");
+  const invocation = handler.indexOf(
+    "activation = await targetMediaWindow.webContents.executeJavaScript",
+  );
+  const response = handler.indexOf("playbackId: activation?.playbackId");
+
+  assert.ok(declaration >= 0 && declaration < invocation);
+  assert.ok(invocation < response);
+  assert.doesNotMatch(handler, /const activation\s*=/);
+});
+
 test("fresh audience creation waits for renderer activation", () => {
   const loadIndex = mediaSource.indexOf("await loadMedia();", mediaSource.indexOf("async function bootstrapMediaWindow"));
   const readyIndex = mediaSource.indexOf(
@@ -179,4 +248,45 @@ test("fresh audience creation waits for renderer activation", () => {
   assert.ok(readyIndex > loadIndex, "ready is emitted only after media activation");
   assert.match(mainSource, /await bootstrapResult;/);
   assert.match(mainSource, /audience-output-failed/);
+});
+
+test("control preview accepts the selected playback state during audience activation", () => {
+  const createStart = controlMediaSource.indexOf("async function createMediaWindow(");
+  const createEnd = controlMediaSource.indexOf("\nexport {", createStart);
+  const createWindow = controlMediaSource.slice(createStart, createEnd);
+  const createStage = createWindow.indexOf("stagePlayback(playbackId)");
+  const createInvoke = createWindow.indexOf('invoke("create-media-window"');
+  assert.ok(createStage >= 0 && createStage < createInvoke);
+
+  const slipstreamStart = presentationPlaybackSource.indexOf(
+    "async function slipstreamQueueItemAtIndex(",
+  );
+  const slipstreamEnd = presentationPlaybackSource.indexOf(
+    "\nasync function trySlipstreamNextQueueItem(",
+    slipstreamStart,
+  );
+  const slipstream = presentationPlaybackSource.slice(slipstreamStart, slipstreamEnd);
+  const slipstreamStage = slipstream.indexOf("stagePlayback(playbackId)");
+  const slipstreamInvoke = slipstream.indexOf('invoke("slipstream-media-window"');
+  assert.ok(slipstreamStage >= 0 && slipstreamStage < slipstreamInvoke);
+
+  const automaticStart = presentationPlaybackSource.indexOf(
+    "async function trySlipstreamNextQueueItem(",
+  );
+  const automaticEnd = presentationPlaybackSource.indexOf(
+    "\nfunction handleRemoteMediaWindowTimeTick(",
+    automaticStart,
+  );
+  const automaticSlipstream = presentationPlaybackSource.slice(
+    automaticStart,
+    automaticEnd,
+  );
+  const inFlightGuard = automaticSlipstream.indexOf(
+    "if (queueSlipstreamTransitionInProgress) return false",
+  );
+  const newAttempt = automaticSlipstream.indexOf("const attemptTransition");
+  assert.ok(inFlightGuard >= 0 && inFlightGuard < newAttempt);
+
+  assert.match(controlMediaSource, /matchesExpectedPlayback\(playbackState\)/);
+  assert.match(controlMediaSource, /matchesStagedPlayback\(playbackState\)/);
 });
