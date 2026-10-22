@@ -995,7 +995,7 @@ function installBibleMediaControls() {
     void showCurrentDeckNow().catch(console.error);
   });
   document.getElementById("slidesAddScheduleBtn")?.addEventListener("click", () => {
-    scheduleCurrentDeck();
+    void scheduleCurrentDeck().catch(console.error);
   });
   document.getElementById("slidesWorkspaceTitleButton")?.addEventListener("click", () => {
     void renameCurrentDeck().catch(console.error);

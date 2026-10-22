@@ -341,6 +341,7 @@ import {
   bulkMoveSelectedSongs,
   bulkScheduleSelectedSongs,
   chooseSlideObjectImage,
+  clearSlideUndoHistory,
   clearLiveSongText,
   clearSongSelection,
   clearSongShowNowPresentation,
@@ -2781,6 +2782,27 @@ function showQueueClearedUndoToast() {
   });
 }
 
+function showQueueRestoreResumeRetryToast(snap) {
+  if (!snap || queueClearUndoSnapshot !== snap) {
+    showGnomeToast("The schedule was restored, but its live output could not be resumed");
+    return;
+  }
+  showGnomeToast("The schedule was restored, but its live output could not be resumed", {
+    onUndo: () => {
+      void restoreQueueClearUndoSnapshot().catch((error) => {
+        console.error("Failed to retry restored live output:", error);
+        showQueueRestoreResumeRetryToast(snap);
+      });
+    },
+    onUndoExpire: () => {
+      if (queueClearUndoSnapshot === snap) discardQueueClearUndoSnapshot();
+    },
+    duration: 10000,
+    undoLabel: "Retry",
+    undoStyle: "pill-accent",
+  });
+}
+
 async function finalizeQueueClearDestructive() {
   // Clear is refused while a schedule item is live, so any output still open
   // here belongs to Show Now (audience text or a Bible lower third). Emptying
@@ -2908,7 +2930,6 @@ async function restoreQueueClearUndoSnapshot() {
     showGnomeToast("Could not restore the cleared schedule");
     return false;
   }
-  queueClearUndoSnapshot = null;
   mediaQueue = restoredQueue;
   currentQueueIndex = snap.index;
   if (mediaQueue.length === 0) {
@@ -2968,13 +2989,18 @@ async function restoreQueueClearUndoSnapshot() {
       restored = false;
     }
     if (!restored) {
-      showGnomeToast("The schedule was restored, but its live output could not be resumed");
+      restoreQueueClearSelectionState(snap);
+      renderQueue();
+      showQueueRestoreResumeRetryToast(snap);
+      return false;
     }
     restoreQueueClearSelectionState(snap);
     renderQueue();
-    return restored;
+    if (queueClearUndoSnapshot === snap) queueClearUndoSnapshot = null;
+    return true;
   }
 
+  if (queueClearUndoSnapshot === snap) queueClearUndoSnapshot = null;
   if (currentMode === MEDIAPLAYER && mediaQueue.length > 0 && !isPlaying) {
     const previewIndex = queueIndexInRange(previewCueIndex)
       ? previewCueIndex
@@ -3770,11 +3796,28 @@ function nextLowerThirdOutputUpdateToken() {
   return lowerThirdOutputUpdateToken;
 }
 
+async function discardUnclaimedLowerThirdWindow(windowId) {
+  const expectedWindowId = Number(windowId);
+  if (!Number.isInteger(expectedWindowId) || expectedWindowId <= 0) return false;
+  // A superseding create/update resumes from the same main-process creation
+  // promise. Give its continuation one task to claim the window before
+  // deciding that the stale creator left an orphan behind.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (bibleLowerThirdOutputActive) return false;
+  try {
+    return await invoke("close-lower-third-window-now", { expectedWindowId });
+  } catch (error) {
+    console.error("Failed to discard an unclaimed lower-third window:", error);
+    return false;
+  }
+}
+
 export {
   SONG_SIDEBAR_MAX_WIDTH,
   SONG_SIDEBAR_MIN_WIDTH,
   clampSongSidebarWidth,
   currentSongSidebarWidth,
+  discardUnclaimedLowerThirdWindow,
   SONG_FOLDER_UNFILED,
   addDeckPage,
   addSlideShapeObject,
@@ -3786,6 +3829,7 @@ export {
   bulkMoveSelectedSongs,
   bulkScheduleSelectedSongs,
   chooseSlideObjectImage,
+  clearSlideUndoHistory,
   clearSongSelection,
   closeSongEditor,
   closeSongFolderPrompt,

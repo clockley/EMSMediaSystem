@@ -1543,6 +1543,7 @@ function playLocalMedia(event) {
         setSharedRendererState({ currentQueueIndex: queueIndex });
         setSharedRendererState({ isQueuePlaying: true });
       } else if (mediaFile && mediaQueue.length === 0) {
+        invalidateQueueUndoToastAfterMutation();
         setSharedRendererState({ mediaQueue: [createQueueEntry(mediaFile)] });
         setSharedRendererState({ currentQueueIndex: 0 });
         setSharedRendererState({ isQueuePlaying: true });

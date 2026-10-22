@@ -30,7 +30,9 @@ const deckLibraryActivationGate = createLatestRequestGate();
 const deckLibraryQueryGate = createLatestRequestGate();
 const deckFolderQueryGate = createLatestRequestGate();
 const deckMutationGate = createLatestRequestGate();
+const scheduleInsertionCoalescer = createAsyncActionCoalescer();
 let songEditorRevision = 0;
+let songEditorLibrarySaveInFlight = false;
 
 function markSongEditorChanged() {
   songEditorRevision += 1;
@@ -3589,7 +3591,10 @@ async function sendSongLowerThirdForLiveItem() {
     },
   };
   const windowId = await invoke("create-lower-third-window", windowOptions, displayValue);
-  if (updateToken !== lowerThirdOutputUpdateToken) return false;
+  if (updateToken !== lowerThirdOutputUpdateToken) {
+    if (!alreadyOpen) await discardUnclaimedLowerThirdWindow(windowId);
+    return false;
+  }
   setSharedRendererState({ bibleLowerThirdOutputActive: Boolean(windowId) });
   if (!bibleLowerThirdOutputActive) return false;
   pushLiveSongLowerThirdMessage();
@@ -3684,22 +3689,31 @@ async function slipstreamSongTextToOutput(item) {
   const presentation = resolvedSongPresentation(sourceItem);
   if (!presentation?.message) return false;
   const transition = slideTransitionPayloadForQueueItem(item);
+  const audienceMessage = {
+    ...presentation.message,
+    transition,
+  };
   const activation = await activateAudienceSlipstream(
     (activationPayload) => invoke("slipstream-media-window", activationPayload),
     {
       isText: true,
       mediaFile: item?.path || "",
-      textPayload: audienceTextMessageForSend("song", {
-        ...presentation.message,
-        transition,
-      }),
+      textPayload: audienceTextMessageForSend("song", audienceMessage),
       transition,
     },
   );
   if (!activation.ok) return false;
-  return sendSongTextToOutput(item, {
+  if (
+    !audiencePlaybackCoordinator.matchesActivePlayback({
+      playbackId: activation.playbackId,
+    })
+  ) {
+    return false;
+  }
+  sendAudienceTextMessage("song", audienceMessage, {
     expectedPlaybackId: activation.playbackId,
   });
+  return true;
 }
 
 function liveSongAudienceTextMessageForClear() {
@@ -3865,18 +3879,23 @@ async function insertSongInSchedule() {
     showGnomeToast("Choose a song to schedule");
     return false;
   }
-  const entry = buildSongQueueEntryFromDeck({
-    deck: currentWorkspaceSongDeck || currentWorkspaceSong,
-    render: currentSongRenderState,
-    currentSectionId: currentSongSectionId,
+  const songOwner = currentWorkspaceSong;
+  const insertionKey = `workspace-song:${songOwner.id || songOwner.title || "song"}`;
+  return scheduleInsertionCoalescer.run(insertionKey, async () => {
+    if (currentWorkspaceSong !== songOwner) return false;
+    const entry = buildSongQueueEntryFromDeck({
+      deck: currentWorkspaceSongDeck || currentWorkspaceSong,
+      render: currentSongRenderState,
+      currentSectionId: currentSongSectionId,
+    });
+    if (!entry) return false;
+    invalidateQueueUndoToastAfterMutation();
+    insertQueueEntriesAfterSelection([entry]);
+    renderQueue();
+    saveMediaFile();
+    showGnomeToast(`Scheduled ${entry.name}`);
+    return true;
   });
-  if (!entry) return false;
-  invalidateQueueUndoToastAfterMutation();
-  insertQueueEntriesAfterSelection([entry]);
-  renderQueue();
-  saveMediaFile();
-  showGnomeToast(`Scheduled ${entry.name}`);
-  return true;
 }
 
 async function importSongFromDialog() {
@@ -7720,15 +7739,21 @@ async function showCurrentDeckNow() {
 function scheduleCurrentDeck() {
   if (!currentDeck) {
     showGnomeToast("Select a deck first");
-    return;
+    return Promise.resolve(false);
   }
-  const entry = buildDeckQueueEntry({});
-  if (!entry) return;
-  invalidateQueueUndoToastAfterMutation();
-  insertQueueEntriesAfterSelection([entry]);
-  renderQueue();
-  saveMediaFile();
-  showGnomeToast(`Scheduled ${entry.name}`);
+  const deckOwner = currentDeck;
+  const insertionKey = `workspace-deck:${deckOwner.id || deckOwner.title || "deck"}`;
+  return scheduleInsertionCoalescer.run(insertionKey, async () => {
+    if (currentDeck !== deckOwner) return false;
+    const entry = buildDeckQueueEntry({});
+    if (!entry) return false;
+    invalidateQueueUndoToastAfterMutation();
+    insertQueueEntriesAfterSelection([entry]);
+    renderQueue();
+    saveMediaFile();
+    showGnomeToast(`Scheduled ${entry.name}`);
+    return true;
+  });
 }
 
 async function openSongEditor(song, opts = {}) {
@@ -8052,6 +8077,9 @@ function updateScheduleDecksWithUpdatedDeck(deck, opts = {}) {
 }
 
 async function saveSongEditor() {
+  if (songEditorLibrarySaveInFlight) return false;
+  songEditorLibrarySaveInFlight = true;
+  try {
   const titleInput = document.getElementById("songEditorTitle");
   const authorInput = document.getElementById("songEditorAuthor");
   const folderInput = document.getElementById("songEditorFolder");
@@ -8132,6 +8160,9 @@ async function saveSongEditor() {
     }
     return false;
   }
+  } finally {
+    songEditorLibrarySaveInFlight = false;
+  }
 }
 
 async function saveSongToSchedule() {
@@ -8148,14 +8179,31 @@ async function saveSongToSchedule() {
   const parsedNumber = numberRaw ? Number.parseInt(numberRaw, 10) : null;
   const songNumber = Number.isFinite(parsedNumber) && parsedNumber > 0 ? parsedNumber : null;
   currentSongRenderState = flushSongEditorStateForSave();
+  const editorOwner = currentWorkspaceSong;
+  const editingSongId = currentEditingSongId;
+  const editorRevision = songEditorRevision;
+  const saveRequest = songEditorSaveGate.begin(editorOwner);
+  const renderSnapshot = structuredClone(currentSongRenderState);
+  const sectionIdSnapshot = currentSongSectionId;
+  const editorSectionsSnapshot = structuredClone(songEditorSections);
+  const stillOwnsEditor = () =>
+    songEditorSaveGate.owns(saveRequest, currentWorkspaceSong) &&
+    currentWorkspaceSong === editorOwner &&
+    currentEditingSongId === editingSongId &&
+    songEditorRevision === editorRevision;
+
+  // Coalesce repeated clicks before either request is allowed to mutate the
+  // schedule. The latest gate owner is the only request that proceeds.
+  await Promise.resolve();
+  if (!stillOwnsEditor()) return false;
   const sections = normalizeToSongAST({
-    id: currentEditingSongId || "editor_song",
+    id: editingSongId || "editor_song",
     title,
     metadata: {},
-    sections: songEditorSections,
+    sections: editorSectionsSnapshot,
   })?.sections || [];
 
-  const songId = currentEditingSongId || `song_${crypto.randomUUID()}`;
+  const songId = editingSongId || `song_${crypto.randomUUID()}`;
   currentEditingSongId = songId;
 
   const song = {
@@ -8166,26 +8214,27 @@ async function saveSongToSchedule() {
     ...(songNumber ? { songNumber } : {}),
     metadata: {
       authors: authorText ? authorText.split(",").map((a) => a.trim()).filter(Boolean) : [],
-      copyright: currentSongRenderState.copyright || "",
-      ccliNumber: currentSongRenderState.ccliNumber || null,
-      oneLicense: currentSongRenderState.oneLicense || null,
-      meter: currentWorkspaceSong?.metadata?.meter || currentWorkspaceSong?.metadata?.hymnal?.meter || "",
+      copyright: renderSnapshot.copyright || "",
+      ccliNumber: renderSnapshot.ccliNumber || null,
+      oneLicense: renderSnapshot.oneLicense || null,
+      meter: editorOwner?.metadata?.meter || editorOwner?.metadata?.hymnal?.meter || "",
     },
     sections,
-    playOrder: reconcileSongPlayOrder(currentWorkspaceSong?.playOrder, sections),
+    playOrder: reconcileSongPlayOrder(editorOwner?.playOrder, sections),
     defaultRender: {
-      ...songDefaultRenderFromRender(currentSongRenderState),
+      ...songDefaultRenderFromRender(renderSnapshot),
     },
   };
 
-  const songDeck = songDeckDocumentFromSongDocument(song, currentSongRenderState);
+  const songDeck = songDeckDocumentFromSongDocument(song, renderSnapshot);
   const entry = buildSongQueueEntryFromDeck({
     deck: songDeck,
-    render: currentSongRenderState,
-    currentSectionId: currentSongSectionId,
+    render: renderSnapshot,
+    currentSectionId: sectionIdSnapshot,
   });
-  if (!entry) return;
+  if (!entry) return false;
 
+  invalidateQueueUndoToastAfterMutation();
   let updatedCount = 0;
   for (let i = 0; i < mediaQueue.length; i++) {
     const item = mediaQueue[i];
@@ -8195,13 +8244,13 @@ async function saveSongToSchedule() {
     ) {
       const updatedEntry = buildSongQueueEntryFromDeck({
         deck: songDeck,
-        render: currentSongRenderState,
-        currentSectionId: item.render?.currentSectionId || currentSongSectionId,
+        render: renderSnapshot,
+        currentSectionId: item.render?.currentSectionId || sectionIdSnapshot,
       });
       if (!updatedEntry) continue;
       updatedEntry.autoAdvance = item.autoAdvance;
       updatedEntry.cueStartTime = queueItemCueStartTime(item);
-      const transitionOverride = normalizeItemSlideTransitionOverride(currentSongRenderState.transition);
+      const transitionOverride = normalizeItemSlideTransitionOverride(renderSnapshot.transition);
       if (transitionOverride) {
         updatedEntry.transition = transitionOverride;
       } else {
@@ -8222,11 +8271,11 @@ async function saveSongToSchedule() {
   closeSongEditor();
   currentWorkspaceSongDeck = songDeck;
   currentWorkspaceSong = deckToTransientSong(songDeck);
-  await loadSongIntoWorkspace(songDeck, { render: currentSongRenderState });
+  await loadSongIntoWorkspace(songDeck, { render: renderSnapshot });
 
-  invalidateQueueUndoToastAfterMutation();
   renderQueue();
   saveMediaFile();
+  return true;
 }
 
 async function deleteSongFromLibrary(songId = currentWorkspaceSong?.id) {
@@ -8320,24 +8369,27 @@ async function activateSongFromLibrary(songSummary, { openEditor = false } = {})
 }
 
 async function scheduleSongFromLibrary(songSummary) {
-  try {
-    const song = await loadFullLibrarySong(songSummary);
-    const entry = buildSongQueueEntryFromDeck({
-      deck: song,
-      render: renderStateForLibrarySong(song),
-    });
-    if (!entry) return false;
-    invalidateQueueUndoToastAfterMutation();
-    insertQueueEntriesAfterSelection([entry]);
-    renderQueue();
-    saveMediaFile();
-    showGnomeToast(`Scheduled ${entry.name}`);
-    return true;
-  } catch (err) {
-    console.error("Failed to schedule song:", err);
-    showGnomeToast("Failed to schedule song");
-    return false;
-  }
+  const insertionKey = `library-song:${songSummary?.id || songSummary?.title || "song"}`;
+  return scheduleInsertionCoalescer.run(insertionKey, async () => {
+    try {
+      const song = await loadFullLibrarySong(songSummary);
+      const entry = buildSongQueueEntryFromDeck({
+        deck: song,
+        render: renderStateForLibrarySong(song),
+      });
+      if (!entry) return false;
+      invalidateQueueUndoToastAfterMutation();
+      insertQueueEntriesAfterSelection([entry]);
+      renderQueue();
+      saveMediaFile();
+      showGnomeToast(`Scheduled ${entry.name}`);
+      return true;
+    } catch (err) {
+      console.error("Failed to schedule song:", err);
+      showGnomeToast("Failed to schedule song");
+      return false;
+    }
+  });
 }
 
 async function showSongFromLibraryNow(songSummary) {
@@ -8763,6 +8815,7 @@ export {
   bulkMoveSelectedSongs,
   bulkScheduleSelectedSongs,
   chooseSlideObjectImage,
+  clearSlideUndoHistory,
   clearLiveSongText,
   clearSongSelection,
   clearSongShowNowPresentation,
@@ -8916,6 +8969,7 @@ import {
   deckDefaultRender,
   deckQueuePath,
   deckToTransientSong,
+  discardUnclaimedLowerThirdWindow,
   enabledSongSections,
   enrichLowerThirdPresentationMessage,
   escapeHtml,
@@ -9020,5 +9074,8 @@ import {
   waitForTextFonts,
 } from "./app-renderer.mjs";
 import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
-import { createLatestRequestGate } from "../shared/async-operation-ownership.mjs";
+import {
+  createAsyncActionCoalescer,
+  createLatestRequestGate,
+} from "../shared/async-operation-ownership.mjs";
 import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";

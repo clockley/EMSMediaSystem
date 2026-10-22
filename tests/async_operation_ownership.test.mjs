@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { createLatestRequestGate } from "../src/shared/async-operation-ownership.mjs";
+import {
+  createAsyncActionCoalescer,
+  createLatestRequestGate,
+} from "../src/shared/async-operation-ownership.mjs";
 
 function deferred() {
   let resolve;
@@ -53,6 +56,33 @@ test("ownership requires both the current generation and the same object", () =>
   assert.equal(gate.owns(request, { id: "song" }), false);
   gate.invalidate();
   assert.equal(gate.owns(request, owner), false);
+});
+
+test("action coalescer blocks in-flight work and the second click of a double-click", async () => {
+  let clock = 1000;
+  const coalescer = createAsyncActionCoalescer({
+    cooldownMs: 400,
+    now: () => clock,
+  });
+  const firstResult = deferred();
+  let runs = 0;
+  const first = coalescer.run("song:1", async () => {
+    runs += 1;
+    await firstResult.promise;
+    return true;
+  });
+
+  assert.equal(await coalescer.run("song:1", async () => true), false);
+  firstResult.resolve();
+  assert.equal(await first, true);
+  clock += 200;
+  assert.equal(await coalescer.run("song:1", async () => true), false);
+  clock += 201;
+  assert.equal(await coalescer.run("song:1", async () => {
+    runs += 1;
+    return true;
+  }), true);
+  assert.equal(runs, 2);
 });
 
 test("async UI handlers validate stable ownership after awaits", async () => {
@@ -169,6 +199,32 @@ test("async UI handlers validate stable ownership after awaits", async () => {
   assert.match(songEditorSave, /const renderSnapshot = structuredClone\(currentSongRenderState\)/);
   assert.match(songEditorSave, /songEditorSaveGate\.owns\(saveRequest, currentWorkspaceSong\)/);
   assert.match(songEditorSave, /render: renderSnapshot/);
+  assert.match(songEditorSave, /if \(songEditorLibrarySaveInFlight\) return false/);
+  assert.ok(
+    songEditorSave.indexOf("songEditorLibrarySaveInFlight = true") <
+      songEditorSave.indexOf("await songsAPI.save(songDeck)"),
+    "a repeated editor save must be rejected before either persistence call can overlap",
+  );
+  assert.match(songEditorSave, /finally \{\s*songEditorLibrarySaveInFlight = false/);
+
+  const songScheduleInsert = functionSource(
+    songs,
+    "async function insertSongInSchedule(",
+    "async function importSongFromDialog(",
+  );
+  assert.match(songScheduleInsert, /scheduleInsertionCoalescer\.run/);
+  const deckScheduleInsert = functionSource(
+    songs,
+    "function scheduleCurrentDeck(",
+    "async function openSongEditor(",
+  );
+  assert.match(deckScheduleInsert, /scheduleInsertionCoalescer\.run/);
+  const libraryScheduleInsert = functionSource(
+    songs,
+    "async function scheduleSongFromLibrary(",
+    "async function showSongFromLibraryNow(",
+  );
+  assert.match(libraryScheduleInsert, /scheduleInsertionCoalescer\.run/);
 
   const scheduleUpdate = functionSource(
     songs,
@@ -192,6 +248,14 @@ test("async UI handlers validate stable ownership after awaits", async () => {
   );
   assert.match(saveToSchedule, /reconcileSongQueueEntryInPlace\(item, updatedEntry\)/);
   assert.doesNotMatch(saveToSchedule, /mediaQueue\[i\]\s*=\s*updatedEntry/);
+  assert.match(saveToSchedule, /const saveRequest = songEditorSaveGate\.begin\(editorOwner\)/);
+  assert.match(saveToSchedule, /songEditorSaveGate\.owns\(saveRequest, currentWorkspaceSong\)/);
+  assert.ok(
+    saveToSchedule.indexOf("await Promise.resolve()") <
+      saveToSchedule.indexOf("invalidateQueueUndoToastAfterMutation()"),
+    "Save to Schedule must validate the latest request before mutating the queue",
+  );
+  assert.match(saveToSchedule, /render: renderSnapshot/);
 
   const bulkSchedule = functionSource(
     songs,
@@ -272,6 +336,18 @@ test("async UI handlers validate stable ownership after awaits", async () => {
     "the lower third must not update before audience and queue commits succeed",
   );
   assert.match(scriptureSync, /if \(!audienceUpdated\) return false/);
+  const bibleInsert = functionSource(
+    bible,
+    "async function insertBibleInSchedule(",
+    "async function addSelectedBibleVersesToSchedule(",
+  );
+  assert.match(bibleInsert, /bibleScheduleInsertionCoalescer\.run/);
+  const selectedBibleInsert = functionSource(
+    bible,
+    "async function addSelectedBibleVersesToSchedule(",
+    "async function addEachSelectedBibleVerseToSchedule(",
+  );
+  assert.match(selectedBibleInsert, /bibleScheduleInsertionCoalescer\.run/);
   const scriptureDoubleClick = functionSource(
     bible,
     "async function presentBibleSelectionFromDoubleClick(",
@@ -312,12 +388,23 @@ test("async UI handlers validate stable ownership after awaits", async () => {
     "function normalizeProjectScriptureOverrides(",
   );
   assert.doesNotMatch(bibleLowerThird, /setTimeout|lowerThirdKeyOnlyMessage/);
+  assert.match(bibleLowerThird, /discardUnclaimedLowerThirdWindow\(windowId\)/);
+  assert.match(bibleLowerThird, /await closeBibleLowerThirdOutput\(\)/);
   const songLowerThird = functionSource(
     songs,
     "async function sendSongLowerThirdForLiveItem(",
     "async function ensureSongLowerThirdOutput(",
   );
   assert.doesNotMatch(songLowerThird, /setTimeout|lowerThirdKeyOnlyMessage/);
+  assert.match(songLowerThird, /discardUnclaimedLowerThirdWindow\(windowId\)/);
+
+  const closeLowerThird = functionSource(
+    main,
+    "async function handleCloseLowerThirdWindowNow(",
+    "function localMediaStateUpdate(",
+  );
+  assert.match(closeLowerThird, /expectedWindowId/);
+  assert.match(closeLowerThird, /lowerThirdWindow\.id !== expectedWindowId/);
 
   const themeApplyHandler = main.slice(
     main.indexOf('ipcMain.handle("themes:apply"'),

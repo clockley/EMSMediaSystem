@@ -770,8 +770,16 @@ async function handleDiscardMediaWindowNow() {
   return mediaClosed;
 }
 
-async function handleCloseLowerThirdWindowNow() {
+async function handleCloseLowerThirdWindowNow(_event, options = {}) {
   if (!lowerThirdWindow || lowerThirdWindow.isDestroyed()) {
+    return false;
+  }
+  const expectedWindowId = Number(options?.expectedWindowId);
+  if (
+    Number.isInteger(expectedWindowId) &&
+    expectedWindowId > 0 &&
+    lowerThirdWindow.id !== expectedWindowId
+  ) {
     return false;
   }
   const windowToClose = lowerThirdWindow;

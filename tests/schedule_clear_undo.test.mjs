@@ -119,6 +119,12 @@ test("Clear and Undo are transactional around output closure and playback restor
   assert.match(restore, /restoreQueueClearSelectionState\(snap\)/);
   assert.doesNotMatch(restore, /snap\.items\.map/);
   assert.doesNotMatch(restore, /currentQueueIndex\s*=\s*0/);
+  assert.ok(
+    restore.indexOf("await resumeQueuePresentationAtTime(") <
+      restore.indexOf("queueClearUndoSnapshot = null"),
+    "Clear Undo must retain its snapshot until live resume succeeds",
+  );
+  assert.match(restore, /showQueueRestoreResumeRetryToast\(snap\)/);
 
   const selectionRestore = functionSource(
     renderer,
@@ -187,10 +193,11 @@ test("Clear and Undo are transactional around output closure and playback restor
   assert.match(play, /if \(loaded === false\) return failPlaybackStart\(""\)/);
 });
 
-test("Clear Undo snapshot is invalidated by schedule edits before its toast is shown", async () => {
-  const [renderer, schedule, toasts] = await Promise.all([
+test("Clear Undo snapshot is invalidated by schedule and project replacements", async () => {
+  const [renderer, schedule, project, toasts] = await Promise.all([
     readFile(new URL("../src/control-window/app-renderer.mjs", import.meta.url), "utf8"),
     readFile(new URL("../src/control-window/app-schedule-controller.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/control-window/app-project-session.mjs", import.meta.url), "utf8"),
     readFile(new URL("../src/shared/app-toasts.mjs", import.meta.url), "utf8"),
   ]);
 
@@ -223,10 +230,27 @@ test("Clear Undo snapshot is invalidated by schedule edits before its toast is s
     "Clear must snapshot before cancelling a live transition",
   );
 
+  const applyProject = functionSource(
+    project,
+    "function applyProjectStateSnapshot(",
+    "function scheduleAutosaveProjectState(",
+  );
+  assert.ok(
+    applyProject.indexOf("invalidateQueueUndoToastAfterMutation()") <
+      applyProject.indexOf("setSharedRendererState({ mediaQueue:"),
+    "opening or dropping a project must invalidate Clear Undo before replacing the queue",
+  );
+
   const restore = functionSource(
     renderer,
     "async function restoreQueueClearUndoSnapshot(",
     "async function openThemeManagerForQueueItem(",
   );
   assert.match(restore, /try \{\s*restored = await resumeQueuePresentationAtTime\(/);
+  assert.match(renderer, /undoLabel: "Retry"/);
+  assert.ok(
+    toasts.indexOf("dismissAfterUndo();") < toasts.indexOf("onUndo();"),
+    "the old Undo toast must begin dismissal before a retry toast can replace it",
+  );
+  assert.match(toasts, /toastRenderGeneration !== renderGeneration/);
 });

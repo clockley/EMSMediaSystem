@@ -15,6 +15,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 import { bibleTextVerseRows } from "../shared/app-bible-reference-utils.mjs";
 import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
+import { createAsyncActionCoalescer } from "../shared/async-operation-ownership.mjs";
 import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
 
 import {
@@ -71,6 +72,7 @@ import {
   currentPreviewCue,
   currentQueueIndex,
   dataTransferHasType,
+  discardUnclaimedLowerThirdWindow,
   enrichLowerThirdPresentationMessage,
   escapeHtml,
   generateProjectGuid,
@@ -186,6 +188,7 @@ let bibleLowerThirdPreviewSourceKey = "";
 
 let biblePreviewRenderToken = 0;
 let bibleAudienceOutputUpdateToken = 0;
+const bibleScheduleInsertionCoalescer = createAsyncActionCoalescer();
 
 const bibleDesignerState = {
   version: "KJV",
@@ -3068,7 +3071,7 @@ async function sendBibleLowerThirdTextToOutput(
   updateToken,
   expectedRevision = null,
 ) {
-  if (!isBibleLowerThirdFeatureEnabled()) return;
+  if (!isBibleLowerThirdFeatureEnabled()) return false;
   const token = updateToken ?? nextLowerThirdOutputUpdateToken();
   await waitForBibleLowerThirdFonts(entry);
   if (token !== lowerThirdOutputUpdateToken) return false;
@@ -3082,6 +3085,7 @@ async function sendBibleLowerThirdTextToOutput(
   songLowerThirdState.liveKey = "";
   renderSongLowerThirdControls();
   syncBibleLookControls(message);
+  return true;
 }
 
 async function showCuedBibleLowerThird() {
@@ -3240,6 +3244,7 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState, expectedR
   if (!displayValue) {
     return false;
   }
+  const alreadyOpen = bibleLowerThirdOutputActive;
   const updateToken = nextLowerThirdOutputUpdateToken();
   await waitForBibleLowerThirdFonts(entry);
   if (updateToken !== lowerThirdOutputUpdateToken) return false;
@@ -3268,15 +3273,29 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState, expectedR
   try {
     const windowId = await invoke("create-lower-third-window", windowOptions, displayValue);
     if (updateToken !== lowerThirdOutputUpdateToken) {
+      if (!alreadyOpen) await discardUnclaimedLowerThirdWindow(windowId);
       return false;
     }
     setSharedRendererState({ bibleLowerThirdOutputActive: Boolean(windowId) });
     updateClearLiveTextButtonState();
     if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
+      if (!alreadyOpen && bibleLowerThirdOutputActive) {
+        await closeBibleLowerThirdOutput();
+      }
       return false;
     }
     if (bibleLowerThirdOutputActive) {
-      await sendBibleLowerThirdTextToOutput(entry, updateToken, expectedRevision);
+      const sent = await sendBibleLowerThirdTextToOutput(entry, updateToken, expectedRevision);
+      if (sent === false) {
+        if (
+          !alreadyOpen &&
+          updateToken === lowerThirdOutputUpdateToken &&
+          bibleLowerThirdOutputActive
+        ) {
+          await closeBibleLowerThirdOutput();
+        }
+        return false;
+      }
     }
     return bibleLowerThirdOutputActive;
   } catch (err) {
@@ -4450,10 +4469,10 @@ async function slipstreamBiblePresentation(entry, expectedRevision = null) {
   if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
     return false;
   }
-  const textPayload = audienceTextMessageForSend(
-    "bible",
-    buildBibleTextMessage(resolvedEntry, { look: SCRIPTURE_LOOK_FULLSCREEN }),
-  );
+  const audienceMessage = buildBibleTextMessage(resolvedEntry, {
+    look: SCRIPTURE_LOOK_FULLSCREEN,
+  });
+  const textPayload = audienceTextMessageForSend("bible", audienceMessage);
   const activation = await activateAudienceSlipstream(
     (activationPayload) => invoke("slipstream-media-window", activationPayload),
     {
@@ -4463,11 +4482,15 @@ async function slipstreamBiblePresentation(entry, expectedRevision = null) {
     },
   );
   if (!activation.ok) return false;
-  if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
+  if (
+    !audiencePlaybackCoordinator.matchesActivePlayback({
+      playbackId: activation.playbackId,
+    })
+  ) {
     return false;
   }
   setSharedRendererState({ activeMediaWindowContentType: "bible" });
-  await sendBibleTextToOutput(resolvedEntry, expectedRevision, {
+  sendAudienceTextMessage("bible", audienceMessage, {
     expectedPlaybackId: activation.playbackId,
   });
   return true;
@@ -4560,39 +4583,44 @@ async function syncLiveBiblePresentation() {
 }
 
 async function insertBibleInSchedule() {
-  const entry = await currentBibleQueueEntry();
-  if (!entry) return;
-  const entries = await queueEntriesForBibleScheduleEntry(entry.bible);
-  invalidateQueueUndoToastAfterMutation();
-  insertQueueEntriesAfterSelection(entries);
-  renderQueue();
-  saveMediaFile();
-  rememberRecentScripture(entry.bible);
-  showGnomeToast(
-    entries.length > 1
-      ? `Scheduled ${entries.length} Bible slides`
-      : `Scheduled ${entries[0]?.name || entry.name}`,
-  );
+  return bibleScheduleInsertionCoalescer.run("bible:add", async () => {
+    const entry = await currentBibleQueueEntry();
+    if (!entry) return false;
+    const entries = await queueEntriesForBibleScheduleEntry(entry.bible);
+    invalidateQueueUndoToastAfterMutation();
+    insertQueueEntriesAfterSelection(entries);
+    renderQueue();
+    saveMediaFile();
+    rememberRecentScripture(entry.bible);
+    showGnomeToast(
+      entries.length > 1
+        ? `Scheduled ${entries.length} Bible slides`
+        : `Scheduled ${entries[0]?.name || entry.name}`,
+    );
+    return true;
+  });
 }
 
 async function addSelectedBibleVersesToSchedule() {
-  const entry = await currentBibleQueueEntry();
-  if (!entry) {
-    showGnomeToast("Choose Bible text to schedule");
-    return false;
-  }
-  const entries = await queueEntriesForBibleScheduleEntry(entry.bible);
-  invalidateQueueUndoToastAfterMutation();
-  insertQueueEntriesAfterSelection(entries);
-  renderQueue();
-  saveMediaFile();
-  rememberRecentScripture(entry.bible);
-  showGnomeToast(
-    entries.length > 1
-      ? `Scheduled ${entries.length} Bible slides`
-      : `Scheduled ${entries[0]?.name || entry.name}`,
-  );
-  return true;
+  return bibleScheduleInsertionCoalescer.run("bible:add-selected", async () => {
+    const entry = await currentBibleQueueEntry();
+    if (!entry) {
+      showGnomeToast("Choose Bible text to schedule");
+      return false;
+    }
+    const entries = await queueEntriesForBibleScheduleEntry(entry.bible);
+    invalidateQueueUndoToastAfterMutation();
+    insertQueueEntriesAfterSelection(entries);
+    renderQueue();
+    saveMediaFile();
+    rememberRecentScripture(entry.bible);
+    showGnomeToast(
+      entries.length > 1
+        ? `Scheduled ${entries.length} Bible slides`
+        : `Scheduled ${entries[0]?.name || entry.name}`,
+    );
+    return true;
+  });
 }
 
 async function addEachSelectedBibleVerseToSchedule() {

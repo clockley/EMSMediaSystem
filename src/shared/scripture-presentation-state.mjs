@@ -25,6 +25,7 @@ export function createScripturePresentationState() {
   return {
     status: SCRIPTURE_PRESENTATION_STATUS.IDLE,
     revision: 0,
+    takeRevision: null,
     source: null,
     cursor: null,
     outputs: {
@@ -95,6 +96,7 @@ export function reduceScripturePresentation(state, event = {}) {
         ...current,
         status: SCRIPTURE_PRESENTATION_STATUS.TAKING,
         revision,
+        takeRevision: revision,
         source,
         cursor: normalizedCursor(event.cursor),
         outputs: {
@@ -104,7 +106,10 @@ export function reduceScripturePresentation(state, event = {}) {
       };
     }
     case "TAKE_CONFIRMED": {
-      if (event.revision !== current.revision || current.status !== SCRIPTURE_PRESENTATION_STATUS.TAKING) {
+      if (
+        event.revision !== current.takeRevision ||
+        current.status !== SCRIPTURE_PRESENTATION_STATUS.TAKING
+      ) {
         return current;
       }
       const outputs = {};
@@ -121,6 +126,7 @@ export function reduceScripturePresentation(state, event = {}) {
         status: OUTPUT_NAMES.some((name) => outputs[name].status === "live")
           ? SCRIPTURE_PRESENTATION_STATUS.LIVE
           : SCRIPTURE_PRESENTATION_STATUS.PREVIEWING,
+        takeRevision: null,
         outputs,
       };
     }

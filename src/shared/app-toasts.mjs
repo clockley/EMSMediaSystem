@@ -25,6 +25,7 @@ function getPreviewVideo() {
 
 let hasShownPreviewWarning = false;
 let toastTimer = null;
+let toastRenderGeneration = 0;
 /** Auto-hide deadline (ms since epoch) for interactive #gnomeToast hover pause. */
 let toastHideDeadline = 0;
 /** AbortController for mouseenter/mouseleave on interactive toast. */
@@ -83,6 +84,7 @@ export function invalidateQueueUndoToastAfterMutation() {
  * @param {number | { onUndo?: () => void; onUndoExpire?: () => void; duration?: number; undoLabel?: string; undoStyle?: "pill-accent" }} [durationOrOptions]
  */
 export function showGnomeToast(message, durationOrOptions = 3000) {
+  const renderGeneration = ++toastRenderGeneration;
   const FADE_OUT_DURATION = 300;
   let duration = 3000;
   /** @type {(() => void) | null} */
@@ -153,6 +155,7 @@ export function showGnomeToast(message, durationOrOptions = 3000) {
     activeInteractiveUndoExpire = null;
     toast.classList.remove("visible");
     setTimeout(() => {
+      if (toastRenderGeneration !== renderGeneration) return;
       toast.style.display = "none";
       toast.replaceChildren();
       toast.classList.remove("gnome-osd-toast--interactive");
@@ -198,6 +201,7 @@ export function showGnomeToast(message, durationOrOptions = 3000) {
       toastTimer = null;
       toastHideDeadline = 0;
       setTimeout(() => {
+        if (toastRenderGeneration !== renderGeneration) return;
         toast.style.display = "none";
         toast.replaceChildren();
         toast.classList.remove("gnome-osd-toast--interactive");
@@ -254,8 +258,8 @@ export function showGnomeToast(message, durationOrOptions = 3000) {
       }
       toastHideDeadline = 0;
       activeInteractiveUndoExpire = null;
-      onUndo();
       dismissAfterUndo();
+      onUndo();
     });
     toast.appendChild(msg);
     toast.appendChild(undoBtn);
@@ -277,6 +281,7 @@ export function showGnomeToast(message, durationOrOptions = 3000) {
       toast.classList.remove("visible");
       toastTimer = null;
       setTimeout(() => {
+        if (toastRenderGeneration !== renderGeneration) return;
         toast.style.display = "none";
         toast.classList.remove("gnome-osd-toast--interactive");
       }, FADE_OUT_DURATION);
@@ -362,4 +367,3 @@ export function showPreviewWarningToast() {
 
   hasShownPreviewWarning = true;
 }
-

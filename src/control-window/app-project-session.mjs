@@ -21,6 +21,7 @@ import {
   bibleQueuePath,
   bibleStyleDirtyState,
   classifyQueueMediaType,
+  clearSlideUndoHistory,
   currentMode,
   currentQueueIndex,
   deckQueuePath,
@@ -29,6 +30,7 @@ import {
   generateProjectGuid,
   getOutputHoldLogoSettings,
   getPathForFile,
+  invalidateQueueUndoToastAfterMutation,
   invoke,
   isBiblePath,
   isFileBackedMediaPath,
@@ -518,6 +520,14 @@ function applyProjectStateSnapshot(state, opts = {}) {
   bibleStyleDirtyState.backgroundPath = false;
   bibleStyleDirtyState.lowerThirdColor = false;
   bibleStyleDirtyState.lowerThirdChromaKeyColor = false;
+  // Loading a project replaces the schedule wholesale. Invalidate a pending
+  // Clear Undo before that replacement so its pre-clear snapshot can never be
+  // applied over the newly opened project while post-load checks are pending.
+  invalidateQueueUndoToastAfterMutation();
+  // Slide checkpoints own complete deck documents. They must never survive a
+  // project boundary, even when the restored preview is media or Scripture and
+  // therefore does not pass through loadDeckIntoWorkspace().
+  clearSlideUndoHistory();
   setSharedRendererState({ mediaQueue: state.mediaQueue
     .map((x) => {
       if (!x || typeof x !== "object") return null;

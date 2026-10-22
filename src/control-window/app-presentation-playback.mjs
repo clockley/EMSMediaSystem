@@ -188,6 +188,7 @@ import {
   selectNavigationForQueueItem,
   selectedBiblePreviewOutputSize,
   send,
+  sendAudienceTextMessage,
   sendBibleTextToOutput,
   sendSongTextToOutput,
   setCueStartTime,
@@ -1941,17 +1942,27 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       ? resolvedSongPresentation(resolvedSongItem)
       : null;
     if (isSongItem && !resolvedSongAudiencePresentation?.message) return false;
+    const slipstreamTransition = slideTransitionPayloadForQueueItem(nextItem);
+    const slipstreamAudienceType = isBibleItem ? "bible" : isSongItem ? "song" : null;
+    const slipstreamAudienceMessage = isBibleItem
+      ? {
+          ...buildBibleTextMessage(resolvedBibleEntry, {
+            look: SCRIPTURE_LOOK_FULLSCREEN,
+          }),
+          transition: slipstreamTransition,
+        }
+      : isSongItem
+        ? {
+            ...resolvedSongAudiencePresentation.message,
+            transition: slipstreamTransition,
+          }
+        : null;
     const slipstreamData = isBibleItem
       ? {
           isText: true,
           mediaFile: nextItem.path,
-          textPayload: audienceTextMessageForSend("bible", {
-            ...buildBibleTextMessage(resolvedBibleEntry, {
-              look: SCRIPTURE_LOOK_FULLSCREEN,
-            }),
-            transition: slideTransitionPayloadForQueueItem(nextItem),
-          }),
-          transition: slideTransitionPayloadForQueueItem(nextItem),
+          textPayload: audienceTextMessageForSend("bible", slipstreamAudienceMessage),
+          transition: slipstreamTransition,
           underLogoHold,
           clearOutputHold,
         }
@@ -1959,11 +1970,8 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
         ? {
             isText: true,
             mediaFile: nextItem.path,
-            textPayload: audienceTextMessageForSend("song", {
-              ...resolvedSongAudiencePresentation.message,
-              transition: slideTransitionPayloadForQueueItem(nextItem),
-            }),
-            transition: slideTransitionPayloadForQueueItem(nextItem),
+            textPayload: audienceTextMessageForSend("song", slipstreamAudienceMessage),
+            transition: slipstreamTransition,
             underLogoHold,
             clearOutputHold,
           }
@@ -2008,10 +2016,27 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
     if (index < 0) return false;
     if (
-      scriptureTakeRevision !== null &&
-      !scripturePresentation.isCurrentRevision(scriptureTakeRevision)
+      slipstreamAudienceType &&
+      slipstreamAudienceMessage &&
+      !audiencePlaybackCoordinator.matchesActivePlayback({
+        playbackId: slipstreamResult.playbackId,
+      })
     ) {
+      if (scriptureTakeRevision !== null) {
+        confirmScriptureTake(scriptureTakeRevision, {
+          audience: false,
+          lowerThird: false,
+        });
+      }
       return false;
+    }
+    // The acknowledged slipstream payload is already on screen. Commit the
+    // same resolved message to local audience bookkeeping synchronously rather
+    // than starting a second fallible lookup/font-loading send after the take.
+    if (slipstreamAudienceType && slipstreamAudienceMessage) {
+      sendAudienceTextMessage(slipstreamAudienceType, slipstreamAudienceMessage, {
+        expectedPlaybackId: slipstreamResult.playbackId,
+      });
     }
     if (!isBibleItem && scripturePresentation.state.status !== "idle") {
       scripturePresentation.dispatch({ type: "STOPPED" });
@@ -2049,23 +2074,15 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     updateDynUI();
     syncPreviewAudioTrackState();
     if (isBibleItem) {
-      const audienceUpdated = await sendBibleTextToOutput(
-        resolvedBibleEntry,
-        scriptureTakeRevision,
-        { expectedPlaybackId: slipstreamResult.playbackId },
-      );
       const lowerThirdUpdated = await updateLowerThirdForSupportedScheduleItem(
         nextItem,
         scriptureTakeRevision,
       );
       confirmScriptureTake(scriptureTakeRevision, {
-        audience: audienceUpdated !== false,
+        audience: true,
         lowerThird: lowerThirdUpdated === true,
       });
     } else if (isSongItem) {
-      await sendSongTextToOutput(nextItem, {
-        expectedPlaybackId: slipstreamResult.playbackId,
-      });
       await updateLowerThirdForSupportedScheduleItem(nextItem);
     } else {
       void syncStageContentFromQueueItem(nextItem).catch(() => {});

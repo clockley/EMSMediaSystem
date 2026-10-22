@@ -42,3 +42,52 @@ export function createLatestRequestGate() {
     },
   });
 }
+
+/**
+ * Coalesces repeated UI actions for the same logical target while the first
+ * action is running and for a short cooldown after it completes.  The cooldown
+ * covers the two separate `click` tasks emitted by a physical double-click;
+ * an in-flight flag alone is not sufficient for synchronous insertions.
+ */
+export function createAsyncActionCoalescer({ cooldownMs = 400, now = Date.now } = {}) {
+  const activeKeys = new Set();
+  const cooldownUntilByKey = new Map();
+  const normalizedCooldown = Math.max(0, Number(cooldownMs) || 0);
+
+  return Object.freeze({
+    async run(key, operation) {
+      if (typeof operation !== "function") {
+        throw new TypeError("A coalesced action requires an operation");
+      }
+      const normalizedKey = String(key || "default");
+      const currentTime = Number(now()) || 0;
+      const cooldownUntil = cooldownUntilByKey.get(normalizedKey) || 0;
+      if (activeKeys.has(normalizedKey) || currentTime < cooldownUntil) {
+        return false;
+      }
+
+      activeKeys.add(normalizedKey);
+      try {
+        return await operation();
+      } finally {
+        activeKeys.delete(normalizedKey);
+        cooldownUntilByKey.set(
+          normalizedKey,
+          (Number(now()) || currentTime) + normalizedCooldown,
+        );
+        // Keep the map bounded without installing timers that outlive tests or
+        // short-lived renderer documents.
+        if (cooldownUntilByKey.size > 256) {
+          const cleanupTime = Number(now()) || currentTime;
+          for (const [candidateKey, expiresAt] of cooldownUntilByKey) {
+            if (expiresAt <= cleanupTime) cooldownUntilByKey.delete(candidateKey);
+          }
+        }
+      }
+    },
+
+    isActive(key) {
+      return activeKeys.has(String(key || "default"));
+    },
+  });
+}
