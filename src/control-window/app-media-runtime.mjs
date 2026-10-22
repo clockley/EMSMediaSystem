@@ -2320,6 +2320,12 @@ async function createMediaWindow(options) {
     );
   };
   setSharedRendererState({ isActiveMediaWindowCache: true });
+  if (isTextItem) {
+    // Do not expose a fresh text renderer to live-update paths until its first
+    // payload has committed. Otherwise a style edit can supersede the initial
+    // lookup/font wait and leave an acknowledged but blank audience window.
+    setSharedRendererState({ activeMediaWindowContentType: null });
+  }
   setSharedRendererState({ activeResolvedMediaFile: projectionMediaFile });
   setSharedRendererState({ activePreviewResolvedMediaFile: projectionMediaFile });
   const startupSyncGeneration = startupSyncNeeded
@@ -2377,7 +2383,7 @@ async function createMediaWindow(options) {
     showGnomeToast(err?.message || "Could not start the audience output");
     return false;
   }
-  setSharedRendererState({ activeMediaWindowContentType: isTextItem
+  const nextMediaWindowContentType = isTextItem
     ? options?.songItem || isQueueItemSong(textItem) || isQueueItemSong(mediaQueue[currentQueueIndex])
       ? "song"
       : "bible"
@@ -2385,62 +2391,96 @@ async function createMediaWindow(options) {
       ? "pptx"
       : isImgFile
       ? "image"
-      : "video" });
-  send("set-output-content-status", activeMediaWindowContentType);
-  if (networkPreviewUsesRendererCapture()) {
-    resetNetworkPreviewTransportState(mediaFile || projectionMediaFile);
-  }
-  refreshPreviewControlsForCurrentMedia();
-  setSharedRendererState({ bibleShowNowModeActive: Boolean(isTextItem && transientText && activeMediaWindowContentType === "bible") });
-  if (isTextItem && transientText && activeMediaWindowContentType === "song") {
-    markSongShowNowPresentation(textItem || mediaQueue[currentQueueIndex]);
-  } else {
-    clearSongShowNowPresentation();
-  }
-  updateClearLiveTextButtonState();
-  updateOutputHoldButtonStates();
+      : "video";
+  const commitMediaWindowOutputState = () => {
+    setSharedRendererState({ activeMediaWindowContentType: nextMediaWindowContentType });
+    send("set-output-content-status", nextMediaWindowContentType);
+    if (networkPreviewUsesRendererCapture()) {
+      resetNetworkPreviewTransportState(mediaFile || projectionMediaFile);
+    }
+    refreshPreviewControlsForCurrentMedia();
+    setSharedRendererState({
+      bibleShowNowModeActive: Boolean(
+        isTextItem && transientText && nextMediaWindowContentType === "bible"
+      ),
+    });
+    if (isTextItem && transientText && nextMediaWindowContentType === "song") {
+      markSongShowNowPresentation(textItem || mediaQueue[currentQueueIndex]);
+    } else {
+      clearSongShowNowPresentation();
+    }
+    updateClearLiveTextButtonState();
+    updateOutputHoldButtonStates();
+  };
   if (isTextItem) {
-    window.setTimeout(() => {
-      void (async () => {
-        if (!audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })) {
-          return;
-        }
-        if (
-          Number.isFinite(options?.presentationRevision) &&
-          !scripturePresentation.isCurrentRevision(options.presentationRevision)
-        ) {
-          return;
-        }
-        const queueItem = textItem || mediaQueue[currentQueueIndex];
-        if (isQueueItemSong(queueItem)) {
-          const sent = await sendSongTextToOutput(queueItem);
-          if (
-            !sent &&
-            audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })
-          ) {
-            showGnomeToast("Could not display the scheduled song");
-          }
-        } else {
-          const entry = resolvedBibleTextEntry;
-          if (!entry) {
-            showGnomeToast("Could not load the scheduled Scripture text");
-            return;
-          }
-          await sendBibleTextToOutput(
-            entry,
+    const discardFailedTextWindow = async (message, error = null) => {
+      if (error) console.error(message, error);
+      if (!audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })) {
+        return false;
+      }
+      showGnomeToast(message);
+      audiencePlaybackCoordinator.deactivatePlayback(playbackId);
+      setSharedRendererState({ isActiveMediaWindowCache: false });
+      setSharedRendererState({ activeMediaWindowContentType: null });
+      setSharedRendererState({ activeResolvedMediaFile: "" });
+      setSharedRendererState({ activePreviewResolvedMediaFile: "" });
+      setSharedRendererState({ bibleShowNowModeActive: false });
+      clearSongShowNowPresentation();
+      send("set-output-content-status", "none");
+      updateClearLiveTextButtonState();
+      updateOutputHoldButtonStates();
+      try {
+        await invoke("discard-media-window-now");
+      } catch (discardError) {
+        console.error("Failed to discard an uninitialized audience text window:", discardError);
+        send("close-media-window", 0);
+      }
+      return false;
+    };
+
+    if (!audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })) {
+      return false;
+    }
+    if (
+      Number.isFinite(options?.presentationRevision) &&
+      !scripturePresentation.isCurrentRevision(options.presentationRevision)
+    ) {
+      return discardFailedTextWindow("Could not display the scheduled Scripture text");
+    }
+
+    const queueItem = textItem || mediaQueue[currentQueueIndex];
+    try {
+      const sent = isQueueItemSong(queueItem)
+        ? await sendSongTextToOutput(queueItem, { expectedPlaybackId: playbackId })
+        : await sendBibleTextToOutput(
+            resolvedBibleTextEntry,
             options?.presentationRevision ?? null,
             { expectedPlaybackId: playbackId },
           );
-        }
-        if (!audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })) {
-          return;
-        }
-        syncAudienceOutputHoldAfterPresentationStart();
-      })().catch(console.error);
-    }, 150);
+      if (!sent) {
+        return discardFailedTextWindow(
+          isQueueItemSong(queueItem)
+            ? "Could not display the scheduled song"
+            : "Could not display the scheduled Scripture text",
+        );
+      }
+    } catch (error) {
+      return discardFailedTextWindow(
+        isQueueItemSong(queueItem)
+          ? "Could not display the scheduled song"
+          : "Could not display the scheduled Scripture text",
+        error,
+      );
+    }
+    if (!audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })) {
+      return false;
+    }
+    commitMediaWindowOutputState();
+    syncAudienceOutputHoldAfterPresentationStart();
     syncStreamRendererPreviewCapture();
     return true;
   }
+  commitMediaWindowOutputState();
   syncAudienceOutputHoldAfterPresentationStart();
   if (isPptxFile) {
     setTimeout(() => {

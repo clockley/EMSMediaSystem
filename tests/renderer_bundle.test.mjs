@@ -323,7 +323,25 @@ test("text output is validated before a media window is reported live", async ()
 
   assert.match(createWindow, /resolvedBibleEntryForItem\(textQueueItem, \{\s*requireLookup: true/);
   assert.match(createWindow, /!resolvedSongPresentation\(textQueueItem\)\?\.message/);
-  assert.match(createWindow, /const sent = await sendSongTextToOutput\(queueItem\)/);
+  assert.match(createWindow, /await sendSongTextToOutput\(queueItem, \{ expectedPlaybackId: playbackId \}\)/);
+  assert.match(createWindow, /await sendBibleTextToOutput\([\s\S]*expectedPlaybackId: playbackId/);
+  assert.match(createWindow, /if \(!sent\) \{[\s\S]*discardFailedTextWindow/);
+  assert.match(createWindow, /await invoke\("discard-media-window-now"\)/);
+  assert.ok(
+    createWindow.indexOf("await sendSongTextToOutput(queueItem") <
+      createWindow.indexOf(
+        "commitMediaWindowOutputState();",
+        createWindow.indexOf("await sendSongTextToOutput(queueItem"),
+      ),
+    "a fresh text window must not be exposed as live before its first payload commits",
+  );
+
+  const textCommitStart = createWindow.indexOf("if (isTextItem) {");
+  const textCommitEnd = createWindow.indexOf(
+    "syncAudienceOutputHoldAfterPresentationStart();",
+    createWindow.indexOf("return true;", textCommitStart) + 1,
+  );
+  assert.doesNotMatch(createWindow.slice(textCommitStart, textCommitEnd), /setTimeout/);
 });
 
 test("schedule double-click survives a preview row rebuild", async () => {

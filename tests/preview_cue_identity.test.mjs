@@ -324,6 +324,10 @@ test("every deferred main-preview load has token and item ownership", () => {
   assert.match(loader, /mediaQueue\[previewCueIndex\] === item/);
   assert.doesNotMatch(loader, /!activePresentationOwnsPreviewAudio\(\)\) return true/);
   assert.match(remove, /previewLoadToken: loadToken/);
+  assert.match(remove, /const previewAudioItem = queueIndexInRange\(previewAudioCueIndex\)/);
+  assert.match(remove, /previewAudioCueIndex: mediaQueue\.indexOf\(previewAudioItem\)/);
+  assert.match(remove, /const liveAudioItem = queueIndexInRange\(liveAudioQueueIndex\)/);
+  assert.match(remove, /liveAudioItem === removedItem \? -1 : mediaQueue\.indexOf\(liveAudioItem\)/);
   assert.match(undo, /previewLoadToken,\s*\}/);
   assert.match(boundary, /isCurrentPreviewLoad\(previewLoadToken\)/);
   assert.match(boundary, /mediaQueue\[currentQueueIndex\] !== item/);

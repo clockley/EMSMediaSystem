@@ -1063,6 +1063,12 @@ async function onClearMediaQueueClick() {
 function removeFromQueue(index) {
   if (index < 0 || index >= mediaQueue.length) return;
   const removedItem = mediaQueue[index];
+  const previewAudioItem = queueIndexInRange(previewAudioCueIndex)
+    ? mediaQueue[previewAudioCueIndex]
+    : null;
+  const liveAudioItem = queueIndexInRange(liveAudioQueueIndex)
+    ? mediaQueue[liveAudioQueueIndex]
+    : null;
   if (audiencePlaybackCoordinator.isTransitioningItem(removedItem)) {
     showGnomeToast("Wait for the live transition to finish before removing this item");
     return;
@@ -1074,6 +1080,21 @@ function removeFromQueue(index) {
   }
   invalidateQueueUndoToastAfterMutation();
   mediaQueue.splice(index, 1);
+  if (previewAudioItem) {
+    if (previewAudioItem === removedItem) {
+      stopPreviewAudioCue();
+    } else {
+      setSharedRendererState({
+        previewAudioCueIndex: mediaQueue.indexOf(previewAudioItem),
+      });
+    }
+  }
+  if (liveAudioItem) {
+    setSharedRendererState({
+      liveAudioQueueIndex:
+        liveAudioItem === removedItem ? -1 : mediaQueue.indexOf(liveAudioItem),
+    });
+  }
   const pendingSwitchItem = audiencePlaybackCoordinator.pendingCloseItem();
   if (pendingSwitchItem) {
     const pendingIndex = mediaQueue.indexOf(pendingSwitchItem);
@@ -1139,6 +1160,10 @@ function removeFromQueue(index) {
     if (previewCueVideoIndex > index) setSharedRendererState({ previewCueVideoIndex: previewCueVideoIndex - 1 });
   } else if (previewCueIndex >= mediaQueue.length) setSharedRendererState({ previewCueIndex: -1 });
   syncMediaLoopState({ notify: false });
+  if (liveAudioItem && liveAudioItem !== removedItem) {
+    refreshLiveAudioControls();
+    syncPreviewAudioTrackState();
+  }
   if (mediaQueue.length === 0) {
     resetPreviewSurfaceToEmptyState();
   }

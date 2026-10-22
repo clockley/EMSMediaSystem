@@ -95,6 +95,9 @@ test("async UI handlers validate stable ownership after awaits", async () => {
   );
   assert.match(songActivation, /songLibraryIntentGate\.begin/);
   assert.match(songActivation, /libraryIntentRequest: request/);
+  assert.doesNotMatch(songActivation, /currentSongRenderState\s*=/);
+  assert.doesNotMatch(songActivation, /currentSongQueueItem\s*=/);
+  assert.match(songActivation, /queueItem: null/);
 
   const songShowNow = functionSource(
     songs,
@@ -105,6 +108,22 @@ test("async UI handlers validate stable ownership after awaits", async () => {
     songShowNow.indexOf("songLibraryIntentGate.isCurrent(request)") <
       songShowNow.indexOf("showSongTextNow()"),
   );
+  assert.doesNotMatch(songShowNow, /currentSongRenderState\s*=/);
+  assert.match(songShowNow, /queueItem: null/);
+
+  const deckShowNow = functionSource(
+    songs,
+    "async function showCurrentDeckNow(",
+    "function scheduleCurrentDeck(",
+  );
+  assert.match(deckShowNow, /const deckOwner = currentDeck/);
+  assert.match(deckShowNow, /currentDeck === deckOwner/);
+  assert.match(deckShowNow, /deckEditRevision === editRevision/);
+  assert.ok(
+    deckShowNow.indexOf("if (!started)") <
+      deckShowNow.indexOf("currentWorkspaceSong = entry.songSnapshot"),
+    "Show Now must not replace the song workspace until output starts",
+  );
 
   const deckSave = functionSource(
     songs,
@@ -114,6 +133,8 @@ test("async UI handlers validate stable ownership after awaits", async () => {
   assert.match(deckSave, /const deckToSave = currentDeck/);
   assert.match(deckSave, /deckMutationGate\.owns\(operation, currentDeck\)/);
   assert.match(deckSave, /deckEditRevision === editRevision/);
+  assert.match(deckSave, /updateScheduleSongsWithUpdatedSong\(currentDeck/);
+  assert.match(deckSave, /updateScheduleDecksWithUpdatedDeck\(deckToSave/);
 
   const deckDelete = functionSource(
     songs,
@@ -237,6 +258,20 @@ test("async UI handlers validate stable ownership after awaits", async () => {
   assert.match(scriptureSync, /mediaQueue\.indexOf\(liveItem\)/);
   assert.match(scriptureSync, /Object\.assign\(liveItem,/);
   assert.doesNotMatch(scriptureSync, /mediaQueue\[currentQueueIndex\]\s*=/);
+  const scriptureAudienceSend = scriptureSync.indexOf(
+    "await sendBibleTextToOutput(entry.bible, expectedRevision)",
+  );
+  const scriptureQueueCommit = scriptureSync.indexOf("Object.assign(liveItem,");
+  const scriptureLowerThirdSend = scriptureSync.indexOf("await ensureBibleLowerThirdOutput(");
+  assert.ok(
+    scriptureAudienceSend >= 0 && scriptureAudienceSend < scriptureQueueCommit,
+    "live Scripture must reach the audience before its queue snapshot is committed",
+  );
+  assert.ok(
+    scriptureQueueCommit < scriptureLowerThirdSend,
+    "the lower third must not update before audience and queue commits succeed",
+  );
+  assert.match(scriptureSync, /if \(!audienceUpdated\) return false/);
   const scriptureDoubleClick = functionSource(
     bible,
     "async function presentBibleSelectionFromDoubleClick(",

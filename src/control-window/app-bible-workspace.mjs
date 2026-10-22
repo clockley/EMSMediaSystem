@@ -3000,11 +3000,8 @@ async function sendBibleTextToOutput(
   if (!stillOwnsAudience()) return false;
   if (expectedPlaybackId) message.playbackId = expectedPlaybackId;
   sendAudienceTextMessage("bible", message);
-  // A newly-created audience window sends its first text message on a short
-  // delay. The earlier updateDynUI() call therefore cannot match the preview
-  // against lastAudienceBibleTextMessage yet, leaving Show Now in its cued
-  // state even though the Scripture is live. Reconcile the operator controls
-  // when the message is actually committed to the audience output.
+  // The earlier updateDynUI() call happens before the first audience payload
+  // is committed, so reconcile the operator controls after a successful send.
   syncBibleOperatorPreviewState();
   return true;
 }
@@ -3970,6 +3967,17 @@ async function syncBibleDesignerStateToPreviewedQueueItem() {
     mediaQueue.indexOf(targetItem) < 0 ||
     mediaQueue[currentBibleEditorTargetIndex()] !== targetItem
   ) return false;
+  // The live queue snapshot and persisted project must describe what actually
+  // reached the audience. syncLiveBiblePresentation commits this item only
+  // after the audience update succeeds.
+  if (
+    targetIndex === currentQueueIndex &&
+    isQueuePlaying &&
+    isActiveMediaWindow() &&
+    activeMediaWindowContentType === "bible"
+  ) {
+    return false;
+  }
   const transitionOverride = normalizeItemSlideTransitionOverride(entry.bible.transition);
   const { transition, ...bible } = entry.bible;
   Object.assign(targetItem, {
@@ -4510,6 +4518,25 @@ async function syncLiveBiblePresentation() {
     ) {
       return false;
     }
+  }
+  if (audienceLive) {
+    const audienceUpdated = await sendBibleTextToOutput(entry.bible, expectedRevision);
+    if (!audienceUpdated) return false;
+  }
+  if (targetIsLiveItem && liveItemOwner) {
+    const liveItem = liveItemOwner;
+    const liveIndex = mediaQueue.indexOf(liveItem);
+    if (
+      liveIndex < 0 ||
+      currentQueueIndex !== liveIndex ||
+      mediaQueue[liveIndex] !== liveItem ||
+      !isQueuePlaying ||
+      !isBibleEditorTargetLiveItem() ||
+      (expectedRevision !== null &&
+        !scripturePresentation.isCurrentRevision(expectedRevision))
+    ) {
+      return false;
+    }
     const transitionOverride = normalizeItemSlideTransitionOverride(entry.bible.transition);
     const { transition, ...bible } = entry.bible;
     Object.assign(liveItem, {
@@ -4525,9 +4552,6 @@ async function syncLiveBiblePresentation() {
     }
     renderQueue();
     saveMediaFile();
-  }
-  if (audienceLive) {
-    await sendBibleTextToOutput(entry.bible, expectedRevision);
   }
   if (hasLowerThirdOutputSelected()) {
     await ensureBibleLowerThirdOutput(entry.bible, expectedRevision);

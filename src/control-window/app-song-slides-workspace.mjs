@@ -4558,6 +4558,8 @@ async function saveCurrentDeck() {
   commitSlideUndoTransaction();
   flushSlideEditorTextToModel();
   const deckToSave = currentDeck;
+  const deckIdToSave = deckToSave.id;
+  const pageIdToSave = currentDeckPageId;
   const editRevision = deckEditRevision;
   const operation = deckMutationGate.begin(deckToSave);
   const stillOwnsEditor = () =>
@@ -4625,6 +4627,11 @@ async function saveCurrentDeck() {
       currentWorkspaceSong = deckToTransientSong(currentDeck);
       currentSongRenderState = mergeSongRenderState(currentSongRenderState, deckDefaultRender(currentDeck));
       currentEditingSongId = currentDeck.id;
+      await updateScheduleSongsWithUpdatedSong(currentDeck, {
+        render: deckDefaultRender(currentDeck),
+        currentSectionId: pageIdToSave,
+        previousSongId: deckIdToSave,
+      });
       const savedTitle = currentDeck.title || "song";
       const savedEditorDeck = currentDeck;
       clearSlideUndoHistory();
@@ -4646,6 +4653,10 @@ async function saveCurrentDeck() {
     if (ownsEditor) {
       if (summary?.id) deckToSave.id = summary.id;
       deckToSave.updatedAt = summary?.updatedAt || new Date().toISOString();
+      updateScheduleDecksWithUpdatedDeck(deckToSave, {
+        currentPageId: pageIdToSave,
+        previousDeckId: deckIdToSave,
+      });
       clearSlideUndoHistory();
       setDeckDirty(false);
     }
@@ -7553,26 +7564,33 @@ function updateCurrentSlideTransitionFromControls() {
 
 /* ── Show Now / Schedule ──────────────────────────────────── */
 
-function buildDeckQueueEntry({ pageId = null } = {}) {
-  if (!currentDeck) return null;
-  flushSlideEditorTextToModel();
-  if (currentDeckIsSongDocument()) {
+function buildDeckQueueEntryFromDeck(
+  deck,
+  { pageId = null, documentType = "deck" } = {},
+) {
+  if (!deck) return null;
+  const isSongDocument = Boolean(
+    documentType === SONG_DECK_DOCUMENT_TYPE ||
+      deck.documentType === SONG_DECK_DOCUMENT_TYPE ||
+      deck.type === SONG_DECK_DOCUMENT_TYPE,
+  );
+  if (isSongDocument) {
     return buildSongQueueEntryFromDeck({
-      deck: currentDeck,
+      deck,
       render: {
         ...currentSongRenderState,
-        ...deckDefaultRender(currentDeck),
+        ...deckDefaultRender(deck),
       },
-      currentSectionId: pageId || currentDeckPageId,
+      currentSectionId: pageId || deck.pages?.[0]?.id || null,
       sourceKind: "library",
     });
   }
-  const transientSong = deckToTransientSong(currentDeck);
+  const transientSong = deckToTransientSong(deck);
   if (!transientSong) return null;
-  const targetPageId = pageId || currentDeckPageId || transientSong.sections[0]?.id || null;
-  const page = findPage(currentDeck, targetPageId);
-  const overrides = pageRenderOverrides(page, currentDeck);
-  const render = { ...deckDefaultRender(currentDeck), ...overrides };
+  const targetPageId = pageId || deck.pages?.[0]?.id || transientSong.sections[0]?.id || null;
+  const page = findPage(deck, targetPageId);
+  const overrides = pageRenderOverrides(page, deck);
+  const render = { ...deckDefaultRender(deck), ...overrides };
   const entry = queueEntryFromSong({
     song: transientSong,
     render,
@@ -7583,16 +7601,25 @@ function buildDeckQueueEntry({ pageId = null } = {}) {
   // Runtime rendering still uses the transient song snapshot, while project
   // identity and editor routing come from type/source/deckSnapshot.
   entry.type = "deck";
-  entry.path = deckQueuePath(currentDeck.id, targetPageId);
-  entry.name = currentDeck.title || "Slide Deck";
+  entry.path = deckQueuePath(deck.id, targetPageId);
+  entry.name = deck.title || "Slide Deck";
   entry.source = {
     kind: "deck",
-    deckId: currentDeck.id,
+    deckId: deck.id,
     pageId: targetPageId,
     songId: transientSong.id,
   };
-  entry.deckSnapshot = normalizeSlideDeck(currentDeck);
+  entry.deckSnapshot = normalizeSlideDeck(deck);
   return entry;
+}
+
+function buildDeckQueueEntry({ pageId = null } = {}) {
+  if (!currentDeck) return null;
+  flushSlideEditorTextToModel();
+  return buildDeckQueueEntryFromDeck(currentDeck, {
+    pageId: pageId || currentDeckPageId,
+    documentType: currentDeckDocumentType,
+  });
 }
 
 function syncCurrentDeckQueueItemSnapshot() {
@@ -7639,20 +7666,10 @@ async function showCurrentDeckNow() {
   }
   const entry = buildDeckQueueEntry({});
   if (!entry) return;
+  const deckOwner = currentDeck;
+  const pageOwner = currentDeckPageId;
+  const editRevision = deckEditRevision;
   try {
-    if (typeof currentWorkspaceSong !== "undefined") currentWorkspaceSong = entry.songSnapshot;
-    if (typeof currentSongRenderState !== "undefined") {
-      currentSongRenderState = mergeSongRenderState(DEFAULT_SONG_RENDER, entry.render || {});
-    }
-    if (typeof currentSongSectionId !== "undefined") currentSongSectionId = entry.render?.currentSectionId || null;
-    if (typeof currentSongSequenceEntryId !== "undefined") {
-      currentSongSequenceEntryId =
-        entry.currentSequenceEntryId || entry.sequence?.currentSequenceEntryId || null;
-    }
-    if (typeof currentSongSlideId !== "undefined") {
-      currentSongSlideId = entry.currentSlideId || entry.render?.currentSlideId || null;
-    }
-    if (typeof currentSongQueueItem !== "undefined") currentSongQueueItem = entry;
     const started = isActiveMediaWindow()
       ? activeMediaWindowContentType === "song"
         ? await sendSongTextToOutput(entry)
@@ -7665,6 +7682,20 @@ async function showCurrentDeckNow() {
     if (!started) {
       showGnomeToast("No output started");
       return;
+    }
+    if (
+      currentDeck === deckOwner &&
+      currentDeckPageId === pageOwner &&
+      deckEditRevision === editRevision
+    ) {
+      currentWorkspaceSongDeck = entry.deckSnapshot || normalizeSlideDeck(deckOwner);
+      currentWorkspaceSong = entry.songSnapshot;
+      currentSongRenderState = mergeSongRenderState(DEFAULT_SONG_RENDER, entry.render || {});
+      currentSongSectionId = entry.render?.currentSectionId || null;
+      currentSongSequenceEntryId =
+        entry.currentSequenceEntryId || entry.sequence?.currentSequenceEntryId || null;
+      currentSongSlideId = entry.currentSlideId || entry.render?.currentSlideId || null;
+      currentSongQueueItem = entry;
     }
     if (typeof mediaPlaybackEndedPending !== "undefined") setSharedRendererState({ mediaPlaybackEndedPending: false });
     if (typeof pendingQueueSwitchIndex !== "undefined") setSharedRendererState({ pendingQueueSwitchIndex: null });
@@ -7948,12 +7979,18 @@ async function updateScheduleSongsWithUpdatedSong(song, opts = {}) {
   const currentSectionId = opts.currentSectionId ?? currentSongSectionId;
   const songDeck = songDeckDocumentFromSongDocument(song, render);
   const songId = songDeck?.id || song?.id;
+  const previousSongId = opts.previousSongId || null;
   let updatedCount = 0;
   for (let i = 0; i < mediaQueue.length; i++) {
     const item = mediaQueue[i];
     if (
       item.type === "song" &&
-      (item.source?.songId === songId || item.deckSnapshot?.id === songId || parseSongQueuePath(item.path) === songId)
+      [songId, previousSongId].filter(Boolean).some(
+        (candidateId) =>
+          item.source?.songId === candidateId ||
+          item.deckSnapshot?.id === candidateId ||
+          parseSongQueuePath(item.path) === candidateId,
+      )
     ) {
       const updatedEntry = buildSongQueueEntryFromDeck({
         deck: songDeck,
@@ -7986,6 +8023,32 @@ async function updateScheduleSongsWithUpdatedSong(song, opts = {}) {
     renderQueue();
     saveMediaFile();
   }
+}
+
+function updateScheduleDecksWithUpdatedDeck(deck, opts = {}) {
+  const deckId = deck?.id;
+  if (!deckId) return 0;
+  const matchingDeckIds = new Set(
+    [deckId, opts.previousDeckId].filter(Boolean),
+  );
+  const currentPageId = opts.currentPageId || deck.pages?.[0]?.id || null;
+  let updatedCount = 0;
+  for (const item of mediaQueue) {
+    if (!isQueueItemDeck(item) || !matchingDeckIds.has(queueItemDeckId(item))) continue;
+    const updatedEntry = buildDeckQueueEntryFromDeck(deck, {
+      pageId: item.source?.pageId || item.render?.currentSectionId || currentPageId,
+      documentType: "deck",
+    });
+    if (!updatedEntry) continue;
+    reconcileSongQueueEntryInPlace(item, updatedEntry);
+    updatedCount += 1;
+  }
+  if (updatedCount > 0) {
+    invalidateQueueUndoToastAfterMutation();
+    renderQueue();
+    saveMediaFile();
+  }
+  return updatedCount;
 }
 
 async function saveSongEditor() {
@@ -8232,13 +8295,12 @@ async function activateSongFromLibrary(songSummary, { openEditor = false } = {})
   songWorkspaceLoadGate.invalidate();
   songEditorOpenGate.invalidate();
   try {
-    currentSongQueueItem = null;
     const fullSong = await loadFullLibrarySong(songSummary);
     if (!songLibraryIntentGate.isCurrent(request)) return null;
     const render = renderStateForLibrarySong(fullSong);
-    currentSongRenderState = render;
     const loaded = await loadSongIntoWorkspace(fullSong, {
       render,
+      queueItem: null,
       libraryIntentRequest: request,
     });
     if (!loaded || !songLibraryIntentGate.isCurrent(request)) return null;
@@ -8286,9 +8348,9 @@ async function showSongFromLibraryNow(songSummary) {
     const song = await loadFullLibrarySong(songSummary);
     if (!songLibraryIntentGate.isCurrent(request)) return false;
     const render = renderStateForLibrarySong(song);
-    currentSongRenderState = render;
     const loaded = await loadSongIntoWorkspace(song, {
       render,
+      queueItem: null,
       libraryIntentRequest: request,
     });
     if (!loaded || !songLibraryIntentGate.isCurrent(request)) return false;

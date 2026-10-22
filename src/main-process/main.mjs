@@ -737,6 +737,39 @@ async function handleCloseMediaWindowNow() {
   return mediaClosed;
 }
 
+async function handleDiscardMediaWindowNow() {
+  if (!mediaWindow || mediaWindow.isDestroyed()) {
+    youtubeLiveSessionActive = false;
+    return false;
+  }
+
+  // A renderer can finish bootstrapping successfully and still fail to receive
+  // its first text payload (for example, a font load or Scripture lookup can
+  // fail). That window was never a committed presentation, so closing it must
+  // not look like a natural media end and advance or stop the schedule.
+  if (hasActiveAlerts()) {
+    const contentWindow = mediaWindow;
+    audienceContentKind = "none";
+    youtubeLiveSessionActive = false;
+    audienceWindowOverlayOnly = true;
+    if (!contentWindow.webContents.isDestroyed()) {
+      contentWindow.webContents.send("audience-enter-alert-only");
+    }
+    setAudienceWindowTransparent(true);
+    publishOutputStatus();
+    return true;
+  }
+
+  const windowToClose = mediaWindow;
+  suppressNextMediaClosedNotification = true;
+  const mediaClosed = new Promise((resolve) => {
+    windowToClose.once("closed", () => resolve(true));
+  });
+  windowToClose.close();
+  youtubeLiveSessionActive = false;
+  return mediaClosed;
+}
+
 async function handleCloseLowerThirdWindowNow() {
   if (!lowerThirdWindow || lowerThirdWindow.isDestroyed()) {
     return false;
@@ -5804,6 +5837,7 @@ function setIPC() {
     clearLowerThirdRendererNow(payload),
   );
   ipcMain.handle("create-media-window", handleCreateMediaWindow);
+  ipcMain.handle("discard-media-window-now", handleDiscardMediaWindowNow);
   ipcMain.handle("create-lower-third-window", handleCreateLowerThirdWindow);
   ipcMain.handle("create-stage-window", handleCreateStageWindow);
   ipcMain.handle("stage-output-command", handleStageOutputCommand);

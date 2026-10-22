@@ -353,6 +353,23 @@ test("fresh audience creation waits for renderer activation", () => {
   assert.match(mainSource, /audience-output-failed/);
 });
 
+test("a failed initial text payload discards its uncommitted audience window", () => {
+  const discardStart = mainSource.indexOf("async function handleDiscardMediaWindowNow(");
+  const discardEnd = mainSource.indexOf(
+    "\nasync function handleCloseLowerThirdWindowNow(",
+    discardStart,
+  );
+  const discard = mainSource.slice(discardStart, discardEnd);
+  assert.ok(discardStart >= 0 && discardEnd > discardStart);
+  assert.match(discard, /suppressNextMediaClosedNotification = true/);
+  assert.doesNotMatch(discard, /win\.webContents\.send\("media-window-closed"/);
+  assert.match(
+    mainSource,
+    /ipcMain\.handle\("discard-media-window-now", handleDiscardMediaWindowNow\)/,
+  );
+  assert.match(controlMediaSource, /await invoke\("discard-media-window-now"\)/);
+});
+
 test("control preview accepts the selected playback state during audience activation", () => {
   const createStart = controlMediaSource.indexOf("async function createMediaWindow(");
   const createEnd = controlMediaSource.indexOf("\nexport {", createStart);
