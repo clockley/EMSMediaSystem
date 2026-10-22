@@ -1,0 +1,308 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+import { createLatestRequestGate } from "../src/shared/async-operation-ownership.mjs";
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function functionSource(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  assert.ok(start >= 0, `missing ${startMarker}`);
+  assert.ok(end > start, `missing ${endMarker}`);
+  return source.slice(start, end);
+}
+
+test("latest request gate prevents an older completion from committing", async () => {
+  const gate = createLatestRequestGate();
+  const firstResult = deferred();
+  const secondResult = deferred();
+  const commits = [];
+
+  const run = async (owner, result) => {
+    const request = gate.begin(owner);
+    const value = await result.promise;
+    if (gate.owns(request, owner)) commits.push(value);
+  };
+
+  const first = run({ id: "first" }, firstResult);
+  const second = run({ id: "second" }, secondResult);
+  secondResult.resolve("second");
+  await second;
+  firstResult.resolve("first");
+  await first;
+
+  assert.deepEqual(commits, ["second"]);
+});
+
+test("ownership requires both the current generation and the same object", () => {
+  const gate = createLatestRequestGate();
+  const owner = { id: "song" };
+  const request = gate.begin(owner);
+
+  assert.equal(gate.owns(request, owner), true);
+  assert.equal(gate.owns(request, { id: "song" }), false);
+  gate.invalidate();
+  assert.equal(gate.owns(request, owner), false);
+});
+
+test("async UI handlers validate stable ownership after awaits", async () => {
+  const [songs, shell, schedule, bible, liveOutputs, main, themeManager] = await Promise.all([
+    readFile(new URL("../src/control-window/app-song-slides-workspace.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/control-window/app-workspace-shell.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/control-window/app-schedule-controller.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/control-window/app-bible-workspace.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/control-window/app-live-outputs.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/main-process/main.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/dialogs/theme_manager.mjs", import.meta.url), "utf8"),
+  ]);
+
+  const songLoad = functionSource(
+    songs,
+    "async function loadSongIntoWorkspace(",
+    "function updateSongNavButtonsState(",
+  );
+  assert.match(songLoad, /songWorkspaceLoadGate\.begin/);
+  assert.match(songLoad, /if \(!stillOwnsWorkspace\(\)\) return false/);
+  assert.ok(
+    songLoad.indexOf("await checkIfSongInLibrary(stagedWorkspaceSong.id)") <
+      songLoad.indexOf("currentWorkspaceSong = stagedWorkspaceSong"),
+    "the song workspace must commit only after asynchronous ownership validation",
+  );
+
+  const scheduledSongLoad = functionSource(
+    songs,
+    "async function loadSongItemIntoWorkspace(",
+    "function queueItemDeckId(",
+  );
+  assert.doesNotMatch(scheduledSongLoad, /commitWorkspaceIdentity/);
+  assert.doesNotMatch(scheduledSongLoad, /currentSongRenderState\s*=/);
+  assert.match(scheduledSongLoad, /queueItem: item \|\| null/);
+
+  const songActivation = functionSource(
+    songs,
+    "async function activateSongFromLibrary(",
+    "async function scheduleSongFromLibrary(",
+  );
+  assert.match(songActivation, /songLibraryIntentGate\.begin/);
+  assert.match(songActivation, /libraryIntentRequest: request/);
+
+  const songShowNow = functionSource(
+    songs,
+    "async function showSongFromLibraryNow(",
+    "function hideSongContextMenu(",
+  );
+  assert.ok(
+    songShowNow.indexOf("songLibraryIntentGate.isCurrent(request)") <
+      songShowNow.indexOf("showSongTextNow()"),
+  );
+
+  const deckSave = functionSource(
+    songs,
+    "async function saveCurrentDeck(",
+    "function resetCurrentSongToThemeDefault(",
+  );
+  assert.match(deckSave, /const deckToSave = currentDeck/);
+  assert.match(deckSave, /deckMutationGate\.owns\(operation, currentDeck\)/);
+  assert.match(deckSave, /deckEditRevision === editRevision/);
+
+  const deckDelete = functionSource(
+    songs,
+    "async function deleteCurrentDeck(",
+    "async function duplicateCurrentDeck(",
+  );
+  assert.match(deckDelete, /const deckToDelete = currentDeck/);
+  assert.match(deckDelete, /if \(currentDeck !== deckToDelete\) return/);
+  assert.match(deckDelete, /deckMutationGate\.begin\(deckToDelete\)/);
+
+  const deckRename = functionSource(
+    songs,
+    "async function renameCurrentDeck(",
+    "function deckSummaryFromDeck(",
+  );
+  assert.match(deckRename, /const deckToRename = currentDeck/);
+  assert.match(deckRename, /if \(currentDeck !== deckToRename\) return/);
+
+  const deckCreate = functionSource(
+    songs,
+    "async function createNewDeck(",
+    "async function saveCurrentDeck(",
+  );
+  assert.match(deckCreate, /const previousDeck = currentDeck/);
+  assert.match(deckCreate, /if \(currentDeck !== previousDeck\) return/);
+
+  const songEditorSave = functionSource(
+    songs,
+    "async function saveSongEditor(",
+    "async function saveSongToSchedule(",
+  );
+  assert.match(songEditorSave, /const renderSnapshot = structuredClone\(currentSongRenderState\)/);
+  assert.match(songEditorSave, /songEditorSaveGate\.owns\(saveRequest, currentWorkspaceSong\)/);
+  assert.match(songEditorSave, /render: renderSnapshot/);
+
+  const scheduleUpdate = functionSource(
+    songs,
+    "async function updateScheduleSongsWithUpdatedSong(",
+    "async function saveSongEditor(",
+  );
+  assert.match(scheduleUpdate, /const render = opts\.render/);
+  assert.match(scheduleUpdate, /reconcileSongQueueEntryInPlace\(item, updatedEntry\)/);
+  const songQueueReconcile = functionSource(
+    songs,
+    "function reconcileSongQueueEntryInPlace(",
+    "async function updateScheduleSongsWithUpdatedSong(",
+  );
+  assert.match(songQueueReconcile, /"itemTheme"/);
+  assert.match(songQueueReconcile, /Object\.assign\(item, updatedEntry, preserved\)/);
+
+  const saveToSchedule = functionSource(
+    songs,
+    "async function saveSongToSchedule(",
+    "async function deleteSongFromLibrary(",
+  );
+  assert.match(saveToSchedule, /reconcileSongQueueEntryInPlace\(item, updatedEntry\)/);
+  assert.doesNotMatch(saveToSchedule, /mediaQueue\[i\]\s*=\s*updatedEntry/);
+
+  const bulkSchedule = functionSource(
+    songs,
+    "async function bulkScheduleSelectedSongs(",
+    "async function bulkDeleteSelectedSongs(",
+  );
+  assert.match(bulkSchedule, /const ids = Object\.freeze\(\[\.\.\.selectedSongIds\]\)/);
+  assert.match(bulkSchedule, /captureQueueInsertionPointAfterSelection/);
+  assert.doesNotMatch(bulkSchedule, /for \(const id of selectedSongIds\)/);
+
+  const sectionRename = functionSource(
+    schedule,
+    "async function renameScheduleSection(",
+    "async function addScheduleSectionAfterSelection(",
+  );
+  assert.match(sectionRename, /const section = mediaQueue\[index\]/);
+  assert.match(sectionRename, /mediaQueue\.includes\(section\)/);
+  assert.doesNotMatch(sectionRename, /mediaQueue\[index\]\.name =/);
+
+  const sectionAdd = functionSource(
+    schedule,
+    "async function addScheduleSectionAfterSelection(",
+    "function fallbackSelectedQueueIndex(",
+  );
+  assert.match(sectionAdd, /captureQueueInsertionPointAfterSelection/);
+  assert.match(sectionAdd, /resolveQueueInsertionPoint/);
+
+  const lyricsStart = shell.lastIndexOf('document.getElementById("songEditorTextarea")');
+  const lyricsHandler = shell.slice(
+    lyricsStart,
+    shell.indexOf('document.getElementById("songsSearchInput")', lyricsStart),
+  );
+  assert.match(lyricsHandler, /songEditorParseGate\.begin\(workspaceOwner\)/);
+  assert.match(lyricsHandler, /songEditorParseGate\.owns\(parseRequest, currentWorkspaceSong\)/);
+  assert.match(lyricsHandler, /e\.target\.value !== text/);
+  assert.match(shell, /songFolderMutationGate\.begin\(songId\)/);
+  assert.match(shell, /currentWorkspaceSong === workspaceOwner/);
+  assert.match(shell, /slideBackgroundPickerGate\.owns\(request, page\)/);
+  assert.match(shell, /currentDeck !== deckOwner/);
+  assert.match(shell, /songBackgroundPickerGate\.owns\(request, renderOwner\)/);
+  assert.match(shell, /currentWorkspaceSong !== workspaceOwner/);
+
+  const songSearch = functionSource(
+    songs,
+    "async function refreshSongsBrowser(",
+    "function setCurrentSongFolderFilter(",
+  );
+  assert.match(songSearch, /songLibraryQueryGate\.begin/);
+  assert.match(songSearch, /if \(!songLibraryQueryGate\.isCurrent\(request\)\) return false/);
+
+  const deckActivation = functionSource(
+    songs,
+    "async function activateDeckFromLibrary(",
+    "function loadDeckIntoWorkspace(",
+  );
+  assert.match(deckActivation, /deckLibraryActivationGate\.begin\(deckId\)/);
+  assert.match(deckActivation, /if \(!deckLibraryActivationGate\.isCurrent\(request\)\) return/);
+
+  const scriptureSync = functionSource(
+    bible,
+    "async function syncLiveBiblePresentation(",
+    "async function insertBibleInSchedule(",
+  );
+  assert.match(scriptureSync, /mediaQueue\.indexOf\(liveItem\)/);
+  assert.match(scriptureSync, /Object\.assign\(liveItem,/);
+  assert.doesNotMatch(scriptureSync, /mediaQueue\[currentQueueIndex\]\s*=/);
+  const scriptureDoubleClick = functionSource(
+    bible,
+    "async function presentBibleSelectionFromDoubleClick(",
+    "function selectedBibleVerseNumbers(",
+  );
+  assert.match(scriptureDoubleClick, /bibleVerseSelectionRequestMatchesCurrent\(selectionRequest\)/);
+  assert.match(scriptureDoubleClick, /bibleDesignerState\.reference !== reference/);
+  const lowerThirdCuePersist = functionSource(
+    bible,
+    "function persistBibleLowerThirdCueState(",
+    "async function commitBibleDesignerRenderState(",
+  );
+  assert.match(lowerThirdCuePersist, /Object\.assign\(item,/);
+  assert.doesNotMatch(lowerThirdCuePersist, /mediaQueue\[index\]\s*=/);
+
+  const liveTheme = functionSource(
+    liveOutputs,
+    "async function applyThemeToLivePresentation(",
+    "export {",
+  );
+  assert.match(liveTheme, /liveThemeApplyGate\.begin/);
+  assert.match(liveTheme, /if \(!liveThemeApplyGate\.isCurrent\(request\)\) return false/);
+
+  const lowerThirdCreate = functionSource(
+    main,
+    "async function handleCreateLowerThirdWindow(",
+    "function currentOutputStatus(",
+  );
+  assert.match(lowerThirdCreate, /lowerThirdWindowCreatePromise/);
+  assert.match(lowerThirdCreate, /waitForAudienceOutputBootstrap/);
+  assert.ok(
+    lowerThirdCreate.indexOf("await bootstrapResult") <
+      lowerThirdCreate.indexOf("return createdLowerThirdWindow.id"),
+  );
+  const bibleLowerThird = functionSource(
+    bible,
+    "async function ensureBibleLowerThirdOutput(",
+    "function normalizeProjectScriptureOverrides(",
+  );
+  assert.doesNotMatch(bibleLowerThird, /setTimeout|lowerThirdKeyOnlyMessage/);
+  const songLowerThird = functionSource(
+    songs,
+    "async function sendSongLowerThirdForLiveItem(",
+    "async function ensureSongLowerThirdOutput(",
+  );
+  assert.doesNotMatch(songLowerThird, /setTimeout|lowerThirdKeyOnlyMessage/);
+
+  const themeApplyHandler = main.slice(
+    main.indexOf('ipcMain.handle("themes:apply"'),
+    main.indexOf('ipcMain.handle("themes:applyToItem"'),
+  );
+  assert.match(themeApplyHandler, /themeActivationQueue/);
+  assert.match(themeApplyHandler, /revision !== themeActivationRevision/);
+  const themeDeleteHandler = main.slice(
+    main.indexOf('ipcMain.handle("themes:delete"'),
+    main.indexOf('ipcMain.handle("themes:import"'),
+  );
+  assert.match(themeDeleteHandler, /themeActivationQueue/);
+  assert.match(themeDeleteHandler, /reconcileDeletedActiveTheme/);
+  assert.match(themeManager, /const stillOwnsApply/);
+  const themeBackground = functionSource(
+    themeManager,
+    "async function chooseAudienceBackground(",
+    "function clearAudienceBackground(",
+  );
+  assert.match(themeBackground, /const targetId = selectedId/);
+  assert.match(themeBackground, /draft !== targetDraft/);
+  assert.match(themeBackground, /outputRole !== targetRole/);
+});
