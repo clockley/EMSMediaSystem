@@ -11,11 +11,31 @@ let currentSongFolderFilter = "__all__";
 let songFoldersCache = [];
 let selectedSongIds = new Set();
 let songsBulkDeleteArmed = false;
+let songSelectionRevision = 0;
+let songsBulkOperationInFlight = false;
 let songSlideNavigatorRenderToken = 0;
 let songPreviewRenderToken = 0;
 let songPreviewRerenderRaf = 0;
 let songLibraryClickTimer = null;
 let deckPageClickTimer = null;
+
+const songWorkspaceLoadGate = createLatestRequestGate();
+const songLibraryIntentGate = createLatestRequestGate();
+const songLibraryQueryGate = createLatestRequestGate();
+const songFolderQueryGate = createLatestRequestGate();
+const songFolderMutationGate = createLatestRequestGate();
+const songEditorOpenGate = createLatestRequestGate();
+const songEditorSaveGate = createLatestRequestGate();
+const deckLibraryActivationGate = createLatestRequestGate();
+const deckLibraryQueryGate = createLatestRequestGate();
+const deckFolderQueryGate = createLatestRequestGate();
+const deckMutationGate = createLatestRequestGate();
+let songEditorRevision = 0;
+
+function markSongEditorChanged() {
+  songEditorRevision += 1;
+  songEditorSaveGate.invalidate();
+}
 
 const SONG_PREVIEW_OUTPUT_WIDTH = 1920;
 const SONG_PREVIEW_OUTPUT_HEIGHT = 1080;
@@ -872,6 +892,7 @@ function applySongEditorTextStyle(style, scope = currentSongEditorStyleScope()) 
       applySongStyleToSectionRange(activeSection, range.start, range.end, style),
     );
   }
+  markSongEditorChanged();
   syncCurrentWorkspaceSongDefaultRender();
   refreshSongEditorAfterStyleChange();
 }
@@ -906,6 +927,9 @@ function syncSongsBulkActions() {
   const bar = document.getElementById("songsBulkActions");
   const countEl = document.getElementById("songsBulkCount");
   const deleteBtn = document.getElementById("songsBulkDeleteBtn");
+  const moveBtn = document.getElementById("songsBulkMoveBtn");
+  const scheduleBtn = document.getElementById("songsBulkScheduleBtn");
+  const folderSelect = document.getElementById("songsBulkMoveFolder");
   const count = selectedSongIds.size;
   if (bar) bar.hidden = count === 0;
   if (countEl) countEl.textContent = `${count} selected`;
@@ -914,10 +938,15 @@ function syncSongsBulkActions() {
   } else if (deleteBtn) {
     deleteBtn.textContent = "Delete";
   }
+  if (deleteBtn) deleteBtn.disabled = songsBulkOperationInFlight;
+  if (moveBtn) moveBtn.disabled = songsBulkOperationInFlight;
+  if (scheduleBtn) scheduleBtn.disabled = songsBulkOperationInFlight;
+  if (folderSelect) folderSelect.disabled = songsBulkOperationInFlight;
   syncSongsBulkMoveFolderOptions();
 }
 
 function clearSongSelection() {
+  if (selectedSongIds.size > 0 || songsBulkDeleteArmed) songSelectionRevision += 1;
   selectedSongIds.clear();
   songsBulkDeleteArmed = false;
   syncSongsBulkActions();
@@ -929,6 +958,7 @@ function clearSongSelection() {
 }
 
 function setSongRowSelected(row, songId, checked) {
+  if (selectedSongIds.has(songId) !== checked) songSelectionRevision += 1;
   if (checked) selectedSongIds.add(songId);
   else selectedSongIds.delete(songId);
   row.classList.toggle("is-checked", checked);
@@ -944,25 +974,34 @@ async function bulkMoveSelectedSongs() {
     return;
   }
   const folderId = value === SONG_FOLDER_UNFILED ? null : value;
-  const ids = [...selectedSongIds];
+  const ids = Object.freeze([...selectedSongIds]);
+  const selectionRevision = songSelectionRevision;
+  if (songsBulkOperationInFlight) return;
+  songsBulkOperationInFlight = true;
+  syncSongsBulkActions();
   let moved = 0;
-  for (const id of ids) {
-    try {
-      await songsAPI.moveToFolder(id, folderId);
-      moved += 1;
-      if (currentWorkspaceSong?.id === id) {
-        currentWorkspaceSong.folderId = folderId;
+  try {
+    for (const id of ids) {
+      try {
+        await songsAPI.moveToFolder(id, folderId);
+        moved += 1;
+        if (currentWorkspaceSong?.id === id) {
+          currentWorkspaceSong.folderId = folderId;
+        }
+      } catch (err) {
+        console.error(`Failed to move song ${id}:`, err);
       }
-    } catch (err) {
-      console.error(`Failed to move song ${id}:`, err);
     }
+    await refreshSongFolders();
+    const searchInput = document.getElementById("songsSearchInput");
+    await refreshSongsBrowser(searchInput?.value || "");
+    syncSongsMoveFolderSelect(currentWorkspaceSong);
+    showGnomeToast(`Moved ${moved} song${moved === 1 ? "" : "s"}`);
+  } finally {
+    songsBulkOperationInFlight = false;
+    if (songSelectionRevision === selectionRevision) clearSongSelection();
+    else syncSongsBulkActions();
   }
-  clearSongSelection();
-  await refreshSongFolders();
-  const searchInput = document.getElementById("songsSearchInput");
-  await refreshSongsBrowser(searchInput?.value || "");
-  syncSongsMoveFolderSelect(currentWorkspaceSong);
-  showGnomeToast(`Moved ${moved} song${moved === 1 ? "" : "s"}`);
 }
 
 async function bulkScheduleSelectedSongs() {
@@ -970,32 +1009,46 @@ async function bulkScheduleSelectedSongs() {
     showGnomeToast("Select songs to schedule");
     return;
   }
-  const entries = [];
-  for (const id of selectedSongIds) {
-    try {
-      const song = await songsAPI.get(id);
-      const entry = buildSongQueueEntryFromDeck({
-        deck: song,
-        render: renderStateForLibrarySong(song),
-      });
-      if (entry) entries.push(entry);
-    } catch (err) {
-      console.error(`Failed to load song ${id} for schedule:`, err);
+  if (songsBulkOperationInFlight) return;
+  const ids = Object.freeze([...selectedSongIds]);
+  const selectionRevision = songSelectionRevision;
+  const insertionPoint = captureQueueInsertionPointAfterSelection();
+  songsBulkOperationInFlight = true;
+  syncSongsBulkActions();
+  let scheduled = false;
+  try {
+    const entries = [];
+    for (const id of ids) {
+      try {
+        const song = await songsAPI.get(id);
+        const entry = buildSongQueueEntryFromDeck({
+          deck: song,
+          render: renderStateForLibrarySong(song),
+        });
+        if (entry) entries.push(entry);
+      } catch (err) {
+        console.error(`Failed to load song ${id} for schedule:`, err);
+      }
     }
+    if (entries.length === 0) {
+      showGnomeToast("Could not schedule selected songs");
+      return;
+    }
+    invalidateQueueUndoToastAfterMutation();
+    insertQueueEntriesAfterSelection(entries, insertionPoint);
+    renderQueue();
+    saveMediaFile();
+    scheduled = true;
+    showGnomeToast(`Scheduled ${entries.length} song${entries.length === 1 ? "" : "s"}`);
+  } finally {
+    songsBulkOperationInFlight = false;
+    if (scheduled && songSelectionRevision === selectionRevision) clearSongSelection();
+    else syncSongsBulkActions();
   }
-  if (entries.length === 0) {
-    showGnomeToast("Could not schedule selected songs");
-    return;
-  }
-  invalidateQueueUndoToastAfterMutation();
-  insertQueueEntriesAfterSelection(entries);
-  renderQueue();
-  saveMediaFile();
-  clearSongSelection();
-  showGnomeToast(`Scheduled ${entries.length} song${entries.length === 1 ? "" : "s"}`);
 }
 
 async function bulkDeleteSelectedSongs() {
+  if (songsBulkOperationInFlight) return;
   const count = selectedSongIds.size;
   if (count === 0) return;
   if (!songsBulkDeleteArmed) {
@@ -1003,25 +1056,37 @@ async function bulkDeleteSelectedSongs() {
     syncSongsBulkActions();
     return;
   }
-  const ids = [...selectedSongIds];
+  const ids = Object.freeze([...selectedSongIds]);
+  const selectionRevision = songSelectionRevision;
+  const libraryIntentRevision = songLibraryIntentGate.currentRevision();
+  songsBulkOperationInFlight = true;
+  syncSongsBulkActions();
   let deleted = 0;
-  for (const id of ids) {
-    try {
-      await songsAPI.delete(id);
-      deleted += 1;
-      if (currentWorkspaceSong?.id === id) {
-        await loadSongIntoWorkspace(null);
+  try {
+    for (const id of ids) {
+      try {
+        await songsAPI.delete(id);
+        deleted += 1;
+        if (
+          currentWorkspaceSong?.id === id &&
+          songLibraryIntentGate.currentRevision() === libraryIntentRevision
+        ) {
+          await loadSongIntoWorkspace(null);
+        }
+      } catch (err) {
+        console.error(`Failed to delete song ${id}:`, err);
       }
-    } catch (err) {
-      console.error(`Failed to delete song ${id}:`, err);
     }
+    await refreshSongFolders();
+    const searchInput = document.getElementById("songsSearchInput");
+    await refreshSongsBrowser(searchInput?.value || "");
+    showGnomeToast(`Deleted ${deleted} song${deleted === 1 ? "" : "s"}`);
+  } finally {
+    songsBulkDeleteArmed = false;
+    songsBulkOperationInFlight = false;
+    if (songSelectionRevision === selectionRevision) clearSongSelection();
+    else syncSongsBulkActions();
   }
-  songsBulkDeleteArmed = false;
-  clearSongSelection();
-  await refreshSongFolders();
-  const searchInput = document.getElementById("songsSearchInput");
-  await refreshSongsBrowser(searchInput?.value || "");
-  showGnomeToast(`Deleted ${deleted} song${deleted === 1 ? "" : "s"}`);
 }
 
 async function handleSongsDatabaseCleared() {
@@ -1478,15 +1543,18 @@ function renderSongEditorSlideList() {
       selectSongEditorSlide(i);
     });
     item.addEventListener("dblclick", async () => {
+      const editorOwner = currentWorkspaceSong;
       const newLabel = await showRendererPrompt(
         "Enter section label (e.g. Verse 1, Chorus):",
         section.label,
         { title: "Rename section", confirmLabel: "Rename" },
       );
+      if (currentWorkspaceSong !== editorOwner || !songEditorSections.includes(section)) return;
       if (newLabel !== null) {
         const trimmed = newLabel.trim();
         if (trimmed) {
           section.label = trimmed;
+          markSongEditorChanged();
           labelEl.textContent = trimmed;
           syncSongEditorHiddenTextarea();
           if (currentWorkspaceSong) {
@@ -2132,6 +2200,7 @@ function handleSongEditorCanvasTextInput(editorDiv) {
   }
 
   activeSection.blocks = blocks;
+  markSongEditorChanged();
 
   syncSongEditorHiddenTextarea();
 
@@ -2182,6 +2251,7 @@ function handleSongEditorSectionMetaChange() {
   }
 
   activeSection.label = label || "Untitled Section";
+  markSongEditorChanged();
 
   const labelEl = document.querySelector(`.song-editor-slide-item[data-index="${songEditorActiveIndex}"] .song-editor-slide-item__label`);
   if (labelEl) {
@@ -2207,6 +2277,7 @@ function handleSongEditorAddSection() {
     blocks: []
   };
   songEditorSections.splice(songEditorActiveIndex + 1, 0, newSection);
+  markSongEditorChanged();
   syncSongEditorHiddenTextarea();
   renderSongEditorSlideList();
   selectSongEditorSlide(songEditorActiveIndex + 1);
@@ -2219,6 +2290,7 @@ function handleSongEditorDeleteSection() {
   }
   const indexToDelete = songEditorActiveIndex;
   songEditorSections.splice(indexToDelete, 1);
+  markSongEditorChanged();
   syncSongEditorHiddenTextarea();
   renderSongEditorSlideList();
   const nextIndex = Math.min(indexToDelete, songEditorSections.length - 1);
@@ -2231,6 +2303,7 @@ function handleSongEditorMoveSectionUp() {
   const temp = songEditorSections[idx];
   songEditorSections[idx] = songEditorSections[idx - 1];
   songEditorSections[idx - 1] = temp;
+  markSongEditorChanged();
   syncSongEditorHiddenTextarea();
   renderSongEditorSlideList();
   selectSongEditorSlide(idx - 1);
@@ -2242,12 +2315,15 @@ function handleSongEditorMoveSectionDown() {
   const temp = songEditorSections[idx];
   songEditorSections[idx] = songEditorSections[idx + 1];
   songEditorSections[idx + 1] = temp;
+  markSongEditorChanged();
   syncSongEditorHiddenTextarea();
   renderSongEditorSlideList();
   selectSongEditorSlide(idx + 1);
 }
 
 function closeSongEditor() {
+  songEditorOpenGate.invalidate();
+  markSongEditorChanged();
   document.getElementById("songEditorDrawer")?.setAttribute("hidden", "");
   restoreSongWorkspaceView();
   if (currentWorkspaceSong) {
@@ -2260,11 +2336,15 @@ function closeSongEditor() {
 }
 
 async function refreshSongFolders(prefetchedFolders = null) {
+  const request = songFolderQueryGate.begin();
   try {
-    songFoldersCache = asSongArray(
+    const folders = asSongArray(
       prefetchedFolders ?? (await songsAPI.listFolders()),
     );
+    if (!songFolderQueryGate.isCurrent(request)) return false;
+    songFoldersCache = folders;
   } catch (err) {
+    if (!songFolderQueryGate.isCurrent(request)) return false;
     console.error("Failed to load song folders:", err);
     songFoldersCache = [];
   }
@@ -2340,9 +2420,11 @@ async function refreshSongFolders(prefetchedFolders = null) {
         const songId = songDragSongId;
         clearSongDragVisualState();
         const folderId = entry.id === SONG_FOLDER_UNFILED ? null : entry.id;
+        const moveRequest = songFolderMutationGate.begin(songId);
         void songsAPI
           .moveToFolder(songId, folderId)
           .then(async (updated) => {
+            if (!songFolderMutationGate.owns(moveRequest, songId)) return;
             if (updated && currentWorkspaceSong?.id === songId) {
               currentWorkspaceSong = updated;
             } else if (currentWorkspaceSong?.id === songId) {
@@ -2352,9 +2434,10 @@ async function refreshSongFolders(prefetchedFolders = null) {
             await refreshSongFolders();
             const searchInput = document.getElementById("songsSearchInput");
             await refreshSongsBrowser(searchInput?.value || "");
-            showGnomeToast("Song moved");
+            if (songFolderMutationGate.owns(moveRequest, songId)) showGnomeToast("Song moved");
           })
           .catch((err) => {
+            if (!songFolderMutationGate.owns(moveRequest, songId)) return;
             console.error("Failed to move song to folder:", err);
             showGnomeToast("Failed to move song");
           });
@@ -2367,6 +2450,7 @@ async function refreshSongFolders(prefetchedFolders = null) {
   syncSongEditorFolderOptions();
   syncSongsMoveFolderSelect();
   syncSongsBulkMoveFolderOptions();
+  return true;
 }
 
 function readSongEditorRenderState() {
@@ -2590,14 +2674,14 @@ function isCurrentWorkspaceSongShownNow() {
 
 async function loadSongItemIntoWorkspace(item, token) {
   if (typeof token === "number" && !isCurrentPreviewLoad(token)) return false;
-  const commitWorkspaceIdentity = () => {
-    currentSongQueueItem = item || null;
-    currentSongSlideId = item?.currentSlideId || item?.render?.currentSlideId || null;
-    currentSongSequenceEntryId =
+  const workspaceIdentity = {
+    queueItem: item || null,
+    currentSlideId: item?.currentSlideId || item?.render?.currentSlideId || null,
+    currentSequenceEntryId:
       item?.currentSequenceEntryId ||
       item?.sequence?.currentSequenceEntryId ||
       item?.render?.currentSequenceEntryId ||
-      null;
+      null,
   };
   if (item?.deckSnapshot) {
     const deck = normalizeSlideDeck(item.deckSnapshot);
@@ -2613,11 +2697,11 @@ async function loadSongItemIntoWorkspace(item, token) {
       ...item,
       songSnapshot,
     });
-    commitWorkspaceIdentity();
-    currentSongRenderState = mergeSongRenderState(songRenderStateFromSongDocument(deck), itemRender);
-    currentSongSectionId = itemRender.currentSectionId || item?.source?.pageId || null;
+    const render = mergeSongRenderState(songRenderStateFromSongDocument(deck), itemRender);
     return (await loadSongIntoWorkspace(deck, {
-      render: currentSongRenderState,
+      ...workspaceIdentity,
+      render,
+      currentSectionId: itemRender.currentSectionId || item?.source?.pageId || null,
       previewLoadToken: token,
     })) !== false;
   }
@@ -2630,11 +2714,10 @@ async function loadSongItemIntoWorkspace(item, token) {
     // the runtime field so the audience resolver always receives ems.song.v1.
     item.songSnapshot = songSnapshot;
     const itemRender = songRenderFromItem({ ...item, songSnapshot });
-    commitWorkspaceIdentity();
-    currentSongRenderState = itemRender;
-    currentSongSectionId = itemRender.currentSectionId || null;
     return (await loadSongIntoWorkspace(sourceDocument, {
+      ...workspaceIdentity,
       render: itemRender,
+      currentSectionId: itemRender.currentSectionId || null,
       previewLoadToken: token,
     })) !== false;
   }
@@ -2658,11 +2741,11 @@ async function loadSongItemIntoWorkspace(item, token) {
       songId: librarySongId,
     };
     const itemRender = songRenderFromItem({ ...item, songSnapshot });
-    commitWorkspaceIdentity();
-    currentSongRenderState = mergeSongRenderState(songRenderStateFromSongDocument(song), itemRender);
-    currentSongSectionId = itemRender.currentSectionId || null;
+    const render = mergeSongRenderState(songRenderStateFromSongDocument(song), itemRender);
     return (await loadSongIntoWorkspace(song, {
-      render: itemRender,
+      ...workspaceIdentity,
+      render,
+      currentSectionId: itemRender.currentSectionId || null,
       previewLoadToken: token,
     })) !== false;
   }
@@ -2871,19 +2954,62 @@ async function loadDeckQueueItemIntoWorkspace(item, token) {
 }
 
 async function loadSongIntoWorkspace(song, opts = {}) {
+  const libraryIntentRequest = opts.libraryIntentRequest || null;
+  if (libraryIntentRequest && !songLibraryIntentGate.isCurrent(libraryIntentRequest)) {
+    return false;
+  }
   if (
     typeof opts.previewLoadToken === "number" &&
     !isCurrentPreviewLoad(opts.previewLoadToken)
   ) {
     return false;
   }
+  if (!libraryIntentRequest) songLibraryIntentGate.invalidate();
+  songEditorOpenGate.invalidate();
   const sourceDocument = song || null;
-  currentWorkspaceSongDeck = sourceDocument
+  const loadRequest = songWorkspaceLoadGate.begin(sourceDocument);
+  const stagedWorkspaceSongDeck = sourceDocument
     ? songDeckDocumentFromSongDocument(sourceDocument, opts.render || currentSongRenderState)
     : null;
-  currentWorkspaceSong = currentWorkspaceSongDeck
-    ? transientSongFromSongDocument(currentWorkspaceSongDeck)
+  const stagedWorkspaceSong = stagedWorkspaceSongDeck
+    ? transientSongFromSongDocument(stagedWorkspaceSongDeck)
     : null;
+  const renderOverrides = opts.render
+    ? structuredClone(opts.render)
+    : sourceDocument
+      ? songRenderStateFromSongDocument(sourceDocument)
+      : null;
+  const stillOwnsWorkspace = () =>
+    songWorkspaceLoadGate.owns(loadRequest, sourceDocument) &&
+    (!libraryIntentRequest || songLibraryIntentGate.isCurrent(libraryIntentRequest)) &&
+    (typeof opts.previewLoadToken !== "number" || isCurrentPreviewLoad(opts.previewLoadToken));
+
+  let inLibrary = false;
+  if (stagedWorkspaceSong) {
+    inLibrary = await checkIfSongInLibrary(stagedWorkspaceSong.id);
+    if (!stillOwnsWorkspace()) return false;
+  }
+
+  // Commit the workspace as one transaction. Nothing above this point mutates
+  // the active song, so a cancelled preview load cannot leave half of its
+  // identity or render state behind when a video or newer item takes over.
+  currentWorkspaceSongDeck = stagedWorkspaceSongDeck;
+  currentWorkspaceSong = stagedWorkspaceSong;
+  if (renderOverrides) {
+    currentSongRenderState = mergeSongRenderState(currentSongRenderState, renderOverrides);
+  }
+  if (Object.prototype.hasOwnProperty.call(opts, "queueItem")) {
+    currentSongQueueItem = opts.queueItem || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(opts, "currentSlideId")) {
+    currentSongSlideId = opts.currentSlideId || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(opts, "currentSequenceEntryId")) {
+    currentSongSequenceEntryId = opts.currentSequenceEntryId || null;
+  }
+  if (Object.prototype.hasOwnProperty.call(opts, "currentSectionId")) {
+    currentSongSectionId = opts.currentSectionId || null;
+  }
 
   const nextLowerThirdSongId = currentWorkspaceSong?.id || "";
   if (
@@ -2946,25 +3072,9 @@ async function loadSongIntoWorkspace(song, opts = {}) {
     syncSongsMoveFolderSelect(null);
     syncSongSlideNavigator();
     syncSongLowerThirdForSection(null);
-    return;
+    return true;
   }
 
-  if (opts.render) {
-    currentSongRenderState = mergeSongRenderState(currentSongRenderState, opts.render);
-  } else if (sourceDocument) {
-    currentSongRenderState = mergeSongRenderState(
-      currentSongRenderState,
-      songRenderStateFromSongDocument(sourceDocument),
-    );
-  }
-
-  const inLibrary = await checkIfSongInLibrary(currentWorkspaceSong.id);
-  if (
-    typeof opts.previewLoadToken === "number" &&
-    !isCurrentPreviewLoad(opts.previewLoadToken)
-  ) {
-    return false;
-  }
   const saveToLibraryBtn = document.getElementById("songsSaveToLibraryBtn");
   if (saveToLibraryBtn) {
     saveToLibraryBtn.hidden = inLibrary;
@@ -3024,6 +3134,7 @@ async function loadSongIntoWorkspace(song, opts = {}) {
   }
   updateSongNavButtonsState();
   syncSongSlideNavigator();
+  return true;
 }
 
 function updateSongNavButtonsState() {
@@ -3478,19 +3589,10 @@ async function sendSongLowerThirdForLiveItem() {
     },
   };
   const windowId = await invoke("create-lower-third-window", windowOptions, displayValue);
+  if (updateToken !== lowerThirdOutputUpdateToken) return false;
   setSharedRendererState({ bibleLowerThirdOutputActive: Boolean(windowId) });
   if (!bibleLowerThirdOutputActive) return false;
-  if (updateToken !== lowerThirdOutputUpdateToken) {
-    sendBibleLowerThirdTextMessage(lowerThirdKeyOnlyMessage(
-      message,
-      message.chromaKeyColor || SCRIPTURE_LOWER_THIRD_CHROMA_KEY_COLOR,
-    ), { remember: false, clearToggle: false, respectLiveTextClearState: false });
-    return false;
-  }
-  window.setTimeout(() => {
-    if (updateToken !== lowerThirdOutputUpdateToken) return;
-    pushLiveSongLowerThirdMessage();
-  }, 100);
+  pushLiveSongLowerThirdMessage();
   return true;
 }
 
@@ -3893,6 +3995,7 @@ let slideTextSelectionState = null;
 let slideObjectClipboard = null;
 let slideObjectPasteCount = 0;
 let deckDirty = false;
+let deckEditRevision = 0;
 let deckLibraryDecks = [];
 let deckLibraryFolders = [];
 const SLIDE_UNDO_LIMIT = 50;
@@ -3966,6 +4069,7 @@ const SLIDE_LAYOUT_TEMPLATES = Object.freeze([
 
 function setDeckDirty(dirty) {
   deckDirty = !!dirty;
+  if (deckDirty) deckEditRevision += 1;
   const saveBtn = document.getElementById("slidesSaveDeckBtn");
   if (saveBtn) saveBtn.disabled = !currentDeck || !deckDirty;
   syncSlidesWorkspaceTitle();
@@ -4166,15 +4270,17 @@ function redoSlideEdit() {
 
 async function renameCurrentDeck() {
   if (!currentDeck) return;
+  const deckToRename = currentDeck;
   const nextTitle = (
-    await showRendererPrompt("Deck name", currentDeck.title || "Untitled Deck", {
+    await showRendererPrompt("Deck name", deckToRename.title || "Untitled Deck", {
       title: "Rename deck",
       confirmLabel: "Rename",
     }) || ""
   ).trim();
-  if (!nextTitle || nextTitle === currentDeck.title) return;
+  if (currentDeck !== deckToRename) return;
+  if (!nextTitle || nextTitle === deckToRename.title) return;
   recordSlideUndoCheckpoint("Rename deck");
-  currentDeck.title = nextTitle;
+  deckToRename.title = nextTitle;
   const titleInput = document.getElementById("slidesDeckTitleInput");
   if (titleInput) titleInput.value = nextTitle;
   setDeckDirty(true);
@@ -4193,6 +4299,8 @@ function deckSummaryFromDeck(deck) {
 }
 
 async function openSlidesWorkspaceFromButton() {
+  deckLibraryActivationGate.invalidate();
+  deckMutationGate.invalidate();
   currentDeck = null;
   currentDeckPageId = null;
   currentDeckDocumentType = "deck";
@@ -4211,14 +4319,19 @@ async function openSlidesWorkspaceFromButton() {
 }
 
 async function refreshSlidesList(query = "") {
+  const requestedFolder = currentDeckFolderFilter;
+  const request = deckLibraryQueryGate.begin({ query, folder: requestedFolder });
   try {
-    const list = await slidesAPI.list({ search: query, folderId: currentDeckFolderFilter });
+    const list = await slidesAPI.list({ search: query, folderId: requestedFolder });
+    if (!deckLibraryQueryGate.isCurrent(request)) return false;
     deckLibraryDecks = Array.isArray(list) ? list : [];
   } catch (err) {
+    if (!deckLibraryQueryGate.isCurrent(request)) return false;
     console.error("Failed to list decks:", err);
     deckLibraryDecks = [];
   }
   renderSlidesList();
+  return true;
 }
 
 function renderSlidesList() {
@@ -4259,15 +4372,19 @@ function renderSlidesList() {
 }
 
 async function refreshSlidesFolderList() {
+  const request = deckFolderQueryGate.begin();
   try {
     const folders = await slidesAPI.listFolders();
+    if (!deckFolderQueryGate.isCurrent(request)) return false;
     deckLibraryFolders = Array.isArray(folders) ? folders : [];
   } catch (err) {
+    if (!deckFolderQueryGate.isCurrent(request)) return false;
     console.error("Failed to list deck folders:", err);
     deckLibraryFolders = [];
   }
   renderSlidesFolderList();
   syncSlidesDeckFolderSelect();
+  return true;
 }
 
 function renderSlidesFolderList() {
@@ -4329,6 +4446,7 @@ function syncSlidesDeckFolderSelect() {
 }
 
 async function activateDeckFromLibrary(deckId) {
+  const request = deckLibraryActivationGate.begin(deckId);
   if (
     deckDirty &&
     currentDeck &&
@@ -4338,20 +4456,25 @@ async function activateDeckFromLibrary(deckId) {
       type: "warning",
     }))
   ) return;
+  if (!deckLibraryActivationGate.isCurrent(request)) return;
   try {
     const deck = await slidesAPI.get(deckId);
+    if (!deckLibraryActivationGate.isCurrent(request)) return;
     if (!deck) {
       showGnomeToast("Deck not found");
       return;
     }
     loadDeckIntoWorkspace(normalizeSlideDeck(deck));
   } catch (err) {
+    if (!deckLibraryActivationGate.isCurrent(request)) return;
     console.error("Failed to load deck:", err);
     showGnomeToast("Failed to load deck");
   }
 }
 
 function loadDeckIntoWorkspace(deck, opts = {}) {
+  deckLibraryActivationGate.invalidate();
+  deckMutationGate.invalidate();
   clearSlideThumbnailState();
   clearSlideUndoHistory();
   currentDeck = deck;
@@ -4383,6 +4506,7 @@ function loadDeckIntoWorkspace(deck, opts = {}) {
 }
 
 async function createNewDeck() {
+  const previousDeck = currentDeck;
   if (
     deckDirty &&
     currentDeck &&
@@ -4392,6 +4516,9 @@ async function createNewDeck() {
       type: "warning",
     }))
   ) return;
+  if (currentDeck !== previousDeck) return;
+  deckLibraryActivationGate.invalidate();
+  deckMutationGate.invalidate();
   clearSlideThumbnailState();
   clearSlideUndoHistory();
   const deck = createBlankDeck({ folderId: currentDeckFolderFilter || null });
@@ -4409,7 +4536,15 @@ async function saveCurrentDeck() {
   if (!currentDeck) return;
   commitSlideUndoTransaction();
   flushSlideEditorTextToModel();
-  if (currentDeckIsSongDocument()) {
+  const deckToSave = currentDeck;
+  const editRevision = deckEditRevision;
+  const operation = deckMutationGate.begin(deckToSave);
+  const stillOwnsEditor = () =>
+    deckMutationGate.owns(operation, currentDeck) &&
+    currentDeck === deckToSave &&
+    deckEditRevision === editRevision;
+  const savingSongDocument = currentDeckIsSongDocument();
+  if (savingSongDocument) {
     if (currentSongThemeEditingContext) {
       const previous = currentSongThemeEditingContext.queueItem;
       const index = mediaQueue.indexOf(previous);
@@ -4449,43 +4584,57 @@ async function saveCurrentDeck() {
       return;
     }
     try {
-      currentDeck.documentType = SONG_DECK_DOCUMENT_TYPE;
-      currentDeck.type = SONG_DECK_DOCUMENT_TYPE;
-      currentDeck.updatedAt = new Date().toISOString();
-      const saved = await songsAPI.save(currentDeck);
-      const savedDeckSource = saved || currentDeck;
+      deckToSave.documentType = SONG_DECK_DOCUMENT_TYPE;
+      deckToSave.type = SONG_DECK_DOCUMENT_TYPE;
+      deckToSave.updatedAt = new Date().toISOString();
+      const saved = await songsAPI.save(deckToSave);
+      const savedDeckSource = saved || deckToSave;
       const savedDeck = songDeckDocumentFromSongDocument(
         savedDeckSource,
         deckDefaultRender(savedDeckSource),
       );
-      currentDeck = savedDeck || currentDeck;
+      if (!stillOwnsEditor()) {
+        await refreshSongFolders();
+        const searchInput = document.getElementById("songsSearchInput");
+        if (searchInput) await refreshSongsBrowser(searchInput.value);
+        return true;
+      }
+      currentDeck = savedDeck || deckToSave;
       currentWorkspaceSongDeck = currentDeck;
       currentWorkspaceSong = deckToTransientSong(currentDeck);
       currentSongRenderState = mergeSongRenderState(currentSongRenderState, deckDefaultRender(currentDeck));
       currentEditingSongId = currentDeck.id;
+      const savedTitle = currentDeck.title || "song";
+      const savedEditorDeck = currentDeck;
       clearSlideUndoHistory();
       setDeckDirty(false);
       const searchInput = document.getElementById("songsSearchInput");
       await refreshSongFolders();
       if (searchInput) await refreshSongsBrowser(searchInput.value);
-      showGnomeToast(`Saved ${currentDeck.title || "song"}`);
+      if (currentDeck === savedEditorDeck) showGnomeToast(`Saved ${savedTitle}`);
+      return true;
     } catch (err) {
       console.error("Failed to save song deck:", err);
-      showGnomeToast(`Save failed: ${err.message || err}`);
+      if (stillOwnsEditor()) showGnomeToast(`Save failed: ${err.message || err}`);
+      return false;
     }
-    return;
   }
   try {
-    const summary = await slidesAPI.save(currentDeck);
-    if (summary?.id) currentDeck.id = summary.id;
-    currentDeck.updatedAt = summary?.updatedAt || new Date().toISOString();
-    clearSlideUndoHistory();
-    setDeckDirty(false);
+    const summary = await slidesAPI.save(deckToSave);
+    const ownsEditor = stillOwnsEditor();
+    if (ownsEditor) {
+      if (summary?.id) deckToSave.id = summary.id;
+      deckToSave.updatedAt = summary?.updatedAt || new Date().toISOString();
+      clearSlideUndoHistory();
+      setDeckDirty(false);
+    }
     await refreshSlidesList(document.getElementById("slidesSearchInput")?.value || "");
-    showGnomeToast(`Saved ${currentDeck.title || "deck"}`);
+    if (ownsEditor) showGnomeToast(`Saved ${deckToSave.title || "deck"}`);
+    return true;
   } catch (err) {
     console.error("Failed to save deck:", err);
-    showGnomeToast(`Save failed: ${err.message || err}`);
+    if (stillOwnsEditor()) showGnomeToast(`Save failed: ${err.message || err}`);
+    return false;
   }
 }
 
@@ -4528,14 +4677,25 @@ function resetCurrentSongToThemeDefault() {
 
 async function deleteCurrentDeck() {
   if (!currentDeck) return;
-  if (!(await showRendererConfirm(`Delete "${currentDeck.title || "Untitled Deck"}"?`, {
+  const deckToDelete = currentDeck;
+  if (!(await showRendererConfirm(`Delete "${deckToDelete.title || "Untitled Deck"}"?`, {
     title: "Delete deck?",
     confirmLabel: "Delete",
     type: "warning",
   }))) return;
-  if (currentDeckIsSongDocument()) {
+  // A confirmation dialog yields to the event loop.  If the operator selected
+  // a different document while it was open, the destructive command belongs
+  // to the old selection and must not continue against the new one.
+  if (currentDeck !== deckToDelete) return;
+  const operation = deckMutationGate.begin(deckToDelete);
+  const stillOwnsEditor = () => deckMutationGate.owns(operation, currentDeck);
+  const deletingSongDocument =
+    deckToDelete.documentType === SONG_DECK_DOCUMENT_TYPE ||
+    deckToDelete.type === SONG_DECK_DOCUMENT_TYPE;
+  if (deletingSongDocument) {
     try {
-      await songsAPI.delete(currentDeck.id);
+      await songsAPI.delete(deckToDelete.id);
+      if (!stillOwnsEditor()) return false;
       currentDeck = null;
       currentDeckPageId = null;
       currentDeckDocumentType = "deck";
@@ -4547,29 +4707,34 @@ async function deleteCurrentDeck() {
       await refreshSongFolders();
       if (searchInput) await refreshSongsBrowser(searchInput.value);
       showSongsWorkspace();
+      return true;
     } catch (err) {
       console.error("Failed to delete song:", err);
-      showGnomeToast(`Delete failed: ${err.message || err}`);
+      if (stillOwnsEditor()) showGnomeToast(`Delete failed: ${err.message || err}`);
     }
-    return;
+    return false;
   }
   try {
-    const deleted = await slidesAPI.delete(currentDeck.id);
+    const deleted = await slidesAPI.delete(deckToDelete.id);
     if (!deleted) throw new Error("The deck could not be found in the slide library");
+    if (!stillOwnsEditor()) return false;
     currentDeck = null;
     currentDeckPageId = null;
     clearSlideUndoHistory();
     setDeckDirty(false);
     await refreshSlidesList(document.getElementById("slidesSearchInput")?.value || "");
     renderSlideEditorState();
+    return true;
   } catch (err) {
     console.error("Failed to delete deck:", err);
-    showGnomeToast(`Delete failed: ${err.message || err}`);
+    if (stillOwnsEditor()) showGnomeToast(`Delete failed: ${err.message || err}`);
+    return false;
   }
 }
 
 async function duplicateCurrentDeck() {
   if (!currentDeck) return;
+  const deckToDuplicate = currentDeck;
   if (
     deckDirty &&
     !(await showRendererConfirm("Save changes before duplicating? Duplicating will save first.", {
@@ -4577,14 +4742,21 @@ async function duplicateCurrentDeck() {
       confirmLabel: "Save and duplicate",
     }))
   ) return;
-  if (deckDirty) await saveCurrentDeck();
+  if (currentDeck !== deckToDuplicate) return;
+  if (deckDirty && !(await saveCurrentDeck())) return;
+  if (currentDeck !== deckToDuplicate) return;
+  const operation = deckMutationGate.begin(deckToDuplicate);
   try {
-    const copy = await slidesAPI.duplicate(currentDeck.id, {});
-    if (copy) loadDeckIntoWorkspace(normalizeSlideDeck(copy));
+    const copy = await slidesAPI.duplicate(deckToDuplicate.id, {});
+    if (copy && deckMutationGate.owns(operation, currentDeck)) {
+      loadDeckIntoWorkspace(normalizeSlideDeck(copy));
+    }
     await refreshSlidesList(document.getElementById("slidesSearchInput")?.value || "");
   } catch (err) {
     console.error("Failed to duplicate deck:", err);
-    showGnomeToast(`Duplicate failed: ${err.message || err}`);
+    if (deckMutationGate.owns(operation, currentDeck)) {
+      showGnomeToast(`Duplicate failed: ${err.message || err}`);
+    }
   }
 }
 
@@ -7507,17 +7679,32 @@ function scheduleCurrentDeck() {
   showGnomeToast(`Scheduled ${entry.name}`);
 }
 
-async function openSongEditor(song) {
+async function openSongEditor(song, opts = {}) {
   const drawer = document.getElementById("songEditorDrawer");
-  if (!drawer) return;
+  if (!drawer) return false;
+
+  const libraryIntentRequest = opts.libraryIntentRequest || null;
+  if (libraryIntentRequest && !songLibraryIntentGate.isCurrent(libraryIntentRequest)) {
+    return false;
+  }
+  if (!libraryIntentRequest) {
+    songLibraryIntentGate.invalidate();
+    songWorkspaceLoadGate.invalidate();
+  }
+  const scheduledQueueItem = currentSongQueueItem;
+  const openRequest = songEditorOpenGate.begin(song?.id || song || null);
+  const stillOwnsOpen = () =>
+    songEditorOpenGate.isCurrent(openRequest) &&
+    currentSongQueueItem === scheduledQueueItem &&
+    (!libraryIntentRequest || songLibraryIntentGate.isCurrent(libraryIntentRequest));
 
   let songToEdit = song || null;
-  const scheduledQueueIndex = mediaQueue.indexOf(currentSongQueueItem);
+  const scheduledQueueIndex = mediaQueue.indexOf(scheduledQueueItem);
   const scheduledSongId =
-    currentSongQueueItem?.deckSnapshot?.id ||
-    currentSongQueueItem?.songSnapshot?.id ||
-    currentSongQueueItem?.source?.songId ||
-    parseSongQueuePath(currentSongQueueItem?.path) ||
+    scheduledQueueItem?.deckSnapshot?.id ||
+    scheduledQueueItem?.songSnapshot?.id ||
+    scheduledQueueItem?.source?.songId ||
+    parseSongQueuePath(scheduledQueueItem?.path) ||
     null;
   const editingScheduledSnapshot = Boolean(
     scheduledQueueIndex >= 0 &&
@@ -7526,15 +7713,18 @@ async function openSongEditor(song) {
   );
   if (songToEdit?.id) {
     const exists = await checkIfSongInLibrary(songToEdit.id);
+    if (!stillOwnsOpen()) return false;
     if (exists && !editingScheduledSnapshot) {
       try {
         songToEdit = await songsAPI.get(songToEdit.id);
+        if (!stillOwnsOpen()) return false;
         currentWorkspaceSong = songToEdit;
         syncSongsMoveFolderSelect(songToEdit);
       } catch (err) {
+        if (!stillOwnsOpen()) return false;
         console.error("Failed to load song for editing:", err);
         showGnomeToast("Failed to load song for editing");
-        return;
+        return false;
       }
     } else if (!exists) {
       console.warn("Song not found in library, editing local/schedule snapshot instead");
@@ -7575,7 +7765,7 @@ async function openSongEditor(song) {
   let songDeck = songDeckDocumentFromSongDocument(songToEdit, currentSongRenderState);
   if (!songDeck) {
     showGnomeToast("Could not open song editor");
-    return;
+    return false;
   }
   const queueIndex = scheduledQueueIndex;
   const editingScheduledItem = queueIndex >= 0 && (
@@ -7602,6 +7792,8 @@ async function openSongEditor(song) {
     }
   }
   currentEditingSongId = songDeck.id;
+  songEditorRevision += 1;
+  songEditorSaveGate.invalidate();
   currentWorkspaceSongDeck = songDeck;
   currentWorkspaceSong = deckToTransientSong(songDeck);
   currentSongRenderState = mergeSongRenderState(
@@ -7701,6 +7893,7 @@ async function openSongEditor(song) {
   // Build the list and select the first slide
   renderSongEditorSlideList();
   selectSongEditorSlide(0);
+  return true;
 }
 
 async function checkIfSongInLibrary(songId) {
@@ -7713,9 +7906,26 @@ async function checkIfSongInLibrary(songId) {
   }
 }
 
+function reconcileSongQueueEntryInPlace(item, updatedEntry) {
+  if (!item || !updatedEntry) return item;
+  const preserved = {};
+  for (const key of ["id", "autoAdvance", "cueStartTime", "cueVolume", "loop", "itemTheme"]) {
+    if (Object.prototype.hasOwnProperty.call(item, key)) preserved[key] = item[key];
+  }
+  for (const key of Object.keys(item)) {
+    if (!Object.prototype.hasOwnProperty.call(updatedEntry, key)) delete item[key];
+  }
+  Object.assign(item, updatedEntry, preserved);
+  return item;
+}
+
 async function updateScheduleSongsWithUpdatedSong(song, opts = {}) {
   const applyTransitionOverride = opts.applyTransitionOverride === true;
-  const songDeck = songDeckDocumentFromSongDocument(song, currentSongRenderState);
+  const render = opts.render
+    ? structuredClone(opts.render)
+    : structuredClone(currentSongRenderState);
+  const currentSectionId = opts.currentSectionId ?? currentSongSectionId;
+  const songDeck = songDeckDocumentFromSongDocument(song, render);
   const songId = songDeck?.id || song?.id;
   let updatedCount = 0;
   for (let i = 0; i < mediaQueue.length; i++) {
@@ -7726,14 +7936,14 @@ async function updateScheduleSongsWithUpdatedSong(song, opts = {}) {
     ) {
       const updatedEntry = buildSongQueueEntryFromDeck({
         deck: songDeck,
-        render: currentSongRenderState,
-        currentSectionId: item.render?.currentSectionId || currentSongSectionId,
+        render,
+        currentSectionId: item.render?.currentSectionId || currentSectionId,
       });
       if (!updatedEntry) continue;
       updatedEntry.autoAdvance = item.autoAdvance;
       updatedEntry.cueStartTime = queueItemCueStartTime(item);
       if (applyTransitionOverride) {
-        const transitionOverride = normalizeItemSlideTransitionOverride(currentSongRenderState.transition);
+        const transitionOverride = normalizeItemSlideTransitionOverride(render.transition);
         if (transitionOverride) {
           updatedEntry.transition = transitionOverride;
         } else {
@@ -7742,7 +7952,11 @@ async function updateScheduleSongsWithUpdatedSong(song, opts = {}) {
       } else if (item.transition) {
         updatedEntry.transition = item.transition;
       }
-      mediaQueue[i] = updatedEntry;
+      // Queue entries are observed by the live-output and editor controllers.
+      // Reconcile the saved snapshot in place and retain item-local controls
+      // (including theme overrides) so an editor save cannot detach an owner
+      // or reset per-schedule settings.
+      reconcileSongQueueEntryInPlace(item, updatedEntry);
       updatedCount++;
     }
   }
@@ -7767,8 +7981,19 @@ async function saveSongEditor() {
   const parsedNumber = numberRaw ? Number.parseInt(numberRaw, 10) : null;
   const songNumber = Number.isFinite(parsedNumber) && parsedNumber > 0 ? parsedNumber : null;
   currentSongRenderState = flushSongEditorStateForSave();
+  const editorOwner = currentWorkspaceSong;
+  const editingSongId = currentEditingSongId;
+  const editorRevision = songEditorRevision;
+  const saveRequest = songEditorSaveGate.begin(editorOwner);
+  const renderSnapshot = structuredClone(currentSongRenderState);
+  const sectionIdSnapshot = currentSongSectionId;
+  const stillOwnsEditor = () =>
+    songEditorSaveGate.owns(saveRequest, currentWorkspaceSong) &&
+    currentWorkspaceSong === editorOwner &&
+    currentEditingSongId === editingSongId &&
+    songEditorRevision === editorRevision;
   const sections = normalizeToSongAST({
-    id: currentEditingSongId || "editor_song",
+    id: editingSongId || "editor_song",
     title,
     metadata: {},
     sections: songEditorSections,
@@ -7776,43 +8001,52 @@ async function saveSongEditor() {
 
   const song = {
     schema: "ems.song.v1",
-    id: currentEditingSongId || `song_${crypto.randomUUID()}`,
+    id: editingSongId || `song_${crypto.randomUUID()}`,
     title,
     folderId,
     ...(songNumber ? { songNumber } : {}),
     metadata: {
       authors: authorText ? authorText.split(",").map((a) => a.trim()).filter(Boolean) : [],
-      copyright: currentSongRenderState.copyright || "",
-      ccliNumber: currentSongRenderState.ccliNumber || null,
-      oneLicense: currentSongRenderState.oneLicense || null,
-      meter: currentWorkspaceSong?.metadata?.meter || currentWorkspaceSong?.metadata?.hymnal?.meter || "",
+      copyright: renderSnapshot.copyright || "",
+      ccliNumber: renderSnapshot.ccliNumber || null,
+      oneLicense: renderSnapshot.oneLicense || null,
+      meter: editorOwner?.metadata?.meter || editorOwner?.metadata?.hymnal?.meter || "",
     },
     sections,
-    playOrder: reconcileSongPlayOrder(currentWorkspaceSong?.playOrder, sections),
+    playOrder: reconcileSongPlayOrder(editorOwner?.playOrder, sections),
     defaultRender: {
-      ...songDefaultRenderFromRender(currentSongRenderState),
+      ...songDefaultRenderFromRender(renderSnapshot),
     },
   };
-  const songDeck = songDeckDocumentFromSongDocument(song, currentSongRenderState);
+  const songDeck = songDeckDocumentFromSongDocument(song, renderSnapshot);
 
   try {
     const saved = await songsAPI.save(songDeck);
-    closeSongEditor();
-    
-    // Update schedule items with the saved song
-    await updateScheduleSongsWithUpdatedSong(saved || songDeck);
+    const savedDocument = saved || songDeck;
+    if (stillOwnsEditor()) {
+      await updateScheduleSongsWithUpdatedSong(savedDocument, {
+        render: renderSnapshot,
+        currentSectionId: sectionIdSnapshot,
+      });
+    }
 
     const searchInput = document.getElementById("songsSearchInput");
     await refreshSongFolders();
     if (searchInput) await refreshSongsBrowser(searchInput.value);
-    await loadSongIntoWorkspace(saved || songDeck, { render: currentSongRenderState });
+    if (!stillOwnsEditor()) return true;
+    closeSongEditor();
+    await loadSongIntoWorkspace(savedDocument, { render: renderSnapshot });
+    return true;
   } catch (err) {
     console.error("Failed to save song:", err);
-    await showRendererAlert("Failed to save song", {
-      title: "Save failed",
-      detail: err.message || String(err),
-      type: "error",
-    });
+    if (stillOwnsEditor()) {
+      await showRendererAlert("Failed to save song", {
+        title: "Save failed",
+        detail: err.message || String(err),
+        type: "error",
+      });
+    }
+    return false;
   }
 }
 
@@ -7889,7 +8123,7 @@ async function saveSongToSchedule() {
       } else {
         delete updatedEntry.transition;
       }
-      mediaQueue[i] = updatedEntry;
+      reconcileSongQueueEntryInPlace(item, updatedEntry);
       updatedCount++;
     }
   }
@@ -7921,6 +8155,8 @@ async function deleteSongFromLibrary(songId = currentWorkspaceSong?.id) {
   const title = currentWorkspaceSong?.id === id
     ? currentWorkspaceSong.title
     : id;
+  const workspaceOwner = currentWorkspaceSong;
+  const libraryIntentRevision = songLibraryIntentGate.currentRevision();
   const accepted = await showRendererConfirm(
     `Delete "${title}" from the song library?`,
     {
@@ -7934,7 +8170,11 @@ async function deleteSongFromLibrary(songId = currentWorkspaceSong?.id) {
 
   try {
     await songsAPI.delete(id);
-    if (currentWorkspaceSong?.id === id) {
+    if (
+      currentWorkspaceSong === workspaceOwner &&
+      currentWorkspaceSong?.id === id &&
+      songLibraryIntentGate.currentRevision() === libraryIntentRevision
+    ) {
       await loadSongIntoWorkspace(null);
       const launcher = document.getElementById("songsLauncher");
       const slide = document.getElementById("songsPreviewSlide");
@@ -7967,19 +8207,29 @@ async function loadFullLibrarySong(songSummary) {
 }
 
 async function activateSongFromLibrary(songSummary, { openEditor = false } = {}) {
+  const request = songLibraryIntentGate.begin(songSummary?.id || songSummary);
+  songWorkspaceLoadGate.invalidate();
+  songEditorOpenGate.invalidate();
   try {
     currentSongQueueItem = null;
     const fullSong = await loadFullLibrarySong(songSummary);
-    currentSongRenderState = renderStateForLibrarySong(fullSong);
-    await loadSongIntoWorkspace(fullSong);
+    if (!songLibraryIntentGate.isCurrent(request)) return null;
+    const render = renderStateForLibrarySong(fullSong);
+    currentSongRenderState = render;
+    const loaded = await loadSongIntoWorkspace(fullSong, {
+      render,
+      libraryIntentRequest: request,
+    });
+    if (!loaded || !songLibraryIntentGate.isCurrent(request)) return null;
     document.querySelectorAll(".songs-list-item").forEach((el) => {
       el.classList.toggle("is-selected", el.dataset.songId === fullSong.id);
     });
     if (openEditor) {
-      await openSongEditor(fullSong);
+      await openSongEditor(fullSong, { libraryIntentRequest: request });
     }
     return fullSong;
   } catch (err) {
+    if (!songLibraryIntentGate.isCurrent(request)) return null;
     console.error("Failed to load song details:", err);
     showGnomeToast("Failed to load song");
     return null;
@@ -8008,15 +8258,26 @@ async function scheduleSongFromLibrary(songSummary) {
 }
 
 async function showSongFromLibraryNow(songSummary) {
+  const request = songLibraryIntentGate.begin(songSummary?.id || songSummary);
+  songWorkspaceLoadGate.invalidate();
+  songEditorOpenGate.invalidate();
   try {
     const song = await loadFullLibrarySong(songSummary);
-    currentSongRenderState = renderStateForLibrarySong(song);
-    await loadSongIntoWorkspace(song);
+    if (!songLibraryIntentGate.isCurrent(request)) return false;
+    const render = renderStateForLibrarySong(song);
+    currentSongRenderState = render;
+    const loaded = await loadSongIntoWorkspace(song, {
+      render,
+      libraryIntentRequest: request,
+    });
+    if (!loaded || !songLibraryIntentGate.isCurrent(request)) return false;
     document.querySelectorAll(".songs-list-item").forEach((el) => {
       el.classList.toggle("is-selected", el.dataset.songId === song.id);
     });
+    if (!songLibraryIntentGate.isCurrent(request)) return false;
     return showSongTextNow();
   } catch (err) {
+    if (!songLibraryIntentGate.isCurrent(request)) return false;
     console.error("Failed to show song:", err);
     showGnomeToast("Failed to show song");
     return false;
@@ -8149,14 +8410,17 @@ function showSongContextMenu(event, song) {
 }
 
 async function refreshSongsBrowser(query = "", prefetchedResults = null) {
+  const trimmedQuery = String(query || "").trim();
+  const searchOptions = songSearchOptionsForCurrentFolder();
+  const request = songLibraryQueryGate.begin({ query: trimmedQuery, options: searchOptions });
   try {
-    const trimmedQuery = String(query || "").trim();
     const results = asSongArray(
       prefetchedResults ??
-        (await songsAPI.search(trimmedQuery, songSearchOptionsForCurrentFolder())),
+        (await songsAPI.search(trimmedQuery, searchOptions)),
     );
+    if (!songLibraryQueryGate.isCurrent(request)) return false;
     const list = document.getElementById("songsList");
-    if (!list) return;
+    if (!list) return false;
 
     if (!list._delegationInitialized) {
       list._delegationInitialized = true;
@@ -8284,7 +8548,7 @@ async function refreshSongsBrowser(query = "", prefetchedResults = null) {
     if (results.length === 0) {
       list.innerHTML = '<span class="list-placeholder-title">No songs found</span>';
       syncSongsBulkActions();
-      return;
+      return true;
     }
 
     const numResults = results.length;
@@ -8382,8 +8646,11 @@ async function refreshSongsBrowser(query = "", prefetchedResults = null) {
     }
 
     syncSongsBulkActions();
+    return true;
   } catch (err) {
+    if (!songLibraryQueryGate.isCurrent(request)) return false;
     console.error("Failed to refresh songs browser:", err);
+    return false;
   }
 }
 
@@ -8451,6 +8718,7 @@ export {
   installSongLowerThirdPreviewScaleObserver,
   loadDeckQueueItemIntoWorkspace,
   loadSongIntoWorkspace,
+  markSongEditorChanged,
   loadSongItemIntoWorkspace,
   markSongShowNowPresentation,
   navigateSongSection,
@@ -8495,6 +8763,7 @@ export {
   showCurrentDeckNow,
   showSongTextNow,
   songDeckDocumentFromSongDocument,
+  songFolderMutationGate,
   songItemForAudienceResolution,
   songSectionsFromParsedSections,
   syncActiveScheduledSongPresentation,
@@ -8552,6 +8821,7 @@ import {
   clearSongDragVisualState,
   clearTextFromPresentationMessage,
   clearTextObjectInlineStyles,
+  captureQueueInsertionPointAfterSelection,
   createBlankDeck,
   createBlankPage,
   createImageObject,
@@ -8667,4 +8937,5 @@ import {
   waitForTextFonts,
 } from "./app-renderer.mjs";
 import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
+import { createLatestRequestGate } from "../shared/async-operation-ownership.mjs";
 import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";

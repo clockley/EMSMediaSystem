@@ -155,6 +155,8 @@ const slidesStore = new SlidesStore({
 });
 const themeLibrary = new ThemeLibrary(path.join(app.getPath("userData"), "themes"));
 let themeLibraryReady = null;
+let themeActivationRevision = 0;
+let themeActivationQueue = Promise.resolve();
 const pendingThemeAssetsBySender = new Map();
 function readyThemeLibrary() {
   themeLibraryReady ||= themeLibrary.init();
@@ -336,6 +338,7 @@ let alertTimer = null;
 let backgroundState = createBackgroundState();
 const outputLayerRevisions = new Map();
 let mediaWindowCreatePromise = null;
+let lowerThirdWindowCreatePromise = null;
 const AUDIENCE_BOOTSTRAP_TIMEOUT_MS = 60000;
 
 function additionalArgumentValue(args, prefix) {
@@ -1040,25 +1043,31 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
 }
 
 async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) {
-  return measurePerformance("Creating lower third window", async () => {
-    const targetSelection = resolveDisplaySelection(displayIndex);
-    if (!targetSelection) return null;
+  const targetSelection = resolveDisplaySelection(displayIndex);
+  if (!targetSelection) return null;
+  const { webPreferences: incomingPrefs = {}, ...restWindowOptions } =
+    windowOptions || {};
+  const backgroundColor =
+    typeof restWindowOptions.backgroundColor === "string"
+      ? restWindowOptions.backgroundColor
+      : "#00ff00";
+  const configureOpenWindow = () => {
+    if (!lowerThirdWindow || lowerThirdWindow.isDestroyed()) return null;
+    lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
+    lowerThirdWindow.setFullScreen(true);
+    lowerThirdWindow.setBackgroundColor(backgroundColor);
+    publishOutputStatus();
+    return lowerThirdWindow.id;
+  };
 
-    const { webPreferences: incomingPrefs = {}, ...restWindowOptions } =
-      windowOptions || {};
-    const backgroundColor =
-      typeof restWindowOptions.backgroundColor === "string"
-        ? restWindowOptions.backgroundColor
-        : "#00ff00";
+  if (lowerThirdWindowCreatePromise) {
+    await lowerThirdWindowCreatePromise;
+    return configureOpenWindow();
+  }
+  const existingWindowId = configureOpenWindow();
+  if (existingWindowId) return existingWindowId;
 
-    if (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) {
-      lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
-      lowerThirdWindow.setFullScreen(true);
-      lowerThirdWindow.setBackgroundColor(backgroundColor);
-      publishOutputStatus();
-      return lowerThirdWindow.id;
-    }
-
+  const creationPromise = measurePerformance("Creating lower third window", async () => {
     const createdLowerThirdWindow = new BrowserWindow({
       ...restWindowOptions,
       backgroundThrottling: false,
@@ -1090,14 +1099,22 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
       }
     };
     createdLowerThirdWindow.once("closed", releaseLowerThirdWindow);
+    const bootstrap = waitForAudienceOutputBootstrap(createdLowerThirdWindow, "");
+    const bootstrapResult = bootstrap.promise.then(
+      (payload) => ({ payload, error: null }),
+      (error) => ({ payload: null, error }),
+    );
     try {
       createdLowerThirdWindow.setIgnoreMouseEvents(true);
       await createdLowerThirdWindow.loadFile("derived/src/media-window/media.prod.html");
       if (createdLowerThirdWindow.isDestroyed() || lowerThirdWindow !== createdLowerThirdWindow) {
         throw new Error("Lower-third output closed while it was loading");
       }
+      const { error: bootstrapError } = await bootstrapResult;
+      if (bootstrapError) throw bootstrapError;
       creationComplete = true;
     } catch (error) {
+      bootstrap.cancel();
       if (!createdLowerThirdWindow.isDestroyed()) createdLowerThirdWindow.destroy();
       releaseLowerThirdWindow();
       throw error;
@@ -1108,6 +1125,14 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
     publishOutputStatus();
     return createdLowerThirdWindow.id;
   });
+  lowerThirdWindowCreatePromise = creationPromise;
+  try {
+    return await creationPromise;
+  } finally {
+    if (lowerThirdWindowCreatePromise === creationPromise) {
+      lowerThirdWindowCreatePromise = null;
+    }
+  }
 }
 
 function currentOutputStatus() {
@@ -5960,11 +5985,25 @@ function setIPC() {
   // action so the operator can re-select the built-in default (or any theme
   // that has no unsaved changes) as the live theme, not just whatever was most
   // recently edited.
-  ipcMain.handle("themes:apply", async (_event, id) => {
-    const theme = await resolveThemeRecordById(id);
-    await setActiveThemeId(theme.id);
-    await broadcastThemeApplied(theme);
-    return { theme, activeThemeId: theme.id };
+  ipcMain.handle("themes:apply", (_event, id) => {
+    const revision = ++themeActivationRevision;
+    const activation = themeActivationQueue.catch(() => {}).then(async () => {
+      const theme = await resolveThemeRecordById(id);
+      if (revision !== themeActivationRevision) {
+        return { theme, activeThemeId: getActiveThemeId(), superseded: true };
+      }
+      await setActiveThemeId(theme.id);
+      // A newer request may have arrived while settings were being written.
+      // The serialized successor will establish the final value; do not leak
+      // this superseded intermediate activation to renderer windows.
+      if (revision !== themeActivationRevision) {
+        return { theme, activeThemeId: getActiveThemeId(), superseded: true };
+      }
+      await broadcastThemeApplied(theme);
+      return { theme, activeThemeId: theme.id, superseded: false };
+    });
+    themeActivationQueue = activation.catch(() => {});
+    return activation;
   });
   ipcMain.handle("themes:applyToItem", async (event, id, rawContext, profile) => {
     const context = normalizeThemeManagerContext(rawContext);
@@ -6012,10 +6051,17 @@ function setIPC() {
     const result = await dialog.showMessageBox(parent, { type: "warning", buttons: ["Cancel", "Delete"], defaultId: 0, cancelId: 0, title: "Delete Theme?", message: "Delete this theme?", detail: "This cannot be undone. Projects with embedded snapshots will keep their saved appearance." });
     if (result.response !== 1) return { deleted: false };
     await themeLibrary.delete(id);
-    if (getActiveThemeId() === id) {
-      await setActiveThemeId(EMS_SAFE_DEFAULT_THEME.id);
-      await broadcastThemeApplied(EMS_SAFE_DEFAULT_THEME);
-    }
+    // Active-theme writes share one serial queue. Without this, deleting the
+    // active theme can race a concurrent apply and let the fallback settings
+    // write land after the newer selection.
+    const reconcileDeletedActiveTheme = themeActivationQueue.catch(() => {}).then(async () => {
+      if (getActiveThemeId() === id) {
+        await setActiveThemeId(EMS_SAFE_DEFAULT_THEME.id);
+        await broadcastThemeApplied(EMS_SAFE_DEFAULT_THEME);
+      }
+    });
+    themeActivationQueue = reconcileDeletedActiveTheme.catch(() => {});
+    await reconcileDeletedActiveTheme;
     return { deleted: true, activeThemeId: getActiveThemeId() };
   });
   ipcMain.handle("themes:import", async event => {

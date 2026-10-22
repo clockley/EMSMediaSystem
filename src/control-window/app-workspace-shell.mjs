@@ -100,6 +100,7 @@ import {
   loadBibleVersionMetadataFromSidecar,
   loadSongIntoWorkspace,
   localTimeStampUpdateIsRunning,
+  markSongEditorChanged,
   navigateSongSection,
   navigationState,
   normalizeBibleVersionMetadata,
@@ -177,6 +178,7 @@ import {
   showSongTextNow,
   slidesAPI,
   songDeckDocumentFromSongDocument,
+  songFolderMutationGate,
   songLowerThirdState,
   songSectionsFromParsedSections,
   songsAPI,
@@ -212,11 +214,17 @@ import {
   video,
 } from "./app-renderer.mjs";
 
+import { createLatestRequestGate } from "../shared/async-operation-ownership.mjs";
+
 const SONG_SIDEBAR_STORAGE_KEY = "ems.songSidebarWidth";
 
 const DECK_PAGES_WIDTH_STORAGE_KEY = "ems.deckPagesWidth";
 
 const SONG_SIDEBAR_DEFAULT_WIDTH = 320;
+const songWorkspaceSaveGate = createLatestRequestGate();
+const songEditorParseGate = createLatestRequestGate();
+const slideBackgroundPickerGate = createLatestRequestGate();
+const songBackgroundPickerGate = createLatestRequestGate();
 
 const SONG_SIDEBAR_MIN_WIDTH = 220;
 
@@ -1224,10 +1232,17 @@ function installBibleMediaControls() {
     e.target.value = "";
   });
   document.getElementById("slidesPageMediaPickerBtn")?.addEventListener("click", async () => {
+    const deckOwner = currentDeck;
     const page = currentPage();
     if (!page) return;
+    const request = slideBackgroundPickerGate.begin(page);
     const item = await openMediaLibraryPicker({ title: "Choose Slide Background", kinds: ["image", "video"] });
     if (!item?.localPath) return;
+    if (
+      !slideBackgroundPickerGate.owns(request, page) ||
+      currentDeck !== deckOwner ||
+      currentPage() !== page
+    ) return;
     recordSlideUndoCheckpoint("Set page background");
     page.backgroundOverride = true;
     page.background = { type: item.kind, path: item.localPath, libraryItemId: item.id };
@@ -1398,22 +1413,38 @@ function installBibleMediaControls() {
 
   document.getElementById("songsSaveToLibraryBtn")?.addEventListener("click", async () => {
     if (!currentWorkspaceSong) return;
+    const workspaceOwner = currentWorkspaceSong;
+    const saveRequest = songWorkspaceSaveGate.begin(workspaceOwner);
     try {
       syncCurrentWorkspaceSongDefaultRender();
+      const renderSnapshot = structuredClone(currentSongRenderState);
+      const sectionIdSnapshot = currentSongSectionId;
       const songDeck = songDeckDocumentFromSongDocument(
         currentWorkspaceSongDeck || currentWorkspaceSong,
-        currentSongRenderState,
+        renderSnapshot,
       );
       const saved = await songsAPI.save(songDeck);
-      await updateScheduleSongsWithUpdatedSong(saved || currentWorkspaceSong);
+      if (!songWorkspaceSaveGate.isCurrent(saveRequest)) return;
+      await updateScheduleSongsWithUpdatedSong(saved || songDeck, {
+        render: renderSnapshot,
+        currentSectionId: sectionIdSnapshot,
+      });
       const searchInput = document.getElementById("songsSearchInput");
       await refreshSongFolders();
       if (searchInput) await refreshSongsBrowser(searchInput.value);
-      await loadSongIntoWorkspace(saved || currentWorkspaceSong, { render: currentSongRenderState });
-      showGnomeToast(`Saved "${currentWorkspaceSong.title}" to library`);
+      if (!songWorkspaceSaveGate.owns(saveRequest, currentWorkspaceSong)) return;
+      const saveToLibraryBtn = document.getElementById("songsSaveToLibraryBtn");
+      if (saveToLibraryBtn) {
+        saveToLibraryBtn.hidden = true;
+        saveToLibraryBtn.disabled = true;
+      }
+      syncSongsMoveFolderSelect(saved || songDeck, true);
+      showGnomeToast(`Saved "${workspaceOwner.title}" to library`);
     } catch (err) {
       console.error("Failed to save song to library:", err);
-      showGnomeToast(`Failed to save song: ${err.message}`);
+      if (songWorkspaceSaveGate.owns(saveRequest, currentWorkspaceSong)) {
+        showGnomeToast(`Failed to save song: ${err.message}`);
+      }
     }
   });
   
@@ -1422,7 +1453,8 @@ function installBibleMediaControls() {
   });
 
   document.getElementById("songsMoveFolderSelect")?.addEventListener("change", (event) => {
-    const songId = currentWorkspaceSong?.id;
+    const workspaceOwner = currentWorkspaceSong;
+    const songId = workspaceOwner?.id;
     const value = event.target.value;
     if (!songId || !value) {
       syncSongsMoveFolderSelect(currentWorkspaceSong);
@@ -1431,29 +1463,42 @@ function installBibleMediaControls() {
     const folderId = value === SONG_FOLDER_UNFILED ? null : value;
     const currentFolderId = currentWorkspaceSong?.folderId || null;
     if (folderId === currentFolderId) return;
+    const moveRequest = songFolderMutationGate.begin(songId);
     void songsAPI
       .moveToFolder(songId, folderId)
       .then(async (updated) => {
-        if (updated) {
-          setCurrentWorkspaceSong(updated);
-        } else if (currentWorkspaceSong) {
-          currentWorkspaceSong.folderId = folderId;
+        if (!songFolderMutationGate.owns(moveRequest, songId)) return;
+        if (currentWorkspaceSong === workspaceOwner && currentWorkspaceSong?.id === songId) {
+          if (updated) {
+            setCurrentWorkspaceSong(updated);
+          } else {
+            workspaceOwner.folderId = folderId;
+          }
+          syncSongsMoveFolderSelect(currentWorkspaceSong);
         }
-        syncSongsMoveFolderSelect(currentWorkspaceSong);
         await refreshSongFolders();
         const searchInput = document.getElementById("songsSearchInput");
         await refreshSongsBrowser(searchInput?.value || "");
-        showGnomeToast("Song moved");
+        if (songFolderMutationGate.owns(moveRequest, songId)) showGnomeToast("Song moved");
       })
       .catch((err) => {
+        if (!songFolderMutationGate.owns(moveRequest, songId)) return;
         console.error("Failed to move song:", err);
         showGnomeToast("Failed to move song");
-        syncSongsMoveFolderSelect(currentWorkspaceSong);
+        if (currentWorkspaceSong === workspaceOwner) {
+          syncSongsMoveFolderSelect(currentWorkspaceSong);
+        }
       });
   });
 
   document.getElementById("songsDeleteBtn")?.addEventListener("click", () => {
     void deleteSongFromLibrary().catch(console.error);
+  });
+
+  // Any editor input supersedes an in-flight save, including metadata and
+  // visual controls that do not flow through the lyric-canvas handlers.
+  document.getElementById("songEditorDrawer")?.addEventListener("input", () => {
+    markSongEditorChanged();
   });
   
   document.getElementById("songEditorCancelBtn")?.addEventListener("click", () => {
@@ -1536,10 +1581,19 @@ function installBibleMediaControls() {
   });
 
   document.getElementById("songEditorMediaPickerBtn")?.addEventListener("click", async () => {
+    const workspaceOwner = currentWorkspaceSong;
+    const renderOwner = currentSongRenderState;
+    const request = songBackgroundPickerGate.begin(renderOwner);
     const item = await openMediaLibraryPicker({ title: "Choose Song Background", kinds: ["image", "video"] });
     if (!item?.localPath) return;
-    currentSongRenderState.backgroundPath = item.localPath;
-    currentSongRenderState.backgroundLibraryItemId = item.id;
+    if (
+      !songBackgroundPickerGate.owns(request, renderOwner) ||
+      currentWorkspaceSong !== workspaceOwner ||
+      currentSongRenderState !== renderOwner
+    ) return;
+    renderOwner.backgroundPath = item.localPath;
+    renderOwner.backgroundLibraryItemId = item.id;
+    markSongEditorChanged();
     syncCurrentWorkspaceSongDefaultRender();
     syncSongBackgroundLabel();
     syncSongEditorWorkspaceStyles();
@@ -1624,12 +1678,20 @@ function installBibleMediaControls() {
   let editorPreviewDebounce;
   document.getElementById("songEditorTextarea")?.addEventListener("input", (e) => {
     clearTimeout(editorPreviewDebounce);
+    markSongEditorChanged();
+    const workspaceOwner = currentWorkspaceSong;
+    const text = e.target.value;
+    const parseRequest = songEditorParseGate.begin(workspaceOwner);
     editorPreviewDebounce = setTimeout(async () => {
-      if (!currentWorkspaceSong) return;
-      const text = e.target.value;
+      if (!workspaceOwner) return;
       try {
         const sections = songSectionsFromParsedSections(await songsAPI.parseLyricsText(text));
-        currentWorkspaceSong.sections = sections;
+        if (
+          !songEditorParseGate.owns(parseRequest, currentWorkspaceSong) ||
+          currentWorkspaceSong !== workspaceOwner ||
+          e.target.value !== text
+        ) return;
+        workspaceOwner.sections = sections;
         const section = sections.find((s) => s.id === currentSongSectionId) || sections[0];
         if (section) {
           renderSongSectionPreview(section);

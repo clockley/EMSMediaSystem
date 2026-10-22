@@ -108,7 +108,10 @@ import {
   updateOutputHoldButtonStates,
 } from "./app-renderer.mjs";
 
+import { createLatestRequestGate } from "../shared/async-operation-ownership.mjs";
+
 const stageLayerRevisions = new Map();
+const liveThemeApplyGate = createLatestRequestGate();
 
 let currentAlertsSnapshot = { alert: null, queue: [], nurseryAlerts: [] };
 
@@ -989,8 +992,10 @@ function themeLowerThirdMessageIfApplied(message, contentKind) {
 }
 
 async function applyThemeToLivePresentation(theme) {
-  setSharedRendererState({ appliedPresentationTheme: theme });
+  const request = liveThemeApplyGate.begin(theme?.id || theme);
   const size = await currentBibleScheduleOutputSize().catch(() => ({ width: 1920, height: 1080 }));
+  if (!liveThemeApplyGate.isCurrent(request)) return false;
+  setSharedRendererState({ appliedPresentationTheme: theme });
   if (hasLiveAudienceTextPresentation("song") && lastAudienceSongTextMessage) {
     const resolved = resolveThemeForTarget({ theme, contentKind: "song", outputRole: "audience", outputSize: size });
     const message = themedAudienceMessage(lastAudienceSongTextMessage, resolved);
@@ -1042,11 +1047,13 @@ async function applyThemeToLivePresentation(theme) {
     const section = currentSongActiveSection();
     if (section) {
       await renderSongSectionPreview(section);
+      if (!liveThemeApplyGate.isCurrent(request)) return false;
       renderSongSlideNavigator();
     }
   }
   renderSongLowerThirdControls();
   showGnomeToast(`Applied “${theme.name}” to live outputs`);
+  return true;
 }
 
 export {

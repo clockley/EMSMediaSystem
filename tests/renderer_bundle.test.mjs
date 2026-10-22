@@ -296,10 +296,20 @@ test("scheduled song preview loads do not commit stale workspace identity", asyn
   const end = source.indexOf("\nfunction queueItemDeckId", start);
   const loadScheduledSong = source.slice(start, end);
   const firstTokenCheck = loadScheduledSong.indexOf('typeof token === "number"');
-  const identityCommit = loadScheduledSong.indexOf("currentSongQueueItem = item || null");
 
-  assert.ok(firstTokenCheck >= 0 && firstTokenCheck < identityCommit);
+  assert.ok(firstTokenCheck >= 0);
+  assert.doesNotMatch(loadScheduledSong, /currentSongQueueItem\s*=/);
+  assert.doesNotMatch(loadScheduledSong, /currentSongRenderState\s*=/);
+  assert.match(loadScheduledSong, /queueItem: item \|\| null/);
   assert.match(loadScheduledSong, /previewLoadToken: token/);
+
+  const workspaceStart = source.indexOf("async function loadSongIntoWorkspace(");
+  const workspaceEnd = source.indexOf("\nfunction updateSongNavButtonsState", workspaceStart);
+  const loadWorkspace = source.slice(workspaceStart, workspaceEnd);
+  assert.ok(
+    loadWorkspace.indexOf("await checkIfSongInLibrary(stagedWorkspaceSong.id)") <
+      loadWorkspace.indexOf("currentWorkspaceSong = stagedWorkspaceSong"),
+  );
 });
 
 test("text output is validated before a media window is reported live", async () => {

@@ -6,6 +6,8 @@ let activeThemeId = null;
 let selectedId = null;
 let original = null;
 let draft = null;
+let applyRevision = 0;
+let reloadRevision = 0;
 const pendingAssetIdsByTheme = new Map();
 const initialParams = new URLSearchParams(window.location.search);
 let outputRole = initialParams.get("outputRole") === "lowerThird" ? "lowerThird" : "audience";
@@ -242,20 +244,34 @@ function renderPreview() {
 
 async function chooseAudienceBackground() {
   if (!draft || outputRole !== "audience") return;
-  readEditor();
-  const result = await api.chooseBackgroundAsset(draft.id, applyContext);
+  const revision = ++applyRevision;
+  const targetId = selectedId;
+  const targetDraft = draft;
+  const targetRole = outputRole;
+  const targetContext = { ...applyContext };
+  const result = await api.chooseBackgroundAsset(targetId, targetContext);
   if (result?.canceled || !result?.asset) return;
-  if (applyContext.scope !== "item") {
+  if (targetContext.scope !== "item") {
+    // Record managed assets even when the UI owner changed while the native
+    // picker was open, so later save/close cleanup can remove the orphan.
+    rememberPendingAsset(targetId, result.asset.id);
+  }
+  if (
+    revision !== applyRevision ||
+    selectedId !== targetId ||
+    draft !== targetDraft ||
+    outputRole !== targetRole
+  ) return;
+  if (targetContext.scope !== "item") {
     draft.assets ||= [];
     draft.assets = [...draft.assets.filter(asset => asset.id !== result.asset.id), result.asset];
-    rememberPendingAsset(draft.id, result.asset.id);
   }
   for (const kind of ["song", "scripture", "text"]) {
     const target = ensureProfile(kind, "audience");
     target.canvas.background = {
       type: "image",
       color: $("tmBackground").value,
-      assetId: applyContext.scope === "item" ? null : result.asset.id,
+      assetId: targetContext.scope === "item" ? null : result.asset.id,
       path: result.asset.path,
       ...(result.asset.assetUrl ? { assetUrl: result.asset.assetUrl } : {}),
       name: result.asset.name,
@@ -281,14 +297,17 @@ function clearAudienceBackground() {
   fillEditor();
 }
 
-function selectTheme(id) {
-  if (isDirty() && !window.confirm("Discard unsaved theme changes?")) return;
+function selectTheme(id, { discardCurrent = false } = {}) {
+  if (!discardCurrent && isDirty() && !window.confirm("Discard unsaved theme changes?")) return;
   const record = records.find(item => item.id === id); if (!record) return;
+  applyRevision += 1;
   selectedId = id; original = copy(record.theme); draft = copy(record.theme); setStatus(); renderList(); fillEditor();
 }
 
-async function reload(preferredId = selectedId) {
+async function reload(preferredId = selectedId, options = {}) {
+  const revision = ++reloadRevision;
   const result = await api.list();
+  if (revision !== reloadRevision) return false;
   records = result.themes; activeThemeId = result.activeThemeId;
   const initialSelection = records.some(item => item.id === preferredId)
     ? preferredId
@@ -296,28 +315,59 @@ async function reload(preferredId = selectedId) {
       ? activeThemeId
       : records[0]?.id;
   renderList();
-  selectTheme(initialSelection);
+  selectTheme(initialSelection, options);
+  return true;
+}
+
+async function refreshRecordsPreservingEditor() {
+  const revision = ++reloadRevision;
+  const result = await api.list();
+  if (revision !== reloadRevision) return false;
+  records = result.themes;
+  activeThemeId = result.activeThemeId;
+  if (records.some(item => item.id === selectedId)) {
+    renderList();
+    updateDirtyState();
+    return true;
+  }
+  const fallbackId = records.some(item => item.id === activeThemeId)
+    ? activeThemeId
+    : records[0]?.id;
+  selectTheme(fallbackId, { discardCurrent: true });
+  return true;
 }
 
 async function apply() {
   readEditor();
+  const revision = ++applyRevision;
+  const targetId = selectedId;
+  const targetRole = outputRole;
+  const targetKind = $("tmKind").value;
+  const targetContext = { ...applyContext, contentKind: targetKind, outputRole: targetRole };
+  const targetProfile = copy(ensureProfile(targetKind, targetRole));
+  const targetDraft = copy(draft);
+  const stillOwnsApply = () => revision === applyRevision && selectedId === targetId;
   const dirty = isDirty();
   if (applyContext.scope === "item") {
     try {
-      const targetProfile = copy(ensureProfile($("tmKind").value, outputRole));
-      await api.applyToItem(selectedId, { ...applyContext, contentKind: $("tmKind").value, outputRole }, targetProfile);
-      original = copy(draft);
-      setStatus(`Applied “${draft.name}” to this scheduled item.`);
+      await api.applyToItem(targetId, targetContext, targetProfile);
+      if (!stillOwnsApply()) return;
+      original = copy(targetDraft);
+      draft = copy(targetDraft);
+      setStatus(`Applied “${targetDraft.name}” to this scheduled item.`);
       updateDirtyState();
-    } catch (error) { setStatus(error.message || "Could not apply theme to item.", true); }
+    } catch (error) {
+      if (stillOwnsApply()) setStatus(error.message || "Could not apply theme to item.", true);
+    }
     return;
   }
   if (!dirty && isSelectedActive()) return;
   try {
-    let appliedName = draft.name;
+    let appliedName = targetDraft.name;
     if (dirty && !isBuiltIn()) {
-      pruneDiscardedPendingAssets(draft);
-      const result = await api.save(draft);
+      pruneDiscardedPendingAssets(targetDraft);
+      const result = await api.save(targetDraft);
+      if (!stillOwnsApply()) return;
       pendingAssetIdsByTheme.delete(result.theme.id);
       // Saving commits the draft. Mark it clean before reload() reselects the
       // theme, otherwise selectTheme() mistakes the just-saved changes for
@@ -329,25 +379,52 @@ async function apply() {
     // Activating is independent of saving: it is how a built-in or already
     // clean theme (e.g. switching back to the default after a custom style)
     // becomes the live theme again, which plain saving can never do.
-    const activation = await api.activate(selectedId);
+    const activation = await api.activate(targetId);
+    if (!stillOwnsApply()) return;
+    if (activation.superseded) return;
     activeThemeId = activation.activeThemeId;
-    await reload(selectedId);
+    await reload(targetId);
     setStatus(`Applied “${appliedName}”.`);
   }
-  catch (error) { setStatus(error.message || "Could not apply theme.", true); }
+  catch (error) {
+    if (stillOwnsApply()) setStatus(error.message || "Could not apply theme.", true);
+  }
 }
 
 async function duplicate() {
   if (!selectedId) return;
-  try { const result = await api.duplicate(selectedId); await reload(result.theme.id); setStatus("Theme created. You can now edit the copy."); }
-  catch (error) { setStatus(error.message || "Could not create theme.", true); }
+  const revision = ++applyRevision;
+  const targetId = selectedId;
+  try {
+    const result = await api.duplicate(targetId);
+    if (revision !== applyRevision || selectedId !== targetId) {
+      await refreshRecordsPreservingEditor();
+      return;
+    }
+    await reload(result.theme.id);
+    setStatus("Theme created. You can now edit the copy.");
+  }
+  catch (error) {
+    if (revision === applyRevision && selectedId === targetId) {
+      setStatus(error.message || "Could not create theme.", true);
+    }
+  }
 }
 
 async function useProjectDefault() {
+  const revision = ++applyRevision;
+  const targetId = selectedId;
+  const targetContext = { ...applyContext, contentKind: $("tmKind").value, outputRole };
   try {
-    await api.clearItem({ ...applyContext, contentKind: $("tmKind").value, outputRole });
-    setStatus("This item now uses the project default theme.");
-  } catch (error) { setStatus(error.message || "Could not reset item theme.", true); }
+    await api.clearItem(targetContext);
+    if (revision === applyRevision && selectedId === targetId) {
+      setStatus("This item now uses the project default theme.");
+    }
+  } catch (error) {
+    if (revision === applyRevision && selectedId === targetId) {
+      setStatus(error.message || "Could not reset item theme.", true);
+    }
+  }
 }
 
 function closeMenu() {
@@ -368,9 +445,11 @@ function requestClose() {
 
 function wire() {
   $("tmClose").addEventListener("click", requestClose); $("tmSearch").addEventListener("input", renderList);
-  $("tmAudienceTab").addEventListener("click", () => { outputRole = "audience"; $("tmAudienceTab").setAttribute("aria-pressed", "true"); $("tmLowerThirdTab").setAttribute("aria-pressed", "false"); fillEditor(); });
-  $("tmLowerThirdTab").addEventListener("click", () => { outputRole = "lowerThird"; $("tmAudienceTab").setAttribute("aria-pressed", "false"); $("tmLowerThirdTab").setAttribute("aria-pressed", "true"); fillEditor(); });
-  $("tmKind").addEventListener("change", fillEditor); $("tmEditor").addEventListener("input", readEditor); $("tmEditor").addEventListener("change", readEditor);
+  $("tmAudienceTab").addEventListener("click", () => { applyRevision += 1; outputRole = "audience"; $("tmAudienceTab").setAttribute("aria-pressed", "true"); $("tmLowerThirdTab").setAttribute("aria-pressed", "false"); fillEditor(); });
+  $("tmLowerThirdTab").addEventListener("click", () => { applyRevision += 1; outputRole = "lowerThird"; $("tmAudienceTab").setAttribute("aria-pressed", "false"); $("tmLowerThirdTab").setAttribute("aria-pressed", "true"); fillEditor(); });
+  $("tmKind").addEventListener("change", () => { applyRevision += 1; fillEditor(); });
+  $("tmEditor").addEventListener("input", () => { applyRevision += 1; readEditor(); });
+  $("tmEditor").addEventListener("change", () => { applyRevision += 1; readEditor(); });
   $("tmApply").addEventListener("click", () => void apply()); $("tmRevert").addEventListener("click", () => { draft = copy(original); fillEditor(); renderList(); setStatus("Changes reverted."); });
   $("tmUseDefault").addEventListener("click", () => void useProjectDefault());
   $("tmDuplicate").addEventListener("click", () => void duplicate());
@@ -384,11 +463,57 @@ function wire() {
   $("tmMenu").addEventListener("click", event => { if (event.target.closest("button")) closeMenu(); });
   document.addEventListener("click", event => { if (!event.target.closest(".tm-menu-wrap")) closeMenu(); });
   $("tmDelete").addEventListener("click", async () => {
-    const result = await api.delete(selectedId);
-    if (result.deleted) { activeThemeId = result.activeThemeId || activeThemeId; await reload(); }
+    const revision = ++applyRevision;
+    const targetId = selectedId;
+    try {
+      const result = await api.delete(targetId);
+      if (!result.deleted) return;
+      activeThemeId = result.activeThemeId || activeThemeId;
+      if (revision !== applyRevision || selectedId !== targetId) {
+        await refreshRecordsPreservingEditor();
+        return;
+      }
+      // The deleted draft no longer has a valid persistence target. Move to a
+      // surviving theme without asking whether to retain an impossible edit.
+      await reload(undefined, { discardCurrent: true });
+    } catch (error) {
+      if (revision === applyRevision && selectedId === targetId) {
+        setStatus(error.message || "Could not delete theme.", true);
+      }
+    }
   });
-  $("tmImport").addEventListener("click", async () => { try { const result = await api.importPack(); if (!result.canceled) { await reload(result.theme.id); setStatus("Theme imported."); } } catch (error) { setStatus(error.message || "Could not import theme.", true); } });
-  $("tmExport").addEventListener("click", async () => { try { const result = await api.exportPack(selectedId); if (!result.canceled) setStatus("Theme pack exported."); } catch (error) { setStatus(error.message || "Could not export theme.", true); } });
+  $("tmImport").addEventListener("click", async () => {
+    const revision = ++applyRevision;
+    const targetId = selectedId;
+    try {
+      const result = await api.importPack();
+      if (result.canceled) return;
+      if (revision !== applyRevision || selectedId !== targetId) {
+        await refreshRecordsPreservingEditor();
+        return;
+      }
+      await reload(result.theme.id);
+      setStatus("Theme imported.");
+    } catch (error) {
+      if (revision === applyRevision && selectedId === targetId) {
+        setStatus(error.message || "Could not import theme.", true);
+      }
+    }
+  });
+  $("tmExport").addEventListener("click", async () => {
+    const revision = ++applyRevision;
+    const targetId = selectedId;
+    try {
+      const result = await api.exportPack(targetId);
+      if (!result.canceled && revision === applyRevision && selectedId === targetId) {
+        setStatus("Theme pack exported.");
+      }
+    } catch (error) {
+      if (revision === applyRevision && selectedId === targetId) {
+        setStatus(error.message || "Could not export theme.", true);
+      }
+    }
+  });
   document.addEventListener("keydown", event => {
     if (event.key === "Escape") { if (!$("tmMenu").hidden) { closeMenu(); return; } requestClose(); }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void apply(); }

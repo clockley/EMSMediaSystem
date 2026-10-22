@@ -375,6 +375,7 @@ import {
   loadDeckQueueItemIntoWorkspace,
   loadSongIntoWorkspace,
   loadSongItemIntoWorkspace,
+  markSongEditorChanged,
   markSongShowNowPresentation,
   navigateSongSection,
   openSlidesWorkspaceFromButton,
@@ -418,6 +419,7 @@ import {
   showCurrentDeckNow,
   showSongTextNow,
   songDeckDocumentFromSongDocument,
+  songFolderMutationGate,
   songItemForAudienceResolution,
   songSectionsFromParsedSections,
   syncActiveScheduledSongPresentation,
@@ -618,6 +620,7 @@ import {
 } from "./app-project-session.mjs";
 import {
   applyDroppedMediaPaths,
+  captureQueueInsertionPointAfterSelection,
   clearMediaQueue,
   enqueuePathsFromFilePicker,
   extractAndFilterDroppedMediaPaths,
@@ -631,6 +634,7 @@ import {
   queueInsertionIndexAfterSelection,
   renderQueue,
   revealNewQueueEntries,
+  resolveQueueInsertionPoint,
   selectedQueueIndexForDisplay,
   selectedQueueItems,
   updateQueueSelectionVisual,
@@ -2496,12 +2500,15 @@ function shiftQueueIndexesForInsertion(insertIndex, count) {
   }
 }
 
-function insertQueueEntriesAfterSelection(entries) {
+function insertQueueEntriesAfterSelection(entries, insertionPoint = null) {
   const nextEntries = Array.isArray(entries) ? entries.filter(Boolean) : [];
   if (!nextEntries.length) return -1;
+  const requestedIndex = insertionPoint
+    ? resolveQueueInsertionPoint(insertionPoint)
+    : queueInsertionIndexAfterSelection();
   const insertIndex = Math.max(
     0,
-    Math.min(queueInsertionIndexAfterSelection(), mediaQueue.length),
+    Math.min(requestedIndex, mediaQueue.length),
   );
   mediaQueue.splice(insertIndex, 0, ...nextEntries);
   shiftQueueIndexesForInsertion(insertIndex, nextEntries.length);
@@ -3725,6 +3732,7 @@ export {
   installBiblePreviewScaleObserver,
   installSongLowerThirdPreviewScaleObserver,
   loadSongIntoWorkspace,
+  markSongEditorChanged,
   navigateSongSection,
   openSlidesWorkspaceFromButton,
   openSongFolderPrompt,
@@ -3754,6 +3762,7 @@ export {
   showCuedSongLowerThird,
   showCurrentDeckNow,
   songDeckDocumentFromSongDocument,
+  songFolderMutationGate,
   songSectionsFromParsedSections,
   syncCurrentWorkspaceSongDefaultRender,
   syncSlidesWorkspaceTitle,
@@ -4070,6 +4079,7 @@ export {
   waitForMediaMetadata,
   waitForMetadata,
   applyDroppedMediaPaths,
+  captureQueueInsertionPointAfterSelection,
   clearMediaQueue,
   enqueuePathsFromFilePicker,
   extractAndFilterDroppedMediaPaths,
@@ -4080,6 +4090,7 @@ export {
   queueDropIndicator,
   queueInsertionIndexAfterSelection,
   revealNewQueueEntries,
+  resolveQueueInsertionPoint,
   selectedQueueIndexForDisplay,
   selectedQueueItems,
   updateQueueSelectionVisual,

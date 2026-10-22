@@ -529,7 +529,8 @@ function toggleScheduleSectionCollapsed(index) {
 
 async function renameScheduleSection(index) {
   if (!queueIndexInRange(index) || !isQueueItemSection(mediaQueue[index])) return;
-  const currentName = mediaQueue[index].name || DEFAULT_SCHEDULE_SECTION_NAME;
+  const section = mediaQueue[index];
+  const currentName = section.name || DEFAULT_SCHEDULE_SECTION_NAME;
   const nextName = await showRendererPrompt("Section name", currentName, {
     title: "Rename Section",
     confirmLabel: "Rename",
@@ -537,14 +538,19 @@ async function renameScheduleSection(index) {
     maxLength: 80,
   });
   if (nextName === null) return;
+  // The prompt yields while the queue remains interactive. Resolve the target
+  // by object identity so a reorder cannot redirect the rename to whatever
+  // later occupies the original numeric index.
+  if (!mediaQueue.includes(section) || !isQueueItemSection(section)) return;
   const normalized = normalizeScheduleSectionName(nextName);
   if (normalized === currentName) return;
-  mediaQueue[index].name = normalized;
+  section.name = normalized;
   renderQueue();
   saveMediaFile();
 }
 
 async function addScheduleSectionAfterSelection() {
+  const insertionPoint = captureQueueInsertionPointAfterSelection();
   const name = await showRendererPrompt("Section name", DEFAULT_SCHEDULE_SECTION_NAME, {
     title: "Add Section",
     confirmLabel: "Add",
@@ -553,7 +559,7 @@ async function addScheduleSectionAfterSelection() {
   });
   if (name === null) return;
   invalidateQueueUndoToastAfterMutation();
-  const insertIndex = queueInsertionIndexAfterSelection();
+  const insertIndex = resolveQueueInsertionPoint(insertionPoint);
   insertQueueEntriesAt([createScheduleSectionEntry(name)], insertIndex);
   renderQueue();
   saveMediaFile();
@@ -590,6 +596,27 @@ function queueInsertionIndexAfterSelection() {
   return selectedIndex >= 0
     ? scheduleInsertionIndexAfterItem(mediaQueue, selectedIndex)
     : mediaQueue.length;
+}
+
+function captureQueueInsertionPointAfterSelection() {
+  const insertIndex = queueInsertionIndexAfterSelection();
+  return Object.freeze({
+    before: insertIndex < mediaQueue.length ? mediaQueue[insertIndex] : null,
+    after: insertIndex > 0 ? mediaQueue[insertIndex - 1] : null,
+    atStart: insertIndex === 0,
+  });
+}
+
+function resolveQueueInsertionPoint(point) {
+  if (!point || typeof point !== "object") return mediaQueue.length;
+  const beforeIndex = point.before ? mediaQueue.indexOf(point.before) : -1;
+  const afterIndex = point.after ? mediaQueue.indexOf(point.after) : -1;
+  if (beforeIndex >= 0 && afterIndex >= 0 && beforeIndex === afterIndex + 1) {
+    return beforeIndex;
+  }
+  if (beforeIndex >= 0) return beforeIndex;
+  if (afterIndex >= 0) return afterIndex + 1;
+  return point.atStart ? 0 : mediaQueue.length;
 }
 
 function extendQueueSelectionTo(index) {
@@ -1782,6 +1809,7 @@ function installAddQueueSectionButton() {
 
 export {
   applyDroppedMediaPaths,
+  captureQueueInsertionPointAfterSelection,
   clearMediaQueue,
   enqueuePathsFromFilePicker,
   ensureQueueDropIndicator,
@@ -1811,6 +1839,7 @@ export {
   reorderSelectedMediaQueue,
   resumeQueueFromManualBoundaryIfReady,
   revealNewQueueEntries,
+  resolveQueueInsertionPoint,
   selectedQueueIndexForDisplay,
   selectedQueueIndexForInsertion,
   selectedQueueItems,
