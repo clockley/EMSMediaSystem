@@ -248,16 +248,34 @@ function currentQueuePreviewItem() {
 async function syncQueuePreviewMediaElements(item = null) {
   const previewItem = item || currentQueuePreviewItem();
   if (!queueItemOwnsControlPreview(previewItem)) return false;
-  await restoreStagedPreviewPlayback(isQueueItemImage(previewItem), currentQueueIndex);
-  return true;
+  const queueIndex = mediaQueue.indexOf(previewItem);
+  if (queueIndex < 0) return false;
+  return restoreStagedPreviewPlayback(isQueueItemImage(previewItem), queueIndex, {
+    previewItem,
+  });
 }
 
-async function restoreStagedPreviewPlayback(isImgFile, queueIndex = currentQueueIndex) {
+async function restoreStagedPreviewPlayback(
+  isImgFile,
+  queueIndex = currentQueueIndex,
+  options = {},
+) {
+  const requestToken = Number.isFinite(options.previewLoadToken)
+    ? options.previewLoadToken
+    : nextPreviewLoadToken();
+  const requestedMediaFile = mediaFile;
   let previewItem =
-    queueIndex >= 0 && queueIndex < mediaQueue.length ? mediaQueue[queueIndex] : null;
+    options.previewItem ||
+    (queueIndex >= 0 && queueIndex < mediaQueue.length ? mediaQueue[queueIndex] : null);
   if (!previewItem && mediaFile) {
     previewItem = queueItemForPath(mediaFile);
   }
+  const requestStillOwnsPreview = () =>
+    isCurrentPreviewLoad(requestToken) &&
+    (previewItem
+      ? currentQueuePreviewItem() === previewItem
+      : mediaFile === requestedMediaFile);
+  if (!requestStillOwnsPreview()) return false;
   if (
     previewItem &&
     isFileBackedMediaPath(previewItem.path) &&
@@ -266,14 +284,17 @@ async function restoreStagedPreviewPlayback(isImgFile, queueIndex = currentQueue
     !isQueueItemSong(previewItem)
   ) {
     const resolvedPath = await resolveQueueItemMediaPath(previewItem);
+    if (!requestStillOwnsPreview()) return false;
     setSharedRendererState({ activePreviewResolvedMediaFile: resolvedPath });
     const cacheBust = queueItemMediaCacheBust(previewItem);
     handleMediaPlayback(isImgFile, resolvedPath, cacheBust);
     handleImageDisplay(isImgFile, document.querySelector("img#preview"), resolvedPath, cacheBust);
-    return;
+    return true;
   }
+  if (!requestStillOwnsPreview()) return false;
   handleMediaPlayback(isImgFile);
   handleImageDisplay(isImgFile, document.querySelector("img#preview"));
+  return true;
 }
 
 function clearVideoPoster(mediaEl) {

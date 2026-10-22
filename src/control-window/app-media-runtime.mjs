@@ -212,6 +212,7 @@ import {
   audiencePlaybackCoordinator,
   createAudiencePlaybackId,
 } from "../shared/playback-transition-coordinator.mjs";
+import { activateAudiencePlayback } from "../shared/audience-playback-activation.mjs";
 
 var pidSeeking = false;
 
@@ -1318,7 +1319,7 @@ function saveMediaFile() {
   }
 
   let imgEle = null;
-  if ((imgEle = document.querySelector("img"))) {
+  if ((imgEle = document.querySelector(".video-wrapper img#preview"))) {
     imgEle.remove();
     imgEle.src = "";
     document.getElementById("preview").style.display = "";
@@ -1329,7 +1330,7 @@ function saveMediaFile() {
     setSharedRendererState({ audioOnlyFile: false });
   }
 
-  if (iM && !document.querySelector("img") && !isActiveMW) {
+  if (iM && !document.querySelector(".video-wrapper img#preview") && !isActiveMW) {
     const previewItem = currentQueuePreviewItem();
     if (queueItemOwnsControlPreview(previewItem)) {
       void syncQueuePreviewMediaElements(previewItem).then(() => {
@@ -1338,7 +1339,7 @@ function saveMediaFile() {
       return;
     }
     let imgEle = null;
-    if ((imgEle = document.querySelector("img")) !== null) {
+    if ((imgEle = document.querySelector(".video-wrapper img#preview")) !== null) {
       imgEle.remove();
       imgEle.src = "";
       if (video) {
@@ -2294,28 +2295,68 @@ async function createMediaWindow(options) {
   );
   // create-media-window resolves only after the audience renderer has loaded
   // and started the source. Its authoritative playback-state therefore arrives
-  // before this function can commit the new epoch; stage the identity now so
-  // the selected preview can consume that state instead of dropping it.
-  const stagedPlaybackId = audiencePlaybackCoordinator.stagePlayback(playbackId);
+  // before this function can commit the new epoch. Use the same transactional
+  // activation as an in-place slipstream so an obsolete completion cannot take
+  // playback ownership back from a newer request.
+  const previousPlaybackId = audiencePlaybackCoordinator.activePlaybackId();
+  const supersededByNewerPlaybackRequest = () => {
+    const stagedPlaybackId = audiencePlaybackCoordinator.stagedPlaybackId();
+    const activePlaybackId = audiencePlaybackCoordinator.activePlaybackId();
+    const newerQueueTransition = Boolean(
+      transitionToken &&
+        !audiencePlaybackCoordinator.owns(transitionToken) &&
+        mediaQueue.some(
+          (item) =>
+            item !== transitionToken.item &&
+            audiencePlaybackCoordinator.isTransitioningItem(item),
+        ),
+    );
+    return Boolean(
+      (stagedPlaybackId && stagedPlaybackId !== playbackId) ||
+        (activePlaybackId &&
+          activePlaybackId !== playbackId &&
+          activePlaybackId !== previousPlaybackId) ||
+        newerQueueTransition,
+    );
+  };
   setSharedRendererState({ isActiveMediaWindowCache: true });
   setSharedRendererState({ activeResolvedMediaFile: projectionMediaFile });
   setSharedRendererState({ activePreviewResolvedMediaFile: projectionMediaFile });
-  if (startupSyncNeeded) {
-    beginProjectionPlaybackStartupSync();
-  }
+  const startupSyncGeneration = startupSyncNeeded
+    ? beginProjectionPlaybackStartupSync()
+    : null;
   try {
-    const windowId = await invoke("create-media-window", windowOptions, selectedDisplay);
-    if (!windowId) {
-      audiencePlaybackCoordinator.discardStagedPlayback(stagedPlaybackId);
-      setSharedRendererState({ isActiveMediaWindowCache: false });
-      if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
+    const activationResult = await activateAudiencePlayback(
+      () => invoke("create-media-window", windowOptions, selectedDisplay),
+      {
+        playbackId,
+        isAcknowledged: (windowId) => Boolean(windowId),
+        acknowledgedPlaybackId: () => playbackId,
+      },
+    );
+    const windowId = activationResult.activation;
+    if (!activationResult.ok) {
+      const supersededByNewerActivation =
+        activationResult.reason === "superseded" &&
+        supersededByNewerPlaybackRequest();
+      if (!supersededByNewerActivation) {
+        if (windowId) send("close-media-window", 0);
+        setSharedRendererState({ isActiveMediaWindowCache: false });
+      }
+      if (startupSyncNeeded) {
+        finishProjectionPlaybackStartupSync(startupSyncGeneration);
+      }
       return false;
     }
     if (!transitionStillOwnsItem()) {
-      audiencePlaybackCoordinator.discardStagedPlayback(stagedPlaybackId);
-      send("close-media-window", 0);
-      setSharedRendererState({ isActiveMediaWindowCache: false });
-      if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
+      if (!supersededByNewerPlaybackRequest()) {
+        send("close-media-window", 0);
+        audiencePlaybackCoordinator.deactivatePlayback(playbackId);
+        setSharedRendererState({ isActiveMediaWindowCache: false });
+      }
+      if (startupSyncNeeded) {
+        finishProjectionPlaybackStartupSync(startupSyncGeneration);
+      }
       return false;
     }
     // A new clip is now live in a freshly created window: open a new
@@ -2323,11 +2364,15 @@ async function createMediaWindow(options) {
     beginLiveMediaWindowEpoch(playbackId);
     queueBiblePreviewMediaWindowSizeRefresh();
   } catch (err) {
-    audiencePlaybackCoordinator.discardStagedPlayback(stagedPlaybackId);
-    setSharedRendererState({ isActiveMediaWindowCache: false });
-    setSharedRendererState({ activeMediaWindowContentType: null });
-    if (startupSyncNeeded) finishProjectionPlaybackStartupSync();
-    if (!transitionStillOwnsItem()) return false;
+    const supersededByNewerActivation = supersededByNewerPlaybackRequest();
+    if (!supersededByNewerActivation) {
+      setSharedRendererState({ isActiveMediaWindowCache: false });
+      setSharedRendererState({ activeMediaWindowContentType: null });
+    }
+    if (startupSyncNeeded) {
+      finishProjectionPlaybackStartupSync(startupSyncGeneration);
+    }
+    if (supersededByNewerActivation || !transitionStillOwnsItem()) return false;
     console.error("Failed to start audience output:", err);
     showGnomeToast(err?.message || "Could not start the audience output");
     return false;

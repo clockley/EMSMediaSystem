@@ -172,12 +172,17 @@ async function resumeStagedPresentationAfterLogoHold() {
 
 async function prepareQueueItemUnderLogoHold(index) {
   if (index < 0 || index >= mediaQueue.length) return;
+  const item = mediaQueue[index];
   const stagingGeneration = outputHoldRecoveryGeneration;
-  if (!(await ensurePendingMediaUpdateApproved(index))) return;
+  if (!(await ensurePendingMediaUpdateApproved(index, item))) return;
   if (stagingGeneration !== outputHoldRecoveryGeneration) return;
+  index = mediaQueue.indexOf(item);
+  if (index < 0) {
+    showGnomeToast("The selected schedule item is no longer available");
+    return;
+  }
   setSelectedQueueAnchor(index);
 
-  const item = mediaQueue[index];
   if (isLiveStream(item.path)) {
     showGnomeToast("Live streams cannot be staged under logo hold");
     await loadQueueItemIntoPreviewCue(index);
@@ -194,6 +199,11 @@ async function prepareQueueItemUnderLogoHold(index) {
 
   await loadQueueItemIntoPreviewCue(index);
   if (stagingGeneration !== outputHoldRecoveryGeneration) return;
+  index = mediaQueue.indexOf(item);
+  if (index < 0) {
+    showGnomeToast("The selected schedule item is no longer available");
+    return;
+  }
   const switched = await slipstreamQueueItemAtIndex(index, {
     startTime: queueItemCueStartTime(item),
     clearCue: false,
@@ -258,8 +268,13 @@ async function releaseOutputHoldsForRecovery() {
 
 async function releaseOutputHoldsAndGoLiveQueueIndex(index, startTime = 0) {
   if (index < 0 || index >= mediaQueue.length) return;
-  if (!(await ensurePendingMediaUpdateApproved(index))) return;
   const item = mediaQueue[index];
+  if (!(await ensurePendingMediaUpdateApproved(index, item))) return;
+  index = mediaQueue.indexOf(item);
+  if (index < 0) {
+    showGnomeToast("The selected schedule item is no longer available");
+    return false;
+  }
   const isCurrentLiveItem =
     queueIndexIsCurrentLivePresentation(index) ||
     queueIndexMatchesCurrentLiveOutput(index);

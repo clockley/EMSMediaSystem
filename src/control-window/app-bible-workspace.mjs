@@ -14,6 +14,7 @@ the Free Software Foundation, either version 3 of the License, or
  */
 
 import { bibleTextVerseRows } from "../shared/app-bible-reference-utils.mjs";
+import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
 
 import {
   DEFAULT_ITEM_SLIDE_TRANSITION,
@@ -4411,12 +4412,15 @@ async function slipstreamBiblePresentation(entry, expectedRevision = null) {
     "bible",
     buildBibleTextMessage(resolvedEntry, { look: SCRIPTURE_LOOK_FULLSCREEN }),
   );
-  const slipstreamSuccess = await invoke("slipstream-media-window", {
-    isText: true,
-    mediaFile: bibleQueuePath(resolvedEntry.reference, resolvedEntry.version),
-    textPayload,
-  });
-  if (!slipstreamSuccess) return false;
+  const activation = await activateAudienceSlipstream(
+    (activationPayload) => invoke("slipstream-media-window", activationPayload),
+    {
+      isText: true,
+      mediaFile: bibleQueuePath(resolvedEntry.reference, resolvedEntry.version),
+      textPayload,
+    },
+  );
+  if (!activation.ok) return false;
   if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
     return false;
   }
@@ -5635,16 +5639,26 @@ async function splitScheduledBiblePassageIntoVerses(index) {
   }
   if (splitEntries.length <= 1) return false;
 
+  const currentIndex = mediaQueue.indexOf(originalItem);
+  if (currentIndex < 0) {
+    showGnomeToast("The selected Scripture item is no longer available");
+    return false;
+  }
+  if (currentIndex === currentQueueIndex && isQueuePresentationActive()) {
+    showGnomeToast("Stop the presentation to split the current item");
+    return false;
+  }
+
   invalidateQueueUndoToastAfterMutation();
-  mediaQueue.splice(index, 1, ...splitEntries);
-  shiftQueueIndexesForInsertion(index + 1, splitEntries.length - 1);
+  mediaQueue.splice(currentIndex, 1, ...splitEntries);
+  shiftQueueIndexesForInsertion(currentIndex + 1, splitEntries.length - 1);
   hideBibleSlideNavigator();
-  setSelectedQueueAnchor(index);
+  setSelectedQueueAnchor(currentIndex);
   renderQueue();
   saveMediaFile();
-  const firstItem = mediaQueue[index];
+  const firstItem = mediaQueue[currentIndex];
   if (firstItem && isQueueItemBible(firstItem)) {
-    await loadQueueItemIntoPreviewCue(index);
+    await loadQueueItemIntoPreviewCue(currentIndex);
   }
   showGnomeToast(`Split into ${splitEntries.length} Bible verses`);
   return true;

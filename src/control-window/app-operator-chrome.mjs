@@ -123,6 +123,7 @@ import {
   liveMediaWindowEpoch,
   loadLocalMediaHandler,
   loadQueueItemIntoControlWindow,
+  loadQueueItemIntoPreviewCue,
   loadedmetadataHandler,
   localTimeStampUpdateIsRunning,
   loopEnabledForLiveMedia,
@@ -1581,6 +1582,17 @@ function installIPCHandler() {
       showGnomeToast("Theme saved, but the live output could not be updated");
     });
   });
+  const refreshThemedQueueItemPreview = (index, item) => {
+    if (index === previewCueIndex) {
+      return loadQueueItemIntoPreviewCue(index);
+    }
+    if (index === currentQueueIndex) {
+      return loadQueueItemIntoControlWindow(item, {
+        previewLoadToken: nextPreviewLoadToken(),
+      });
+    }
+    return Promise.resolve();
+  };
   on("theme-applied-to-item", (_event, payload) => {
     const index = payload?.queueIndex;
     if (!queueIndexInRange(index) || !payload?.theme) return;
@@ -1593,9 +1605,7 @@ function installIPCHandler() {
     if (isQueueItemBible(item) && item.bible) item.bible.itemTheme = item.itemTheme;
     renderQueue();
     scheduleAutosaveProjectState();
-    if (index === previewCueIndex || index === currentQueueIndex) {
-      void loadQueueItemIntoControlWindow(item, { previewLoadToken: nextPreviewLoadToken() }).catch(console.error);
-    }
+    void refreshThemedQueueItemPreview(index, item).catch(console.error);
     showGnomeToast(`Applied “${payload.theme.name}” to ${item.name || "scheduled item"}`);
   });
   on("theme-cleared-from-item", (_event, payload) => {
@@ -1605,6 +1615,7 @@ function installIPCHandler() {
     if (mediaQueue[index].bible) delete mediaQueue[index].bible.itemTheme;
     renderQueue();
     scheduleAutosaveProjectState();
+    void refreshThemedQueueItemPreview(index, mediaQueue[index]).catch(console.error);
     showGnomeToast(`${mediaQueue[index].name || "Scheduled item"} now uses the project theme`);
   });
   on("songs-database-cleared", () => {
@@ -2036,7 +2047,7 @@ function setSBFormMediaPlayer() {
     }
   }
 
-  if (isImgFile && !document.querySelector("img")) {
+  if (isImgFile && !document.querySelector(".video-wrapper img#preview")) {
     const previewItem = currentQueuePreviewItem();
     if (queueItemOwnsControlPreview(previewItem)) {
       void syncQueuePreviewMediaElements(previewItem);

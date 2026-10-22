@@ -143,6 +143,7 @@ import {
   playAudioOnlyLocally,
   playLivePreviewMirrorSafely,
   playVideoSafely,
+  playbackStateSyncGeneration,
   playingMediaAudioOnly,
   pptxRegex,
   pptxStartSlideForItem,
@@ -238,10 +239,8 @@ import {
   waitForTextFonts,
 } from "./app-renderer.mjs";
 import { hideMediaLibraryWorkspaceForSchedulePreview } from "./app-media-library-workspace.mjs";
-import {
-  audiencePlaybackCoordinator,
-  createAudiencePlaybackId,
-} from "../shared/playback-transition-coordinator.mjs";
+import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
+import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
 
 function isAudioPreviewCueActive() {
   const cue = currentPreviewCue();
@@ -275,6 +274,17 @@ function currentPreviewCue() {
     item,
     startTime: queueItemCueStartTime(item),
   };
+}
+
+/**
+ * Return the cue's current index only while this asynchronous load still owns
+ * the same queue item. Queue indexes are allowed to change while paths,
+ * metadata, Scripture, or song documents are resolving.
+ */
+function previewCueIndexForItem(item, loadToken) {
+  if (!isCurrentPreviewLoad(loadToken)) return -1;
+  if (previewCueIndex < 0 || previewCueIndex >= mediaQueue.length) return -1;
+  return mediaQueue[previewCueIndex] === item ? previewCueIndex : -1;
 }
 
 function updatePreviewCueUI() {
@@ -426,105 +436,121 @@ async function loadVideoQueueItemIntoPreviewCueOverlay(index, item, startTime, l
   const token = Number.isFinite(loadToken) ? loadToken : nextPreviewLoadToken();
   beginPreviewTransportLoad(token);
   try {
-  const el = ensurePreviewCueVideoElement();
-  if (!el) return;
-  setSharedRendererState({ previewCueVideoIndex: index });
-  hidePptxPreviewIfNeeded({ restoreVideoPreview: true });
+    const currentCueIndex = () => previewCueIndexForItem(item, token);
+    const syncCueIndex = () => {
+      const resolvedIndex = currentCueIndex();
+      if (resolvedIndex >= 0 && previewCueVideoIndex !== resolvedIndex) {
+        setSharedRendererState({ previewCueVideoIndex: resolvedIndex });
+      }
+      return resolvedIndex;
+    };
+    const abandonOwnedLoad = () => {
+      if (isCurrentPreviewLoad(token)) clearVideoPreviewCueOverlay();
+    };
 
-  // When an image is the current live output, img#preview sits after
-  // #previewCue in the DOM and paints over it. Hide it so the operator
-  // can see the video cue overlay. Restored in clearVideoPreviewCueOverlay.
-  const liveImg = document.querySelector("img#preview");
-  if (liveImg) liveImg.style.display = "none";
+    const el = ensurePreviewCueVideoElement();
+    if (!el || syncCueIndex() < 0) return;
+    hidePptxPreviewIfNeeded({ restoreVideoPreview: true });
 
-  const resolvedPath = await resolveQueueItemMediaPath(item);
-  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
-    if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
-    return;
-  }
-  const itemIsNetworkVideo =
-    isNetworkStreamSource(item?.path) || isNetworkStreamSource(resolvedPath);
+    // When an image is the current live output, img#preview sits after
+    // #previewCue in the DOM and paints over it. Hide it so the operator
+    // can see the video cue overlay. Restored in clearVideoPreviewCueOverlay.
+    const liveImg = document.querySelector("img#preview");
+    if (liveImg) liveImg.style.display = "none";
 
-  try {
-    el.pause();
-  } catch {
-    /* ignore */
-  }
-  teardownNetworkPreviewCueStreamingPlayers();
-  if (itemIsNetworkVideo) setNetworkPreviewCueAudio(el);
-  else setPreviewCueVideoLocalAudio(el);
-  el.loop = loopEnabledForQueueItem(item);
-  el.preload = "metadata";
-  el.removeAttribute("src");
-  clearVideoPoster(el);
-  el.load();
-  let networkPreviewLoadStatusToken = 0;
-  if (itemIsNetworkVideo) {
-    setSharedRendererState({ networkPreviewCueSource: item?.path || resolvedPath });
-    networkPreviewLoadStatusToken = beginNetworkPreviewStatus("Connecting to stream");
-    try {
-      const resources = await attachNetworkMediaSourceToElement(el, networkPreviewCueSource, {
-        isCurrent: () => isCurrentPreviewLoad(token) && previewCueIndex === index,
-      });
-      if (resources.cancelled) return;
-      setSharedRendererState({ networkPreviewCueHlsInstance: resources.hlsInstance });
-      setSharedRendererState({ networkPreviewCueDashPlayer: resources.dashPlayer });
-      setSharedRendererState({ networkPreviewCueDashManifestObjectUrl: resources.dashManifestObjectUrl });
-      setSharedRendererState({ networkPreviewCueLiveEdge: resources.liveEdge || networkPreviewSourceHidesScrubber(networkPreviewCueSource) });
-      installNetworkPreviewStatusHandlers(el, resources, networkPreviewLoadStatusToken);
-    } catch (err) {
-      showNetworkPreviewError("The stream could not be loaded.", networkPreviewLoadStatusToken);
-      throw err;
-    }
-  } else {
-    resetNetworkPreviewStatus();
-    const cueUrl = pathToMediaUrl(resolvedPath, queueItemMediaCacheBust(item));
-    void applyVideoPoster(el, resolvedPath);
-    el.src = cueUrl;
-    el.load();
-  }
-  el.hidden = false;
-  setPreviewStackSurface(PREVIEW_SURFACE_CUE_VIDEO);
-  if (itemIsNetworkVideo) setNetworkPreviewCueAudio(el);
-  else setPreviewCueVideoLocalAudio(el);
-
-  await waitForCueVideoMetadata(el, itemIsNetworkVideo);
-  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
-    if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
-    return;
-  }
-
-  const actualStart = await seekMedia(el, startTime);
-  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
-    if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
-    return;
-  }
-
-  if (itemIsNetworkVideo) {
-    await primeNetworkPreviewElement(el, setNetworkPreviewCueAudio, {
-      isCurrent: () => isCurrentPreviewLoad(token) && previewCueIndex === index,
-    });
-    hideNetworkPreviewStatus(networkPreviewLoadStatusToken);
-    if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) {
-      if (previewCueVideoIndex === index) clearVideoPreviewCueOverlay();
+    const resolvedPath = await resolveQueueItemMediaPath(item);
+    if (syncCueIndex() < 0) {
+      abandonOwnedLoad();
       return;
     }
-  }
+    const itemIsNetworkVideo =
+      isNetworkStreamSource(item?.path) || isNetworkStreamSource(resolvedPath);
 
-  setCueStartTime(index, actualStart);
-  if (Number.isFinite(el.duration) && el.duration > 0) {
-    mediaQueue[index].duration = el.duration;
-  }
+    try {
+      el.pause();
+    } catch {
+      /* ignore */
+    }
+    teardownNetworkPreviewCueStreamingPlayers();
+    if (itemIsNetworkVideo) setNetworkPreviewCueAudio(el);
+    else setPreviewCueVideoLocalAudio(el);
+    el.loop = loopEnabledForQueueItem(item);
+    el.preload = "metadata";
+    el.removeAttribute("src");
+    clearVideoPoster(el);
+    el.load();
+    let networkPreviewLoadStatusToken = 0;
+    if (itemIsNetworkVideo) {
+      setSharedRendererState({ networkPreviewCueSource: item?.path || resolvedPath });
+      networkPreviewLoadStatusToken = beginNetworkPreviewStatus("Connecting to stream");
+      try {
+        const resources = await attachNetworkMediaSourceToElement(el, networkPreviewCueSource, {
+          isCurrent: () => currentCueIndex() >= 0,
+        });
+        if (resources.cancelled) return;
+        setSharedRendererState({ networkPreviewCueHlsInstance: resources.hlsInstance });
+        setSharedRendererState({ networkPreviewCueDashPlayer: resources.dashPlayer });
+        setSharedRendererState({ networkPreviewCueDashManifestObjectUrl: resources.dashManifestObjectUrl });
+        setSharedRendererState({ networkPreviewCueLiveEdge: resources.liveEdge || networkPreviewSourceHidesScrubber(networkPreviewCueSource) });
+        installNetworkPreviewStatusHandlers(el, resources, networkPreviewLoadStatusToken);
+      } catch (err) {
+        showNetworkPreviewError("The stream could not be loaded.", networkPreviewLoadStatusToken);
+        throw err;
+      }
+    } else {
+      resetNetworkPreviewStatus();
+      const cueUrl = pathToMediaUrl(resolvedPath, queueItemMediaCacheBust(item));
+      void applyVideoPoster(el, resolvedPath);
+      el.src = cueUrl;
+      el.load();
+    }
+    el.hidden = false;
+    setPreviewStackSurface(PREVIEW_SURFACE_CUE_VIDEO);
+    if (itemIsNetworkVideo) setNetworkPreviewCueAudio(el);
+    else setPreviewCueVideoLocalAudio(el);
 
-  if (timeline && Number.isFinite(el.duration) && el.duration > 0) {
-    timeline.value = (actualStart / el.duration) * 100;
-    if (currentTimeDisplay) paintTransportTimeDisplay(currentTimeDisplay, actualStart);
-    if (durationTimeDisplay) paintTransportTimeDisplay(durationTimeDisplay, el.duration);
-    document
-      .getElementById("customControls")
-      ?.style.setProperty("visibility", "visible");
-  }
-  syncMediaLoopState({ notify: false });
+    await waitForCueVideoMetadata(el, itemIsNetworkVideo);
+    if (syncCueIndex() < 0) {
+      abandonOwnedLoad();
+      return;
+    }
+
+    const actualStart = await seekMedia(el, startTime);
+    if (syncCueIndex() < 0) {
+      abandonOwnedLoad();
+      return;
+    }
+
+    if (itemIsNetworkVideo) {
+      await primeNetworkPreviewElement(el, setNetworkPreviewCueAudio, {
+        isCurrent: () => currentCueIndex() >= 0,
+      });
+      hideNetworkPreviewStatus(networkPreviewLoadStatusToken);
+      if (syncCueIndex() < 0) {
+        abandonOwnedLoad();
+        return;
+      }
+    }
+
+    const committedIndex = syncCueIndex();
+    if (committedIndex < 0) {
+      abandonOwnedLoad();
+      return;
+    }
+    setCueStartTime(committedIndex, actualStart);
+    if (Number.isFinite(el.duration) && el.duration > 0) {
+      mediaQueue[committedIndex].duration = el.duration;
+    }
+
+    if (timeline && Number.isFinite(el.duration) && el.duration > 0) {
+      timeline.value = (actualStart / el.duration) * 100;
+      if (currentTimeDisplay) paintTransportTimeDisplay(currentTimeDisplay, actualStart);
+      if (durationTimeDisplay) paintTransportTimeDisplay(durationTimeDisplay, el.duration);
+      document
+        .getElementById("customControls")
+        ?.style.setProperty("visibility", "visible");
+    }
+    syncMediaLoopState({ notify: false });
   } finally {
     finishPreviewTransportLoad(token);
   }
@@ -636,21 +662,33 @@ async function loadAudioQueueItemIntoPreviewCue(index, item, startTime, loadToke
   audio.loop = loopEnabledForQueueItem(item);
   audio.preload = "metadata";
   const audioUrl = await stagedMediaUrlForItem(item);
-  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+  let committedIndex = previewCueIndexForItem(item, token);
+  if (committedIndex < 0) return;
+  if (previewAudioCueIndex !== committedIndex) {
+    setSharedRendererState({ previewAudioCueIndex: committedIndex });
+  }
   audio.src = audioUrl;
 
   await waitForLoadedMetadata(audio);
-  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+  committedIndex = previewCueIndexForItem(item, token);
+  if (committedIndex < 0) return;
+  if (previewAudioCueIndex !== committedIndex) {
+    setSharedRendererState({ previewAudioCueIndex: committedIndex });
+  }
 
   const duration = Number.isFinite(audio.duration) && audio.duration > 0
     ? audio.duration
     : item.duration || 0;
   const actualStart = await seekMedia(audio, startTime);
-  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+  committedIndex = previewCueIndexForItem(item, token);
+  if (committedIndex < 0) return;
+  if (previewAudioCueIndex !== committedIndex) {
+    setSharedRendererState({ previewAudioCueIndex: committedIndex });
+  }
 
-  setCueStartTime(index, actualStart);
+  setCueStartTime(committedIndex, actualStart);
   if (duration > 0) {
-    mediaQueue[index].duration = duration;
+    mediaQueue[committedIndex].duration = duration;
   }
   if (timeline && duration > 0) {
     timeline.value = (actualStart / duration) * 100;
@@ -750,7 +788,7 @@ async function loadQueueItemIntoPreviewCue(index) {
       preserveLiveVideo: isQueuePresentationActive() && isQueueItemVideo(currentLiveQueueItem()),
       preserveLiveBible: isBiblePresentationActive(),
     });
-    if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+    if (previewCueIndexForItem(item, token) < 0) return;
     syncMediaLoopState({ notify: false });
     updatePreviewCueUI();
     renderQueue();
@@ -764,12 +802,12 @@ async function loadQueueItemIntoPreviewCue(index) {
     setMediaCountdownOverlayVisible(false);
     setMediaCountdownText("");
     const cueBibleEntry = await resolvedBibleEntryForItem(item);
-    if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+    if (previewCueIndexForItem(item, token) < 0) return;
     item.bible = { ...cueBibleEntry };
     const loaded = await loadBibleEntryIntoEditor(cueBibleEntry, {
       previewLoadToken: token,
     });
-    if (!loaded || !isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+    if (!loaded || previewCueIndexForItem(item, token) < 0) return;
     showBibleWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemDeck(item)) {
@@ -780,7 +818,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     setMediaCountdownText("");
 
     const loaded = await loadDeckQueueItemIntoWorkspace(item, token);
-    if (!loaded || !isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+    if (!loaded || previewCueIndexForItem(item, token) < 0) return;
     showSlidesWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemSong(item)) {
@@ -791,7 +829,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     setMediaCountdownText("");
     const loaded = await loadSongItemIntoWorkspace(item, token);
 
-    if (!loaded || !isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+    if (!loaded || previewCueIndexForItem(item, token) < 0) return;
     showSongsWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemImage(item)) {
@@ -810,7 +848,7 @@ async function loadQueueItemIntoPreviewCue(index) {
     const cueEl = ensurePreviewCueVideoElement();
     if (cueEl) {
       const posterUrl = await stagedMediaUrlForItem(item);
-      if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+      if (previewCueIndexForItem(item, token) < 0) return;
       cueEl.poster = posterUrl;
       cueEl.hidden = false;
       setPreviewStackSurface(PREVIEW_SURFACE_CUE_IMAGE);
@@ -856,10 +894,10 @@ async function loadQueueItemIntoPreviewCue(index) {
     setMediaCountdownOverlayVisible(true);
     setMediaCountdownText("");
     await loadVideoQueueItemIntoPreviewCueOverlay(index, item, cueStart, token);
-    if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+    if (previewCueIndexForItem(item, token) < 0) return;
     syncPreviewAudioTrackState();
   }
-  if (!isCurrentPreviewLoad(token) || previewCueIndex !== index) return;
+  if (previewCueIndexForItem(item, token) < 0) return;
   syncMediaLoopState({ notify: false });
   updatePreviewCueUI();
   renderQueue();
@@ -876,6 +914,7 @@ async function takeQueueItemLive(index, startTime = 0, opts = {}) {
     return takeQueueItemLive(next, startTime, opts);
   }
   if (pendingQueueSwitchIndex !== null || queueSlipstreamTransitionInProgress) return;
+  const requestedItem = mediaQueue[index];
   if (
     !opts.skipLogoHoldPrep &&
     isAudienceLogoHoldActive() &&
@@ -884,12 +923,21 @@ async function takeQueueItemLive(index, startTime = 0, opts = {}) {
     await prepareQueueItemUnderLogoHold(index);
     return;
   }
-  if (!(await ensurePendingMediaUpdateApproved(index))) return;
+  if (!(await ensurePendingMediaUpdateApproved(index, requestedItem))) return;
+  index = mediaQueue.indexOf(requestedItem);
+  if (index < 0) {
+    showGnomeToast("The selected schedule item is no longer available");
+    return;
+  }
+  if (!isScheduleItemCurrentlyPlayable(requestedItem)) {
+    showGnomeToast("The selected schedule item is no longer playable");
+    return;
+  }
   setSelectedQueueAnchor(index);
   hideMediaLibraryWorkspaceForSchedulePreview();
   syncPreviewStackSurface();
 
-  const item = mediaQueue[index];
+  const item = requestedItem;
   const safeStart =
     queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
       ? startTime
@@ -1058,7 +1106,10 @@ async function stopQueuePresentationUserClosed() {
 }
 
 function beginLiveMediaWindowEpoch(playbackId) {
-  if (!audiencePlaybackCoordinator.commitStagedPlayback(playbackId)) {
+  if (
+    !audiencePlaybackCoordinator.matchesActivePlayback({ playbackId }) &&
+    !audiencePlaybackCoordinator.commitStagedPlayback(playbackId)
+  ) {
     audiencePlaybackCoordinator.activatePlayback(playbackId);
   }
   setSharedRendererState({ liveMediaWindowEpoch: liveMediaWindowEpoch + (1) });
@@ -1725,7 +1776,6 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
 
   setSharedRendererState({ queueSlipstreamTransitionInProgress: true });
   let startupSyncStarted = false;
-  let stagedPlaybackId = "";
   // Staging the next item rewrites #preview's source and seeks it to the new
   // cue point. Those pause/seek events would otherwise be forwarded to the
   // projection as play-ctl / timeGoto-message commands describing a clip that is
@@ -1876,16 +1926,11 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
     index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
     if (index < 0) return false;
-    const playbackId = createAudiencePlaybackId();
-    slipstreamData.playbackId = playbackId;
-    // The audience renderer emits its first stable playback-state event while
-    // emsApplySlipstream is still running. Stage the identity before invoking
-    // it so that event can take ownership of the selected preview immediately;
-    // commit it only after the renderer confirms activation.
-    stagedPlaybackId = audiencePlaybackCoordinator.stagePlayback(playbackId);
-    const slipstreamResult = await invoke("slipstream-media-window", slipstreamData);
-    const slipstreamSuccess =
-      slipstreamResult === true || slipstreamResult?.ok === true;
+    const slipstreamResult = await activateAudienceSlipstream(
+      (activationPayload) => invoke("slipstream-media-window", activationPayload),
+      slipstreamData,
+    );
+    const slipstreamSuccess = slipstreamResult.ok === true;
     resolveQueuePresentationVideo();
     if (!slipstreamSuccess) {
       if (startupSyncStarted) finishProjectionPlaybackStartupSync();
@@ -1916,7 +1961,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     // A new clip is now live: open a fresh end-of-clip epoch so its natural end
     // can be claimed exactly once (and any late end from the clip we just left
     // is ignored).
-    beginLiveMediaWindowEpoch(slipstreamResult?.playbackId || playbackId);
+    beginLiveMediaWindowEpoch(slipstreamResult.playbackId);
     setSharedRendererState({ mediaPlaybackEndedPending: false });
     setSharedRendererState({ currentQueueIndex: index });
     setSelectedQueueAnchor(index);
@@ -1983,7 +2028,6 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     if (startupSyncStarted) finishProjectionPlaybackStartupSync();
     throw err;
   } finally {
-    audiencePlaybackCoordinator.discardStagedPlayback(stagedPlaybackId);
     if (
       !transitionWasSupplied &&
       audiencePlaybackCoordinator.owns(transitionToken) &&
@@ -2073,6 +2117,15 @@ async function handleMediaWindowClosed(event, id) {
     "idx=" + currentQueueIndex,
     "loop=" + loopEnabledForLiveMedia(),
   );
+  // Once the audience window is gone, neither queued playback-state work nor
+  // an activation that was waiting on that renderer may retain ownership.
+  audiencePlaybackCoordinator.deactivatePlayback();
+  audiencePlaybackCoordinator.discardStagedPlayback();
+  setSharedRendererState({
+    playbackStateSyncGeneration: playbackStateSyncGeneration + 1,
+    desiredProjectionPreviewPlayback: "paused",
+    latestExplicitProjectionPauseState: null,
+  });
   resolveQueuePresentationVideo();
   const localVideo = video;
   finishProjectionPlaybackStartupSync();

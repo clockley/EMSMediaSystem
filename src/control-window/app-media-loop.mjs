@@ -21,7 +21,6 @@ import {
   currentProjectGuid,
   currentProjectPath,
   currentQueueIndex,
-  findQueueIndexByPath,
   invoke,
   isActiveMediaWindow,
   isAudioPreviewCueActive,
@@ -39,9 +38,11 @@ import {
   liveAudio,
   liveAudioQueueIndex,
   loadQueueItemIntoControlWindow,
+  loadQueueItemIntoPreviewCue,
   mediaFile,
   mediaQueue,
   mediaWatchSyncTimer,
+  nextPreviewLoadToken,
   normalizeLiveSource,
   normalizeMediaPathForCompare,
   pathToMediaUrl,
@@ -599,23 +600,33 @@ function markQueueItemMediaUpdate(payload) {
   }
 }
 
-async function approvePendingMediaUpdate(index) {
-  if (!queueIndexInRange(index)) return false;
-  const item = mediaQueue[index];
+async function approvePendingMediaUpdate(index, expectedItem = mediaQueue[index]) {
+  const item = expectedItem;
+  if (!item || mediaQueue.indexOf(item) < 0) return false;
   if (!item?.pendingMediaUpdate) return false;
   const payload = mediaPinPayloadForItem(item);
   if (!payload) return false;
   try {
     const pinned = await invoke("approve-media-refresh", payload);
+    const currentIndex = mediaQueue.indexOf(item);
+    if (currentIndex < 0) {
+      showGnomeToast("The selected schedule item is no longer available");
+      return false;
+    }
     if (!applyPinnedMediaSource(item, pinned, { clearPendingMediaUpdate: true })) return false;
     renderQueue();
     scheduleAutosaveProjectState();
     scheduleMediaWatchSync();
-    if (index === currentQueueIndex && isQueuePresentationActive()) {
-      await slipstreamQueueItemAtIndex(index, { startTime: queueItemCueStartTime(item) });
-    } else if (index === previewCueIndex || index === selectedQueueIndexForDisplay()) {
+    if (currentIndex === currentQueueIndex && isQueuePresentationActive()) {
+      await slipstreamQueueItemAtIndex(currentIndex, {
+        startTime: queueItemCueStartTime(item),
+      });
+    } else if (currentIndex === previewCueIndex) {
+      await loadQueueItemIntoPreviewCue(currentIndex);
+    } else if (currentIndex === selectedQueueIndexForDisplay()) {
       await loadQueueItemIntoControlWindow(item, {
         preservePreviewSeek: false,
+        previewLoadToken: nextPreviewLoadToken(),
         startTime: queueItemCueStartTime(item),
       });
     }
@@ -651,9 +662,9 @@ function queueItemNeedsPendingUpdateApproval(item) {
   );
 }
 
-async function ensurePendingMediaUpdateApproved(index) {
-  if (!queueIndexInRange(index)) return false;
-  const item = mediaQueue[index];
+async function ensurePendingMediaUpdateApproved(index, expectedItem = mediaQueue[index]) {
+  const item = expectedItem;
+  if (!item || mediaQueue.indexOf(item) < 0) return false;
   if (!queueItemNeedsPendingUpdateApproval(item)) return true;
   const name = item.name || item.path || "This media item";
   const accepted = await showRendererConfirm(
@@ -664,7 +675,12 @@ async function ensurePendingMediaUpdateApproved(index) {
     },
   );
   if (!accepted) return false;
-  return approvePendingMediaUpdate(index);
+  const currentIndex = mediaQueue.indexOf(item);
+  if (currentIndex < 0) {
+    showGnomeToast("The selected schedule item is no longer available");
+    return false;
+  }
+  return approvePendingMediaUpdate(currentIndex, item);
 }
 
 async function refreshMissingFlagsAndWarn(opts = {}) {
@@ -722,6 +738,7 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
   }
   const missingFiles = [];
   const changedItems = [];
+  const changedItemTargets = [];
   const unverifiableItems = [];
   let baselineStamped = false;
   fileItems.forEach(({ item, index }, i) => {
@@ -755,7 +772,7 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
         delete item.lastPreflightWarningFingerprint;
         baselineStamped = true;
       }
-      changedItems.push({
+      const changedItem = {
         index,
         name: item.name || item.path,
         path: checkedPath,
@@ -767,7 +784,9 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
         canKeepOld,
         stagingTier: liveSource?.stagingTier,
         reason: liveSource?.reason,
-      });
+      };
+      changedItems.push(changedItem);
+      changedItemTargets.push({ changedItem, item });
     } else if (status === "unverifiable") {
       // First sighting with no stored baseline. Adopt the current state as the
       // baseline so future changes are detectable. This does not assert the
@@ -818,13 +837,11 @@ async function refreshMissingFlagsAndWarn(opts = {}) {
         missingItems: missingFiles,
         actionMode,
       });
-      for (const changedItem of changedItems) {
-        const index = queueIndexInRange(changedItem.index)
-          ? changedItem.index
-          : findQueueIndexByPath(changedItem.queuePath || changedItem.path);
+      for (const { changedItem, item } of changedItemTargets) {
+        const index = mediaQueue.indexOf(item);
         if (!queueIndexInRange(index)) continue;
         if (action === "reload" || !changedItem.canKeepOld) {
-          await approvePendingMediaUpdate(index);
+          await approvePendingMediaUpdate(index, item);
           continue;
         }
         // Keep Old from the launch dialog keeps the staged old file active, but

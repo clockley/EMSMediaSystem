@@ -7,6 +7,10 @@ import {
   PlaybackTransitionCoordinator,
   createAudiencePlaybackId,
 } from "../src/shared/playback-transition-coordinator.mjs";
+import {
+  activateAudiencePlayback,
+  activateAudienceSlipstream,
+} from "../src/shared/audience-playback-activation.mjs";
 
 const mediaSource = await readFile(
   new URL("../src/media-window/media.mjs", import.meta.url),
@@ -20,8 +24,16 @@ const controlMediaSource = await readFile(
   new URL("../src/control-window/app-media-runtime.mjs", import.meta.url),
   "utf8",
 );
+const controlRendererSource = await readFile(
+  new URL("../src/control-window/app-renderer.mjs", import.meta.url),
+  "utf8",
+);
 const presentationPlaybackSource = await readFile(
   new URL("../src/control-window/app-presentation-playback.mjs", import.meta.url),
+  "utf8",
+);
+const activationSource = await readFile(
+  new URL("../src/shared/audience-playback-activation.mjs", import.meta.url),
   "utf8",
 );
 
@@ -139,6 +151,97 @@ test("audience playback identities are unique", () => {
   assert.notEqual(createAudiencePlaybackId(), createAudiencePlaybackId());
 });
 
+test("slipstream activation stages, transmits, and commits one playback identity", async () => {
+  const coordinator = new PlaybackTransitionCoordinator();
+  coordinator.activatePlayback("playback-old");
+
+  const result = await activateAudienceSlipstream(
+    async (payload) => {
+      assert.equal(payload.playbackId, "playback-new");
+      assert.equal(payload.mediaFile, "new.mp4");
+      assert.equal(
+        coordinator.matchesExpectedPlayback({ playbackId: payload.playbackId }),
+        true,
+        "renderer state is accepted while IPC activation is pending",
+      );
+      return { ok: true, playbackId: payload.playbackId };
+    },
+    { mediaFile: "new.mp4" },
+    { coordinator, playbackId: "playback-new" },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(coordinator.stagedPlaybackId(), "");
+  assert.equal(coordinator.activePlaybackId(), "playback-new");
+});
+
+test("an obsolete slipstream completion cannot reclaim playback ownership", async () => {
+  const coordinator = new PlaybackTransitionCoordinator();
+  let finishFirst;
+  const firstResponse = new Promise((resolve) => {
+    finishFirst = resolve;
+  });
+  const first = activateAudienceSlipstream(
+    () => firstResponse,
+    { mediaFile: "first.mp4" },
+    { coordinator, playbackId: "playback-first" },
+  );
+
+  const second = await activateAudienceSlipstream(
+    async (payload) => ({ ok: true, playbackId: payload.playbackId }),
+    { mediaFile: "second.mp4" },
+    { coordinator, playbackId: "playback-second" },
+  );
+  finishFirst({ ok: true, playbackId: "playback-first" });
+  const obsolete = await first;
+
+  assert.equal(second.ok, true);
+  assert.equal(obsolete.ok, false);
+  assert.equal(obsolete.reason, "superseded");
+  assert.equal(coordinator.activePlaybackId(), "playback-second");
+});
+
+test("an obsolete fresh-window completion cannot reclaim playback ownership", async () => {
+  const coordinator = new PlaybackTransitionCoordinator();
+  let finishFirst;
+  const firstResponse = new Promise((resolve) => {
+    finishFirst = resolve;
+  });
+  const first = activateAudiencePlayback(
+    () => firstResponse,
+    { coordinator, playbackId: "window-first" },
+  );
+
+  const second = await activateAudiencePlayback(
+    async () => 42,
+    { coordinator, playbackId: "window-second" },
+  );
+  finishFirst(41);
+  const obsolete = await first;
+
+  assert.equal(second.ok, true);
+  assert.equal(second.activation, 42);
+  assert.equal(obsolete.ok, false);
+  assert.equal(obsolete.reason, "superseded");
+  assert.equal(obsolete.activation, 41);
+  assert.equal(coordinator.activePlaybackId(), "window-second");
+});
+
+test("a rejected slipstream restores the previously active playback", async () => {
+  const coordinator = new PlaybackTransitionCoordinator();
+  coordinator.activatePlayback("playback-live");
+
+  const result = await activateAudienceSlipstream(
+    async () => false,
+    { mediaFile: "failed.mp4" },
+    { coordinator, playbackId: "playback-failed" },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(coordinator.stagedPlaybackId(), "");
+  assert.equal(coordinator.activePlaybackId(), "playback-live");
+});
+
 test("a rejected media play is returned as an activation failure", async () => {
   const reported = [];
   const context = vm.createContext({
@@ -254,9 +357,19 @@ test("control preview accepts the selected playback state during audience activa
   const createStart = controlMediaSource.indexOf("async function createMediaWindow(");
   const createEnd = controlMediaSource.indexOf("\nexport {", createStart);
   const createWindow = controlMediaSource.slice(createStart, createEnd);
-  const createStage = createWindow.indexOf("stagePlayback(playbackId)");
+  const createActivation = createWindow.indexOf("activateAudiencePlayback(");
   const createInvoke = createWindow.indexOf('invoke("create-media-window"');
-  assert.ok(createStage >= 0 && createStage < createInvoke);
+  assert.ok(createActivation >= 0 && createActivation < createInvoke);
+  assert.doesNotMatch(createWindow, /stagePlayback\(playbackId\)/);
+  assert.match(createWindow, /const startupSyncGeneration = startupSyncNeeded/);
+  assert.match(
+    createWindow,
+    /finishProjectionPlaybackStartupSync\(startupSyncGeneration\)/,
+  );
+  assert.match(
+    controlRendererSource,
+    /generation !== projectionPlaybackStartupGeneration/,
+  );
 
   const slipstreamStart = presentationPlaybackSource.indexOf(
     "async function slipstreamQueueItemAtIndex(",
@@ -266,9 +379,14 @@ test("control preview accepts the selected playback state during audience activa
     slipstreamStart,
   );
   const slipstream = presentationPlaybackSource.slice(slipstreamStart, slipstreamEnd);
-  const slipstreamStage = slipstream.indexOf("stagePlayback(playbackId)");
-  const slipstreamInvoke = slipstream.indexOf('invoke("slipstream-media-window"');
+  assert.match(slipstream, /activateAudienceSlipstream\(/);
+  const slipstreamStage = activationSource.indexOf("stagePlayback(normalizedPlaybackId)");
+  const slipstreamInvoke = activationSource.indexOf("await invokeActivation(");
+  const slipstreamCommit = activationSource.indexOf(
+    "commitStagedPlayback(normalizedPlaybackId)",
+  );
   assert.ok(slipstreamStage >= 0 && slipstreamStage < slipstreamInvoke);
+  assert.ok(slipstreamInvoke < slipstreamCommit);
 
   const automaticStart = presentationPlaybackSource.indexOf(
     "async function trySlipstreamNextQueueItem(",
@@ -289,4 +407,21 @@ test("control preview accepts the selected playback state during audience activa
 
   assert.match(controlMediaSource, /matchesExpectedPlayback\(playbackState\)/);
   assert.match(controlMediaSource, /matchesStagedPlayback\(playbackState\)/);
+});
+
+test("closing the audience output invalidates playback ownership and in-flight sync", () => {
+  const closeStart = presentationPlaybackSource.indexOf(
+    "async function handleMediaWindowClosed(",
+  );
+  const closeEnd = presentationPlaybackSource.indexOf("\nexport {", closeStart);
+  const closeHandler = presentationPlaybackSource.slice(closeStart, closeEnd);
+
+  assert.match(closeHandler, /audiencePlaybackCoordinator\.deactivatePlayback\(\)/);
+  assert.match(closeHandler, /audiencePlaybackCoordinator\.discardStagedPlayback\(\)/);
+  assert.match(
+    closeHandler,
+    /playbackStateSyncGeneration:\s*playbackStateSyncGeneration \+ 1/,
+  );
+  assert.match(closeHandler, /desiredProjectionPreviewPlayback:\s*"paused"/);
+  assert.match(closeHandler, /latestExplicitProjectionPauseState:\s*null/);
 });

@@ -3570,16 +3570,19 @@ async function slipstreamSongTextToOutput(item) {
   const presentation = resolvedSongPresentation(sourceItem);
   if (!presentation?.message) return false;
   const transition = slideTransitionPayloadForQueueItem(item);
-  const switched = await invoke("slipstream-media-window", {
-    isText: true,
-    mediaFile: item?.path || "",
-    textPayload: audienceTextMessageForSend("song", {
-      ...presentation.message,
+  const activation = await activateAudienceSlipstream(
+    (activationPayload) => invoke("slipstream-media-window", activationPayload),
+    {
+      isText: true,
+      mediaFile: item?.path || "",
+      textPayload: audienceTextMessageForSend("song", {
+        ...presentation.message,
+        transition,
+      }),
       transition,
-    }),
-    transition,
-  });
-  if (!switched) return false;
+    },
+  );
+  if (!activation.ok) return false;
   return sendSongTextToOutput(item);
 }
 
@@ -8642,3 +8645,4 @@ import {
   userStopPresentationPending,
   waitForTextFonts,
 } from "./app-renderer.mjs";
+import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";

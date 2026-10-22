@@ -1381,6 +1381,7 @@ function endPreviewForwardingSuppression() {
   suppressPreviewForwarding = previewForwardingSuppressionDepth > 0;
 }
 let projectionPlaybackStartupPending = false;
+let projectionPlaybackStartupGeneration = 0;
 let playbackStateSyncGeneration = 0;
 let desiredProjectionPreviewPlayback = null;
 let latestExplicitProjectionPauseState = null;
@@ -1465,11 +1466,20 @@ function restoreLivePreviewMirrorMuteState(mediaEl = video) {
 }
 
 function beginProjectionPlaybackStartupSync() {
+  projectionPlaybackStartupGeneration += 1;
   projectionPlaybackStartupPending = true;
+  return projectionPlaybackStartupGeneration;
 }
 
-function finishProjectionPlaybackStartupSync() {
+function finishProjectionPlaybackStartupSync(generation = null) {
+  if (
+    Number.isInteger(generation) &&
+    generation !== projectionPlaybackStartupGeneration
+  ) {
+    return false;
+  }
   projectionPlaybackStartupPending = false;
+  return true;
 }
 
 async function playVideoSafely(mediaEl, context = "", options = {}) {
@@ -3109,7 +3119,12 @@ async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
     return switchQueueItemLiveWithConfirmation(next, startTime);
   }
   const item = mediaQueue[index];
-  if (!(await ensurePendingMediaUpdateApproved(index))) return;
+  if (!(await ensurePendingMediaUpdateApproved(index, item))) return;
+  index = mediaQueue.indexOf(item);
+  if (index < 0) {
+    showGnomeToast("The selected schedule item is no longer available");
+    return;
+  }
   if (queueIndexIsCurrentLivePresentation(index) || queueIndexMatchesCurrentLiveOutput(index)) {
     await restorePreviewToLiveOutput(index);
     return;
@@ -3127,12 +3142,17 @@ async function switchQueueItemLiveWithConfirmation(index, startTime = 0) {
   const itemStart =
     queueItemSupportsCueStartTime(item) && Number.isFinite(startTime) && startTime > 0
       ? startTime
-      : queueItemCueStartTime(mediaQueue[index]);
+      : queueItemCueStartTime(item);
   if (!presentationActive) {
     return takeQueueItemLive(index, itemStart);
   }
   if (!(await confirmLiveSwitchAccepted(item))) return;
 
+  index = mediaQueue.indexOf(item);
+  if (index < 0) {
+    showGnomeToast("The selected schedule item is no longer available");
+    return;
+  }
   await takeQueueItemLive(index, itemStart);
 }
 
