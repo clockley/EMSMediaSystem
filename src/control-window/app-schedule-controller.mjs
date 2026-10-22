@@ -1123,7 +1123,11 @@ function removeFromQueue(index) {
       currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
         ? currentQueueIndex
         : 0;
-    void loadQueueItemIntoControlWindow(mediaQueue[previewIndex]).catch(
+    const previewItem = mediaQueue[previewIndex];
+    const loadToken = nextPreviewLoadToken();
+    void loadQueueItemIntoControlWindow(previewItem, {
+      previewLoadToken: loadToken,
+    }).catch(
       (err) => console.error(err),
     );
   }

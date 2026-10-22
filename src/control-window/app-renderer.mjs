@@ -2741,9 +2741,16 @@ async function resumeQueuePresentationAtTime(seekTime) {
   const localVideo = video;
 
   mediaPlaybackEndedPending = false;
+  const previewLoadToken = nextPreviewLoadToken();
   await loadQueueItemIntoControlWindow(item, {
     preservePreviewSeek: false,
+    previewLoadToken,
   });
+  if (
+    !isCurrentPreviewLoad(previewLoadToken) ||
+    !queueIndexInRange(currentQueueIndex) ||
+    mediaQueue[currentQueueIndex] !== item
+  ) return false;
   renderQueue();
 
   isQueuePlaying = true;
@@ -2766,7 +2773,7 @@ async function resumeQueuePresentationAtTime(seekTime) {
       localVideo.removeAttribute("src");
       localVideo.load();
     }
-    return;
+    return true;
   }
 
   const live = queueItemIsLiveEdgeStream(item);
@@ -2799,6 +2806,7 @@ async function resumeQueuePresentationAtTime(seekTime) {
     seekOnly: !live,
     startTime: live ? 0 : validMediaStartTime(seekTime),
   });
+  return true;
 }
 
 async function restoreQueueClearUndoSnapshot() {
@@ -2888,9 +2896,11 @@ async function restoreQueueClearUndoSnapshot() {
     currentQueueIndex >= 0 &&
     !isPlaying
   ) {
-    void loadQueueItemIntoControlWindow(
-      mediaQueue[currentQueueIndex],
-    ).catch((err) => console.error(err));
+    const previewItem = mediaQueue[currentQueueIndex];
+    const previewLoadToken = nextPreviewLoadToken();
+    void loadQueueItemIntoControlWindow(previewItem, {
+      previewLoadToken,
+    }).catch((err) => console.error(err));
   }
 }
 
@@ -3187,12 +3197,17 @@ async function onQueueItemActivate(index) {
     currentQueueIndex = activateIndex;
     renderQueue();
     const token = nextPreviewLoadToken();
-    const previewStartTime = queueItemCueStartTime(mediaQueue[activateIndex]);
-    await loadQueueItemIntoControlWindow(mediaQueue[activateIndex], {
+    const previewStartTime = queueItemCueStartTime(item);
+    await loadQueueItemIntoControlWindow(item, {
       previewLoadToken: token,
       startTime: previewStartTime,
     });
-    if (!isCurrentPreviewLoad(token) || currentQueueIndex !== activateIndex) {
+    if (
+      !isCurrentPreviewLoad(token) ||
+      mediaQueue.indexOf(item) < 0 ||
+      !queueIndexInRange(currentQueueIndex) ||
+      mediaQueue[currentQueueIndex] !== item
+    ) {
       return;
     }
     renderQueue();
@@ -3256,10 +3271,17 @@ async function pauseQueuePresentationAtBoundary(index) {
       syncMediaLoopState({ notify: false });
     }
     const item = mediaQueue[index];
+    const previewLoadToken = nextPreviewLoadToken();
     await loadQueueItemIntoControlWindow(item, {
       preservePreviewSeek: false,
+      previewLoadToken,
       startTime: queueItemCueStartTime(item),
     });
+    if (
+      !isCurrentPreviewLoad(previewLoadToken) ||
+      !queueIndexInRange(currentQueueIndex) ||
+      mediaQueue[currentQueueIndex] !== item
+    ) return;
   } else if (queueIndexInRange(currentQueueIndex)) {
     // End of queue: don't wrap or jump back to the top. Keep the last played
     // item highlighted (matching EasyWorship/ProPresenter) instead of

@@ -2402,6 +2402,9 @@ async function createMediaWindow(options) {
   if (isTextItem) {
     window.setTimeout(() => {
       void (async () => {
+        if (!audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })) {
+          return;
+        }
         if (
           Number.isFinite(options?.presentationRevision) &&
           !scripturePresentation.isCurrentRevision(options.presentationRevision)
@@ -2411,14 +2414,26 @@ async function createMediaWindow(options) {
         const queueItem = textItem || mediaQueue[currentQueueIndex];
         if (isQueueItemSong(queueItem)) {
           const sent = await sendSongTextToOutput(queueItem);
-          if (!sent) showGnomeToast("Could not display the scheduled song");
+          if (
+            !sent &&
+            audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })
+          ) {
+            showGnomeToast("Could not display the scheduled song");
+          }
         } else {
           const entry = resolvedBibleTextEntry;
           if (!entry) {
             showGnomeToast("Could not load the scheduled Scripture text");
             return;
           }
-          await sendBibleTextToOutput(entry, options?.presentationRevision ?? null);
+          await sendBibleTextToOutput(
+            entry,
+            options?.presentationRevision ?? null,
+            { expectedPlaybackId: playbackId },
+          );
+        }
+        if (!audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })) {
+          return;
         }
         syncAudienceOutputHoldAfterPresentationStart();
       })().catch(console.error);
@@ -2429,7 +2444,10 @@ async function createMediaWindow(options) {
   syncAudienceOutputHoldAfterPresentationStart();
   if (isPptxFile) {
     setTimeout(() => {
-      sendPptxSlideToMediaWindow(pptxStartSlide);
+      if (!audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })) {
+        return;
+      }
+      sendPptxSlideToMediaWindow(pptxStartSlide, playbackId);
     }, 800);
   }
 

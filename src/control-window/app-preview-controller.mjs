@@ -11,6 +11,8 @@ the Free Software Foundation, either version 3 of the License, or
  * PPTX preview, slide navigation, and PowerPoint thumbnail chrome.
  */
 
+import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
+
 import {
   PPTX_SIDEBAR_DEFAULT_WIDTH,
   PPTX_SIDEBAR_MAX_WIDTH,
@@ -19,6 +21,7 @@ import {
   PREVIEW_SURFACE_LIVE,
   PREVIEW_SURFACE_PPTX,
   activeMediaWindowContentType,
+  activeResolvedMediaFile,
   clearVideoPreviewCueOverlay,
   clampPptxSlideIndexValue,
   currentLiveQueueItem,
@@ -872,7 +875,10 @@ async function showPptxSlide(index) {
   return true;
 }
 
-function sendPptxSlideToMediaWindow(slideIndex) {
+function sendPptxSlideToMediaWindow(
+  slideIndex,
+  playbackId = audiencePlaybackCoordinator.activePlaybackId(),
+) {
   const livePptxItem =
     isQueuePlaying &&
     currentQueueIndex >= 0 &&
@@ -880,9 +886,21 @@ function sendPptxSlideToMediaWindow(slideIndex) {
     isQueueItemPptx(mediaQueue[currentQueueIndex])
       ? mediaQueue[currentQueueIndex]
       : null;
+  const livePptxPath = livePptxItem?.path || mediaFile || "";
+  if (
+    !pptxFilePath ||
+    !livePptxPath ||
+    normalizeMediaPathForCompare(pptxFilePath) !==
+      normalizeMediaPathForCompare(livePptxPath)
+  ) {
+    return false;
+  }
   send("pptx-goto-slide", {
     slideIndex,
-    filePath: pptxFilePath,
+    // The audience window owns the resolved/staged path, which may differ
+    // from the project path used by the operator preview.
+    filePath: activeResolvedMediaFile || livePptxPath,
+    playbackId: String(playbackId || ""),
     transition: livePptxItem ? slideTransitionPayloadForQueueItem(livePptxItem) : undefined,
   });
   const nextSlide =
@@ -896,6 +914,7 @@ function sendPptxSlideToMediaWindow(slideIndex) {
     serviceItem: queueItemStageLabel(livePptxItem) || "",
   } });
   void sendCachedStageContent().catch(() => {});
+  return true;
 }
 
 function pptxStartSlideForItem(item) {

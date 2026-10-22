@@ -39,6 +39,26 @@ const renderer = await readFile(
   new URL("../src/control-window/app-renderer.mjs", import.meta.url),
   "utf8",
 );
+const projectSession = await readFile(
+  new URL("../src/control-window/app-project-session.mjs", import.meta.url),
+  "utf8",
+);
+const scheduleController = await readFile(
+  new URL("../src/control-window/app-schedule-controller.mjs", import.meta.url),
+  "utf8",
+);
+const previewController = await readFile(
+  new URL("../src/control-window/app-preview-controller.mjs", import.meta.url),
+  "utf8",
+);
+const liveOutputs = await readFile(
+  new URL("../src/control-window/app-live-outputs.mjs", import.meta.url),
+  "utf8",
+);
+const mediaWindow = await readFile(
+  new URL("../src/media-window/media.mjs", import.meta.url),
+  "utf8",
+);
 
 function functionSource(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -232,4 +252,140 @@ test("staged preview restore cannot overwrite a newer selected item", () => {
   );
   assert.match(sync, /mediaQueue\.indexOf\(previewItem\)/);
   assert.match(sync, /previewItem,/);
+});
+
+test("missing-media relinking follows each original item through queue edits", () => {
+  const relink = functionSource(
+    projectSession,
+    "async function relinkMissingFilesDialog(",
+    "async function openProjectDialog(",
+  );
+
+  assert.match(relink, /missingItemTargets = new Map/);
+  assert.match(relink, /const item = missingItemTargets\.get\(match\.index\)/);
+  assert.match(relink, /const currentIndex = mediaQueue\.indexOf\(item\)/);
+  assert.match(relink, /pinQueueMediaSources\(relinkedItems/);
+  assert.doesNotMatch(relink, /mediaQueue\[match\.index\]/);
+});
+
+test("scheduled song saves retain the edited queue item instead of its old index", () => {
+  const save = functionSource(
+    songWorkspace,
+    "async function saveCurrentDeck(",
+    "function resetCurrentSongToThemeDefault(",
+  );
+
+  assert.match(save, /const previous = currentSongThemeEditingContext\.queueItem/);
+  assert.match(save, /const index = mediaQueue\.indexOf\(previous\)/);
+  assert.match(save, /Object\.assign\(previous, updated\)/);
+  assert.match(save, /currentSongThemeEditingContext\.queueItem = previous/);
+  assert.doesNotMatch(save, /currentSongThemeEditingContext\.queueIndex/);
+  assert.match(songWorkspace, /queueItem: currentSongQueueItem/);
+});
+
+test("next scheduled Scripture resolves and takes the same item after reordering", () => {
+  const advance = functionSource(
+    bibleWorkspace,
+    "async function advanceToNextScheduledBibleText(",
+    "async function advanceBibleLowerThirdCursor(",
+  );
+
+  const lookup = advance.indexOf("await resolvedBibleEntryForItem(nextItem");
+  const currentLookup = advance.indexOf("mediaQueue.indexOf(nextItem)", lookup);
+  assert.ok(lookup >= 0 && currentLookup > lookup);
+  assert.match(advance, /Object\.assign\(nextItem/);
+  assert.match(advance, /switchQueueItemLiveWithConfirmation\(currentNextIndex\)/);
+  assert.doesNotMatch(advance, /mediaQueue\[nextIndex\] =/);
+});
+
+test("every deferred main-preview load has token and item ownership", () => {
+  const loader = functionSource(
+    presentationPlayback,
+    "async function loadQueueItemIntoControlWindow(",
+    "async function playCurrentQueueItem(",
+  );
+  const remove = functionSource(
+    scheduleController,
+    "function removeFromQueue(",
+    "function setQueueItemAutoAdvance(",
+  );
+  const undo = functionSource(
+    renderer,
+    "async function restoreQueueClearUndoSnapshot(",
+    "async function openThemeManagerForQueueItem(",
+  );
+  const boundary = functionSource(
+    renderer,
+    "async function pauseQueuePresentationAtBoundary(",
+    "function updateQueueFileLabel(",
+  );
+
+  assert.match(loader, /if \(!previewRequestStillOwnsMainSurface\(\)\) return false;/);
+  assert.match(loader, /mediaQueue\[previewCueIndex\] === item/);
+  assert.doesNotMatch(loader, /!activePresentationOwnsPreviewAudio\(\)\) return true/);
+  assert.match(remove, /previewLoadToken: loadToken/);
+  assert.match(undo, /previewLoadToken,\s*\}/);
+  assert.match(boundary, /isCurrentPreviewLoad\(previewLoadToken\)/);
+  assert.match(boundary, /mediaQueue\[currentQueueIndex\] !== item/);
+});
+
+test("cue restoration cannot commit after a newer cue selection", () => {
+  const restore = functionSource(
+    presentationPlayback,
+    "async function restorePreviewCueAfterPresentationStopped(",
+    "async function loadAudioQueueItemIntoPreviewCue(",
+  );
+
+  assert.match(restore, /const token = nextPreviewLoadToken\(\)/);
+  assert.match(restore, /previewCueIndexForItem\(cue\.item, token\)/);
+  assert.match(restore, /previewLoadToken: token/);
+  assert.match(restore, /const posterUrl = await stagedMediaUrlForItem/);
+  assert.ok(
+    restore.indexOf("if (currentCueIndex() < 0)", restore.indexOf("const posterUrl")) <
+      restore.indexOf("cueEl.poster = posterUrl"),
+  );
+});
+
+test("deferred audience commands are scoped to their playback identity", () => {
+  const createWindow = functionSource(
+    mediaRuntime,
+    "async function createMediaWindow(",
+    "\nexport {",
+  );
+  const songSend = functionSource(
+    songWorkspace,
+    "async function sendSongTextToOutput(",
+    "async function slipstreamSongTextToOutput(",
+  );
+  const pptxSend = functionSource(
+    previewController,
+    "function sendPptxSlideToMediaWindow(",
+    "function pptxStartSlideForItem(",
+  );
+
+  assert.match(createWindow, /matchesActivePlayback\(\{ playbackId \}\)/);
+  assert.match(createWindow, /sendPptxSlideToMediaWindow\(pptxStartSlide, playbackId\)/);
+  assert.match(songSend, /expectedPlaybackId/);
+  assert.match(songSend, /matchesActivePlayback/);
+  assert.match(liveOutputs, /playbackId: String\(options\.expectedPlaybackId\)/);
+  assert.match(pptxSend, /playbackId: String\(playbackId \|\| ""\)/);
+  assert.match(pptxSend, /normalizeMediaPathForCompare\(pptxFilePath\)/);
+  assert.match(pptxSend, /filePath: activeResolvedMediaFile \|\| livePptxPath/);
+  assert.match(mediaWindow, /message\.playbackId !== audiencePlaybackId/);
+  assert.match(mediaWindow, /data\.playbackId === audiencePlaybackId/);
+  assert.match(mediaWindow, /data\.filePath === mediaFile/);
+});
+
+test("Bible editor commits retain the previewed queue item across awaits", () => {
+  const sync = functionSource(
+    bibleWorkspace,
+    "async function syncBibleDesignerStateToPreviewedQueueItem(",
+    "async function applyBibleBackgroundToAllProjectText(",
+  );
+
+  assert.match(sync, /const targetItem = mediaQueue\[targetIndex\]/);
+  assert.match(sync, /mediaQueue\.indexOf\(targetItem\)/);
+  assert.match(sync, /bibleEntryMatchesQueueItem\(entry\.bible, targetItem\)/);
+  assert.match(sync, /Object\.assign\(targetItem/);
+  assert.doesNotMatch(sync, /mediaQueue\[targetIndex\] =/);
 });

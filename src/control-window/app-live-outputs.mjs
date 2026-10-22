@@ -230,7 +230,13 @@ function sendAudienceTextMessage(type, message, options = {}) {
   if (remember) {
     rememberAudienceTextMessage(type, themedMessage);
   }
-  send("update-text", audienceTextMessageForSend(type, themedMessage, options));
+  const outgoingMessage = audienceTextMessageForSend(type, themedMessage, options);
+  send(
+    "update-text",
+    options.expectedPlaybackId
+      ? { ...outgoingMessage, playbackId: String(options.expectedPlaybackId) }
+      : outgoingMessage,
+  );
   void syncStageContentFromAudienceMessage(type, themedMessage);
   if (clearToggle && !applyClearState) {
     setSharedRendererState({ liveTextClearActive: false });

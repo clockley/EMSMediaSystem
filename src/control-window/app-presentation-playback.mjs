@@ -581,6 +581,8 @@ function installPreviewCueVideoHandlers(el) {
 async function restorePreviewCueAfterPresentationStopped() {
   const cue = currentPreviewCue();
   if (!cue || currentMode !== MEDIAPLAYER) return false;
+  const token = nextPreviewLoadToken();
+  const currentCueIndex = () => previewCueIndexForItem(cue.item, token);
 
   setSharedRendererState({ mediaFile: cue.item.path });
   mediaPlayerInputState.filePaths = [mediaFile];
@@ -589,31 +591,45 @@ async function restorePreviewCueAfterPresentationStopped() {
   if (
     await restoreWorkspacePreviewForQueueItem(cue.item, {
       preserveCue: true,
+      previewLoadToken: token,
       startTime: cue.startTime,
     })
   ) {
+    if (currentCueIndex() < 0) return true;
     syncPreviewMediaAfterPresentationStateChange();
     return true;
   }
+  if (currentCueIndex() < 0) return true;
 
   if (isQueueItemPptx(cue.item)) {
     await loadPptxPreview(cue.item.path, {
       startSlide: pptxStartSlideForItem(cue.item),
     });
+    if (currentCueIndex() < 0) return true;
   } else if (isQueueItemBible(cue.item)) {
     stopPreviewAudioCue();
     clearVideoPreviewCueOverlay();
     setMediaCountdownOverlayVisible(false);
     setMediaCountdownText("");
     const cueBibleEntry = await resolvedBibleEntryForItem(cue.item);
-    if (cue.item) cue.item.bible = { ...cueBibleEntry };
-    await loadBibleEntryIntoEditor(cueBibleEntry);
+    if (currentCueIndex() < 0) return true;
+    cue.item.bible = { ...cueBibleEntry };
+    const loaded = await loadBibleEntryIntoEditor(cueBibleEntry, {
+      previewLoadToken: token,
+    });
+    if (!loaded || currentCueIndex() < 0) return true;
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
   } else if (isQueueItemAudio(cue.item)) {
     setMediaCountdownOverlayVisible(true);
     setMediaCountdownText("");
     if (!isAudioPreviewCueActive()) {
-      await loadAudioQueueItemIntoPreviewCue(cue.index, cue.item, cue.startTime);
+      await loadAudioQueueItemIntoPreviewCue(
+        currentCueIndex(),
+        cue.item,
+        cue.startTime,
+        token,
+      );
+      if (currentCueIndex() < 0) return true;
     }
   } else if (isQueueItemImage(cue.item)) {
     restoreNonPptxPreviewSurface({ isImage: true });
@@ -621,7 +637,9 @@ async function restorePreviewCueAfterPresentationStopped() {
     stopPreviewAudioCue();
     const cueEl = ensurePreviewCueVideoElement();
     if (cueEl) {
-      cueEl.poster = await stagedMediaUrlForItem(cue.item);
+      const posterUrl = await stagedMediaUrlForItem(cue.item);
+      if (currentCueIndex() < 0) return true;
+      cueEl.poster = posterUrl;
       cueEl.hidden = false;
     }
     setMediaCountdownOverlayVisible(false);
@@ -632,10 +650,17 @@ async function restorePreviewCueAfterPresentationStopped() {
     setMediaCountdownOverlayVisible(true);
     setMediaCountdownText("");
     if (!isVideoPreviewCueActive()) {
-      await loadVideoQueueItemIntoPreviewCueOverlay(cue.index, cue.item, cue.startTime);
+      await loadVideoQueueItemIntoPreviewCueOverlay(
+        currentCueIndex(),
+        cue.item,
+        cue.startTime,
+        token,
+      );
+      if (currentCueIndex() < 0) return true;
     }
   }
 
+  if (currentCueIndex() < 0) return true;
   updatePreviewCueUI();
   renderQueue();
   syncPreviewMediaAfterPresentationStateChange();
@@ -1133,9 +1158,6 @@ function claimMediaWindowEnd(payload) {
 }
 
 async function loadQueueItemIntoControlWindow(item, opts) {
-  selectNavigationForQueueItem(item);
-  resolveQueuePresentationVideo();
-  let localVideo = video;
   const preservePreviewSeek = !opts || opts.preservePreviewSeek !== false;
   const cueOnly = opts?.cueOnly === true;
   const loadToken = opts?.previewLoadToken;
@@ -1144,9 +1166,18 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) {
       return false;
     }
-    if (presentationTakeover || !activePresentationOwnsPreviewAudio()) return true;
-    return queueIndexInRange(currentQueueIndex) && mediaQueue[currentQueueIndex] === item;
+    if (presentationTakeover) return true;
+    const currentItemOwnsSurface =
+      queueIndexInRange(currentQueueIndex) && mediaQueue[currentQueueIndex] === item;
+    if (activePresentationOwnsPreviewAudio()) return currentItemOwnsSurface;
+    const cueItemOwnsSurface =
+      queueIndexInRange(previewCueIndex) && mediaQueue[previewCueIndex] === item;
+    return currentItemOwnsSurface || cueItemOwnsSurface;
   };
+  if (!previewRequestStillOwnsMainSurface()) return false;
+  selectNavigationForQueueItem(item);
+  resolveQueuePresentationVideo();
+  let localVideo = video;
   const itemIsBible = isQueueItemBible(item);
   const isImgFile = isImg(item.path);
   const itemIsPptx = isQueueItemPptx(item);
@@ -1220,6 +1251,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     setSharedRendererState({ audioOnlyFile: false });
     setSharedRendererState({ playingMediaAudioOnly: false });
     const loaded = await loadDeckQueueItemIntoWorkspace(item, loadToken);
+    if (!previewRequestStillOwnsMainSurface()) return false;
     if (loaded) showSlidesWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
     return;
@@ -1237,6 +1269,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     setSharedRendererState({ audioOnlyFile: false });
     setSharedRendererState({ playingMediaAudioOnly: false });
     const loaded = await loadSongItemIntoWorkspace(item, loadToken);
+    if (!previewRequestStillOwnsMainSurface()) return false;
     if (!loaded) {
       throw new Error(`Could not resolve scheduled song: ${item.name || item.path || "Song"}`);
     }
@@ -1291,6 +1324,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     await loadPptxPreview(item.path, {
       startSlide: Number.isFinite(opts?.pptxStartSlide) ? opts.pptxStartSlide : undefined,
     });
+    if (!previewRequestStillOwnsMainSurface()) return false;
     setSharedRendererState({ audioOnlyFile: false });
     setSharedRendererState({ playingMediaAudioOnly: false });
     return;
@@ -1368,9 +1402,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     } else {
       await waitForMetadata(localVideo);
     }
-    if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) {
-      return;
-    }
+    if (!previewRequestStillOwnsMainSurface()) return false;
     if (cueOnly) {
       setSharedRendererState({ audioOnlyFile: previousAudioOnlyFile });
       setSharedRendererState({ playingMediaAudioOnly: previousPlayingMediaAudioOnly });
@@ -1392,9 +1424,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
           : resumeAt;
       try {
         await seekMedia(localVideo, safe);
-        if (typeof loadToken === "number" && !isCurrentPreviewLoad(loadToken)) {
-          return;
-        }
+        if (!previewRequestStillOwnsMainSurface()) return false;
         if (!cueOnly) {
           setSharedRendererState({ startTime: localVideo.currentTime });
           setSharedRendererState({ targetTime: startTime });
@@ -1990,6 +2020,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       const audienceUpdated = await sendBibleTextToOutput(
         resolvedBibleEntry,
         scriptureTakeRevision,
+        { expectedPlaybackId: slipstreamResult.playbackId },
       );
       const lowerThirdUpdated = await updateLowerThirdForSupportedScheduleItem(
         nextItem,
@@ -2000,7 +2031,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
         lowerThird: lowerThirdUpdated === true,
       });
     } else if (isSongItem) {
-      await sendSongTextToOutput(nextItem);
+      await sendSongTextToOutput(nextItem, {
+        expectedPlaybackId: slipstreamResult.playbackId,
+      });
       await updateLowerThirdForSupportedScheduleItem(nextItem);
     } else {
       void syncStageContentFromQueueItem(nextItem).catch(() => {});

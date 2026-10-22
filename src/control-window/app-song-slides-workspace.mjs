@@ -3525,7 +3525,16 @@ async function showCuedSongLowerThird() {
   return started;
 }
 
-async function sendSongTextToOutput(item = null) {
+async function sendSongTextToOutput(item = null, options = {}) {
+  const expectedPlaybackId = String(
+    options.expectedPlaybackId ?? audiencePlaybackCoordinator.activePlaybackId() ?? "",
+  );
+  const stillOwnsAudience = () =>
+    !expectedPlaybackId ||
+    audiencePlaybackCoordinator.matchesActivePlayback({
+      playbackId: expectedPlaybackId,
+    });
+  if (!stillOwnsAudience()) return false;
   const sourceItem = songItemForAudienceResolution(item || currentSongPresentationItem());
   await waitForTextFonts(
     [
@@ -3538,6 +3547,7 @@ async function sendSongTextToOutput(item = null) {
       fontSize: sourceItem?.render?.fontSize,
     },
   );
+  if (!stillOwnsAudience()) return false;
   const presentation = resolvedSongPresentation(sourceItem);
   if (!presentation?.message) return false;
   const message = { ...presentation.message };
@@ -3550,6 +3560,8 @@ async function sendSongTextToOutput(item = null) {
   if (transitionItem) {
     message.transition = slideTransitionPayloadForQueueItem(transitionItem);
   }
+  if (!stillOwnsAudience()) return false;
+  if (expectedPlaybackId) message.playbackId = expectedPlaybackId;
   sendAudienceTextMessage("song", message);
   return true;
 }
@@ -3583,7 +3595,9 @@ async function slipstreamSongTextToOutput(item) {
     },
   );
   if (!activation.ok) return false;
-  return sendSongTextToOutput(item);
+  return sendSongTextToOutput(item, {
+    expectedPlaybackId: activation.playbackId,
+  });
 }
 
 function liveSongAudienceTextMessageForClear() {
@@ -4396,9 +4410,13 @@ async function saveCurrentDeck() {
   commitSlideUndoTransaction();
   flushSlideEditorTextToModel();
   if (currentDeckIsSongDocument()) {
-    if (currentSongThemeEditingContext && queueIndexInRange(currentSongThemeEditingContext.queueIndex)) {
-      const index = currentSongThemeEditingContext.queueIndex;
-      const previous = mediaQueue[index];
+    if (currentSongThemeEditingContext) {
+      const previous = currentSongThemeEditingContext.queueItem;
+      const index = mediaQueue.indexOf(previous);
+      if (index < 0) {
+        showGnomeToast("The scheduled song being edited is no longer available");
+        return;
+      }
       const updated = buildSongQueueEntryFromDeck({
         deck: currentDeck,
         render: deckDefaultRender(currentDeck),
@@ -4415,8 +4433,11 @@ async function saveCurrentDeck() {
         profile: itemThemeProfileFromSongDeck(currentDeck, currentSongThemeEditingContext.baseProfile),
       });
       updated.itemTheme.editorMaterialized = true;
-      mediaQueue[index] = updated;
-      currentSongQueueItem = updated;
+      // Keep the queue object's identity stable so selection, transition, and
+      // editor owners that already reference it continue to follow this song.
+      Object.assign(previous, updated);
+      currentSongThemeEditingContext.queueItem = previous;
+      currentSongQueueItem = previous;
       currentWorkspaceSongDeck = currentDeck;
       currentWorkspaceSong = deckToTransientSong(currentDeck);
       currentSongRenderState = mergeSongRenderState(currentSongRenderState, deckDefaultRender(currentDeck));
@@ -7573,7 +7594,7 @@ async function openSongEditor(song) {
       }
       const selected = itemThemeForRole(currentSongQueueItem, "audience");
       currentSongThemeEditingContext = {
-        queueIndex,
+        queueItem: currentSongQueueItem,
         theme: selected.theme || appliedPresentationTheme,
         baseProfile: resolvedTheme,
       };
@@ -8646,3 +8667,4 @@ import {
   waitForTextFonts,
 } from "./app-renderer.mjs";
 import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
+import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";

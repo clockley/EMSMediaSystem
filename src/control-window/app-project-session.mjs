@@ -817,6 +817,9 @@ async function relinkMissingFilesDialog() {
   const missingItems = mediaQueue
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => item?.missing === true);
+  const missingItemTargets = new Map(
+    missingItems.map(({ item, index }) => [index, item]),
+  );
   if (missingItems.length === 0) {
     showGnomeToast("No missing files to relink");
     return false;
@@ -841,12 +844,16 @@ async function relinkMissingFilesDialog() {
     });
 
     const matches = Array.isArray(result?.matches) ? result.matches : [];
+    const relinkedItems = [];
     for (const match of matches) {
-      if (!Number.isInteger(match.index) || match.index < 0 || match.index >= mediaQueue.length) {
-        continue;
-      }
-      const item = mediaQueue[match.index];
-      if (!item) continue;
+      if (!Number.isInteger(match.index)) continue;
+      const item = missingItemTargets.get(match.index);
+      const currentIndex = mediaQueue.indexOf(item);
+      // Folder selection and recursive matching are asynchronous. The queue
+      // may have been reordered, or this item may have been removed/relinked
+      // by a newer request, while that work was in flight.
+      if (!item || currentIndex < 0 || item.missing !== true) continue;
+      const previousDefaultName = queueBasename(item.originalPath || item.path || "");
       item.path = match.path;
       item.type = classifyQueueMediaType(match.path);
       item.missing = false;
@@ -859,27 +866,30 @@ async function relinkMissingFilesDialog() {
       if (typeof match.modifiedTime === "string") {
         item.modifiedTime = match.modifiedTime;
       }
-      if (!item.name || item.name === queueBasename(item.originalPath || "")) {
+      if (!item.name || item.name === previousDefaultName) {
         item.name = queueBasename(match.path);
       }
+      relinkedItems.push(item);
     }
 
-    if (matches.length > 0) {
-      await pinQueueMediaSources(matches.map((match) => mediaQueue[match.index]), {
+    if (relinkedItems.length > 0) {
+      await pinQueueMediaSources(relinkedItems, {
         force: true,
         skipScheduleAutosave: true,
         clearPendingMediaUpdate: true,
       });
       renderQueue();
-      const reloadIndexes = new Set(
-        matches
-          .map((match) => match.index)
-          .filter((index) => index >= 0 && index < mediaQueue.length),
-      );
-      if (reloadIndexes.has(previewCueIndex)) {
-        await loadQueueItemIntoPreviewCue(previewCueIndex);
-      } else if (reloadIndexes.has(currentQueueIndex)) {
-        await loadQueueItemIntoControlWindow(mediaQueue[currentQueueIndex], {
+      const relinkedItemSet = new Set(relinkedItems);
+      const currentCueItem = queueIndexInRange(previewCueIndex)
+        ? mediaQueue[previewCueIndex]
+        : null;
+      const currentPreviewItem = queueIndexInRange(currentQueueIndex)
+        ? mediaQueue[currentQueueIndex]
+        : null;
+      if (currentCueItem && relinkedItemSet.has(currentCueItem)) {
+        await loadQueueItemIntoPreviewCue(mediaQueue.indexOf(currentCueItem));
+      } else if (currentPreviewItem && relinkedItemSet.has(currentPreviewItem)) {
+        await loadQueueItemIntoControlWindow(currentPreviewItem, {
           previewLoadToken: nextPreviewLoadToken(),
         });
       }
@@ -888,16 +898,16 @@ async function relinkMissingFilesDialog() {
     }
     await invoke("show-relink-summary-dialog", {
       searchedFolder: folder.filePath,
-      matchedCount: matches.length,
+      matchedCount: relinkedItems.length,
       totalCount: missingItems.length,
       unresolved: Array.isArray(result?.unresolved) ? result.unresolved : [],
     });
     showGnomeToast(
-      matches.length === missingItems.length
+      relinkedItems.length === missingItems.length
         ? "Missing files relinked"
-        : `Relinked ${matches.length} of ${missingItems.length} missing files`,
+        : `Relinked ${relinkedItems.length} of ${missingItems.length} missing files`,
     );
-    return matches.length > 0;
+    return relinkedItems.length > 0;
   } catch (err) {
     console.error("Failed to relink missing files:", err);
     showGnomeToast("Failed to relink files");

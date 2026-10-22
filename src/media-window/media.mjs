@@ -2000,7 +2000,12 @@ function installPptxIpcHandlers() {
   if (pptxIpcHandlersInstalled) return;
   pptxIpcHandlersInstalled = true;
   ipcRenderer.on("pptx-goto-slide", (event, data) => {
-    if (typeof data?.slideIndex === "number") {
+    if (
+      typeof data?.slideIndex === "number" &&
+      isPptx &&
+      (!data?.playbackId || data.playbackId === audiencePlaybackId) &&
+      (!data?.filePath || data.filePath === mediaFile)
+    ) {
       void showPptxSlideInMediaWindow(data.slideIndex, data.transition);
     }
   });
@@ -3390,6 +3395,7 @@ function installTextHandlers() {
   if (textIpcHandlersInstalled) return;
   textIpcHandlersInstalled = true;
   ipcRenderer.on("update-text", (evt, message) => {
+    if (message?.playbackId && message.playbackId !== audiencePlaybackId) return;
     if (!isText) {
       isText = true;
       isPptx = false;

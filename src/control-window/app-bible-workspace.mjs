@@ -15,6 +15,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 import { bibleTextVerseRows } from "../shared/app-bible-reference-utils.mjs";
 import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
+import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
 
 import {
   DEFAULT_ITEM_SLIDE_TRANSITION,
@@ -1780,9 +1781,13 @@ async function advanceToNextScheduledBibleText() {
     showGnomeToast("No next scheduled Bible text");
     return false;
   }
+  const sourceItem = queueIndexInRange(currentQueueIndex)
+    ? mediaQueue[currentQueueIndex]
+    : null;
+  const nextItem = mediaQueue[nextIndex];
   let nextEntry = null;
   try {
-    nextEntry = await resolvedBibleEntryForItem(mediaQueue[nextIndex], {
+    nextEntry = await resolvedBibleEntryForItem(nextItem, {
       requireLookup: true,
     });
   } catch (error) {
@@ -1794,8 +1799,18 @@ async function advanceToNextScheduledBibleText() {
     showGnomeToast("Could not load the next scheduled Bible text");
     return false;
   }
-  mediaQueue[nextIndex] = {
-    ...mediaQueue[nextIndex],
+  if (
+    sourceItem &&
+    (!queueIndexInRange(currentQueueIndex) || mediaQueue[currentQueueIndex] !== sourceItem)
+  ) {
+    return false;
+  }
+  const currentNextIndex = mediaQueue.indexOf(nextItem);
+  if (currentNextIndex < 0 || !isQueueItemBible(nextItem)) {
+    showGnomeToast("The next scheduled Bible text is no longer available");
+    return false;
+  }
+  Object.assign(nextItem, {
     path: bibleQueuePath(nextEntry.reference, nextEntry.version),
     name: `${nextEntry.reference} ${nextEntry.version}`.trim(),
     type: "bible",
@@ -1803,10 +1818,10 @@ async function advanceToNextScheduledBibleText() {
       ...nextEntry,
       lowerThirdSegmentIndex: 0,
     },
-  };
+  });
   renderQueue();
   saveMediaFile();
-  await switchQueueItemLiveWithConfirmation(nextIndex);
+  await switchQueueItemLiveWithConfirmation(currentNextIndex);
   return true;
 }
 
@@ -2909,18 +2924,33 @@ async function currentBibleTextOnlyEntry() {
   };
 }
 
-async function sendBibleTextToOutput(entry = bibleDesignerState, expectedRevision = null) {
+async function sendBibleTextToOutput(
+  entry = bibleDesignerState,
+  expectedRevision = null,
+  options = {},
+) {
+  const expectedPlaybackId = String(
+    options.expectedPlaybackId ?? audiencePlaybackCoordinator.activePlaybackId() ?? "",
+  );
+  const stillOwnsAudience = () =>
+    !expectedPlaybackId ||
+    audiencePlaybackCoordinator.matchesActivePlayback({
+      playbackId: expectedPlaybackId,
+    });
+  if (!stillOwnsAudience()) return false;
   const updateToken = ++bibleAudienceOutputUpdateToken;
   // Never put a new reference on screen beside fallback text from an older
   // entry. If the lookup fails, leave the previous complete Scripture live.
   const resolvedEntry = await bibleEntryWithLookupText(entry, { requireLookup: true });
   if (!resolvedEntry || updateToken !== bibleAudienceOutputUpdateToken) return false;
+  if (!stillOwnsAudience()) return false;
   if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
     return false;
   }
   await waitForScriptureFonts(resolvedEntry);
   if (
     updateToken !== bibleAudienceOutputUpdateToken ||
+    !stillOwnsAudience() ||
     (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision))
   ) {
     return false;
@@ -2940,6 +2970,7 @@ async function sendBibleTextToOutput(entry = bibleDesignerState, expectedRevisio
     });
     if (
       updateToken !== bibleAudienceOutputUpdateToken ||
+      !stillOwnsAudience() ||
       (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision))
     ) {
       return false;
@@ -2959,6 +2990,8 @@ async function sendBibleTextToOutput(entry = bibleDesignerState, expectedRevisio
   if (liveQueueItem) {
     message.transition = slideTransitionPayloadForQueueItem(liveQueueItem);
   }
+  if (!stillOwnsAudience()) return false;
+  if (expectedPlaybackId) message.playbackId = expectedPlaybackId;
   sendAudienceTextMessage("bible", message);
   // A newly-created audience window sends its first text message on a short
   // delay. The earlier updateDynUI() call therefore cannot match the preview
@@ -3931,24 +3964,31 @@ function isBibleEditorTargetLiveItem() {
 async function syncBibleDesignerStateToPreviewedQueueItem() {
   const targetIndex = currentBibleEditorTargetIndex();
   if (targetIndex < 0) return false;
+  const targetItem = mediaQueue[targetIndex];
   const entry = await currentBibleQueueEntry();
   if (!entry) return false;
-  if (!(await bibleEntryMatchesQueueItem(entry.bible, mediaQueue[targetIndex]))) return false;
+  if (
+    mediaQueue.indexOf(targetItem) < 0 ||
+    mediaQueue[currentBibleEditorTargetIndex()] !== targetItem
+  ) return false;
+  if (!(await bibleEntryMatchesQueueItem(entry.bible, targetItem))) return false;
+  if (
+    mediaQueue.indexOf(targetItem) < 0 ||
+    mediaQueue[currentBibleEditorTargetIndex()] !== targetItem
+  ) return false;
   const transitionOverride = normalizeItemSlideTransitionOverride(entry.bible.transition);
   const { transition, ...bible } = entry.bible;
-  const updatedItem = {
-    ...mediaQueue[targetIndex],
+  Object.assign(targetItem, {
     path: entry.path,
     name: entry.name,
     type: "bible",
     bible: { ...bible },
-  };
+  });
   if (transitionOverride) {
-    updatedItem.transition = transitionOverride;
+    targetItem.transition = transitionOverride;
   } else {
-    delete updatedItem.transition;
+    delete targetItem.transition;
   }
-  mediaQueue[targetIndex] = updatedItem;
   renderQueue();
   return true;
 }
@@ -4425,7 +4465,9 @@ async function slipstreamBiblePresentation(entry, expectedRevision = null) {
     return false;
   }
   setSharedRendererState({ activeMediaWindowContentType: "bible" });
-  await sendBibleTextToOutput(resolvedEntry, expectedRevision);
+  await sendBibleTextToOutput(resolvedEntry, expectedRevision, {
+    expectedPlaybackId: activation.playbackId,
+  });
   return true;
 }
 
