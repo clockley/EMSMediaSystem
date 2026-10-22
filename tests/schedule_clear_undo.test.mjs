@@ -132,10 +132,11 @@ test("Clear and Undo are transactional around output closure and playback restor
     "async function finalizeQueueClearDestructive(",
     "async function finalizeQueueClearAfterAudienceClose(",
   );
-  assert.match(
-    finalizeWithoutAudience,
-    /if \(bibleLowerThirdOutputActive\)[\s\S]*await closeBibleLowerThirdOutput\(\)/,
-  );
+  // Clear only runs when no schedule item is live, so any open output is Show
+  // Now and must survive: no lower-third close, no forced stopped state.
+  assert.doesNotMatch(finalizeWithoutAudience, /closeBibleLowerThirdOutput/);
+  assert.match(finalizeWithoutAudience, /if \(!showNowOutputLive\) isPlaying = false/);
+  assert.match(finalizeWithoutAudience, /if \(!showNowOutputLive\) isActiveMediaWindowCache = false/);
 
   const clear = functionSource(
     schedule,
@@ -144,8 +145,28 @@ test("Clear and Undo are transactional around output closure and playback restor
   );
   assert.match(clear, /queueClearInFlight/);
   assert.match(clear, /captureQueueClearUndoState\(\)/);
-  assert.match(clear, /await closeActiveMediaWindowNow\(\)/);
+  assert.match(
+    clear,
+    /if \(queueClearBlockedByLivePresentation\(\)\) \{\s*showGnomeToast\("Stop the presentation to clear the schedule"\);\s*return;/,
+  );
+  assert.ok(
+    clear.indexOf("queueClearBlockedByLivePresentation()") <
+      clear.indexOf("captureQueueClearUndoState()"),
+    "the live-presentation guard must run before any Clear state changes",
+  );
+  assert.doesNotMatch(clear, /closeActiveMediaWindowNow|pendingQueueClearPostClose/);
   assert.doesNotMatch(clear, /showQueueClearedUndoToast/);
+
+  const guard = functionSource(
+    renderer,
+    "function queueClearBlockedByLivePresentation(",
+    "function queueIndexIsLiveForDisplay(",
+  );
+  assert.match(guard, /isQueuePresentationActive\(\)/);
+  assert.match(guard, /userStopPresentationPending \|\| pendingQueueSwitchIndex !== null/);
+  assert.match(guard, /audiencePlaybackCoordinator\.pendingCloseItem\(\)/);
+  assert.match(guard, /audiencePlaybackCoordinator\.isTransitioningItem\(item\)/);
+  assert.match(guard, /queueIndexIsLiveForDisplay\(currentQueueIndex\)/);
 
   const closeHandler = functionSource(
     playback,
@@ -164,4 +185,48 @@ test("Clear and Undo are transactional around output closure and playback restor
   );
   assert.match(play, /opts\?\.outputRoles/);
   assert.match(play, /if \(loaded === false\) return failPlaybackStart\(""\)/);
+});
+
+test("Clear Undo snapshot is invalidated by schedule edits before its toast is shown", async () => {
+  const [renderer, schedule, toasts] = await Promise.all([
+    readFile(new URL("../src/control-window/app-renderer.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/control-window/app-schedule-controller.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../src/shared/app-toasts.mjs", import.meta.url), "utf8"),
+  ]);
+
+  const invalidate = functionSource(
+    toasts,
+    "export function invalidateQueueUndoToastAfterMutation(",
+    "export function showGnomeToast(",
+  );
+  assert.match(invalidate, /toastDeps\.onQueueMutation\?\.\(\)/);
+  assert.match(
+    renderer,
+    /configureToasts\(\{[\s\S]*?onQueueMutation:\s*\(\)\s*=>\s*discardQueueClearUndoSnapshot\(\)/,
+  );
+
+  const toast = functionSource(
+    renderer,
+    "function showQueueClearedUndoToast(",
+    "async function finalizeQueueClearDestructive(",
+  );
+  assert.match(toast, /if \(!queueClearUndoSnapshot\)[\s\S]*?return;/);
+
+  const clear = functionSource(
+    schedule,
+    "async function onClearMediaQueueClick(",
+    "function removeFromQueue(",
+  );
+  assert.ok(
+    clear.indexOf("captureQueueClearUndoState()") <
+      clear.indexOf("audiencePlaybackCoordinator.cancel()"),
+    "Clear must snapshot before cancelling a live transition",
+  );
+
+  const restore = functionSource(
+    renderer,
+    "async function restoreQueueClearUndoSnapshot(",
+    "async function openThemeManagerForQueueItem(",
+  );
+  assert.match(restore, /try \{\s*restored = await resumeQueuePresentationAtTime\(/);
 });

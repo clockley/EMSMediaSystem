@@ -36,7 +36,6 @@ import {
   clearBibleVerseDragVisualState,
   clearSongDragVisualState,
   clearVideoPreviewCueOverlay,
-  closeActiveMediaWindowNow,
   createQueueEntry,
   currentMode,
   currentQueueIndex,
@@ -44,7 +43,6 @@ import {
   currentWorkspaceSongDeck,
   dataTransferHasType,
   escapeHtml,
-  finalizeQueueClearAfterAudienceClose,
   finalizeQueueClearDestructive,
   firstDroppedProjectPath,
   formatCueTime,
@@ -83,11 +81,11 @@ import {
   onQueueItemActivate,
   openProjectByPath,
   openSongEditor,
-  pauseLocalPreviewAfterQueueClear,
   pendingQueueSwitchIndex,
   pendingQueueSwitchStartTime,
   playCurrentQueueItem,
   playingMediaAudioOnly,
+  queueClearBlockedByLivePresentation,
   previewAudioCueIndex,
   previewCueIndex,
   previewCueVideoIndex,
@@ -1039,34 +1037,20 @@ function clearMediaQueue() {
 
 async function onClearMediaQueueClick() {
   if (mediaQueue.length === 0 || queueClearInFlight) return;
+  // Never pull a live schedule item off an output from the Clear button. The
+  // operator stops the presentation first, which keeps Clear a list-only
+  // operation with no output side effects to undo.
+  if (queueClearBlockedByLivePresentation()) {
+    showGnomeToast("Stop the presentation to clear the schedule");
+    return;
+  }
   queueClearInFlight = true;
   try {
-    // Capture synchronously before any async close work. This gives Clear a
-    // single click-time boundary: playback advancement and a rapid second
-    // click cannot replace the Undo document with a different queue.
+    // Capture first: if cloning throws, Clear aborts before any state changes.
+    captureQueueClearUndoState();
     audiencePlaybackCoordinator.cancel();
     setSharedRendererState({ pendingQueueSwitchIndex: null });
     setSharedRendererState({ pendingQueueSwitchStartTime: 0 });
-    captureQueueClearUndoState();
-
-    if (isActiveMediaWindow()) {
-      setSharedRendererState({ pendingQueueClearPostClose: true });
-      setSharedRendererState({ isQueuePlaying: false });
-      setSharedRendererState({ isPlaying: false });
-      updateDynUI();
-      clearMediaQueue();
-      pauseLocalPreviewAfterQueueClear();
-      const closed = await closeActiveMediaWindowNow();
-      // `false` means main had no window and therefore cannot emit the close
-      // event that normally completes this transaction. A null result means
-      // the invoke failed and the legacy close signal was sent as fallback, so
-      // its eventual event must retain ownership of finalization.
-      if (closed === false) {
-        await finalizeQueueClearAfterAudienceClose();
-      }
-      return;
-    }
-
     await finalizeQueueClearDestructive();
   } catch (error) {
     console.error("Failed to clear the schedule:", error);

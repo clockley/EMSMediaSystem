@@ -1097,6 +1097,7 @@ let durationTimeDisplay;
 let repeatButton;
 configureToasts({
   getVideo: () => video,
+  onQueueMutation: () => discardQueueClearUndoSnapshot(),
 });
 
 const MEDIAPLAYER = 0,
@@ -2152,6 +2153,21 @@ function isQueuePresentationActive() {
   );
 }
 
+/**
+ * Clear is refused while the schedule owns a live output: an item is playing
+ * or paused on an output, starting, switching, or stopping. Show Now output is
+ * not schedule-owned and does not block Clear.
+ */
+function queueClearBlockedByLivePresentation() {
+  if (isQueuePresentationActive()) return true;
+  if (userStopPresentationPending || pendingQueueSwitchIndex !== null) return true;
+  if (audiencePlaybackCoordinator.pendingCloseItem()) return true;
+  if (mediaQueue.some((item) => audiencePlaybackCoordinator.isTransitioningItem(item))) return true;
+  // A schedule item can remain on an output after queue playback is flagged
+  // stopped; the queue already shows that row as Live.
+  return queueIndexIsLiveForDisplay(currentQueueIndex);
+}
+
 function queueIndexIsLiveForDisplay(index) {
   if (!queueIndexInRange(index) || index !== currentQueueIndex) return false;
   if (isQueuePresentationActive()) return true;
@@ -2744,6 +2760,12 @@ function captureQueueClearUndoState() {
 }
 
 function showQueueClearedUndoToast() {
+  // The schedule may have been edited between Clear and this point (the
+  // audience-window close gap). Offering Undo then would overwrite those edits.
+  if (!queueClearUndoSnapshot) {
+    showGnomeToast("Queue cleared");
+    return;
+  }
   showGnomeToast("Queue cleared", {
     onUndo: () => {
       void restoreQueueClearUndoSnapshot().catch((error) => {
@@ -2760,20 +2782,21 @@ function showQueueClearedUndoToast() {
 }
 
 async function finalizeQueueClearDestructive() {
+  // Clear is refused while a schedule item is live, so any output still open
+  // here belongs to Show Now (audience text or a Bible lower third). Emptying
+  // the schedule must not take that output down or mark it stopped.
+  const showNowOutputLive = Boolean(isActiveMediaWindow() || bibleLowerThirdOutputActive);
   pendingQueueSwitchIndex = null;
   pendingQueueSwitchStartTime = 0;
   mediaPlaybackEndedPending = false;
   pendingQueueClearPostClose = false;
-  isPlaying = false;
   isQueuePlaying = false;
+  if (!showNowOutputLive) isPlaying = false;
   updateDynUI();
-  isActiveMediaWindowCache = false;
+  if (!showNowOutputLive) isActiveMediaWindowCache = false;
   clearMediaQueue();
   saveMediaFile();
   pauseLocalPreviewAfterQueueClear();
-  if (bibleLowerThirdOutputActive) {
-    await closeBibleLowerThirdOutput();
-  }
   showQueueClearedUndoToast();
 }
 
@@ -2932,10 +2955,18 @@ async function restoreQueueClearUndoSnapshot() {
     currentQueueIndex >= 0 &&
     currentQueueIndex < mediaQueue.length
   ) {
-    const restored = await resumeQueuePresentationAtTime(
-      snap.seekTime,
-      snap.outputs,
-    );
+    // The schedule is already restored at this point; a resume exception must
+    // not surface as "Could not restore the cleared schedule".
+    let restored = false;
+    try {
+      restored = await resumeQueuePresentationAtTime(
+        snap.seekTime,
+        snap.outputs,
+      );
+    } catch (error) {
+      console.error("Failed to resume live output after restoring the schedule:", error);
+      restored = false;
+    }
     if (!restored) {
       showGnomeToast("The schedule was restored, but its live output could not be resumed");
     }
@@ -4471,6 +4502,7 @@ export {
   isQueueItemBible,
   isQueueItemSection,
   isQueuePresentationActive,
+  queueClearBlockedByLivePresentation,
   lastAudienceBibleTextMessage,
   liveTextClearActive,
   markAudiencePreviewTextSelection,

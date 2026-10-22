@@ -4175,9 +4175,10 @@ function clearSlideUndoHistory() {
 }
 
 function pushSlideUndoCheckpoint(checkpoint, { clearRedo = true } = {}) {
-  pushSlideHistoryEntry(slideUndoStack, checkpoint);
-  if (clearRedo) slideRedoStack = [];
+  const pushed = pushSlideHistoryEntry(slideUndoStack, checkpoint);
+  if (pushed && clearRedo) slideRedoStack = [];
   syncSlideUndoRedoButtons();
+  return pushed;
 }
 
 function beginSlideUndoTransaction(label = "Edit slide") {
@@ -4213,14 +4214,34 @@ function recordSlideUndoCheckpoint(label = "Edit slide", { flush = true } = {}) 
 
 function recordSlideUndoForMutation(label = "Edit slide") {
   if (slideUndoRestoring || !currentDeck || slideUndoTransaction) return;
-  recordSlideUndoCheckpoint(label, { flush: false });
+  // Callers mutate synchronously right after this call. Wrapping the mutation
+  // in a transaction committed on the next microtask compares before/after,
+  // so a mutation that changes nothing neither adds an empty step nor wipes
+  // Redo.
+  beginSlideUndoTransaction(label);
+  const transaction = slideUndoTransaction;
+  if (!transaction) return;
+  queueMicrotask(() => {
+    if (slideUndoTransaction === transaction) commitSlideUndoTransaction();
+  });
 }
 
 function restoreSlideEditorCheckpoint(checkpoint) {
   if (!checkpoint?.deck) return false;
   slideUndoRestoring = true;
   try {
+    // Loading a scheduled deck/song and saving a song both make the Songs-tab
+    // workspace deck share the editor's deck object. Restoring swaps in a new
+    // object, so carry that link over or Show Now / lower third keep
+    // presenting the pre-undo content.
+    const workspaceFollowsEditor = Boolean(
+      currentDeck && currentWorkspaceSongDeck === currentDeck,
+    );
     currentDeck = normalizeSlideDeck(cloneSlideDeckValue(checkpoint.deck));
+    if (workspaceFollowsEditor && currentDeck) {
+      currentWorkspaceSongDeck = currentDeck;
+      currentWorkspaceSong = deckToTransientSong(currentDeck);
+    }
     currentDeckPageId =
       checkpoint.pageId && findPage(currentDeck, checkpoint.pageId)
         ? checkpoint.pageId

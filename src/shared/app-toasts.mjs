@@ -11,6 +11,8 @@ the Free Software Foundation, either version 3 of the License, or
 
 let toastDeps = {
   getVideo: () => null,
+  /** Discards any pending queue Undo state, including state whose toast is not shown yet. */
+  onQueueMutation: () => {},
 };
 
 export function configureToasts(deps = {}) {
@@ -69,6 +71,10 @@ function dismissInteractiveGnomeToastForReplacement() {
 }
 
 export function invalidateQueueUndoToastAfterMutation() {
+  // The Undo snapshot can exist before its toast is visible (Clear with a live
+  // audience window shows the toast only after the window-closed event), so
+  // discard it explicitly rather than relying on the toast's expire callback.
+  toastDeps.onQueueMutation?.();
   dismissInteractiveGnomeToastForReplacement();
 }
 
