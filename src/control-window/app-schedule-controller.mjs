@@ -36,6 +36,7 @@ import {
   clearBibleVerseDragVisualState,
   clearSongDragVisualState,
   clearVideoPreviewCueOverlay,
+  closeActiveMediaWindowNow,
   createQueueEntry,
   currentMode,
   currentQueueIndex,
@@ -43,6 +44,7 @@ import {
   currentWorkspaceSongDeck,
   dataTransferHasType,
   escapeHtml,
+  finalizeQueueClearAfterAudienceClose,
   finalizeQueueClearDestructive,
   firstDroppedProjectPath,
   formatCueTime,
@@ -82,7 +84,6 @@ import {
   openProjectByPath,
   openSongEditor,
   pauseLocalPreviewAfterQueueClear,
-  pendingQueueClearPostClose,
   pendingQueueSwitchIndex,
   pendingQueueSwitchStartTime,
   playCurrentQueueItem,
@@ -110,14 +111,12 @@ import {
   saveMediaFile,
   schedulePptxThumbnailRefresh,
   selectedQueueAnchorIndex,
-  send,
   setSBFormMediaPlayer,
   setSelectedQueueAnchor,
   setSharedRendererState,
   shiftQueueIndexesForInsertion,
   showGnomeToast,
   showMediaWorkspace,
-  showQueueClearedUndoToast,
   showRendererPrompt,
   showScheduleBibleContextMenu,
   slideTransitionBadgeMarkup,
@@ -155,6 +154,8 @@ const SCHEDULE_DOUBLE_CLICK_WINDOW_MS = 650;
 let lastQueueItemClick = null;
 
 let queueItemLiveTakeInFlight = false;
+
+let queueClearInFlight = false;
 
 let lastQueueItemLiveTakeRequest = null;
 
@@ -1017,10 +1018,13 @@ function clearMediaQueue() {
   audiencePlaybackCoordinator.cancel();
   stopPreviewAudioCue();
   clearVideoPreviewCueOverlay();
+  selectedQueueItems.clear();
   setSharedRendererState({ mediaQueue: [] });
   setSharedRendererState({ currentQueueIndex: -1 });
   setSharedRendererState({ previewCueIndex: -1 });
   setSharedRendererState({ selectedQueueAnchorIndex: -1 });
+  setSharedRendererState({ queueSelectionRangeAnchorIndex: -1 });
+  setSharedRendererState({ queueInsertionSelectionExplicit: false });
   setSharedRendererState({ isQueuePlaying: false });
   setSharedRendererState({ manualBoundaryPauseIndex: -1 });
   // Hand the countdown overlay back to the live media (or hide it if the
@@ -1034,27 +1038,42 @@ function clearMediaQueue() {
 }
 
 async function onClearMediaQueueClick() {
-  if (mediaQueue.length === 0) return;
-  // Invalidate before the undo snapshot awaits storage. A transition that was
-  // already loading must never commit into the queue we are about to clear.
-  audiencePlaybackCoordinator.cancel();
-  setSharedRendererState({ pendingQueueSwitchIndex: null });
-  setSharedRendererState({ pendingQueueSwitchStartTime: 0 });
-  await captureQueueClearUndoState();
+  if (mediaQueue.length === 0 || queueClearInFlight) return;
+  queueClearInFlight = true;
+  try {
+    // Capture synchronously before any async close work. This gives Clear a
+    // single click-time boundary: playback advancement and a rapid second
+    // click cannot replace the Undo document with a different queue.
+    audiencePlaybackCoordinator.cancel();
+    setSharedRendererState({ pendingQueueSwitchIndex: null });
+    setSharedRendererState({ pendingQueueSwitchStartTime: 0 });
+    captureQueueClearUndoState();
 
-  if (isActiveMediaWindow()) {
-    setSharedRendererState({ pendingQueueClearPostClose: true });
-    setSharedRendererState({ isQueuePlaying: false });
-    setSharedRendererState({ isPlaying: false });
-    updateDynUI();
-    clearMediaQueue();
-    pauseLocalPreviewAfterQueueClear();
-    showQueueClearedUndoToast();
-    send("close-media-window", 0);
-    return;
+    if (isActiveMediaWindow()) {
+      setSharedRendererState({ pendingQueueClearPostClose: true });
+      setSharedRendererState({ isQueuePlaying: false });
+      setSharedRendererState({ isPlaying: false });
+      updateDynUI();
+      clearMediaQueue();
+      pauseLocalPreviewAfterQueueClear();
+      const closed = await closeActiveMediaWindowNow();
+      // `false` means main had no window and therefore cannot emit the close
+      // event that normally completes this transaction. A null result means
+      // the invoke failed and the legacy close signal was sent as fallback, so
+      // its eventual event must retain ownership of finalization.
+      if (closed === false) {
+        await finalizeQueueClearAfterAudienceClose();
+      }
+      return;
+    }
+
+    await finalizeQueueClearDestructive();
+  } catch (error) {
+    console.error("Failed to clear the schedule:", error);
+    showGnomeToast("Could not clear the schedule");
+  } finally {
+    queueClearInFlight = false;
   }
-
-  await finalizeQueueClearDestructive();
 }
 
 function removeFromQueue(index) {

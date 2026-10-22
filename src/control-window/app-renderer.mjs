@@ -204,6 +204,11 @@ import {
   resolvedFontFamilyFields,
   renderScriptureForTarget,
 } from "../shared/theme-render-message.mjs";
+import {
+  cloneScheduleQueueForUndo,
+  restoreScheduleQueueFromUndo,
+} from "../shared/schedule-clear-undo.mjs";
+import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
 
 async function showRendererConfirm(message, options = {}) {
   const result = await invoke("show-renderer-message-box", {
@@ -658,6 +663,7 @@ import {
   clearCueAfterTake,
   clearPreviewCue,
   clearVideoPreviewCueOverlay,
+  closeActiveMediaWindowNow,
   currentPreviewCue,
   ensurePreviewCueVideoElement,
   getPreviewCueDisplayVolume,
@@ -1395,10 +1401,7 @@ let livePreviewMirrorMutedState = null;
  * presentation was closed from the clear action).
  */
 let pendingQueueClearPostClose = false;
-/**
- * Snapshot for undo after "Clear" on the media queue (HIG: perform + restore).
- * @type {null | { items: { path: string; name: string; type: string; cueStartTime: number; cueVolume?: number; loop?: boolean }[]; index: number; cueIndex: number; seekTime: number; wasPresentationActive: boolean }}
- */
+/** Complete runtime snapshot for the one-shot Undo shown after queue Clear. */
 let queueClearUndoSnapshot = null;
 let queueInsertionSelectionExplicit = false;
 let songDragSongId = "";
@@ -2665,54 +2668,88 @@ function discardQueueClearUndoSnapshot() {
   queueClearUndoSnapshot = null;
 }
 
-async function captureQueueClearUndoState() {
-  let seekTime = 0;
-  if (isActiveMediaWindow()) {
-    try {
-      const t = await invoke("get-media-current-time");
-      seekTime = typeof t === "number" && Number.isFinite(t) ? t : 0;
-    } catch (err) {
-      console.error(err);
-      seekTime = 0;
-    }
+function queueClearSeekTimeSnapshot() {
+  const item = queueIndexInRange(currentQueueIndex)
+    ? mediaQueue[currentQueueIndex]
+    : null;
+  if (
+    !item ||
+    isQueueItemBible(item) ||
+    isQueueItemSong(item) ||
+    isQueueItemImage(item) ||
+    isQueueItemPptx(item) ||
+    queueItemIsLiveEdgeStream(item)
+  ) {
+    return 0;
   }
+  if (
+    isQueueItemAudio(item) &&
+    playingMediaAudioOnly &&
+    Number.isFinite(liveAudio?.currentTime)
+  ) {
+    return Math.max(0, liveAudio.currentTime);
+  }
+  if (isNetworkStreamSource(item.path)) {
+    const networkTime = networkPreviewTransportCurrentTime();
+    if (Number.isFinite(networkTime)) return Math.max(0, networkTime);
+  }
+  if (Number.isFinite(video?.currentTime)) {
+    return Math.max(0, video.currentTime);
+  }
+  return Number.isFinite(targetTime) ? Math.max(0, targetTime) : 0;
+}
+
+function captureQueueClearUndoState() {
+  const currentItem = queueIndexInRange(currentQueueIndex)
+    ? mediaQueue[currentQueueIndex]
+    : null;
+  const currentTextType = isQueueItemSong(currentItem)
+    ? "song"
+    : isQueueItemBible(currentItem)
+      ? "bible"
+      : null;
+  const audienceWasActive = isActiveMediaWindow();
+  const lowerThirdWasActive = Boolean(
+    bibleLowerThirdOutputActive &&
+      currentTextType &&
+      activeLowerThirdContentType === currentTextType,
+  );
+  const localAudioWasActive = Boolean(
+    playingMediaAudioOnly && isQueueItemAudio(currentItem),
+  );
   queueClearUndoSnapshot = {
-    items: mediaQueue.map((x) =>
-      isQueueItemSection(x)
-        ? {
-            id: x.id,
-            name: x.name,
-            type: "section",
-            collapsed: x.collapsed === true,
-          }
-        : {
-            path: x.path,
-            name: x.name,
-            type: x.type,
-            cueStartTime: queueItemCueStartTime(x),
-            cueVolume: x.cueVolume,
-            loop: loopEnabledForQueueItem(x),
-            networkSource: x.networkSource && typeof x.networkSource === "object"
-              ? { ...x.networkSource }
-              : undefined,
-            pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
-            transition: normalizeItemSlideTransitionOverride(x.transition),
-            bible: x.bible ? { ...x.bible } : undefined,
-          },
-    ),
+    items: cloneScheduleQueueForUndo(mediaQueue),
     index: currentQueueIndex,
     cueIndex: previewCueIndex,
-    seekTime,
+    selectedIndex: selectedQueueAnchorIndex,
+    selectedIndexes: [...selectedQueueItems]
+      .map((item) => mediaQueue.indexOf(item))
+      .filter((index) => index >= 0),
+    selectionRangeAnchorIndex: queueSelectionRangeAnchorIndex,
+    insertionSelectionExplicit: queueInsertionSelectionExplicit,
+    manualBoundaryPauseIndex,
+    seekTime: queueClearSeekTimeSnapshot(),
+    outputs: {
+      audience: audienceWasActive,
+      lowerThird: lowerThirdWasActive,
+      localAudio: localAudioWasActive,
+    },
     wasPresentationActive: Boolean(
-      isQueuePlaying && isActiveMediaWindow() && isPlaying,
+      isQueuePlaying &&
+        isPlaying &&
+        (audienceWasActive || lowerThirdWasActive || localAudioWasActive),
     ),
   };
+  return queueClearUndoSnapshot;
 }
 
 function showQueueClearedUndoToast() {
   showGnomeToast("Queue cleared", {
     onUndo: () => {
-      void restoreQueueClearUndoSnapshot();
+      void restoreQueueClearUndoSnapshot().catch((error) => {
+        console.error("Failed to restore the cleared schedule:", error);
+        showGnomeToast("Could not restore the cleared schedule");
+      });
     },
     onUndoExpire: () => {
       discardQueueClearUndoSnapshot();
@@ -2734,126 +2771,129 @@ async function finalizeQueueClearDestructive() {
   clearMediaQueue();
   saveMediaFile();
   pauseLocalPreviewAfterQueueClear();
+  if (bibleLowerThirdOutputActive) {
+    await closeBibleLowerThirdOutput();
+  }
   showQueueClearedUndoToast();
 }
 
-async function resumeQueuePresentationAtTime(seekTime) {
+async function finalizeQueueClearAfterAudienceClose() {
+  if (!pendingQueueClearPostClose) return false;
+  pendingQueueClearPostClose = false;
+  userStopPresentationPending = false;
+  mediaPlaybackEndedPending = false;
+  isPlaying = false;
+  isQueuePlaying = false;
+  await closeBibleLowerThirdOutput();
+  updateDynUI();
+  isActiveMediaWindowCache = false;
+  saveMediaFile();
+  pauseLocalPreviewAfterQueueClear();
+  showQueueClearedUndoToast();
+  return true;
+}
+
+async function resumeQueuePresentationAtTime(seekTime, outputs = {}) {
   const item =
     currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
       ? mediaQueue[currentQueueIndex]
       : null;
-  if (!item) return;
+  if (!item) return false;
 
-  resolveQueuePresentationVideo();
-  const localVideo = video;
-
-  mediaPlaybackEndedPending = false;
-  const previewLoadToken = nextPreviewLoadToken();
-  await loadQueueItemIntoControlWindow(item, {
-    preservePreviewSeek: false,
-    previewLoadToken,
+  const stagedCueItem =
+    queueIndexInRange(previewCueIndex) && previewCueIndex !== currentQueueIndex
+      ? mediaQueue[previewCueIndex]
+      : null;
+  if (stagedCueItem) {
+    previewCueIndex = -1;
+    pendingCueVolume = null;
+    cueVolumeDirty = false;
+  }
+  const safeSeekTime = Number.isFinite(seekTime) ? Math.max(0, seekTime) : 0;
+  const transitionToken = audiencePlaybackCoordinator.begin(item, {
+    startTime: safeSeekTime,
   });
-  if (
-    !isCurrentPreviewLoad(previewLoadToken) ||
-    !queueIndexInRange(currentQueueIndex) ||
-    mediaQueue[currentQueueIndex] !== item
-  ) return false;
-  renderQueue();
-
+  mediaPlaybackEndedPending = false;
   isQueuePlaying = true;
   isPlaying = true;
   updateDynUI();
-
-  if (!isQueueItemBible(item) && !audioOnlyFile && !hasAudienceOutputSelected()) {
-    showGnomeToast("Choose an audience output display");
-    isQueuePlaying = false;
-    isPlaying = false;
-    updateDynUI();
-    renderQueue();
-    return;
-  }
-
-  const iM = isImg(mediaFile);
-  if (iM) {
-    await createMediaWindow();
-    if (localVideo && !localVideo.paused) {
-      localVideo.removeAttribute("src");
-      localVideo.load();
-    }
-    return true;
-  }
-
-  const live = queueItemIsLiveEdgeStream(item);
-  if (!live && localVideo && seekTime > 0.05) {
-    const d = localVideo.duration;
-    let safe = seekTime;
-    if (Number.isFinite(d) && d > 0) {
-      safe = Math.min(seekTime, Math.max(0, d - 0.25));
-    }
-    try {
-      await new Promise((resolve) => {
-        const done = () => resolve();
-        const t = window.setTimeout(done, 400);
-        const onSeeked = () => {
-          window.clearTimeout(t);
-          localVideo.removeEventListener("seeked", onSeeked);
-          done();
-        };
-        localVideo.addEventListener("seeked", onSeeked, { once: true });
-        localVideo.currentTime = safe;
-      });
-      startTime = localVideo.currentTime;
-      targetTime = startTime;
-    } catch (err) {
-      console.error(err);
-    }
-  }
-
-  await createMediaWindow({
-    seekOnly: !live,
-    startTime: live ? 0 : validMediaStartTime(seekTime),
+  renderQueue();
+  const started = await playCurrentQueueItem({
+    preservePreviewSeek: false,
+    startTime: safeSeekTime,
+    transitionToken,
+    outputRoles: {
+      audience: outputs.audience === true,
+      lowerThird: outputs.lowerThird === true,
+    },
   });
+  const restoreStagedCue = async () => {
+    if (!stagedCueItem || !mediaQueue.includes(item)) return;
+    const cueIndex = mediaQueue.indexOf(stagedCueItem);
+    if (cueIndex < 0) return;
+    previewCueIndex = cueIndex;
+    pendingCueVolume = Number.isFinite(stagedCueItem.cueVolume)
+      ? stagedCueItem.cueVolume
+      : 1;
+    await loadQueueItemIntoPreviewCue(cueIndex);
+  };
+  if (started === false) {
+    if (audiencePlaybackCoordinator.owns(transitionToken)) {
+      audiencePlaybackCoordinator.cancel();
+    }
+    await restoreStagedCue();
+    return false;
+  }
+  if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
+  const committedIndex = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+  if (committedIndex < 0) {
+    audiencePlaybackCoordinator.cancel();
+    return false;
+  }
+  currentQueueIndex = committedIndex;
+  audiencePlaybackCoordinator.complete(transitionToken);
+  await restoreStagedCue();
   return true;
+}
+
+function restoreQueueClearSelectionState(snap) {
+  selectedQueueItems.clear();
+  for (const index of snap.selectedIndexes || []) {
+    if (queueIndexInRange(index)) selectedQueueItems.add(mediaQueue[index]);
+  }
+  selectedQueueAnchorIndex = queueIndexInRange(snap.selectedIndex)
+    ? snap.selectedIndex
+    : queueIndexInRange(previewCueIndex)
+      ? previewCueIndex
+      : queueIndexInRange(currentQueueIndex)
+        ? currentQueueIndex
+        : -1;
+  queueSelectionRangeAnchorIndex = queueIndexInRange(snap.selectionRangeAnchorIndex)
+    ? snap.selectionRangeAnchorIndex
+    : selectedQueueAnchorIndex;
+  queueInsertionSelectionExplicit = snap.insertionSelectionExplicit === true;
 }
 
 async function restoreQueueClearUndoSnapshot() {
   const snap = queueClearUndoSnapshot;
   if (!snap) return;
+  let restoredQueue;
+  try {
+    restoredQueue = restoreScheduleQueueFromUndo(snap.items);
+  } catch (error) {
+    console.error("Failed to restore the cleared schedule:", error);
+    showGnomeToast("Could not restore the cleared schedule");
+    return false;
+  }
   queueClearUndoSnapshot = null;
-
-  mediaQueue = snap.items.map((x) => {
-    if (x.type === "section") {
-      return {
-        id: typeof x.id === "string" && x.id ? x.id : `section-${generateProjectGuid()}`,
-        name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : "New Section",
-        type: "section",
-        collapsed: x.collapsed === true,
-      };
-    }
-    const item = {
-      path: x.path,
-      name: x.name,
-      type: x.type,
-      cueStartTime: x.cueStartTime || 0,
-      cueVolume: Number.isFinite(x.cueVolume) ? x.cueVolume : undefined,
-      loop: x.loop === true && mediaPathSupportsLoop(x.path),
-      networkSource: x.networkSource && typeof x.networkSource === "object"
-        ? { ...x.networkSource }
-        : undefined,
-      pptxSlideIndex: Number.isFinite(x.pptxSlideIndex) ? x.pptxSlideIndex : undefined,
-      transition: normalizeItemSlideTransitionOverride(x.transition),
-      bible: x.bible ? { ...x.bible } : undefined,
-    };
-    item.cueStartTime = queueItemCueStartTime(item);
-    return item;
-  });
+  mediaQueue = restoredQueue;
   currentQueueIndex = snap.index;
   if (mediaQueue.length === 0) {
     currentQueueIndex = -1;
   } else if (currentQueueIndex >= mediaQueue.length) {
     currentQueueIndex = mediaQueue.length - 1;
-  } else if (currentQueueIndex < 0) {
-    currentQueueIndex = 0;
+  } else if (currentQueueIndex < -1) {
+    currentQueueIndex = -1;
   }
   if (
     currentQueueIndex >= 0 &&
@@ -2877,11 +2917,10 @@ async function restoreQueueClearUndoSnapshot() {
   } else {
     pendingCueVolume = null;
   }
-  selectedQueueAnchorIndex = queueIndexInRange(previewCueIndex)
-    ? previewCueIndex
-    : queueIndexInRange(currentQueueIndex)
-      ? currentQueueIndex
-      : -1;
+  restoreQueueClearSelectionState(snap);
+  manualBoundaryPauseIndex = queueIndexInRange(snap.manualBoundaryPauseIndex)
+    ? snap.manualBoundaryPauseIndex
+    : -1;
   cueVolumeDirty = false;
   syncGtkSliderToCueState();
 
@@ -2893,22 +2932,33 @@ async function restoreQueueClearUndoSnapshot() {
     currentQueueIndex >= 0 &&
     currentQueueIndex < mediaQueue.length
   ) {
-    await resumeQueuePresentationAtTime(snap.seekTime);
-    return;
+    const restored = await resumeQueuePresentationAtTime(
+      snap.seekTime,
+      snap.outputs,
+    );
+    if (!restored) {
+      showGnomeToast("The schedule was restored, but its live output could not be resumed");
+    }
+    restoreQueueClearSelectionState(snap);
+    renderQueue();
+    return restored;
   }
 
-  if (
-    currentMode === MEDIAPLAYER &&
-    mediaQueue.length > 0 &&
-    currentQueueIndex >= 0 &&
-    !isPlaying
-  ) {
-    const previewItem = mediaQueue[currentQueueIndex];
+  if (currentMode === MEDIAPLAYER && mediaQueue.length > 0 && !isPlaying) {
+    const previewIndex = queueIndexInRange(previewCueIndex)
+      ? previewCueIndex
+      : queueIndexInRange(selectedQueueAnchorIndex) &&
+          isScheduleItemCurrentlyPlayable(mediaQueue[selectedQueueAnchorIndex])
+        ? selectedQueueAnchorIndex
+        : currentQueueIndex;
+    if (!queueIndexInRange(previewIndex)) return true;
+    const previewItem = mediaQueue[previewIndex];
     const previewLoadToken = nextPreviewLoadToken();
     void loadQueueItemIntoControlWindow(previewItem, {
       previewLoadToken,
     }).catch((err) => console.error(err));
   }
+  return true;
 }
 
 async function openThemeManagerForQueueItem(index, outputRole = "audience") {
@@ -4097,8 +4147,10 @@ export {
   approvePendingMediaUpdate,
   buildSongQueueEntryFromDeck,
   captureQueueClearUndoState,
+  closeActiveMediaWindowNow,
   currentWorkspaceSong,
   currentWorkspaceSongDeck,
+  finalizeQueueClearAfterAudienceClose,
   finalizeQueueClearDestructive,
   formatCueTime,
   isPreparingSeparateCue,

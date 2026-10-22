@@ -60,6 +60,7 @@ import {
   ensurePendingMediaUpdateApproved,
   ensurePreviewAudioElement,
   fileEnded,
+  finalizeQueueClearAfterAudienceClose,
   finishPreviewTransportLoad,
   finishProjectionPlaybackStartupSync,
   getHostnameOrBasename,
@@ -134,7 +135,6 @@ import {
   paintCountdownFor,
   paintTransportTimeDisplay,
   pathToMediaUrl,
-  pauseLocalPreviewAfterQueueClear,
   pauseQueuePresentationAtBoundary,
   pendingCueVolume,
   pendingQueueClearPostClose,
@@ -1229,14 +1229,24 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     setSharedRendererState({ audioOnlyFile: false });
     setSharedRendererState({ playingMediaAudioOnly: false });
     const bibleEntry = await resolvedBibleEntryForItem(item);
-    if (!previewRequestStillOwnsMainSurface()) return;
+    if (!previewRequestStillOwnsMainSurface()) return false;
+    if (!bibleEntry) {
+      throw new Error(
+        `Could not resolve scheduled Scripture: ${item.name || item.path || "Scripture"}`,
+      );
+    }
     item.bible = { ...bibleEntry };
     const loaded = await loadBibleEntryIntoEditor(bibleEntry, {
       previewLoadToken: loadToken,
     });
-    if (!loaded || !previewRequestStillOwnsMainSurface()) return;
+    if (!previewRequestStillOwnsMainSurface()) return false;
+    if (!loaded) {
+      throw new Error(
+        `Could not load scheduled Scripture: ${item.name || item.path || "Scripture"}`,
+      );
+    }
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
-    return;
+    return true;
   }
   if (isQueueItemDeck(item)) {
     hidePptxPreviewIfNeeded();
@@ -1252,9 +1262,14 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     setSharedRendererState({ playingMediaAudioOnly: false });
     const loaded = await loadDeckQueueItemIntoWorkspace(item, loadToken);
     if (!previewRequestStillOwnsMainSurface()) return false;
-    if (loaded) showSlidesWorkspace();
+    if (!loaded) {
+      throw new Error(
+        `Could not resolve scheduled slide deck: ${item.name || item.path || "Deck"}`,
+      );
+    }
+    showSlidesWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
-    return;
+    return true;
   }
   if (isQueueItemSong(item)) {
     hidePptxPreviewIfNeeded();
@@ -1275,7 +1290,7 @@ async function loadQueueItemIntoControlWindow(item, opts) {
     }
     showSongsWorkspace();
     document.getElementById("customControls")?.style.setProperty("visibility", "hidden");
-    return;
+    return true;
   }
   hideBiblePreview();
   hideSongsWorkspace();
@@ -1514,11 +1529,12 @@ async function playCurrentQueueItem(opts) {
     if (!isQueueItemBible(item) && scripturePresentation.state.status !== "idle") {
       scripturePresentation.dispatch({ type: "STOPPED" });
     }
-    await loadQueueItemIntoControlWindow(item, {
+    const loaded = await loadQueueItemIntoControlWindow(item, {
       ...(opts || {}),
       skipNetworkPreviewLoad: itemIsNetworkPresentationVideo,
     });
     if (!transitionStillOwnsItem()) return false;
+    if (loaded === false) return failPlaybackStart("");
   } catch (error) {
     return failPlaybackStart(
       error?.message || "Could not load the scheduled item",
@@ -1543,18 +1559,25 @@ async function playCurrentQueueItem(opts) {
     if (!entry) {
       return failPlaybackStart("Could not load the scheduled Scripture text");
     }
-    const wantsAudience = hasAudienceOutputSelected();
-    const wantsLowerThird = hasLowerThirdOutputSelected();
+    const requestedOutputRoles = opts?.outputRoles;
+    const wantsAudience = requestedOutputRoles
+      ? requestedOutputRoles.audience === true
+      : hasAudienceOutputSelected();
+    const wantsLowerThird = requestedOutputRoles
+      ? requestedOutputRoles.lowerThird === true
+      : hasLowerThirdOutputSelected();
     const presentationRevision = beginScriptureTake(entry, {
       item,
       scheduleIndex: currentQueueIndex,
       audience: wantsAudience,
       lowerThird: wantsLowerThird,
     });
-    const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(
-      item,
-      presentationRevision,
-    );
+    const lowerThirdStarted = wantsLowerThird
+      ? await updateLowerThirdForSupportedScheduleItem(
+          item,
+          presentationRevision,
+        )
+      : false;
     const audienceStarted = wantsAudience
       ? await createMediaWindow({
           textItem: item,
@@ -1578,8 +1601,17 @@ async function playCurrentQueueItem(opts) {
   }
 
   if (isQueueItemSong(item)) {
-    const lowerThirdStarted = await updateLowerThirdForSupportedScheduleItem(item);
-    const audienceStarted = hasAudienceOutputSelected()
+    const requestedOutputRoles = opts?.outputRoles;
+    const wantsAudience = requestedOutputRoles
+      ? requestedOutputRoles.audience === true
+      : hasAudienceOutputSelected();
+    const wantsLowerThird = requestedOutputRoles
+      ? requestedOutputRoles.lowerThird === true
+      : hasLowerThirdOutputSelected();
+    const lowerThirdStarted = wantsLowerThird
+      ? await updateLowerThirdForSupportedScheduleItem(item)
+      : false;
+    const audienceStarted = wantsAudience
       ? await createMediaWindow({ textItem: item, songItem: true, transitionToken })
       : false;
     if (!audienceStarted && !lowerThirdStarted) {
@@ -2136,7 +2168,10 @@ async function closeActiveMediaWindowNow() {
   } catch (err) {
     console.error("Failed to close media window via invoke:", err);
     send("close-media-window", 0);
-    return false;
+    // Null means a fire-and-forget fallback close is still pending. Callers
+    // must wait for media-window-closed instead of treating the window as
+    // already absent and starting replacement output over it.
+    return null;
   }
 }
 
@@ -2182,16 +2217,7 @@ async function handleMediaWindowClosed(event, id) {
 
   if (pendingQueueClearPostClose) {
     audiencePlaybackCoordinator.cancel();
-    setSharedRendererState({ pendingQueueClearPostClose: false });
-    setSharedRendererState({ userStopPresentationPending: false });
-    setSharedRendererState({ mediaPlaybackEndedPending: false });
-    setSharedRendererState({ isPlaying: false });
-    setSharedRendererState({ isQueuePlaying: false });
-    await closeBibleLowerThirdOutput();
-    updateDynUI();
-    setSharedRendererState({ isActiveMediaWindowCache: false });
-    saveMediaFile();
-    pauseLocalPreviewAfterQueueClear();
+    await finalizeQueueClearAfterAudienceClose();
     return;
   }
 
