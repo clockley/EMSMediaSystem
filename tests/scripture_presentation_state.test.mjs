@@ -26,9 +26,13 @@ test("one take revision owns audience and lower-third activation", () => {
     type: "TAKE_REQUESTED",
     source,
     cursor,
+    lowerThirdSlideId: "lower:0",
     outputs: { audience: true, lowerThird: true },
   });
   assert.equal(taking.status, SCRIPTURE_PRESENTATION_STATUS.TAKING);
+  assert.equal(taking.revision, taking.takeRevision);
+  assert.equal(taking.outputs.audience.slideId, "audience:0");
+  assert.equal(taking.outputs.lowerThird.slideId, "lower:0");
 
   const stale = machine.dispatch({
     type: "TAKE_CONFIRMED",
@@ -45,6 +49,32 @@ test("one take revision owns audience and lower-third activation", () => {
   assert.equal(live.status, SCRIPTURE_PRESENTATION_STATUS.LIVE);
   assert.equal(live.outputs.audience.status, "live");
   assert.equal(live.outputs.lowerThird.status, "live");
+});
+
+test("a failed take can settle after cursor navigation invalidates its render revision", () => {
+  const machine = createScripturePresentationMachine();
+  const taking = machine.dispatch({
+    type: "TAKE_REQUESTED",
+    source,
+    cursor: scriptureCursorForSlide(audienceSlides[0], audienceSlides),
+    outputs: { audience: true, lowerThird: true },
+  });
+  const navigated = machine.dispatch({
+    type: "CURSOR_CHANGED",
+    sourceId: source.id,
+    cursor: scriptureCursorForSlide(audienceSlides[1], audienceSlides),
+    lowerThirdSlideId: "lower:2",
+  });
+  assert.notEqual(navigated.revision, taking.revision);
+  assert.equal(navigated.status, SCRIPTURE_PRESENTATION_STATUS.TAKING);
+
+  const settled = machine.dispatch({
+    type: "TAKE_CONFIRMED",
+    revision: taking.takeRevision,
+    outputs: { audience: false, lowerThird: false },
+  });
+  assert.equal(settled.status, SCRIPTURE_PRESENTATION_STATUS.PREVIEWING);
+  assert.equal(settled.takeRevision, null);
 });
 
 test("linked cursor maps the same verse across different pagination", () => {

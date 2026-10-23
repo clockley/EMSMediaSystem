@@ -92,16 +92,23 @@ export function reduceScripturePresentation(state, event = {}) {
       const source = normalizedSource(event.source);
       if (!source) return current;
       const revision = nextRevision(current);
+      const cursor = normalizedCursor(event.cursor);
       return {
         ...current,
         status: SCRIPTURE_PRESENTATION_STATUS.TAKING,
         revision,
         takeRevision: revision,
         source,
-        cursor: normalizedCursor(event.cursor),
+        cursor,
         outputs: {
-          audience: outputState(event.outputs?.audience === true),
-          lowerThird: outputState(event.outputs?.lowerThird === true),
+          audience: {
+            ...outputState(event.outputs?.audience === true),
+            slideId: cursor?.audienceSlideId || null,
+          },
+          lowerThird: {
+            ...outputState(event.outputs?.lowerThird === true),
+            slideId: event.lowerThirdSlideId ? String(event.lowerThirdSlideId) : null,
+          },
         },
       };
     }

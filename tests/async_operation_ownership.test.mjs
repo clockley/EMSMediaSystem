@@ -348,6 +348,20 @@ test("async UI handlers validate stable ownership after awaits", async () => {
     "async function addEachSelectedBibleVerseToSchedule(",
   );
   assert.match(selectedBibleInsert, /bibleScheduleInsertionCoalescer\.run/);
+  const eachBibleInsert = functionSource(
+    bible,
+    "async function addEachSelectedBibleVerseToSchedule(",
+    "function hideBibleTextContextMenu(",
+  );
+  assert.match(eachBibleInsert, /bibleScheduleInsertionCoalescer\.run\("bible:add-each"/);
+  const scriptureTakeStart = functionSource(
+    bible,
+    "function beginScriptureTake(",
+    "function confirmScriptureTake(",
+  );
+  assert.match(scriptureTakeStart, /lowerThirdSlideId:/);
+  assert.match(scriptureTakeStart, /return state\.takeRevision/);
+  assert.doesNotMatch(scriptureTakeStart, /type: "CURSOR_CHANGED"/);
   const scriptureDoubleClick = functionSource(
     bible,
     "async function presentBibleSelectionFromDoubleClick(",

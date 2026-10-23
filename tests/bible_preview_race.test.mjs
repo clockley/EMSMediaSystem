@@ -10,6 +10,10 @@ const presentationPlayback = await readFile(
   new URL("../src/control-window/app-presentation-playback.mjs", import.meta.url),
   "utf8",
 );
+const mediaRuntime = await readFile(
+  new URL("../src/control-window/app-media-runtime.mjs", import.meta.url),
+  "utf8",
+);
 const mediaWindow = await readFile(
   new URL("../src/media-window/media.mjs", import.meta.url),
   "utf8",
@@ -142,6 +146,90 @@ test("scheduled Scripture slipstreams reject fallback text", () => {
     /resolvedBibleEntryForItem\(nextItem, \{ requireLookup: true \}\)/,
   );
   assert.match(slipstream, /if \(isBibleItem && !resolvedBibleEntry\) return false/);
+  assert.match(
+    slipstream,
+    /scripturePresentation\.state\.takeRevision === scriptureTakeRevision/,
+  );
+  assert.match(
+    slipstream,
+    /confirmScriptureTake\(scriptureTakeRevision, \{\s*audience: scriptureAudienceStarted,\s*lowerThird: scriptureLowerThirdStarted,/,
+  );
+});
+
+test("an acknowledged Scripture slipstream remains live after queue ownership loss", () => {
+  const slipstream = functionSource(
+    presentationPlayback,
+    "async function slipstreamQueueItemAtIndex",
+    "async function trySlipstreamNextQueueItem",
+  );
+  const activationIndex = slipstream.indexOf(
+    "const slipstreamSuccess = slipstreamResult.ok === true",
+  );
+  const audienceStartedIndex = slipstream.indexOf(
+    "scriptureAudienceStarted = true",
+    activationIndex,
+  );
+  const ownershipIndex = slipstream.indexOf(
+    "if (!audiencePlaybackCoordinator.owns(transitionToken)) return false",
+    activationIndex,
+  );
+
+  assert.ok(activationIndex >= 0, "the slipstream activation should be acknowledged");
+  assert.ok(
+    audienceStartedIndex > activationIndex && audienceStartedIndex < ownershipIndex,
+    "the audience must be recorded live before a lost queue token can return",
+  );
+});
+
+test("Show Now exceptions settle owned takes and restore an unused queue selection", () => {
+  const showNow = functionSource(
+    bibleWorkspace,
+    "async function showBibleTextNow",
+    "async function slipstreamBiblePresentation",
+  );
+  assert.match(showNow, /let presentationRevision = null/);
+  assert.match(showNow, /let audienceStarted = false/);
+  assert.match(showNow, /let lowerThirdStarted = false/);
+  assert.equal(
+    (showNow.match(/onAudienceStarted:/g) || []).length,
+    2,
+    "both audience activation paths must report partial success before later bookkeeping",
+  );
+  assert.match(
+    showNow,
+    /scripturePresentation\.state\.takeRevision === presentationRevision/,
+  );
+  assert.match(
+    showNow,
+    /confirmScriptureTake\(presentationRevision, \{\s*audience: audienceStarted === true,\s*lowerThird: lowerThirdStarted === true,/,
+  );
+  assert.match(
+    showNow,
+    /!audienceStarted &&\s*!lowerThirdStarted[\s\S]*currentQueueIndex === -1[\s\S]*setSharedRendererState\(\{ currentQueueIndex: previousQueueIndex \}\)/,
+  );
+});
+
+test("Show Now audience helpers report activation before fallible bookkeeping", () => {
+  const bibleSlipstream = functionSource(
+    bibleWorkspace,
+    "async function slipstreamBiblePresentation",
+    "async function syncLiveBiblePresentation",
+  );
+  const createWindow = functionSource(
+    mediaRuntime,
+    "async function createMediaWindow",
+    "\nexport {",
+  );
+  assert.ok(
+    bibleSlipstream.indexOf("options.onAudienceStarted?.") <
+      bibleSlipstream.indexOf("setSharedRendererState({ activeMediaWindowContentType"),
+    "slipstream activation must be reported before local state can throw",
+  );
+  assert.ok(
+    createWindow.indexOf("options?.onAudienceStarted?.") <
+      createWindow.indexOf("commitMediaWindowOutputState();"),
+    "fresh-window activation must be reported before local state can throw",
+  );
 });
 
 test("the audience renderer cannot let song blocks override Scripture body text", () => {

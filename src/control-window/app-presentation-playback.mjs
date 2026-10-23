@@ -1839,6 +1839,9 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
 
   setSharedRendererState({ queueSlipstreamTransitionInProgress: true });
   let startupSyncStarted = false;
+  let scriptureTakeRevision = null;
+  let scriptureAudienceStarted = false;
+  let scriptureLowerThirdStarted = false;
   // Staging the next item rewrites #preview's source and seeks it to the new
   // cue point. Those pause/seek events would otherwise be forwarded to the
   // projection as play-ctl / timeGoto-message commands describing a clip that is
@@ -1893,7 +1896,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       ? await resolvedBibleEntryForItem(nextItem, { requireLookup: true })
       : null;
     if (isBibleItem && !resolvedBibleEntry) return false;
-    const scriptureTakeRevision = resolvedBibleEntry
+    scriptureTakeRevision = resolvedBibleEntry
       ? beginScriptureTake(resolvedBibleEntry, {
           item: nextItem,
           scheduleIndex: index,
@@ -2012,6 +2015,17 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       }
       return false;
     }
+    if (
+      isBibleItem &&
+      audiencePlaybackCoordinator.matchesActivePlayback({
+        playbackId: slipstreamResult.playbackId,
+      })
+    ) {
+      // The renderer acknowledged and the activation helper committed this
+      // playback. Preserve that fact even if queue-transition ownership was
+      // cancelled while the IPC request was in flight.
+      scriptureAudienceStarted = true;
+    }
     if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
     index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
     if (index < 0) return false;
@@ -2078,9 +2092,10 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
         nextItem,
         scriptureTakeRevision,
       );
+      scriptureLowerThirdStarted = lowerThirdUpdated === true;
       confirmScriptureTake(scriptureTakeRevision, {
-        audience: true,
-        lowerThird: lowerThirdUpdated === true,
+        audience: scriptureAudienceStarted,
+        lowerThird: scriptureLowerThirdStarted,
       });
     } else if (isSongItem) {
       await updateLowerThirdForSupportedScheduleItem(nextItem);
@@ -2110,6 +2125,16 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     if (startupSyncStarted) finishProjectionPlaybackStartupSync();
     throw err;
   } finally {
+    if (
+      scriptureTakeRevision !== null &&
+      scripturePresentation.state.status === "taking" &&
+      scripturePresentation.state.takeRevision === scriptureTakeRevision
+    ) {
+      confirmScriptureTake(scriptureTakeRevision, {
+        audience: scriptureAudienceStarted,
+        lowerThird: scriptureLowerThirdStarted,
+      });
+    }
     if (
       !transitionWasSupplied &&
       audiencePlaybackCoordinator.owns(transitionToken) &&

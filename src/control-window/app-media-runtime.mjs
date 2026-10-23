@@ -2476,6 +2476,7 @@ async function createMediaWindow(options) {
     if (!audiencePlaybackCoordinator.matchesActivePlayback({ playbackId })) {
       return false;
     }
+    options?.onAudienceStarted?.({ playbackId });
     commitMediaWindowOutputState();
     syncAudienceOutputHoldAfterPresentationStart();
     syncStreamRendererPreviewCapture();
