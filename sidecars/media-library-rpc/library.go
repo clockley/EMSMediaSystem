@@ -109,6 +109,7 @@ type folderView struct {
 
 type activityInput struct {
 	ItemID         string `json:"itemId"`
+	SourceID       string `json:"sourceId"`
 	LocalPath      string `json:"localPath"`
 	ActionKind     string `json:"actionKind"`
 	ProjectID      string `json:"projectId"`
@@ -917,9 +918,11 @@ func (s *libraryService) AddFiles(paths []string) ([]itemView, error) {
 	items := []itemView{}
 	ids := []string{}
 	thumbnailPaths := []string{}
+	failures := []string{}
 	for _, rawPath := range paths {
 		localPath, err := canonicalPath(rawPath)
 		if err != nil {
+			failures = append(failures, fmt.Sprintf("%q: %v", rawPath, err))
 			continue
 		}
 		// Promoting a transient Recent item removes the transient row first.
@@ -947,6 +950,7 @@ func (s *libraryService) AddFiles(paths []string) ([]itemView, error) {
 		}
 		item, err := upsertItemTx(tx, addedFilesSourceID, localPath, false)
 		if err != nil {
+			failures = append(failures, fmt.Sprintf("%q: %v", rawPath, err))
 			continue
 		}
 		item.SourceName = "Added Files"
@@ -958,7 +962,10 @@ func (s *libraryService) AddFiles(paths []string) ([]itemView, error) {
 	_, _ = tx.Exec(`UPDATE sources SET item_count=?, last_sync_at=? WHERE id=?`, count, time.Now().UTC().Format(time.RFC3339Nano), addedFilesSourceID)
 	if len(ids) == 0 {
 		_ = tx.Rollback()
-		return items, nil
+		if len(failures) == 0 {
+			return nil, fmt.Errorf("no files were provided")
+		}
+		return nil, fmt.Errorf("no files were added: %s", strings.Join(failures, "; "))
 	}
 	change, err := recordChangeTx(tx, "items-added", ids)
 	if err == nil {
@@ -1257,7 +1264,23 @@ func (s *libraryService) RecordActivity(input activityInput) (*activityResult, e
 			_ = tx.Rollback()
 			return nil, err
 		}
-		_ = tx.QueryRow(`SELECT id FROM items WHERE path_key=? AND transient=0 LIMIT 1`, pathKey(localPath)).Scan(&itemID)
+		if strings.TrimSpace(input.SourceID) != "" {
+			_ = tx.QueryRow(`
+				SELECT id FROM items
+				WHERE source_id=? AND path_key=? AND transient=0
+				LIMIT 1
+			`, strings.TrimSpace(input.SourceID), pathKey(localPath)).Scan(&itemID)
+		} else {
+			// A path may be indexed by several folder sources as well as Added
+			// Files. Prefer the durable Added Files identity and use a stable
+			// source/id order instead of whichever row SQLite happens to return.
+			_ = tx.QueryRow(`
+				SELECT id FROM items
+				WHERE path_key=? AND transient=0
+				ORDER BY CASE WHEN source_id=? THEN 0 ELSE 1 END, source_id, id
+				LIMIT 1
+			`, pathKey(localPath), addedFilesSourceID).Scan(&itemID)
+		}
 		if itemID == "" {
 			item, err := upsertItemTx(tx, recentSourceID, localPath, true)
 			if err != nil {
@@ -1319,6 +1342,22 @@ func (s *libraryService) RecordActivity(input activityInput) (*activityResult, e
 	return &activityResult{ItemID: itemID, LastUsedAt: now}, nil
 }
 
+func (s *libraryService) scheduleSourceRescanLocked(sourceID string, delay time.Duration) {
+	if timer := s.rescanTimers[sourceID]; timer != nil {
+		timer.Stop()
+	}
+	id := sourceID
+	s.rescanTimers[id] = time.AfterFunc(delay, func() { _, _ = s.ScanSource(id) })
+}
+
+func (s *libraryService) recoverFromWatcherError() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for sourceID := range s.watchedBySource {
+		s.scheduleSourceRescanLocked(sourceID, 0)
+	}
+}
+
 func (s *libraryService) watchLoop(watcher *fsnotify.Watcher) {
 	for {
 		select {
@@ -1329,14 +1368,14 @@ func (s *libraryService) watchLoop(watcher *fsnotify.Watcher) {
 			s.mu.Lock()
 			owners := s.ownersByDir[pathKey(filepath.Dir(event.Name))]
 			for sourceID := range owners {
-				if timer := s.rescanTimers[sourceID]; timer != nil {
-					timer.Stop()
-				}
-				id := sourceID
-				s.rescanTimers[id] = time.AfterFunc(350*time.Millisecond, func() { _, _ = s.ScanSource(id) })
+				s.scheduleSourceRescanLocked(sourceID, 350*time.Millisecond)
 			}
 			s.mu.Unlock()
-		case <-watcher.Errors:
+		case _, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			s.recoverFromWatcherError()
 		case <-s.stop:
 			return
 		}

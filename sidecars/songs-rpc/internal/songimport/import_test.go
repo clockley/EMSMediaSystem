@@ -212,6 +212,29 @@ Instrumental break
 	}
 }
 
+func TestParseTXTImportAllowsEmptyLeadingTagSection(t *testing.T) {
+	txtContent := `Title: Empty Tag
+
+[Tag]
+[Verse 1]
+The first lyric line
+`
+
+	song, err := ParseTXTImport(txtContent, "empty-tag.txt")
+	if err != nil {
+		t.Fatalf("ParseTXTImport failed: %v", err)
+	}
+	if len(song.Sections) != 3 {
+		t.Fatalf("sections = %d, want title, empty tag, and verse", len(song.Sections))
+	}
+	if song.Sections[0].Kind != "title" {
+		t.Fatalf("first section kind = %q, want title", song.Sections[0].Kind)
+	}
+	if song.Sections[1].Kind != "tag" || len(song.Sections[1].Blocks) != 0 {
+		t.Fatalf("empty tag section = %#v", song.Sections[1])
+	}
+}
+
 func TestParseTXTImportSkipsLeadingProPresenterTag(t *testing.T) {
 	txtContent := `Tag
 SDA Hymnal #9

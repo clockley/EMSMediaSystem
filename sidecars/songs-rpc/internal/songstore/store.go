@@ -1223,6 +1223,44 @@ func deckBlocks(page map[string]interface{}) []interface{} {
 	return blocks
 }
 
+func deckBlocksContainText(blocks []interface{}) bool {
+	localizedRunContainsText := func(value interface{}) bool {
+		run, ok := value.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		if text, ok := run["text"].(string); ok && strings.TrimSpace(text) != "" {
+			return true
+		}
+		for _, segmentValue := range genericSlice(run["segments"]) {
+			segment, ok := segmentValue.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if text, ok := segment["text"].(string); ok && strings.TrimSpace(text) != "" {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, blockValue := range blocks {
+		block, ok := blockValue.(map[string]interface{})
+		if !ok || documentString(block, "type") == "spacer" {
+			continue
+		}
+		if localizedRunContainsText(block["primary"]) {
+			return true
+		}
+		for _, translation := range genericSlice(block["translations"]) {
+			if localizedRunContainsText(translation) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func deckToCanonicalSongDocument(raw map[string]interface{}) (map[string]interface{}, error) {
 	deck := cloneDocument(raw)
 	if documentString(deck, "id") == "" {
@@ -1261,13 +1299,21 @@ func deckToCanonicalSongDocument(raw map[string]interface{}) (map[string]interfa
 			label = fmt.Sprintf("Section %d", index+1)
 		}
 		section := map[string]interface{}{}
-		if existing, ok := existingSections[id]; ok {
+		existing, hasExisting := existingSections[id]
+		if hasExisting {
 			section = cloneDocument(existing)
 		}
 		section["id"] = id
 		section["kind"] = strings.ToLower(kind)
 		section["label"] = label
-		section["blocks"] = deckBlocks(page)
+		pageBlocks := deckBlocks(page)
+		// A slide deck carries both visual objects and its canonical song. Empty
+		// placeholder text objects are not an instruction to erase canonical
+		// lyrics. An explicit canonical edit still wins because it is the section
+		// cloned above.
+		if !hasExisting || deckBlocksContainText(pageBlocks) || !deckBlocksContainText(genericSlice(section["blocks"])) {
+			section["blocks"] = pageBlocks
+		}
 		section["slideObjects"] = cloneDocument(map[string]interface{}{"value": genericSlice(page["objects"])})["value"]
 		if background, ok := page["background"].(map[string]interface{}); ok {
 			section["slideBackground"] = cloneDocument(background)
@@ -1571,6 +1617,20 @@ func (s *SongStore) SaveSongDocument(raw map[string]interface{}, originalImportJ
 
 	document, err := canonicalSongFromDocument(raw)
 	if err != nil {
+		return err
+	}
+	// Folder membership is changed through MoveSongToFolder. Preserve the
+	// current database value for existing songs so an editor opened before a
+	// folder move cannot undo that move with a later content save.
+	var existingFolderID sql.NullString
+	err = tx.QueryRow(`SELECT folder_id FROM songs WHERE id = ?`, documentString(document, "id")).Scan(&existingFolderID)
+	if err == nil {
+		if folderID := scanNullableString(existingFolderID); folderID != nil {
+			document["folderId"] = *folderID
+		} else {
+			document["folderId"] = nil
+		}
+	} else if err != sql.ErrNoRows {
 		return err
 	}
 	if err := s.saveSongDocumentTx(tx, document, originalImportJSON); err != nil {
@@ -2019,9 +2079,18 @@ func (s *SongStore) MoveSongToFolder(songID string, folderID *string) error {
 	if songID == "" {
 		return fmt.Errorf("song id is required")
 	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var normalizedFolderID *string
 	if folderID != nil && strings.TrimSpace(*folderID) != "" {
+		trimmed := strings.TrimSpace(*folderID)
+		normalizedFolderID = &trimmed
 		var exists int
-		err := s.db.QueryRow("SELECT 1 FROM song_folders WHERE id = ?", strings.TrimSpace(*folderID)).Scan(&exists)
+		err := tx.QueryRow("SELECT 1 FROM song_folders WHERE id = ?", trimmed).Scan(&exists)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return fmt.Errorf("folder not found")
@@ -2029,20 +2098,49 @@ func (s *SongStore) MoveSongToFolder(songID string, folderID *string) error {
 			return err
 		}
 	}
-	result, err := s.db.Exec(`
-		UPDATE songs
-		SET folder_id = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, nullableString(folderID), songID)
+
+	var canonicalJSON sql.NullString
+	var astJSON sql.NullString
+	var songJSON sql.NullString
+	var songNumber sql.NullInt64
+	var meter sql.NullString
+	err = tx.QueryRow(`
+		SELECT canonical_json, ast_json, song_json, song_number, meter
+		FROM songs WHERE id = ?
+	`, songID).Scan(&canonicalJSON, &astJSON, &songJSON, &songNumber, &meter)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("song not found")
+		}
 		return err
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
+
+	var document map[string]interface{}
+	for _, candidate := range []sql.NullString{canonicalJSON, astJSON, songJSON} {
+		rawDocument := decodeSongDocument(candidate)
+		if rawDocument == nil {
+			continue
+		}
+		converted, conversionErr := canonicalSongFromDocument(rawDocument)
+		if conversionErr == nil {
+			document = converted
+			break
+		}
+	}
+	if document == nil {
+		return fmt.Errorf("song data is invalid")
+	}
+	if normalizedFolderID != nil {
+		document["folderId"] = *normalizedFolderID
+	} else {
+		document["folderId"] = nil
+	}
+	if dbNumber := scanNullableInt(songNumber); dbNumber != nil {
+		document["songNumber"] = *dbNumber
+	}
+	setASTMetadataString(document, "meter", scanNullableText(meter))
+	if err := s.saveSongDocumentTx(tx, document, ""); err != nil {
 		return err
 	}
-	if rows == 0 {
-		return fmt.Errorf("song not found")
-	}
-	return nil
+	return tx.Commit()
 }

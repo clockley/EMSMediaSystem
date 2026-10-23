@@ -300,7 +300,7 @@ func normalizeParsedSong(song *ParsedSong, sourceName string, injectTitleSlide b
 	hasTitleSlide := false
 	if len(song.Sections) > 0 {
 		firstSec := song.Sections[0]
-		if firstSec.Kind == "title" || (firstSec.Kind == "tag" && len(firstSec.Blocks) <= 3 && strings.Contains(strings.ToLower(parsedBlockText(firstSec.Blocks[0])), "hymn")) {
+		if firstSec.Kind == "title" || (firstSec.Kind == "tag" && len(firstSec.Blocks) > 0 && len(firstSec.Blocks) <= 3 && strings.Contains(strings.ToLower(parsedBlockText(firstSec.Blocks[0])), "hymn")) {
 			hasTitleSlide = true
 		}
 	}

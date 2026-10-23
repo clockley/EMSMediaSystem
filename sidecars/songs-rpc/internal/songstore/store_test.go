@@ -549,7 +549,20 @@ func TestDeckEditorSavePreservesCanonicalOnlySectionFields(t *testing.T) {
 				"number":       3,
 				"label":        "Verse 3",
 				"customSource": "keep",
-				"blocks":       []interface{}{},
+				"blocks": []interface{}{
+					map[string]interface{}{
+						"type": "lyricLine",
+						"id":   "line_1",
+						"primary": map[string]interface{}{
+							"lang": "en",
+							"segments": []interface{}{
+								map[string]interface{}{"type": "text", "text": "Preserve this lyric"},
+							},
+						},
+						"translations": []interface{}{},
+						"annotations":  []interface{}{},
+					},
+				},
 			},
 		},
 		"arrangements": []interface{}{
@@ -569,10 +582,16 @@ func TestDeckEditorSavePreservesCanonicalOnlySectionFields(t *testing.T) {
 		"metadata":      canonical["metadata"],
 		"pages": []interface{}{
 			map[string]interface{}{
-				"id":      "verse",
-				"kind":    "verse",
-				"label":   "Edited Verse",
-				"objects": []interface{}{},
+				"id":    "verse",
+				"kind":  "verse",
+				"label": "Edited Verse",
+				"objects": []interface{}{
+					map[string]interface{}{
+						"id":     "empty_text",
+						"kind":   "text",
+						"blocks": []interface{}{},
+					},
+				},
 			},
 		},
 		"playOrder": canonical["playOrder"],
@@ -589,8 +608,71 @@ func TestDeckEditorSavePreservesCanonicalOnlySectionFields(t *testing.T) {
 	if section["number"] != float64(3) || section["customSource"] != "keep" {
 		t.Fatalf("canonical-only section fields were lost: %#v", section)
 	}
+	blocks := genericSlice(section["blocks"])
+	if len(blocks) != 1 || textFromGenericBlock(blocks[0].(map[string]interface{})) != "Preserve this lyric" {
+		t.Fatalf("canonical lyrics were replaced by empty slide text: %#v", blocks)
+	}
 	if len(genericSlice(got["arrangements"])) != 1 {
 		t.Fatalf("arrangements were lost: %#v", got["arrangements"])
+	}
+}
+
+func TestMoveSongToFolderSurvivesStaleContentSave(t *testing.T) {
+	store, err := InitStore(filepath.Join(t.TempDir(), "songs.db"))
+	if err != nil {
+		t.Fatalf("InitStore failed: %v", err)
+	}
+	defer store.Close()
+
+	firstFolder, err := store.CreateFolder("First")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondFolder, err := store.CreateFolder("Second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := map[string]interface{}{
+		"schema":   canonicalSongSchemaVersion,
+		"id":       "folder_round_trip",
+		"title":    "Folder Round Trip",
+		"folderId": firstFolder.ID,
+		"metadata": map[string]interface{}{"authors": []interface{}{}, "copyright": ""},
+		"sections": []interface{}{},
+	}
+	if err := store.SaveSongDocument(document, ""); err != nil {
+		t.Fatal(err)
+	}
+	staleValue, err := store.GetSong("folder_round_trip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleDocument := staleValue.(map[string]interface{})
+
+	if err := store.MoveSongToFolder("folder_round_trip", &secondFolder.ID); err != nil {
+		t.Fatal(err)
+	}
+	var storedJSON string
+	if err := store.db.QueryRow(`SELECT canonical_json FROM songs WHERE id=?`, "folder_round_trip").Scan(&storedJSON); err != nil {
+		t.Fatal(err)
+	}
+	var storedDocument map[string]interface{}
+	if err := json.Unmarshal([]byte(storedJSON), &storedDocument); err != nil {
+		t.Fatal(err)
+	}
+	if storedDocument["folderId"] != secondFolder.ID {
+		t.Fatalf("stored folderId after move = %#v", storedDocument["folderId"])
+	}
+
+	if err := store.SaveSongDocument(staleDocument, ""); err != nil {
+		t.Fatal(err)
+	}
+	gotValue, err := store.GetSong("folder_round_trip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotValue.(map[string]interface{})["folderId"] != secondFolder.ID {
+		t.Fatalf("stale save reverted folder: %#v", gotValue)
 	}
 }
 

@@ -8133,7 +8133,10 @@ async function saveSongEditor() {
   const songDeck = songDeckDocumentFromSongDocument(song, renderSnapshot);
 
   try {
-    const saved = await songsAPI.save(songDeck);
+    let saved = await songsAPI.save(songDeck);
+    if (saved?.id && (saved.folderId || null) !== folderId) {
+      saved = await songsAPI.moveToFolder(saved.id, folderId);
+    }
     const savedDocument = saved || songDeck;
     if (stillOwnsEditor()) {
       await updateScheduleSongsWithUpdatedSong(savedDocument, {

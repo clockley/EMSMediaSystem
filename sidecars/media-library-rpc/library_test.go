@@ -467,6 +467,118 @@ func TestDroppedPathsAreClassifiedWithoutFolderProbeErrors(t *testing.T) {
 	}
 }
 
+func TestAddFilesReturnsErrorWhenNothingCanBeAdded(t *testing.T) {
+	root := t.TempDir()
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := service.AddFiles([]string{"", filepath.Join(root, "missing.png")})
+	if err == nil {
+		t.Fatalf("items=%#v, want an error when every path fails", items)
+	}
+	var count int
+	if queryErr := service.db.QueryRow(`SELECT COUNT(*) FROM items WHERE source_id=?`, addedFilesSourceID).Scan(&count); queryErr != nil {
+		t.Fatal(queryErr)
+	}
+	if count != 0 {
+		t.Fatalf("added-files rows = %d, want 0", count)
+	}
+}
+
+func TestRecordActivityUsesRequestedSourceForDuplicatePath(t *testing.T) {
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "source")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	imagePath := filepath.Join(sourceRoot, "shared.png")
+	writePNG(t, imagePath)
+
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := service.AddSource(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanSource(source.ID); err != nil {
+		t.Fatal(err)
+	}
+	folderItems, err := service.Query(queryOptions{SourceID: source.ID, Limit: 10})
+	if err != nil || len(folderItems.Items) != 1 {
+		t.Fatalf("folder items=%#v err=%v", folderItems, err)
+	}
+	addedItems, err := service.AddFiles([]string{imagePath})
+	if err != nil || len(addedItems) != 1 {
+		t.Fatalf("added items=%#v err=%v", addedItems, err)
+	}
+
+	activity, err := service.RecordActivity(activityInput{
+		SourceID:   source.ID,
+		LocalPath:  imagePath,
+		ActionKind: "previewed",
+	})
+	if err != nil || activity == nil || activity.ItemID != folderItems.Items[0].ID {
+		t.Fatalf("source-specific activity=%#v err=%v", activity, err)
+	}
+
+	activity, err = service.RecordActivity(activityInput{LocalPath: imagePath, ActionKind: "previewed"})
+	if err != nil || activity == nil || activity.ItemID != addedItems[0].ID {
+		t.Fatalf("default duplicate-path activity=%#v err=%v", activity, err)
+	}
+}
+
+func TestWatcherErrorSchedulesImmediateSourceRescan(t *testing.T) {
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "source")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := service.AddSource(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanSource(source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.watcher.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	imagePath := filepath.Join(sourceRoot, "recovered.png")
+	writePNG(t, imagePath)
+	service.recoverFromWatcherError()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		result, queryErr := service.Query(queryOptions{SourceID: source.ID, Query: "recovered", Limit: 10})
+		if queryErr == nil && result.Total == 1 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("watcher error recovery did not rescan the source")
+}
+
 func TestPromotingRecentItemRemovesThumbnailRowsAndFiles(t *testing.T) {
 	root := t.TempDir()
 	imagePath := filepath.Join(root, "promoted.png")
