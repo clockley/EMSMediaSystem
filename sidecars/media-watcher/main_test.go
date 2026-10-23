@@ -82,6 +82,23 @@ func TestTargetsFromItemsKeepsDuplicateQueueItemsForSameFile(t *testing.T) {
 	}
 }
 
+func TestTargetsFromItemsKeepsCaseDistinctPaths(t *testing.T) {
+	root := t.TempDir()
+	upperPath := filepath.Join(root, "Media.mp4")
+	lowerPath := filepath.Join(root, "media.mp4")
+	if comparablePathKey(upperPath) == comparablePathKey(lowerPath) {
+		t.Fatal("comparable path keys unexpectedly folded case")
+	}
+
+	targets, _ := targetsFromItems([]watchItem{
+		{QueueItemID: "upper", OriginalPath: upperPath},
+		{QueueItemID: "lower", OriginalPath: lowerPath},
+	})
+	if len(targets) != 2 {
+		t.Fatalf("targets length = %d, want 2 case-sensitive paths", len(targets))
+	}
+}
+
 func TestParseSetWatchesParams(t *testing.T) {
 	payload, err := json.Marshal([]any{
 		map[string]any{

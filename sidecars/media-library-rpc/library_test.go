@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -186,8 +187,9 @@ func TestSourceScanDoesNotBlockLibraryQueriesDuringFilesystemWalk(t *testing.T) 
 	originalWalk := service.walkDir
 	walkStarted := make(chan struct{})
 	releaseWalk := make(chan struct{})
+	var signalWalkStarted sync.Once
 	service.walkDir = func(root string, visit fs.WalkDirFunc) error {
-		close(walkStarted)
+		signalWalkStarted.Do(func() { close(walkStarted) })
 		<-releaseWalk
 		return originalWalk(root, visit)
 	}

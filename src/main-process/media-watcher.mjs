@@ -264,6 +264,7 @@ export class MediaWatcher {
     this.sendToRenderer =
       typeof sendToRenderer === "function" ? sendToRenderer : () => {};
     this.itemsByPath = new Map();
+    this.itemsByQueueId = new Map();
     this.sidecar = new MediaWatcherSidecarClient({
       app,
       devRoot,
@@ -325,6 +326,7 @@ export class MediaWatcher {
 
   resetLocalState() {
     this.itemsByPath.clear();
+    this.itemsByQueueId.clear();
   }
 
   normalizeWatchItem(raw) {
@@ -358,6 +360,7 @@ export class MediaWatcher {
     const existing = this.itemsByPath.get(item.originalPath) || [];
     existing.push(item);
     this.itemsByPath.set(item.originalPath, existing);
+    if (item.queueItemId) this.itemsByQueueId.set(item.queueItemId, item);
   }
 
   watchedItemCount() {
@@ -390,7 +393,9 @@ export class MediaWatcher {
     const watchedItems = this.itemsByPath.get(originalPath) || [];
     const queueItemIds = this.payloadQueueItemIds(payload);
     if (!queueItemIds) return watchedItems;
-    return watchedItems.filter((item) => queueItemIds.has(item.queueItemId));
+    return [...queueItemIds]
+      .map((queueItemId) => this.itemsByQueueId.get(queueItemId))
+      .filter(Boolean);
   }
 
   sidecarFacts(payload) {
@@ -412,7 +417,7 @@ export class MediaWatcher {
 
   handleSidecarChanged(payload) {
     const originalPath = normalizeLocalPath(payload?.originalPath || payload?.eventPath || "");
-    if (!originalPath || !this.itemsByPath.has(originalPath)) return;
+    if (!originalPath) return;
     const watchedItems = this.itemsForPayload(originalPath, payload);
     if (watchedItems.length === 0) return;
 

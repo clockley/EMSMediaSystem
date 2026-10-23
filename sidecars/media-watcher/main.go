@@ -18,7 +18,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -225,11 +224,7 @@ func normalizeWatchOptions(patch watchOptionsPatch) watchOptions {
 }
 
 func comparablePathKey(filePath string) string {
-	cleaned := filepath.Clean(filePath)
-	if runtime.GOOS == "windows" {
-		return strings.ToLower(cleaned)
-	}
-	return cleaned
+	return filepath.Clean(filePath)
 }
 
 func normalizePath(filePath string) (string, error) {

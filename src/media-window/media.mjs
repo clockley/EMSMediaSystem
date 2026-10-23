@@ -1058,6 +1058,14 @@ async function activateVideoTarget(data) {
  * first. Live streams are not slipstreamed; the queue uses a close/reopen cycle
  * for them.
  */
+function isDirectHlsStream(url) {
+  return /\.m3u8(?:[?#]|$)/i.test(String(url || ""));
+}
+
+function isDirectDashStream(url) {
+  return /\.mpd(?:[?#]|$)/i.test(String(url || ""));
+}
+
 async function startLiveStreamPlayback(url) {
   beginPlaybackStateStabilizing();
   teardownStreamingPlayers();
@@ -1094,10 +1102,22 @@ async function startLiveStreamPlayback(url) {
       );
       dashPlayer.initialize(video, dashManifestObjectUrl, false);
     }
-  } else {
+  } else if (isDirectHlsStream(url)) {
     hlsInstance = await createStreamingHls();
     installLiveStreamStatusHandlers(video, hlsInstance);
     hlsInstance.loadSource(url);
+  } else if (isDirectDashStream(url)) {
+    installLiveStreamStatusHandlers(video);
+    const { MediaPlayer } = await import("../../../node_modules/dashjs/dist/modern/esm/dash.all.min.js");
+    dashPlayer = MediaPlayer().create();
+    configureDashAggressiveBuffer(dashPlayer);
+    dashPlayer.initialize(video, url, false);
+  } else {
+    // Legacy projects may still contain a non-HLS/DASH network source. Let the
+    // media element report its normal unsupported-source error instead of
+    // handing an unrelated protocol to the HLS parser.
+    installLiveStreamStatusHandlers(video);
+    video.src = url;
   }
 
   // A non-live-edge stream (e.g. YouTube VOD) behaves like a finite clip, so it

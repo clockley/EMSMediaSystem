@@ -198,7 +198,7 @@ async function primeNetworkPreviewElement(mediaEl, restoreAudioState, options = 
 
 const NETWORK_ITEM_KINDS = new Set(["auto", "stream", "video", "audio"]);
 
-const NETWORK_ITEM_PROTOCOLS = new Set(["http:", "https:", "rtsp:", "rtmp:"]);
+const NETWORK_ITEM_PROTOCOLS = new Set(["http:", "https:"]);
 
 function normalizeNetworkScheduleUrl(value) {
   let candidate = String(value || "").trim();
@@ -385,7 +385,7 @@ function updateNetworkItemDialogState() {
   urlInput.setAttribute("aria-invalid", hasInput && !valid ? "true" : "false");
   if (validation) {
     validation.textContent = hasInput && !valid
-      ? "Use an HTTP, HTTPS, RTSP, or RTMP URL."
+      ? "Use an HTTP or HTTPS URL."
       : "";
   }
 }
@@ -664,7 +664,7 @@ function matchYouTubeNetworkUrl(url) {
 
 function networkPreviewSourceHidesScrubber(source) {
   if (typeof source !== "string" || source.trim().length === 0) return false;
-  return /(?:^rtsp:|^rtmp:|\.m3u8(?:[?#]|$))/i.test(
+  return /\.m3u8(?:[?#]|$)/i.test(
     source,
   );
 }

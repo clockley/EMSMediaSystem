@@ -69,6 +69,7 @@ import {
 import { MediaWatcher } from "./media-watcher.min.mjs";
 import { MediaLibraryRpcClient } from "./media-library-rpc-client.min.mjs";
 import { generateVideoPoster } from "./video-poster.min.mjs";
+import { createYouTubeLiveSessionRegistry } from "./youtube-live-session.min.mjs";
 import { createOutputCommand, validateOutputCommand } from "../shared/output-compositor.min.mjs";
 import {
   advanceAlertState,
@@ -105,6 +106,7 @@ let sessionID = 0;
 let innertubePromise = null;
 const youtubePathNTransformCache = new Map();
 const youtubeMetadataCache = new Map();
+const youtubeLiveSessions = createYouTubeLiveSessionRegistry();
 const isDevMode = process.env.ems_dev === "true";
 const openDevConsole = process.env.ems_dev_console === "true";
 let lastKnownDisplayState = null;
@@ -664,8 +666,8 @@ function handleCloseMediaWindow(event, id) {
     mediaWindow.close();
   }
   // Closing the projection window ends any active YouTube live HLS session;
-  // clear the flag so the next item (often a VOD) isn't given the iOS UA.
-  youtubeLiveSessionActive = false;
+  // clear only the presentation session so control-window previews are isolated.
+  youtubeLiveSessions.set(mediaPresentationSession, false);
 }
 
 function isMediaWindowCapturable() {
@@ -720,7 +722,7 @@ function handleSetDisplayMediaCaptureTarget(_event, target) {
 
 async function handleCloseMediaWindowNow() {
   if (!mediaWindow || mediaWindow.isDestroyed()) {
-    youtubeLiveSessionActive = false;
+    youtubeLiveSessions.set(mediaPresentationSession, false);
     return false;
   }
 
@@ -733,13 +735,13 @@ async function handleCloseMediaWindowNow() {
     windowToClose.once("closed", () => resolve(true));
   });
   windowToClose.close();
-  youtubeLiveSessionActive = false;
+  youtubeLiveSessions.set(mediaPresentationSession, false);
   return mediaClosed;
 }
 
 async function handleDiscardMediaWindowNow() {
   if (!mediaWindow || mediaWindow.isDestroyed()) {
-    youtubeLiveSessionActive = false;
+    youtubeLiveSessions.set(mediaPresentationSession, false);
     return false;
   }
 
@@ -750,7 +752,7 @@ async function handleDiscardMediaWindowNow() {
   if (hasActiveAlerts()) {
     const contentWindow = mediaWindow;
     audienceContentKind = "none";
-    youtubeLiveSessionActive = false;
+    youtubeLiveSessions.set(mediaPresentationSession, false);
     audienceWindowOverlayOnly = true;
     if (!contentWindow.webContents.isDestroyed()) {
       contentWindow.webContents.send("audience-enter-alert-only");
@@ -766,7 +768,7 @@ async function handleDiscardMediaWindowNow() {
     windowToClose.once("closed", () => resolve(true));
   });
   windowToClose.close();
-  youtubeLiveSessionActive = false;
+  youtubeLiveSessions.set(mediaPresentationSession, false);
   return mediaClosed;
 }
 
@@ -797,7 +799,7 @@ function localMediaStateUpdate(event, id, state) {
       break;
     case "stop":
       stopMediaPlaybackPowerHint();
-      youtubeLiveSessionActive = false;
+      youtubeLiveSessions.set(event?.sender?.session, false);
       break;
   }
 }
@@ -919,7 +921,7 @@ async function replaceContentWindowWithAlertOverlay() {
   const contentWindow = mediaWindow;
   const closedId = contentWindow.id;
   audienceContentKind = "none";
-  youtubeLiveSessionActive = false;
+  youtubeLiveSessions.set(mediaPresentationSession, false);
   audienceWindowOverlayOnly = true;
   if (!contentWindow.webContents.isDestroyed()) {
     contentWindow.webContents.send("audience-enter-alert-only");
@@ -2961,21 +2963,12 @@ const YOUTUBE_LIVE_INFO_CLIENTS = [
 ];
 
 /**
- * Tracks whether the active YouTube media session is a live IOS-client HLS
- * stream. We flip this on the moment {@link handleResolveYouTubeStream}
- * resolves an HLS URL so the `webRequest` header-injector knows to apply the
- * iOS User-Agent to every `googlevideo.com` segment fetch, not just URLs that
- * happen to include client/path markers. Live HLS segment URLs frequently
- * omit `c=IOS` / `yt_live_broadcast` (they're path-style:
- * `/videoplayback/id/<id>/.../index.m3u8/sq/<n>/.../file/seg.ts`), and
- * without the iOS UA those segment fetches return 403 even though the
- * manifest itself loaded fine.
- *
- * Cleared by {@link handleCloseMediaWindow} and on `localMediaState` "stop"
- * so VOD playback that follows a live session does not get the iOS UA
- * spoof (which would 403 TV_SIMPLY-signed URLs).
+ * YouTube live-HLS state is tracked per Electron Session. The control preview
+ * uses defaultSession while audience output uses mediaPresentationSession, so
+ * resolving or stopping one cannot change the signed-request headers of the
+ * other. Live HLS segment URLs frequently omit `c=IOS` / `yt_live_broadcast`,
+ * making this explicit per-session state necessary for the iOS UA injection.
  */
-let youtubeLiveSessionActive = false;
 
 /**
  * Clients to try for VOD playback. {@code TV_SIMPLY} (TVHTML5 simply embedded
@@ -3023,7 +3016,8 @@ function shouldFilterOutAudioFormat(format) {
  * Resolves a YouTube URL to something the media window can play.
  * @returns {{ type: 'hls', url: string } | { type: 'progressive', url: string } | { type: 'dash', manifest: string }}
  */
-async function handleResolveYouTubeStream(_event, url) {
+async function handleResolveYouTubeStream(event, url) {
+  const requestSession = event?.sender?.session;
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) {
     throw new Error(`Could not extract a YouTube video ID from: ${url}`);
@@ -3063,7 +3057,7 @@ async function handleResolveYouTubeStream(_event, url) {
           // injector applies the iOS User-Agent to every segment fetch —
           // path-style live segment URLs do not always carry the
           // `c=IOS` / `yt_live_broadcast` markers we'd otherwise key on.
-          youtubeLiveSessionActive = true;
+          youtubeLiveSessions.set(requestSession, true);
           return { type: "hls", url: hlsUrl };
         }
         continue;
@@ -3076,7 +3070,7 @@ async function handleResolveYouTubeStream(_event, url) {
       // Going down the VOD path; any leftover live flag must be cleared so
       // we don't poison TV_SIMPLY-signed URLs with an iOS UA spoof (which
       // would re-introduce VOD 403s).
-      youtubeLiveSessionActive = false;
+      youtubeLiveSessions.set(requestSession, false);
 
       try {
         const preferredFormat = info.chooseFormat({
@@ -6244,9 +6238,9 @@ app.whenReady().then(async () => {
   // request and *do* expect a YouTube Referer + Origin; for those we keep
   // the original Chromium UA and inject Referer / Origin.
   //
-  // The primary live signal is {@link youtubeLiveSessionActive} (set by the
-  // resolver when it hands back an HLS URL); URL-substring patterns are a
-  // defensive fallback for late-arriving requests.
+  // The primary live signal is the per-Session registry (set by the resolver
+  // when it hands back an HLS URL); URL-substring patterns are a defensive
+  // fallback for late-arriving requests.
   //
   // IOS_USER_AGENT must match youtubei.js's Constants.CLIENTS.IOS.USER_AGENT
   // verbatim — the manifest is signed against this exact string and any
@@ -6262,9 +6256,9 @@ app.whenReady().then(async () => {
     // Path-style live HLS segment markers used by the IOS manifest.
     /\/videoplayback\/.+?\/index\.m3u8\//.test(url) ||
     url.includes("/file/seg.ts");
-  const needsIosUserAgent = (url) =>
+  const needsIosUserAgent = (targetSession, url) =>
     url.includes("googlevideo.com") &&
-    (youtubeLiveSessionActive || urlLooksLikeLiveSegment(url));
+    (youtubeLiveSessions.has(targetSession) || urlLooksLikeLiveSegment(url));
   const stripBrowserIdentityHeaders = (headers) => {
     // Chromium fills in these on every fetch and leaks the real browser
     // identity even after we override `User-Agent`. The iOS app never sends
@@ -6288,10 +6282,10 @@ app.whenReady().then(async () => {
     }
     return out;
   };
-  const injectGooglevideoHeaders = (details, callback) => {
+  const injectGooglevideoHeaders = (targetSession, details, callback) => {
     let requestHeaders = details.requestHeaders;
     if (details.url.includes("googlevideo.com")) {
-      if (needsIosUserAgent(details.url)) {
+      if (needsIosUserAgent(targetSession, details.url)) {
         // iOS-signed live segments: strip browser identity, then set iOS UA.
         // NB: order matters — we strip first so a leftover lowercase
         // "user-agent" from Chromium does not shadow our override.
@@ -6330,7 +6324,8 @@ app.whenReady().then(async () => {
     redirectGooglevideoPathN,
   );
   mediaPresentationSession.webRequest.onBeforeSendHeaders(
-    injectGooglevideoHeaders,
+    (details, callback) =>
+      injectGooglevideoHeaders(mediaPresentationSession, details, callback),
   );
 
   // COOP + COEP for the main renderer only (SharedArrayBuffer / high-res timers).
@@ -6354,7 +6349,8 @@ app.whenReady().then(async () => {
     redirectGooglevideoPathN,
   );
   session.defaultSession.webRequest.onBeforeSendHeaders(
-    injectGooglevideoHeaders,
+    (details, callback) =>
+      injectGooglevideoHeaders(session.defaultSession, details, callback),
   );
   session.defaultSession.setDisplayMediaRequestHandler(
     handleMediaWindowDisplayMediaRequest,

@@ -225,17 +225,6 @@ func renderImageThumbnail(input, output string, size int) error {
 	return nil
 }
 
-func linuxPosterDesktop() string {
-	if strings.TrimSpace(os.Getenv("KDE_FULL_SESSION")) != "" {
-		return "kde"
-	}
-	haystack := strings.ToLower(os.Getenv("XDG_CURRENT_DESKTOP") + ":" + os.Getenv("DESKTOP_SESSION"))
-	if strings.Contains(haystack, "kde") || strings.Contains(haystack, "plasma") {
-		return "kde"
-	}
-	return "gnome"
-}
-
 func renderVideoThumbnail(input, output string, size int) error {
 	executable, err := os.Executable()
 	if err != nil {
@@ -248,9 +237,6 @@ func renderVideoThumbnail(input, output string, size int) error {
 	if runtime.GOOS == "windows" {
 		backend := filepath.Join(binDir, "video-poster-win32-x64.exe")
 		command = exec.CommandContext(ctx, backend)
-	} else if linuxPosterDesktop() == "kde" {
-		backend := filepath.Join(binDir, "kde-video-poster.py")
-		command = exec.CommandContext(ctx, "python3", backend)
 	} else {
 		backend := filepath.Join(binDir, "gnome-video-poster.js")
 		command = exec.CommandContext(ctx, "gjs", backend)

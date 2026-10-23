@@ -1950,7 +1950,7 @@ function isLiveStream(mediaFile) {
   ) {
     return false;
   }
-  return /(?:^rtsp:|^rtmp:|\.m3u8(?:[?#]|$)|\.mpd(?:[?#]|$)|youtube\.com|videoplayback|youtu\.be)/i.test(
+  return /(?:\.m3u8(?:[?#]|$)|\.mpd(?:[?#]|$)|youtube\.com|videoplayback|youtu\.be)/i.test(
     String(mediaFile),
   );
 }
