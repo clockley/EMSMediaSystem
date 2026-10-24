@@ -309,7 +309,10 @@ func buildBibleCache(path string, sources []sourceManifest) error {
 				}
 				verses := make([]biblestore.ChapterVerse, 0, len(verseNumbers))
 				for _, verse := range verseNumbers {
-					verses = append(verses, biblestore.ChapterVerse{Verse: verse, Text: biblestore.CleanBibleVerseText(verseMap[strconv.Itoa(verse)])})
+					verses = append(verses, biblestore.ChapterVerse{
+						Verse: verse,
+						Text:  biblestore.CleanBibleVerseTextAtLocation(bookIDs[bookName], chapter, verse, verseMap[strconv.Itoa(verse)]),
+					})
 				}
 				compressed, err := biblestore.CompressChapterVerses(verses)
 				if err != nil {

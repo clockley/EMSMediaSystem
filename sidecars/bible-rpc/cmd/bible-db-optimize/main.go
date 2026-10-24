@@ -344,7 +344,7 @@ func readChapterJobs(tx *sql.Tx, version versionRow, tableName string) ([]chapte
 			return nil, err
 		}
 
-		text := biblestore.CleanBibleVerseText(string(rawText))
+		text := biblestore.CleanBibleVerseTextAtLocation(book, chapter, verse, string(rawText))
 
 		if pendingChapter == nil || book != currentBook || chapter != currentChapter {
 			if err := flushChapter(); err != nil {
@@ -484,7 +484,7 @@ func bulkInsertLookupRows(tx *sql.Tx, version versionRow, tableName string, rowI
 }
 
 func bulkInsertFTSRows(tx *sql.Tx, tableName string, rowIDBase int64) error {
-	rows, err := tx.Query(fmt.Sprintf(`SELECT "id", "t" FROM %s ORDER BY "id"`, tableName))
+	rows, err := tx.Query(fmt.Sprintf(`SELECT "id", "b", "c", "v", "t" FROM %s ORDER BY "id"`, tableName))
 	if err != nil {
 		return fmt.Errorf("read FTS rows: %w", err)
 	}
@@ -501,11 +501,13 @@ func bulkInsertFTSRows(tx *sql.Tx, tableName string, rowIDBase int64) error {
 
 	for rows.Next() {
 		var verseID int64
+		var book, chapter, verse int
 		var rawText []byte
-		if err := rows.Scan(&verseID, &rawText); err != nil {
+		if err := rows.Scan(&verseID, &book, &chapter, &verse, &rawText); err != nil {
 			return fmt.Errorf("scan FTS row: %w", err)
 		}
-		if _, err := insert.Exec(rowIDBase+verseID, biblestore.CleanBibleVerseText(string(rawText))); err != nil {
+		text := biblestore.CleanBibleVerseTextAtLocation(book, chapter, verse, string(rawText))
+		if _, err := insert.Exec(rowIDBase+verseID, text); err != nil {
 			return fmt.Errorf("insert FTS row: %w", err)
 		}
 	}

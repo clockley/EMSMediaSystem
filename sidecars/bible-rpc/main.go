@@ -1137,7 +1137,7 @@ func fetchChapterVerses(db *sql.DB, tableName string, bookID int, chapter int) (
 	for _, verse := range chapterVerses {
 		verses = append(verses, PassageVerse{
 			Verse: verse.Verse,
-			Text:  biblestore.CleanBibleVerseText(verse.Text),
+			Text:  biblestore.CleanBibleVerseTextAtLocation(bookID, chapter, verse.Verse, verse.Text),
 		})
 	}
 	return verses, nil
