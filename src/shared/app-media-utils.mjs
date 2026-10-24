@@ -165,18 +165,49 @@ export function isPlayInterruptedError(error) {
   );
 }
 
+function encodeLocalPath(pathname) {
+  return pathname
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+/**
+ * Convert a native local path to a file URL without allowing URL-reserved
+ * filename characters (notably # and ?) to become a fragment or query.
+ *
+ * This intentionally does not resolve relative paths against the current
+ * working directory: callers historically pass application-selected paths and
+ * expect their spelling to be preserved. Windows drive paths and UNC shares
+ * are handled explicitly so the result is stable on every host platform.
+ */
+export function localPathToFileUrl(filePath) {
+  if (!filePath || typeof filePath !== "string") return "";
+
+  const normalized = filePath.replace(/\\/g, "/");
+  const uncMatch = normalized.match(/^\/\/([^/]+)(\/.*)?$/);
+  if (uncMatch) {
+    const host = uncMatch[1];
+    const pathname = encodeLocalPath(uncMatch[2] || "/");
+    return `file://${host}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
+  }
+
+  const driveMatch = normalized.match(/^([a-z]):(\/.*)?$/i);
+  if (driveMatch) {
+    const pathname = encodeLocalPath(driveMatch[2] || "/");
+    return `file:///${driveMatch[1].toUpperCase()}:${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
+  }
+
+  const encoded = encodeLocalPath(normalized);
+  return normalized.startsWith("/") ? `file://${encoded}` : `file:///${encoded}`;
+}
+
 export function pathToMediaUrl(filePath, cacheBust) {
   if (!filePath || typeof filePath !== "string") return "";
   if (isBiblePath(filePath) || isSongPath(filePath)) return "";
   if (/^(file|https?|rtsp|rtmp|blob):/i.test(filePath)) return filePath;
 
-  const normalized = filePath.replace(/\\/g, "/");
-  let url;
-  if (normalized.startsWith("/")) {
-    url = `file://${encodeURI(normalized)}`;
-  } else {
-    url = `file:///${encodeURI(normalized)}`;
-  }
+  let url = localPathToFileUrl(filePath);
   if (typeof cacheBust === "string" && cacheBust.length > 0) {
     url += `${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(cacheBust)}`;
   }

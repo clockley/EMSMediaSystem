@@ -949,6 +949,31 @@ async function attachNetworkMediaSourceToElement(targetEl, sourcePath, options =
   let youtubeResolved = null;
   if (matchYouTubeNetworkUrl(originalSource)) {
     youtubeResolved = await invoke("resolve-youtube-stream", originalSource);
+    if (cancelIfStale()) {
+      // Clear only if this is still the main process's newest resolution. A
+      // newer request must retain ownership of the shared Session headers.
+      void invoke("cancel-youtube-resolution", {
+        resolutionToken: youtubeResolved.resolutionToken,
+      }).catch(() => {});
+      return resources;
+    }
+    const committed = await invoke("commit-youtube-session-mode", {
+      resolutionToken: youtubeResolved.resolutionToken,
+    });
+    if (!committed) {
+      resources.cancelled = true;
+      return resources;
+    }
+    if (cancelIfStale()) {
+      void invoke("cancel-youtube-resolution", {
+        resolutionToken: youtubeResolved.resolutionToken,
+      }).catch(() => {});
+      return resources;
+    }
+  } else {
+    // Direct streams must not inherit an iOS header mode from an earlier
+    // YouTube live preview, and this also invalidates any late resolver.
+    await invoke("reset-youtube-session-mode");
     if (cancelIfStale()) return resources;
   }
 

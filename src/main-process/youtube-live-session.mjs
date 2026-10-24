@@ -22,3 +22,58 @@ export function createYouTubeLiveSessionRegistry() {
     },
   });
 }
+
+/**
+ * Gives each renderer its own monotonic YouTube-resolution token. A resolved
+ * URL may change shared Electron Session headers only while its token is still
+ * the renderer's newest request.
+ */
+export function createYouTubeResolutionRegistry() {
+  const currentRequests = new WeakMap();
+  let nextToken = 0;
+
+  const newToken = () => {
+    nextToken += 1;
+    if (!Number.isSafeInteger(nextToken)) nextToken = 1;
+    return nextToken;
+  };
+
+  return Object.freeze({
+    begin(owner) {
+      if (!isSessionObject(owner)) return 0;
+      const token = newToken();
+      currentRequests.set(owner, { token, value: undefined });
+      return token;
+    },
+    invalidate(owner) {
+      if (!isSessionObject(owner)) return false;
+      currentRequests.set(owner, { token: newToken(), value: undefined });
+      return true;
+    },
+    isCurrent(owner, token) {
+      return (
+        isSessionObject(owner) &&
+        Number.isSafeInteger(token) &&
+        token > 0 &&
+        currentRequests.get(owner)?.token === token
+      );
+    },
+    complete(owner, token, value) {
+      if (
+        !isSessionObject(owner) ||
+        !Number.isSafeInteger(token) ||
+        currentRequests.get(owner)?.token !== token
+      ) {
+        return false;
+      }
+      currentRequests.set(owner, { token, value });
+      return true;
+    },
+    value(owner, token) {
+      const request = isSessionObject(owner)
+        ? currentRequests.get(owner)
+        : undefined;
+      return request?.token === token ? request.value : undefined;
+    },
+  });
+}

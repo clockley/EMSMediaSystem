@@ -398,6 +398,83 @@ func TestExplicitRemovalDeletesThumbnailRowsAndFiles(t *testing.T) {
 	})
 }
 
+func TestRemoveSourceRollsBackEveryRelatedTableOnDeleteFailure(t *testing.T) {
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "source-with-forced-delete-failure")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, filepath.Join(sourceRoot, "source-image.png"))
+
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := service.AddSource(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanSource(source.ID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Query(queryOptions{SourceID: source.ID, Limit: 10})
+	if err != nil || result.Total != 1 {
+		t.Fatalf("query=%#v err=%v", result, err)
+	}
+	item := result.Items[0]
+	thumb, err := service.Thumbnail(thumbnailRequest{ItemID: item.ID, Size: 96})
+	if err != nil || !thumb.OK {
+		t.Fatalf("thumbnail=%#v err=%v", thumb, err)
+	}
+	if _, err := service.RecordActivity(activityInput{ItemID: item.ID, ActionKind: "previewed"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.db.Exec(`CREATE TEMP TRIGGER force_item_delete_failure
+		BEFORE DELETE ON items BEGIN SELECT RAISE(ABORT, 'forced delete failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := service.RemoveSource(source.ID)
+	if err == nil || removed {
+		t.Fatalf("removed=%v err=%v, want a transactional delete error", removed, err)
+	}
+
+	checks := []struct {
+		name  string
+		query string
+		arg   string
+	}{
+		{"source", `SELECT COUNT(*) FROM sources WHERE id=?`, source.ID},
+		{"item", `SELECT COUNT(*) FROM items WHERE id=?`, item.ID},
+		{"search row", `SELECT COUNT(*) FROM items_fts WHERE item_id=?`, item.ID},
+		{"recent activity", `SELECT COUNT(*) FROM recent_activity WHERE item_id=?`, item.ID},
+		{"thumbnail", `SELECT COUNT(*) FROM thumbnails WHERE item_id=?`, item.ID},
+	}
+	for _, check := range checks {
+		var count int
+		if err := service.db.QueryRow(check.query, check.arg).Scan(&count); err != nil {
+			t.Fatalf("%s count: %v", check.name, err)
+		}
+		if count != 1 {
+			t.Fatalf("%s count=%d, want 1 after rollback", check.name, count)
+		}
+	}
+	if _, err := os.Stat(thumb.Output); err != nil {
+		t.Fatalf("thumbnail file was removed despite rollback: %v", err)
+	}
+	var removalChanges int
+	if err := service.db.QueryRow(`SELECT COUNT(*) FROM change_journal WHERE kind='source-removed'`).Scan(&removalChanges); err != nil {
+		t.Fatal(err)
+	}
+	if removalChanges != 0 {
+		t.Fatalf("source-removal journal rows=%d, want 0 after rollback", removalChanges)
+	}
+}
+
 func TestLibraryWatcherFindsFilesAddedWhileRunning(t *testing.T) {
 	root := t.TempDir()
 	sourceRoot := filepath.Join(root, "watched")

@@ -81,6 +81,7 @@ export function waitForMetadata(mediaEl, callbacks = {}) {
   const onResolved = callbacks.onResolved || (() => {});
   const onRejected = callbacks.onRejected || (() => {});
 
+  const invalidSourceError = new Error("Invalid source or live stream.");
   if (
     !mediaEl ||
     !mediaEl.src ||
@@ -88,8 +89,12 @@ export function waitForMetadata(mediaEl, callbacks = {}) {
     isLiveStream(mediaEl.src) ||
     isImg(mediaEl.src)
   ) {
-    onRejected();
-    return Promise.reject(new Error("Invalid source or live stream."));
+    try {
+      onRejected({}, invalidSourceError, mediaEl);
+    } catch (callbackError) {
+      return Promise.reject(callbackError);
+    }
+    return Promise.reject(invalidSourceError);
   }
 
   return new Promise((resolve, reject) => {
@@ -111,13 +116,25 @@ export function waitForMetadata(mediaEl, callbacks = {}) {
       cleanup();
       onResolved(event || {}, resolve, mediaEl);
     };
-    const onMetadata = () => finishOk();
-    const onCanPlayThrough = (event) => finishOk(event);
-    const onError = (event) => {
+    const finishError = (event, error) => {
       if (settled) return;
       settled = true;
       cleanup();
-      reject(mediaMetadataError(mediaEl, "Failed to load media metadata"));
+      try {
+        onRejected(event || {}, error, mediaEl);
+      } catch (callbackError) {
+        reject(callbackError);
+        return;
+      }
+      reject(error);
+    };
+    const onMetadata = () => finishOk();
+    const onCanPlayThrough = (event) => finishOk(event);
+    const onError = (event) => {
+      finishError(
+        event,
+        mediaMetadataError(mediaEl, "Failed to load media metadata"),
+      );
     };
 
     if (mediaEl.readyState >= HAVE_METADATA) {

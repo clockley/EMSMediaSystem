@@ -932,7 +932,9 @@ function teardownVideoElement() {
 }
 
 function teardownImageElement() {
-  if (img) img.style.display = "none";
+  if (!img) return;
+  img.style.display = "none";
+  img.removeAttribute("src");
 }
 
 function teardownTextPresentation() {
@@ -960,6 +962,17 @@ function teardownPptxViewer() {
     } catch {}
     window._pptxMediaViewer = null;
   }
+}
+
+/** Release every content-only resource while leaving compositor overlays live. */
+function teardownAudienceContent() {
+  closePreviewRtcPeer();
+  teardownTextPresentation();
+  teardownPptxViewer();
+  teardownImageElement();
+  teardownVideoElement();
+  streamActsAsLiveEdge = false;
+  liveStreamMode = false;
 }
 
 function activateTextTarget(data) {
@@ -1080,7 +1093,17 @@ async function startLiveStreamPlayback(url) {
   if (matchYouTubeUrl(url)) {
     showStreamLoading("Resolving YouTube stream");
     ytResolved = await ipcRenderer.invoke("resolve-youtube-stream", url);
+    const committed = await ipcRenderer.invoke("commit-youtube-session-mode", {
+      resolutionToken: ytResolved.resolutionToken,
+    });
+    if (!committed) {
+      throw new Error("YouTube stream resolution was superseded");
+    }
     streamActsAsLiveEdge = ytResolved.type === "hls";
+  } else {
+    // This renderer can be retained for overlays, so explicitly invalidate
+    // any older YouTube resolution before attaching a direct stream.
+    await ipcRenderer.invoke("reset-youtube-session-mode");
   }
 
   showStreamLoading("Connecting to live stream");
@@ -1800,11 +1823,7 @@ ipcRenderer.on("audience-output-command", (_event, command) => {
 
 ipcRenderer.on("audience-enter-alert-only", () => {
   document.body.classList.add("is-transparent-output");
-  if (video) {
-    video.pause();
-    video.muted = true;
-    setProjectionVideoSource("");
-  }
+  teardownAudienceContent();
 });
 
 setInterval(() => {

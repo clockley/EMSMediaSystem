@@ -828,44 +828,84 @@ func (s *libraryService) RemoveSource(sourceID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	itemRows, _ := tx.Query(`SELECT id FROM items WHERE source_id=?`, sourceID)
+	rollback := func(cause error) (bool, error) {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			return false, fmt.Errorf("%w (rollback failed: %v)", cause, rollbackErr)
+		}
+		return false, cause
+	}
+	var sourceExists int
+	if err := tx.QueryRow(`SELECT 1 FROM sources WHERE id=?`, sourceID).Scan(&sourceExists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				return false, fmt.Errorf("rollback missing source removal: %w", rollbackErr)
+			}
+			return false, nil
+		}
+		return rollback(fmt.Errorf("query source before removal: %w", err))
+	}
+	itemRows, err := tx.Query(`SELECT id FROM items WHERE source_id=?`, sourceID)
+	if err != nil {
+		return rollback(fmt.Errorf("query source items before removal: %w", err))
+	}
 	ids := []string{sourceID}
 	for itemRows.Next() {
 		var id string
-		_ = itemRows.Scan(&id)
+		if err := itemRows.Scan(&id); err != nil {
+			_ = itemRows.Close()
+			return rollback(fmt.Errorf("scan source item before removal: %w", err))
+		}
 		ids = append(ids, id)
 	}
-	itemRows.Close()
+	if err := itemRows.Err(); err != nil {
+		_ = itemRows.Close()
+		return rollback(fmt.Errorf("iterate source items before removal: %w", err))
+	}
+	if err := itemRows.Close(); err != nil {
+		return rollback(fmt.Errorf("close source item query: %w", err))
+	}
 	thumbnailPaths, err := deleteThumbnailsTx(tx,
 		`item_id IN (SELECT id FROM items WHERE source_id=?)`, sourceID)
 	if err != nil {
-		_ = tx.Rollback()
-		return false, err
+		return rollback(err)
 	}
-	for _, id := range ids[1:] {
-		_, _ = tx.Exec(`DELETE FROM items_fts WHERE item_id=?`, id)
-		_, _ = tx.Exec(`DELETE FROM recent_activity WHERE item_id=?`, id)
+	if _, err := tx.Exec(
+		`DELETE FROM items_fts WHERE item_id IN (SELECT id FROM items WHERE source_id=?)`,
+		sourceID,
+	); err != nil {
+		return rollback(fmt.Errorf("delete source search rows: %w", err))
 	}
-	_, _ = tx.Exec(`DELETE FROM items WHERE source_id=?`, sourceID)
+	if _, err := tx.Exec(
+		`DELETE FROM recent_activity WHERE item_id IN (SELECT id FROM items WHERE source_id=?)`,
+		sourceID,
+	); err != nil {
+		return rollback(fmt.Errorf("delete source recent activity: %w", err))
+	}
+	if _, err := tx.Exec(`DELETE FROM items WHERE source_id=?`, sourceID); err != nil {
+		return rollback(fmt.Errorf("delete source items: %w", err))
+	}
 	result, err := tx.Exec(`DELETE FROM sources WHERE id=?`, sourceID)
 	if err != nil {
-		_ = tx.Rollback()
-		return false, err
+		return rollback(fmt.Errorf("delete source: %w", err))
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return rollback(fmt.Errorf("read removed source count: %w", err))
+	}
+	if affected != 1 {
+		return rollback(fmt.Errorf("expected to remove one source, removed %d", affected))
 	}
 	change, err := recordChangeTx(tx, "source-removed", ids)
-	if err == nil {
-		err = tx.Commit()
-	} else {
-		_ = tx.Rollback()
-	}
 	if err != nil {
+		return rollback(err)
+	}
+	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 	s.removeThumbnailFiles(thumbnailPaths)
 	s.removeSourceWatchesLocked(sourceID)
 	s.notifyChange(change)
-	affected, _ := result.RowsAffected()
-	return affected > 0, nil
+	return true, nil
 }
 
 func upsertItemTx(tx *sql.Tx, sourceID, localPath string, transient bool) (itemView, error) {

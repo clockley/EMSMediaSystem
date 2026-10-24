@@ -69,7 +69,10 @@ import {
 import { MediaWatcher } from "./media-watcher.min.mjs";
 import { MediaLibraryRpcClient } from "./media-library-rpc-client.min.mjs";
 import { generateVideoPoster } from "./video-poster.min.mjs";
-import { createYouTubeLiveSessionRegistry } from "./youtube-live-session.min.mjs";
+import {
+  createYouTubeLiveSessionRegistry,
+  createYouTubeResolutionRegistry,
+} from "./youtube-live-session.min.mjs";
 import { createOutputCommand, validateOutputCommand } from "../shared/output-compositor.min.mjs";
 import {
   advanceAlertState,
@@ -107,6 +110,7 @@ let innertubePromise = null;
 const youtubePathNTransformCache = new Map();
 const youtubeMetadataCache = new Map();
 const youtubeLiveSessions = createYouTubeLiveSessionRegistry();
+const youtubeResolutionRequests = createYouTubeResolutionRegistry();
 const isDevMode = process.env.ems_dev === "true";
 const openDevConsole = process.env.ems_dev_console === "true";
 let lastKnownDisplayState = null;
@@ -752,6 +756,7 @@ async function handleDiscardMediaWindowNow() {
   if (hasActiveAlerts()) {
     const contentWindow = mediaWindow;
     audienceContentKind = "none";
+    youtubeResolutionRequests.invalidate(contentWindow.webContents);
     youtubeLiveSessions.set(mediaPresentationSession, false);
     audienceWindowOverlayOnly = true;
     if (!contentWindow.webContents.isDestroyed()) {
@@ -799,6 +804,7 @@ function localMediaStateUpdate(event, id, state) {
       break;
     case "stop":
       stopMediaPlaybackPowerHint();
+      youtubeResolutionRequests.invalidate(event?.sender);
       youtubeLiveSessions.set(event?.sender?.session, false);
       break;
   }
@@ -921,6 +927,7 @@ async function replaceContentWindowWithAlertOverlay() {
   const contentWindow = mediaWindow;
   const closedId = contentWindow.id;
   audienceContentKind = "none";
+  youtubeResolutionRequests.invalidate(contentWindow.webContents);
   youtubeLiveSessions.set(mediaPresentationSession, false);
   audienceWindowOverlayOnly = true;
   if (!contentWindow.webContents.isDestroyed()) {
@@ -1297,6 +1304,50 @@ function assertControlSender(event) {
   if (!win || event.sender !== win.webContents) {
     throw new TypeError("Output commands are accepted only from the control window");
   }
+}
+
+function assertYouTubePlaybackSender(event) {
+  const sender = event?.sender;
+  const isControlWindow = Boolean(
+    win && !win.isDestroyed() && sender === win.webContents,
+  );
+  const isCurrentMediaWindow = Boolean(
+    mediaWindow &&
+      !mediaWindow.isDestroyed() &&
+      sender === mediaWindow.webContents,
+  );
+  if (!isControlWindow && !isCurrentMediaWindow) {
+    throw new TypeError(
+      "YouTube playback requests are accepted only from an active playback window",
+    );
+  }
+  return sender;
+}
+
+function handleCommitYouTubeSessionMode(event, input = {}) {
+  const sender = assertYouTubePlaybackSender(event);
+  const token = input?.resolutionToken;
+  if (!youtubeResolutionRequests.isCurrent(sender, token)) return false;
+  const sessionMode = youtubeResolutionRequests.value(sender, token);
+  if (sessionMode !== "ios-live" && sessionMode !== "browser") return false;
+  youtubeLiveSessions.set(sender.session, sessionMode === "ios-live");
+  return true;
+}
+
+function handleResetYouTubeSessionMode(event) {
+  const sender = assertYouTubePlaybackSender(event);
+  youtubeResolutionRequests.invalidate(sender);
+  youtubeLiveSessions.set(sender.session, false);
+  return true;
+}
+
+function handleCancelYouTubeResolution(event, input = {}) {
+  const sender = assertYouTubePlaybackSender(event);
+  const token = input?.resolutionToken;
+  if (!youtubeResolutionRequests.isCurrent(sender, token)) return false;
+  youtubeResolutionRequests.invalidate(sender);
+  youtubeLiveSessions.set(sender.session, false);
+  return true;
 }
 
 async function handleShowAlert(event, input) {
@@ -3013,11 +3064,12 @@ function shouldFilterOutAudioFormat(format) {
 }
 
 /**
- * Resolves a YouTube URL to something the media window can play.
- * @returns {{ type: 'hls', url: string } | { type: 'progressive', url: string } | { type: 'dash', manifest: string }}
+ * Resolves a YouTube URL to something the media window can play. This pure
+ * resolution step reports its required header mode but does not mutate the
+ * shared Electron Session; the owning renderer commits it separately.
+ * @returns {{ type: 'hls', url: string, sessionMode: 'ios-live' } | { type: 'progressive', url: string, sessionMode: 'browser' } | { type: 'dash', manifest: string, sessionMode: 'browser' }}
  */
-async function handleResolveYouTubeStream(event, url) {
-  const requestSession = event?.sender?.session;
+async function resolveYouTubeStream(url) {
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) {
     throw new Error(`Could not extract a YouTube video ID from: ${url}`);
@@ -3053,12 +3105,7 @@ async function handleResolveYouTubeStream(event, url) {
           if (player) {
             hlsUrl = await player.decipher(hlsUrl);
           }
-          // Flag this as an active live session so the webRequest header
-          // injector applies the iOS User-Agent to every segment fetch —
-          // path-style live segment URLs do not always carry the
-          // `c=IOS` / `yt_live_broadcast` markers we'd otherwise key on.
-          youtubeLiveSessions.set(requestSession, true);
-          return { type: "hls", url: hlsUrl };
+          return { type: "hls", url: hlsUrl, sessionMode: "ios-live" };
         }
         continue;
       }
@@ -3066,11 +3113,6 @@ async function handleResolveYouTubeStream(event, url) {
       if (!info.streaming_data) {
         continue;
       }
-
-      // Going down the VOD path; any leftover live flag must be cleared so
-      // we don't poison TV_SIMPLY-signed URLs with an iOS UA spoof (which
-      // would re-introduce VOD 403s).
-      youtubeLiveSessions.set(requestSession, false);
 
       try {
         const preferredFormat = info.chooseFormat({
@@ -3083,7 +3125,11 @@ async function handleResolveYouTubeStream(event, url) {
           ? await preferredFormat.decipher(player)
           : preferredFormat?.url;
         if (progressiveUrl) {
-          return { type: "progressive", url: progressiveUrl };
+          return {
+            type: "progressive",
+            url: progressiveUrl,
+            sessionMode: "browser",
+          };
         }
       } catch {
         // No combined progressive format (typical for 1080p+); use DASH below.
@@ -3093,7 +3139,7 @@ async function handleResolveYouTubeStream(event, url) {
         format_filter: shouldFilterOutAudioFormat,
       });
       if (manifest) {
-        return { type: "dash", manifest };
+        return { type: "dash", manifest, sessionMode: "browser" };
       }
     } catch (e) {
       lastError = e;
@@ -3103,6 +3149,28 @@ async function handleResolveYouTubeStream(event, url) {
     lastError?.message ??
       "No playable stream is available for this YouTube video.",
   );
+}
+
+async function handleResolveYouTubeStream(event, url) {
+  const sender = assertYouTubePlaybackSender(event);
+  const resolutionToken = youtubeResolutionRequests.begin(sender);
+  try {
+    const result = await resolveYouTubeStream(url);
+    youtubeResolutionRequests.complete(
+      sender,
+      resolutionToken,
+      result.sessionMode,
+    );
+    return { ...result, resolutionToken };
+  } catch (error) {
+    // A failed newest request must not leave an earlier live-stream header
+    // mode behind. An older failure, however, must not disturb its successor.
+    if (youtubeResolutionRequests.isCurrent(sender, resolutionToken)) {
+      youtubeResolutionRequests.invalidate(sender);
+      youtubeLiveSessions.set(sender.session, false);
+    }
+    throw error;
+  }
 }
 
 const ALLOWED_MEDIA_EXTENSIONS = [
@@ -5621,6 +5689,12 @@ function setIPC() {
   ipcMain.handle("get-platform", getPlatform);
   ipcMain.handle("get-youtube-metadata", handleGetYouTubeMetadata);
   ipcMain.handle("resolve-youtube-stream", handleResolveYouTubeStream);
+  ipcMain.handle(
+    "commit-youtube-session-mode",
+    handleCommitYouTubeSessionMode,
+  );
+  ipcMain.handle("cancel-youtube-resolution", handleCancelYouTubeResolution);
+  ipcMain.handle("reset-youtube-session-mode", handleResetYouTubeSessionMode);
   ipcMain.on("set-mode", handleSetMode);
   ipcMain.handle("get-setting", getSetting);
   ipcMain.handle("set-setting", setSetting);
@@ -6238,9 +6312,9 @@ app.whenReady().then(async () => {
   // request and *do* expect a YouTube Referer + Origin; for those we keep
   // the original Chromium UA and inject Referer / Origin.
   //
-  // The primary live signal is the per-Session registry (set by the resolver
-  // when it hands back an HLS URL); URL-substring patterns are a defensive
-  // fallback for late-arriving requests.
+  // The primary live signal is the per-Session registry (committed by the
+  // renderer that still owns the resolver token); URL-substring patterns are
+  // a defensive fallback for late-arriving requests.
   //
   // IOS_USER_AGENT must match youtubei.js's Constants.CLIENTS.IOS.USER_AGENT
   // verbatim — the manifest is signed against this exact string and any

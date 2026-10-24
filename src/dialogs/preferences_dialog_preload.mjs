@@ -2,6 +2,7 @@
 Copyright (C) 2026 Christian Lockley
 */
 import { contextBridge, ipcRenderer } from "electron/renderer";
+import { localPathToFileUrl } from "../shared/app-media-utils.min.mjs";
 
 const PREFERENCES_DIALOG_CLOSE_CHANNEL = "preferences-dialog-close";
 
@@ -19,11 +20,7 @@ function normalizeHexColor(value, fallback = "#000000") {
 function pathToFileUrl(filePath) {
   if (!filePath || typeof filePath !== "string") return "";
   if (/^(file|https?|blob):/i.test(filePath)) return filePath;
-  const normalized = filePath.replace(/\\/g, "/");
-  if (normalized.startsWith("/")) {
-    return `file://${encodeURI(normalized)}`;
-  }
-  return `file:///${encodeURI(normalized)}`;
+  return localPathToFileUrl(filePath);
 }
 
 let draft = {

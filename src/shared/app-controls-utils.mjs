@@ -94,9 +94,7 @@ export class PIDController {
     this.historyIndex = 0;
     this.historySize = 0;
     this.MASK = 31;
-    this.TREND_MASK = 15;
-    this._trendBuffer = new Float64Array(16);
-    this._trendPos = 0;
+    this.metricsWindowLength = 10;
 
     this._rollingSum = 0;
     this._rollingSquareSum = 0;
@@ -104,8 +102,6 @@ export class PIDController {
   }
 
   updateSystemMetrics(timeDifference, timestamp) {
-    const oldDiff = this.diffArray[this.historyIndex] || 0;
-
     this.timeArray[this.historyIndex] = timestamp;
     this.diffArray[this.historyIndex] = timeDifference;
     this.responseArray[this.historyIndex] =
@@ -116,32 +112,56 @@ export class PIDController {
     this.historyIndex = (this.historyIndex + 1) & this.MASK;
     if (this.historySize < this.maxHistoryLength) this.historySize++;
 
-    if (this.historySize >= 10) {
-      const pos = this._trendPos;
-      const prevIndex = (pos - 1 + 16) & this.TREND_MASK;
-      const prev = this._trendBuffer[prevIndex] || 0;
-      const replaced = this._trendBuffer[pos];
-      this._trendBuffer[pos] = timeDifference;
-      this._trendPos = (pos + 1) & this.TREND_MASK;
+    if (this.historySize < this.metricsWindowLength) return;
 
-      this._rollingSum += timeDifference - oldDiff;
-      this._rollingSquareSum +=
-        timeDifference * timeDifference - oldDiff * oldDiff;
-      this._rollingTrend += timeDifference - prev - (replaced - prev);
-
-      const mean = this._rollingSum / 10;
-      const variance = this._rollingSquareSum / 10 - mean * mean;
-      const trend = this._rollingTrend / 9;
-
-      this.currentPattern =
-        variance > 0.1 && this.overshoots > 3
-          ? this.patterns.OSCILLATING
-          : trend > 0.05 || this.avgResponseTime > 0.15
-            ? this.patterns.LAGGING
-            : this.systemLag > 100 || this.avgResponseTime > 0.2
-              ? this.patterns.SYSTEM_STRESS
-              : this.patterns.STABLE;
+    // Recompute the small analysis window from the circular history. This is
+    // deliberately O(10): it avoids mixing a 32-sample replacement index with
+    // 10-sample divisors, which made the old rolling totals drift indefinitely.
+    const firstIndex =
+      (this.historyIndex - this.metricsWindowLength) & this.MASK;
+    let responseTotalMs = 0;
+    let overshoots = 0;
+    let previous = this.diffArray[firstIndex];
+    this._rollingSum = 0;
+    this._rollingSquareSum = 0;
+    for (let offset = 0; offset < this.metricsWindowLength; offset += 1) {
+      const index = (firstIndex + offset) & this.MASK;
+      const difference = this.diffArray[index];
+      this._rollingSum += difference;
+      this._rollingSquareSum += difference * difference;
+      if (offset > 0) {
+        responseTotalMs += Math.max(0, this.responseArray[index]);
+        if (
+          (previous < 0 && difference > 0) ||
+          (previous > 0 && difference < 0)
+        ) {
+          overshoots += 1;
+        }
+      }
+      previous = difference;
     }
+
+    const latestIndex = (this.historyIndex - 1) & this.MASK;
+    this._rollingTrend =
+      (this.diffArray[latestIndex] - this.diffArray[firstIndex]) /
+      (this.metricsWindowLength - 1);
+    this.avgResponseTime =
+      responseTotalMs / (this.metricsWindowLength - 1) / 1000;
+    this.overshoots = overshoots;
+
+    const mean = this._rollingSum / this.metricsWindowLength;
+    const variance = Math.max(
+      0,
+      this._rollingSquareSum / this.metricsWindowLength - mean * mean,
+    );
+    this.currentPattern =
+      this.systemLag > 100 || this.avgResponseTime > 0.2
+        ? this.patterns.SYSTEM_STRESS
+        : variance > 0.1 && this.overshoots > 3
+          ? this.patterns.OSCILLATING
+          : this._rollingTrend > 0.05 || this.avgResponseTime > 0.15
+            ? this.patterns.LAGGING
+            : this.patterns.STABLE;
   }
 
   calculateHistoricalAdjustment(timeDifference, deltaTime) {
@@ -273,6 +293,12 @@ export class PIDController {
 
     this.historyIndex = 0;
     this.historySize = 0;
+    this.timeArray.fill(0);
+    this.diffArray.fill(0);
+    this.responseArray.fill(0);
+    this._rollingSum = 0;
+    this._rollingSquareSum = 0;
+    this._rollingTrend = 0;
 
     this.systemLag = 0;
     this.overshoots = 0;
