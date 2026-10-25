@@ -48,7 +48,7 @@
     "yauzl": "^3.3.2",
     "yazl": "^3.3.1",
     "youtubei.js": "^17.2.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "build": {
     "extends": "file:build-scripts/versioned-windows-installer.cjs",
