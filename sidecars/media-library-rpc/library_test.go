@@ -176,15 +176,26 @@ func TestSourceScanDoesNotBlockLibraryQueriesDuringFilesystemWalk(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
+	originalWalk := service.walkDir
+	initialWalkDone := make(chan struct{})
+	var signalInitialWalkDone sync.Once
+	service.walkDir = func(root string, visit fs.WalkDirFunc) error {
+		err := originalWalk(root, visit)
+		signalInitialWalkDone.Do(func() { close(initialWalkDone) })
+		return err
+	}
 	source, err := service.AddSource(sourceRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// AddSource launches its first scan asynchronously. Wait until that goroutine
+	// has entered the injected walker, then a synchronous scan guarantees it has
+	// released scanMu before the test replaces the hook below.
+	<-initialWalkDone
 	if _, err := service.ScanSource(source.ID); err != nil {
 		t.Fatal(err)
 	}
 
-	originalWalk := service.walkDir
 	walkStarted := make(chan struct{})
 	releaseWalk := make(chan struct{})
 	var signalWalkStarted sync.Once
@@ -475,6 +486,109 @@ func TestRemoveSourceRollsBackEveryRelatedTableOnDeleteFailure(t *testing.T) {
 	}
 }
 
+func TestRemoveAddedItemsReportsNothingRemovedWhenADeleteFails(t *testing.T) {
+	root := t.TempDir()
+	imagePath := filepath.Join(root, "added-image.png")
+	writePNG(t, imagePath)
+
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := service.AddFiles([]string{imagePath})
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items=%#v err=%v", items, err)
+	}
+	item := items[0]
+	thumb, err := service.Thumbnail(thumbnailRequest{ItemID: item.ID, Size: 96})
+	if err != nil || !thumb.OK {
+		t.Fatalf("thumbnail=%#v err=%v", thumb, err)
+	}
+	if _, err := service.db.Exec(`CREATE TEMP TRIGGER force_added_item_delete_failure
+		BEFORE DELETE ON items BEGIN SELECT RAISE(ABORT, 'forced delete failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := service.RemoveAddedItems([]string{item.ID})
+	if err == nil || removed != 0 {
+		t.Fatalf("removed=%d err=%v, want a transactional delete error", removed, err)
+	}
+
+	checks := []struct {
+		name  string
+		query string
+	}{
+		{"item", `SELECT COUNT(*) FROM items WHERE id=?`},
+		{"search row", `SELECT COUNT(*) FROM items_fts WHERE item_id=?`},
+		{"thumbnail", `SELECT COUNT(*) FROM thumbnails WHERE item_id=?`},
+	}
+	for _, check := range checks {
+		var count int
+		if err := service.db.QueryRow(check.query, item.ID).Scan(&count); err != nil {
+			t.Fatalf("%s count: %v", check.name, err)
+		}
+		if count != 1 {
+			t.Fatalf("%s count=%d, want 1 after rollback", check.name, count)
+		}
+	}
+	if _, err := os.Stat(thumb.Output); err != nil {
+		t.Fatalf("thumbnail file was removed despite rollback: %v", err)
+	}
+	var removalChanges int
+	if err := service.db.QueryRow(`SELECT COUNT(*) FROM change_journal WHERE kind='items-removed'`).Scan(&removalChanges); err != nil {
+		t.Fatal(err)
+	}
+	if removalChanges != 0 {
+		t.Fatalf("items-removed journal rows=%d, want 0 after rollback", removalChanges)
+	}
+}
+
+func TestScanSourceRecordsFailureInsteadOfLeavingTheSourceIndexing(t *testing.T) {
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "source-with-forced-scan-failure")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, filepath.Join(sourceRoot, "slide.png"))
+
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := service.AddSource(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanSource(source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.db.Exec(`CREATE TEMP TRIGGER force_scan_failure
+		BEFORE UPDATE ON items BEGIN SELECT RAISE(ABORT, 'forced scan failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := service.ScanSource(source.ID); err == nil {
+		t.Fatal("want an error from a scan that cannot write its results")
+	}
+
+	var status, sourceError string
+	if err := service.db.QueryRow(`SELECT status, error FROM sources WHERE id=?`, source.ID).
+		Scan(&status, &sourceError); err != nil {
+		t.Fatal(err)
+	}
+	if status != "error" || sourceError == "" {
+		t.Fatalf("source status=%q error=%q, want a recorded failure", status, sourceError)
+	}
+}
+
 func TestLibraryWatcherFindsFilesAddedWhileRunning(t *testing.T) {
 	root := t.TempDir()
 	sourceRoot := filepath.Join(root, "watched")
@@ -683,6 +797,77 @@ func TestPromotingRecentItemRemovesThumbnailRowsAndFiles(t *testing.T) {
 		t.Fatalf("items=%#v err=%v", items, err)
 	}
 	assertThumbnailRemoved(t, service, activity.ItemID, thumb.Output)
+}
+
+func TestAddFilesRollsBackOneFailedPromotionBeforeCommittingAnotherFile(t *testing.T) {
+	root := t.TempDir()
+	failedPath := filepath.Join(root, "promotion-fails.png")
+	successPath := filepath.Join(root, "promotion-succeeds.png")
+	writePNG(t, failedPath)
+	writePNG(t, successPath)
+
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	activity, err := service.RecordActivity(activityInput{
+		LocalPath:  failedPath,
+		ActionKind: "previewed",
+	})
+	if err != nil || activity == nil {
+		t.Fatalf("activity=%#v err=%v", activity, err)
+	}
+	thumb, err := service.Thumbnail(thumbnailRequest{ItemID: activity.ItemID, Size: 96})
+	if err != nil || !thumb.OK {
+		t.Fatalf("thumbnail=%#v err=%v", thumb, err)
+	}
+	if _, err := service.db.Exec(`CREATE TEMP TRIGGER force_one_added_file_failure
+		BEFORE INSERT ON items
+		WHEN NEW.source_id='added-files' AND NEW.file_name='promotion-fails.png'
+		BEGIN SELECT RAISE(ABORT, 'forced promotion failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := service.AddFiles([]string{failedPath, successPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].FileName != "promotion-succeeds.png" {
+		t.Fatalf("items=%#v, want only the successful file", items)
+	}
+
+	var recentItemCount, recentActivityCount, recentThumbnailCount int
+	if err := service.db.QueryRow(`SELECT COUNT(*) FROM items WHERE id=? AND source_id=? AND transient=1`, activity.ItemID, recentSourceID).Scan(&recentItemCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.db.QueryRow(`SELECT COUNT(*) FROM recent_activity WHERE item_id=?`, activity.ItemID).Scan(&recentActivityCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.db.QueryRow(`SELECT COUNT(*) FROM thumbnails WHERE item_id=?`, activity.ItemID).Scan(&recentThumbnailCount); err != nil {
+		t.Fatal(err)
+	}
+	if recentItemCount != 1 || recentActivityCount != 1 || recentThumbnailCount != 1 {
+		t.Fatalf(
+			"failed promotion leaked changes: item=%d activity=%d thumbnail=%d",
+			recentItemCount,
+			recentActivityCount,
+			recentThumbnailCount,
+		)
+	}
+	if _, err := os.Stat(thumb.Output); err != nil {
+		t.Fatalf("failed promotion removed its thumbnail file: %v", err)
+	}
+	var failedAddedCount int
+	if err := service.db.QueryRow(`SELECT COUNT(*) FROM items WHERE source_id=? AND path_key=?`, addedFilesSourceID, pathKey(failedPath)).Scan(&failedAddedCount); err != nil {
+		t.Fatal(err)
+	}
+	if failedAddedCount != 0 {
+		t.Fatalf("failed Added Files row count=%d, want 0", failedAddedCount)
+	}
 }
 
 func TestRecentEvictionRemovesThumbnailRowsAndFiles(t *testing.T) {

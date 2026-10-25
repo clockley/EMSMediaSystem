@@ -224,6 +224,10 @@ func (s *libraryService) Ready(options readyOptions) (snapshotResult, error) {
 	}
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
+		// Leaving s.db set would make the next Ready() report an initialized
+		// service that has neither a watcher nor its polling loops running.
+		db.Close()
+		s.db = nil
 		return snapshotResult{}, err
 	}
 	s.watcher = watcher
@@ -562,7 +566,7 @@ func (s *libraryService) AddSource(folderPath string) (sourceView, error) {
 	return source.sourceView, err
 }
 
-func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
+func (s *libraryService) ScanSource(sourceID string) (scanned sourceView, scanErr error) {
 	s.scanMu.Lock()
 	defer s.scanMu.Unlock()
 	s.mu.Lock()
@@ -584,6 +588,22 @@ func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
 		return sourceView{}, err
 	}
 	_, _ = s.db.Exec(`UPDATE sources SET status='indexing', error='' WHERE id=?`, sourceID)
+	// Only a completed pass writes the final status, so an abandoned scan would
+	// otherwise leave the source parked in "indexing" until the process exits.
+	defer func() {
+		if scanErr == nil {
+			return
+		}
+		if !locked {
+			s.mu.Lock()
+			locked = true
+		}
+		if s.closed || s.db == nil {
+			return
+		}
+		_, _ = s.db.Exec(`UPDATE sources SET status='error', error=? WHERE id=? AND status='indexing'`,
+			scanErr.Error(), sourceID)
+	}()
 	rootInfo, statErr := os.Stat(source.RootLocator)
 	if statErr != nil || !rootInfo.IsDir() {
 		tx, err := s.db.Begin()
@@ -620,10 +640,20 @@ func (s *libraryService) ScanSource(sourceID string) (sourceView, error) {
 	}
 	for rows.Next() {
 		var key, id string
-		_ = rows.Scan(&key, &id)
+		if err = rows.Scan(&key, &id); err != nil {
+			break
+		}
 		existing[key] = id
 	}
+	if err == nil {
+		err = rows.Err()
+	}
 	rows.Close()
+	// A partial map would hand already-indexed files new IDs and orphan their
+	// thumbnails, so an unreadable item table has to fail the scan.
+	if err != nil {
+		return sourceView{}, err
+	}
 	excludedRoots := append([]string(nil), s.excludedRoots...)
 	s.mu.Unlock()
 	locked = false
@@ -804,11 +834,24 @@ func (s *libraryService) RefreshAll() (snapshotResult, error) {
 	ids := []string{}
 	for rows.Next() {
 		var id string
-		_ = rows.Scan(&id)
+		if err = rows.Scan(&id); err != nil {
+			break
+		}
 		ids = append(ids, id)
+	}
+	if err == nil {
+		err = rows.Err()
 	}
 	rows.Close()
 	s.mu.Unlock()
+	// A truncated source list means the refresh never covered the library, so
+	// it cannot be reported as a successful pass.
+	if err != nil {
+		return snapshotResult{}, err
+	}
+	// One unreadable source must not abort the others. ScanSource records its
+	// own failure on the source row, so the snapshot below carries it back to
+	// the UI instead of leaving the source parked in "indexing".
 	for _, id := range ids {
 		_, _ = s.ScanSource(id)
 	}
@@ -919,7 +962,11 @@ func upsertItemTx(tx *sql.Tx, sourceID, localPath string, transient bool) (itemV
 	}
 	key := pathKey(localPath)
 	var id string
-	_ = tx.QueryRow(`SELECT id FROM items WHERE source_id=? AND path_key=?`, sourceID, key).Scan(&id)
+	switch lookupErr := tx.QueryRow(`SELECT id FROM items WHERE source_id=? AND path_key=?`, sourceID, key).Scan(&id); {
+	case errors.Is(lookupErr, sql.ErrNoRows):
+	case lookupErr != nil:
+		return itemView{}, lookupErr
+	}
 	if id == "" {
 		id = newID()
 	}
@@ -940,7 +987,9 @@ func upsertItemTx(tx *sql.Tx, sourceID, localPath string, transient bool) (itemV
 	if err != nil {
 		return itemView{}, err
 	}
-	_, _ = tx.Exec(`DELETE FROM items_fts WHERE item_id=?`, id)
+	if _, err = tx.Exec(`DELETE FROM items_fts WHERE item_id=?`, id); err != nil {
+		return itemView{}, err
+	}
 	_, err = tx.Exec(`INSERT INTO items_fts(item_id,display_name,file_name,parent_id) VALUES(?,?,?,?)`, id, item.DisplayName, item.FileName, "")
 	return item, err
 }
@@ -959,22 +1008,45 @@ func (s *libraryService) AddFiles(paths []string) ([]itemView, error) {
 	ids := []string{}
 	thumbnailPaths := []string{}
 	failures := []string{}
-	for _, rawPath := range paths {
+	for fileIndex, rawPath := range paths {
 		localPath, err := canonicalPath(rawPath)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%q: %v", rawPath, err))
 			continue
 		}
+		// Each file is an atomic sub-transaction. Expected per-file failures may
+		// be reported while other valid files commit, but no promotion, item row,
+		// thumbnail row, or FTS mutation from the failed file may leak through.
+		savepoint := fmt.Sprintf("add_file_%d", fileIndex)
+		if _, err = tx.Exec(`SAVEPOINT ` + savepoint); err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+		rollbackFile := func(cause error) error {
+			if _, rollbackErr := tx.Exec(`ROLLBACK TO ` + savepoint); rollbackErr != nil {
+				return fmt.Errorf("%v (savepoint rollback failed: %w)", cause, rollbackErr)
+			}
+			if _, releaseErr := tx.Exec(`RELEASE ` + savepoint); releaseErr != nil {
+				return fmt.Errorf("%v (savepoint release failed: %w)", cause, releaseErr)
+			}
+			return nil
+		}
+		fileThumbnailPaths := []string{}
 		// Promoting a transient Recent item removes the transient row first.
 		var transientID string
-		_ = tx.QueryRow(`SELECT id FROM items WHERE source_id=? AND path_key=?`, recentSourceID, pathKey(localPath)).Scan(&transientID)
+		switch lookupErr := tx.QueryRow(`SELECT id FROM items WHERE source_id=? AND path_key=?`, recentSourceID, pathKey(localPath)).Scan(&transientID); {
+		case errors.Is(lookupErr, sql.ErrNoRows):
+		case lookupErr != nil:
+			_ = tx.Rollback()
+			return nil, lookupErr
+		}
 		if transientID != "" {
-			paths, deleteErr := deleteThumbnailsTx(tx, `item_id=?`, transientID)
+			pathsToRemove, deleteErr := deleteThumbnailsTx(tx, `item_id=?`, transientID)
 			if deleteErr != nil {
 				_ = tx.Rollback()
 				return nil, deleteErr
 			}
-			thumbnailPaths = append(thumbnailPaths, paths...)
+			fileThumbnailPaths = append(fileThumbnailPaths, pathsToRemove...)
 			if _, deleteErr = tx.Exec(`DELETE FROM recent_activity WHERE item_id=?`, transientID); deleteErr != nil {
 				_ = tx.Rollback()
 				return nil, deleteErr
@@ -990,16 +1062,31 @@ func (s *libraryService) AddFiles(paths []string) ([]itemView, error) {
 		}
 		item, err := upsertItemTx(tx, addedFilesSourceID, localPath, false)
 		if err != nil {
+			if rollbackErr := rollbackFile(err); rollbackErr != nil {
+				_ = tx.Rollback()
+				return nil, rollbackErr
+			}
 			failures = append(failures, fmt.Sprintf("%q: %v", rawPath, err))
 			continue
 		}
+		if _, err = tx.Exec(`RELEASE ` + savepoint); err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+		thumbnailPaths = append(thumbnailPaths, fileThumbnailPaths...)
 		item.SourceName = "Added Files"
 		items = append(items, item)
 		ids = append(ids, item.ID)
 	}
 	var count int64
-	_ = tx.QueryRow(`SELECT COUNT(*) FROM items WHERE source_id=?`, addedFilesSourceID).Scan(&count)
-	_, _ = tx.Exec(`UPDATE sources SET item_count=?, last_sync_at=? WHERE id=?`, count, time.Now().UTC().Format(time.RFC3339Nano), addedFilesSourceID)
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM items WHERE source_id=?`, addedFilesSourceID).Scan(&count); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
+	if _, err = tx.Exec(`UPDATE sources SET item_count=?, last_sync_at=? WHERE id=?`, count, time.Now().UTC().Format(time.RFC3339Nano), addedFilesSourceID); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
 	if len(ids) == 0 {
 		_ = tx.Rollback()
 		if len(failures) == 0 {
@@ -1070,7 +1157,16 @@ func (s *libraryService) RemoveAddedItems(itemIDs []string) (int, error) {
 	thumbnailPaths := []string{}
 	for _, id := range itemIDs {
 		var sourceID string
-		if tx.QueryRow(`SELECT source_id FROM items WHERE id=?`, id).Scan(&sourceID) != nil || sourceID != addedFilesSourceID {
+		// Only a genuinely absent row may be skipped. Treating a lookup failure
+		// as "not found" would report a removal that never happened.
+		switch err := tx.QueryRow(`SELECT source_id FROM items WHERE id=?`, id).Scan(&sourceID); {
+		case errors.Is(err, sql.ErrNoRows):
+			continue
+		case err != nil:
+			_ = tx.Rollback()
+			return 0, err
+		}
+		if sourceID != addedFilesSourceID {
 			continue
 		}
 		paths, err := deleteThumbnailsTx(tx, `item_id=?`, id)
@@ -1079,16 +1175,26 @@ func (s *libraryService) RemoveAddedItems(itemIDs []string) (int, error) {
 			return 0, err
 		}
 		thumbnailPaths = append(thumbnailPaths, paths...)
-		_, _ = tx.Exec(`DELETE FROM recent_activity WHERE item_id=?`, id)
-		_, _ = tx.Exec(`DELETE FROM items_fts WHERE item_id=?`, id)
-		_, _ = tx.Exec(`DELETE FROM items WHERE id=?`, id)
+		for _, statement := range []string{
+			`DELETE FROM recent_activity WHERE item_id=?`,
+			`DELETE FROM items_fts WHERE item_id=?`,
+			`DELETE FROM items WHERE id=?`,
+		} {
+			if _, err := tx.Exec(statement, id); err != nil {
+				_ = tx.Rollback()
+				return 0, err
+			}
+		}
 		removed = append(removed, id)
 	}
 	if len(removed) == 0 {
 		_ = tx.Rollback()
 		return 0, nil
 	}
-	_, _ = tx.Exec(`UPDATE sources SET item_count=(SELECT COUNT(*) FROM items WHERE source_id=?) WHERE id=?`, addedFilesSourceID, addedFilesSourceID)
+	if _, err := tx.Exec(`UPDATE sources SET item_count=(SELECT COUNT(*) FROM items WHERE source_id=?) WHERE id=?`, addedFilesSourceID, addedFilesSourceID); err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
 	change, err := recordChangeTx(tx, "items-removed", removed)
 	if err == nil {
 		err = tx.Commit()

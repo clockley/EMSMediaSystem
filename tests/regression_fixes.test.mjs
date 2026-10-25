@@ -85,6 +85,13 @@ test("project files are committed only after renderer application succeeds", asy
       openHandler.indexOf("applyProjectStateSnapshot"),
   );
   assert.match(openHandler, /invoke\("discard-project-file-open"/);
+  assert.match(openHandler, /projectOpenQueue\.run\(\(\) => openProjectByPathSerialized\(filePath\)\)/);
+});
+
+test("Makefile uses the Go command configured by the user environment", async () => {
+  const makefile = await readFile(new URL("../Makefile", import.meta.url), "utf8");
+  assert.match(makefile, /^GO \?= go$/m);
+  assert.doesNotMatch(makefile, /\/usr\/local\/go\/bin\/go/);
 });
 
 test("renderer file logging and its machine-specific path are removed", async () => {

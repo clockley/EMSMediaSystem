@@ -133,6 +133,8 @@ test("Scripture slipstreams require fresh text before changing the audience wind
     rejectIndex > resolveIndex && rejectIndex < invokeIndex,
     "a failed lookup must not replace the audience window payload",
   );
+  assert.match(slipstream, /activation\.reason !== "rejected"/);
+  assert.match(slipstream, /return createMediaWindow\(\{/);
 });
 
 test("scheduled Scripture slipstreams reject fallback text", () => {

@@ -620,6 +620,10 @@ async function approvePendingMediaUpdate(index, expectedItem = mediaQueue[index]
     if (currentIndex === currentQueueIndex && isQueuePresentationActive()) {
       await slipstreamQueueItemAtIndex(currentIndex, {
         startTime: queueItemCueStartTime(item),
+        // Nothing here can fall back to a close/reopen on its own, so a swap
+        // that dies after the renderer released the outgoing file would leave
+        // the audience with a blank window.
+        reopenOnFailure: true,
       });
     } else if (currentIndex === previewCueIndex) {
       await loadQueueItemIntoPreviewCue(currentIndex);

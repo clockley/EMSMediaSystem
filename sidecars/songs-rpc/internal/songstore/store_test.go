@@ -133,6 +133,63 @@ func TestSongStorePersistsMeterInSchemaAndAST(t *testing.T) {
 	}
 }
 
+func TestRebuildSearchIndexRejectsInvalidCanonicalJSONBeforeReplacingIndex(t *testing.T) {
+	store, err := InitStore(filepath.Join(t.TempDir(), "songs.db"))
+	if err != nil {
+		t.Fatalf("InitStore failed: %v", err)
+	}
+	defer store.Close()
+
+	song := Song{
+		Schema: "ems.song.v1",
+		ID:     "search_index_guard",
+		Title:  "Search Index Guard",
+		Sections: []SongSection{
+			{
+				ID:    "verse_1",
+				Kind:  "verse",
+				Label: "Verse 1",
+				Blocks: []SongBlock{
+					{
+						Type: "lyricLine",
+						ID:   "block_1",
+						Primary: SongBlockPrimary{
+							Lang: "en",
+							Segments: []SongSegment{
+								{Type: "text", Text: "Searchable words"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	if err := store.SaveSong(song, ""); err != nil {
+		t.Fatalf("SaveSong failed: %v", err)
+	}
+	var before int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM song_fts WHERE song_id=?`, song.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if before != 1 {
+		t.Fatalf("search rows before corruption=%d, want 1", before)
+	}
+	if _, err := store.db.Exec(`UPDATE songs SET canonical_json='{' WHERE id=?`, song.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.rebuildSearchIndex(); err == nil {
+		t.Fatal("expected invalid canonical JSON to abort the search rebuild")
+	}
+	var after int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM song_fts WHERE song_id=?`, song.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("search rows after failed rebuild=%d, want %d", after, before)
+	}
+}
+
 func TestSongStorePersistsCanonicalSongAndDerivedDeckSeparately(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "songs.db")
 	store, err := InitStore(dbPath)

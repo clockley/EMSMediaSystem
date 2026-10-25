@@ -4401,11 +4401,13 @@ async function showBibleTextNow() {
     lowerThirdStarted = wantsLowerThird
       ? await ensureBibleLowerThirdOutput(transientEntry.bible, presentationRevision)
       : false;
-    if (wantsAudience && isActiveMediaWindow()) {
+    const shouldSlipstreamAudience = wantsAudience && isActiveMediaWindow();
+    if (shouldSlipstreamAudience) {
       const didSlipstream = await slipstreamBiblePresentation(
         transientEntry.bible,
         presentationRevision,
         {
+          fallbackTextItem: transientEntry,
           onAudienceStarted: () => {
             audienceStarted = true;
           },
@@ -4427,7 +4429,7 @@ async function showBibleTextNow() {
         return true;
       }
     }
-    if (wantsAudience) {
+    if (wantsAudience && !shouldSlipstreamAudience) {
       const createdAudience = await createMediaWindow({
         textItem: transientEntry,
         transientText: true,
@@ -4511,7 +4513,17 @@ async function slipstreamBiblePresentation(
       textPayload,
     },
   );
-  if (!activation.ok) return false;
+  if (!activation.ok) {
+    if (activation.reason !== "rejected" || !options.fallbackTextItem) return false;
+    // Only the request that still owned the failed renderer may replace it.
+    // Superseded Scripture takes must not reclaim the window from newer output.
+    return createMediaWindow({
+      textItem: options.fallbackTextItem,
+      transientText: true,
+      presentationRevision: expectedRevision,
+      onAudienceStarted: options.onAudienceStarted,
+    });
+  }
   if (
     !audiencePlaybackCoordinator.matchesActivePlayback({
       playbackId: activation.playbackId,

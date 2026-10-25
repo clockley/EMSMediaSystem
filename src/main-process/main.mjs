@@ -334,6 +334,7 @@ const stageLayerCommands = new Map();
 let stageHealth = "inactive";
 let audienceContentKind = "none";
 let lowerThirdContentKind = "none";
+let mediaWindowSlipstreamGeneration = 0;
 let audienceHoldMode = "none";
 let audienceHoldPayload = null;
 let audienceWindowOverlayOnly = false;
@@ -5816,7 +5817,18 @@ function setIPC() {
   });
   ipcMain.handle("slipstream-media-window", async (event, data) => {
     assertControlSender(event);
+    const slipstreamGeneration = ++mediaWindowSlipstreamGeneration;
     const targetMediaWindow = mediaWindow;
+    const acknowledgedPlayback = () => ({
+      ok: true,
+      playbackId: String(data?.playbackId || ""),
+    });
+    const isLatestSlipstream = () =>
+      slipstreamGeneration === mediaWindowSlipstreamGeneration;
+    const stillOwnsTargetWindow = () =>
+      isLatestSlipstream() &&
+      targetMediaWindow === mediaWindow &&
+      !targetMediaWindow?.isDestroyed();
     if (targetMediaWindow && !targetMediaWindow.isDestroyed()) {
       applyMediaWindowPresentationMode(targetMediaWindow);
       targetMediaWindow.setSkipTaskbar(false);
@@ -5825,9 +5837,16 @@ function setIPC() {
         activation = await targetMediaWindow.webContents.executeJavaScript(
           `window.emsApplySlipstream(${JSON.stringify(data)})`,
         );
+        // The renderer serializes activations, but IPC handlers can still
+        // resume out of order. A newer request owns all main-process output
+        // metadata and will publish it when its renderer activation completes.
+        if (!isLatestSlipstream()) return acknowledgedPlayback();
+        if (!stillOwnsTargetWindow()) return false;
         if (data?.isText !== true) {
           await clearLowerThirdRendererNow({});
         }
+        if (!isLatestSlipstream()) return acknowledgedPlayback();
+        if (!stillOwnsTargetWindow()) return false;
         audienceContentKind = data?.isText === true
           ? String(
               data?.textPayload?.contentKind ||
@@ -5843,6 +5862,7 @@ function setIPC() {
         setAudienceWindowTransparent(false);
         publishOutputStatus();
       } catch (err) {
+        if (!isLatestSlipstream()) return acknowledgedPlayback();
         if (!targetMediaWindow.isDestroyed()) {
           console.error("Failed to slipstream media window:", err);
         }

@@ -89,6 +89,7 @@ import {
   updateDynUI,
   updatePreviewCueUI,
 } from "./app-renderer.mjs";
+import { createSerializedAsyncQueue } from "../shared/async-operation-ownership.mjs";
 
 const PROJECT_SCHEMA_VERSION = 2;
 
@@ -106,6 +107,12 @@ let currentProjectStorageMode = "working";
 let currentProjectGuid = generateProjectGuid();
 
 let currentProjectCreated = new Date().toISOString();
+
+// A project open is one transaction across two processes: read/extract in the
+// main process, apply in the renderer, then commit in main. Serializing the
+// complete transaction prevents a newer read from replacing (and cleaning) the
+// pending snapshot while an older renderer application is still in progress.
+const projectOpenQueue = createSerializedAsyncQueue();
 
 function resetCurrentProjectIdentity() {
   currentProjectGuid = generateProjectGuid();
@@ -938,6 +945,10 @@ async function openProjectDialog() {
 
 async function openProjectByPath(filePath) {
   if (typeof filePath !== "string" || filePath.length === 0) return false;
+  return projectOpenQueue.run(() => openProjectByPathSerialized(filePath));
+}
+
+async function openProjectByPathSerialized(filePath) {
   const project = await invoke("read-project-file", filePath);
   let committed = false;
   try {

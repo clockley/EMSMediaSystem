@@ -228,6 +228,11 @@ func mergeInstalledPackages(targetPath string, packages []string) error {
 					}
 				}
 			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				packageDB.Close()
+				return rollback(fmt.Errorf("read installed Bible chapters from %s: %w", packagePath, err))
+			}
 			if err := rows.Close(); err != nil {
 				packageDB.Close()
 				return rollback(err)

@@ -2238,7 +2238,13 @@ async function createMediaWindow(options) {
     strtVl = streamVolume;
   }
   const autoPlayCtl = document.getElementById("autoPlayCtl");
-  const autoPlayEnabled = isQueuePlaybackContext || !!autoPlayCtl?.checked;
+  // A replacement window used to recover staging beneath a logo hold must load
+  // the target without starting its timeline or audio. Releasing the hold sends
+  // the normal play command once the operator is ready.
+  const deferPlaybackForOutputHold = options?.underLogoHold === true;
+  const autoPlayEnabled =
+    !deferPlaybackForOutputHold &&
+    (isQueuePlaybackContext || !!autoPlayCtl?.checked);
   const autoPlayExplicitlyDisabled =
     !isQueuePlaybackContext && autoPlayCtl && !autoPlayCtl.checked;
   const effectiveLoop = loopEnabledForLiveMedia(mediaFile);

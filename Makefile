@@ -110,12 +110,10 @@ BUILD_ARTIFACTS_DIR = build-artifacts
 # its prerequisites is newer (changed source JSONs, changed Go source, or an
 # edition switch tracked by $(BIBLE_EDITION_RECORD)).
 
-# Resolve a usable Go (>=1.22). Override with `make GO=/path/to/go`.
-ifeq ($(WINDOWS), 1)
-  GO ?= go
-else
-  GO ?= $(shell for c in /usr/local/go/bin/go go; do command -v "$$c" >/dev/null 2>&1 && { echo "$$c"; break; }; done)
-endif
+# Respect the Go command configured by the user's environment.  `GO` can still
+# be supplied through the environment or command line; otherwise the shell's
+# PATH selects the matching go/GOROOT installation.
+GO ?= go
 
 # .NET 8 SDK. Override with `make DOTNET=/path/to/dotnet`.
 # A mixed Microsoft SDK + Ubuntu runtime install leaves /usr/bin/dotnet unable
@@ -487,7 +485,7 @@ check-deps:
 	@test -f node_modules/csso/package.json || { echo "$(COLOR_RED)Error: csso module required. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@command -v sqlite3 >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: sqlite3 is required$(COLOR_RESET)" >&2; exit 1; }
 	@"$(DOTNET)" --list-runtimes >/dev/null 2>&1 || test -x "$(DOTNET_STANDALONE)" || command -v curl >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: .NET 8 SDK is required to cross-publish the Windows video poster$(COLOR_RESET)" >&2; exit 1; }
-	@$(NODE) -e "const {spawnSync}=require('node:child_process'); const supported=(out)=>{const m=String(out||'').match(/go(\\d+)\\.(\\d+)/); return !!m && (Number(m[1])>1 || Number(m[2])>=22);}; for (const c of [process.env.GO,'/usr/local/go/bin/go','go'].filter(Boolean)) { const r=spawnSync(c,['version'],{encoding:'utf8'}); if (r.status===0 && supported(r.stdout)) process.exit(0); } process.exit(1);" || { echo "$(COLOR_RED)Error: Go 1.22+ is required$(COLOR_RESET)" >&2; exit 1; }
+	@$(NODE) -e "const {spawnSync}=require('node:child_process'); const m=String(spawnSync(process.argv[1]||'go',['version'],{encoding:'utf8'}).stdout||'').match(/go(\\d+)\\.(\\d+)/); process.exit(m&&(Number(m[1])>1||Number(m[2])>=22)?0:1);" "$(GO)" || { echo "$(COLOR_RED)Error: configured Go command '$(GO)' must be version 1.22+$(COLOR_RESET)" >&2; exit 1; }
 
 # Rule: Generate CSS source map
 $(CSS_MIN_MAP): $(CSS_SRC)

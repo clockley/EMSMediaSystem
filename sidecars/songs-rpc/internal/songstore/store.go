@@ -684,11 +684,19 @@ func (s *SongStore) rebuildSearchIndex() error {
 			return err
 		}
 		var document map[string]interface{}
-		if json.Unmarshal([]byte(raw), &document) == nil {
-			documents = append(documents, document)
+		if err := json.Unmarshal([]byte(raw), &document); err != nil {
+			rows.Close()
+			return fmt.Errorf("decode canonical song for search index: %w", err)
 		}
+		documents = append(documents, document)
 	}
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("read songs for search index: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err

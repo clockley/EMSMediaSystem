@@ -283,6 +283,8 @@ test("Show Now slipstreams songs and decks over an existing non-song output", as
 
   assert.match(helper, /invoke\("slipstream-media-window"/);
   assert.match(helper, /isText: true/);
+  assert.match(helper, /activation\.reason !== "rejected"/);
+  assert.match(helper, /return createMediaWindow\(\{/);
   assert.match(source.slice(songStart, songEnd), /slipstreamSongTextToOutput\(transientEntry\)/);
   assert.match(source.slice(deckStart, deckEnd), /slipstreamSongTextToOutput\(entry\)/);
 });

@@ -3702,7 +3702,17 @@ async function slipstreamSongTextToOutput(item) {
       transition,
     },
   );
-  if (!activation.ok) return false;
+  if (!activation.ok) {
+    if (activation.reason !== "rejected") return false;
+    // The failed renderer already released the outgoing presentation. Rebuild
+    // the requested song in a fresh window; create-media-window replaces the
+    // blank renderer without emitting a misleading natural-close event.
+    return createMediaWindow({
+      textItem: item,
+      transientText: true,
+      songItem: true,
+    });
+  }
   if (
     !audiencePlaybackCoordinator.matchesActivePlayback({
       playbackId: activation.playbackId,

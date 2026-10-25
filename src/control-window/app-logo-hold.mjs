@@ -208,6 +208,9 @@ async function prepareQueueItemUnderLogoHold(index) {
     startTime: queueItemCueStartTime(item),
     clearCue: false,
     underLogoHold: true,
+    // Replacing the renderer suppresses its close notification, preserving the
+    // compositor's logo hold while rebuilding the failed content underneath.
+    recreateOnFailure: true,
   });
   if (stagingGeneration !== outputHoldRecoveryGeneration) return;
   if (!switched) {

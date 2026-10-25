@@ -49,6 +49,7 @@ import {
 } from "../shared/output-compositor.min.mjs";
 import { resolveAlertTokens } from "../shared/alert-tokens.min.mjs";
 import { tickerDurationSeconds, tickerPhaseDelaySeconds } from "../shared/alert-motion.min.mjs";
+import { createSerializedAsyncQueue } from "../shared/async-operation-ownership.min.mjs";
 let hlsInstance = null;
 let dashPlayer = null;
 let previewRtcPeer = null;
@@ -90,6 +91,8 @@ var logoHoldOnly = false;
 var debugPlayback = false;
 let audiencePlaybackId =
   argv.find((arg) => String(arg).startsWith("__audience-playback="))?.split("=")[1] || "";
+const slipstreamActivationQueue = createSerializedAsyncQueue();
+let slipstreamActivationGeneration = 0;
 let pptxIpcHandlersInstalled = false;
 let textIpcHandlersInstalled = false;
 let ipcHandlersInstalled = false;
@@ -1019,7 +1022,29 @@ async function activatePptxTarget(data) {
   await showPptxSlideInMediaWindow(data.pptxStartSlide || 0, data.transition);
 }
 
-function activateImageTarget() {
+/**
+ * Resolve once the image is decoded and paintable, so an image activation can
+ * fail the same way a video or PPTX one does instead of reporting a blank
+ * surface as live.
+ */
+function awaitProjectionImageReady(element) {
+  if (typeof element.decode === "function") return element.decode();
+  if (element.complete) {
+    return element.naturalWidth > 0
+      ? Promise.resolve()
+      : Promise.reject(new Error("image failed to load"));
+  }
+  return new Promise((resolve, reject) => {
+    element.addEventListener("load", () => resolve(), { once: true });
+    element.addEventListener(
+      "error",
+      () => reject(new Error("image failed to load")),
+      { once: true },
+    );
+  });
+}
+
+async function activateImageTarget() {
   if (!img) {
     img = document.createElement("img");
     img.setAttribute("id", "bigPlayer");
@@ -1027,6 +1052,15 @@ function activateImageTarget() {
   }
   img.src = mediaFile;
   img.style.display = "block";
+  const activatedSrc = img.src;
+  try {
+    await awaitProjectionImageReady(img);
+  } catch (err) {
+    // A newer activation already replaced the source; its own decode owns the
+    // outcome and this failure belongs to an image that is no longer on screen.
+    if (img?.src !== activatedSrc) return;
+    throw new Error(`Projection image could not be loaded: ${mediaFile}`, { cause: err });
+  }
 }
 
 async function activateVideoTarget(data) {
@@ -1188,7 +1222,14 @@ async function startLiveStreamPlayback(url) {
  * the new target is activated, so every combination behaves identically. (Live
  * streams are not slipstreamed; the queue close/reopens the window for those.)
  */
-async function applySlipstream(data) {
+function applySlipstream(data) {
+  const activationGeneration = ++slipstreamActivationGeneration;
+  return slipstreamActivationQueue.run(() =>
+    applySlipstreamActivation(data, activationGeneration),
+  );
+}
+
+async function applySlipstreamActivation(data, activationGeneration) {
   tracePlayback(
     "applySlipstream",
     "file=" + (data?.mediaFile || ""),
@@ -1198,6 +1239,12 @@ async function applySlipstream(data) {
   );
   const nextPlaybackId = String(data?.playbackId || "");
   if (!nextPlaybackId) throw new TypeError("Slipstream playback identity is required");
+  const ownsActivation = () =>
+    activationGeneration === slipstreamActivationGeneration;
+  // A newer request can arrive while this activation is waiting its turn. It
+  // will perform the real swap, so acknowledge this obsolete request without
+  // touching the surface or making the newer request wait on unnecessary I/O.
+  if (!ownsActivation()) return { playbackId: nextPlaybackId };
   audiencePlaybackId = nextPlaybackId;
   hideStreamStatus();
   if (data?.clearOutputHold === true) {
@@ -1224,23 +1271,40 @@ async function applySlipstream(data) {
   // the element must not be detached here; every other target releases it.
   if (target !== SLIPSTREAM_TARGET_VIDEO) teardownVideoElement();
 
-  switch (target) {
-    case SLIPSTREAM_TARGET_TEXT:
-      activateTextTarget(data);
-      break;
-    case SLIPSTREAM_TARGET_PPTX:
-      await activatePptxTarget(data);
-      break;
-    case SLIPSTREAM_TARGET_IMAGE:
-      activateImageTarget();
-      break;
-    default:
-      await activateVideoTarget(data);
-      break;
+  try {
+    switch (target) {
+      case SLIPSTREAM_TARGET_TEXT:
+        activateTextTarget(data);
+        break;
+      case SLIPSTREAM_TARGET_PPTX:
+        await activatePptxTarget(data);
+        break;
+      case SLIPSTREAM_TARGET_IMAGE:
+        await activateImageTarget();
+        break;
+      default:
+        await activateVideoTarget(data);
+        break;
+    }
+  } catch (err) {
+    // A newer request is queued behind this one. Its target has not started yet,
+    // but it owns the audience surface now; leave cleanup to that activation so
+    // this stale failure cannot tear down the replacement.
+    if (!ownsActivation()) return { playbackId: nextPlaybackId };
+    // The outgoing content was released before this point, so there is nothing
+    // left to roll back to. Leave a blank surface instead of a half-activated
+    // one and report the failure, which the control window answers by closing
+    // and rebuilding the window.
+    teardownTextPresentation();
+    teardownPptxViewer();
+    teardownImageElement();
+    teardownVideoElement();
+    throw err;
   }
 
+  if (!ownsActivation()) return { playbackId: nextPlaybackId };
   reapplyOutputHoldIfActive();
-  return { playbackId: audiencePlaybackId };
+  return { playbackId: nextPlaybackId };
 }
 
 window.emsApplySlipstream = applySlipstream;
@@ -1604,6 +1668,9 @@ async function startPreviewRtcPeer(message = {}) {
     }
   };
 
+  const ownsPreviewRtcSession = () =>
+    previewRtcPeer === peer && previewRtcSessionId === message.sessionId;
+
   try {
     await peer.setRemoteDescription({ type: "offer", sdp: message.sdp });
     const pending = previewRtcPendingCandidates;
@@ -1612,7 +1679,7 @@ async function startPreviewRtcPeer(message = {}) {
       await peer.addIceCandidate(candidate);
     }
     const capturedStream = await captureMediaWindowVideoStreamWithRetries();
-    if (previewRtcPeer !== peer || previewRtcSessionId !== message.sessionId) {
+    if (!ownsPreviewRtcSession()) {
       stopPreviewCaptureRetryStream(capturedStream);
       return;
     }
@@ -1625,12 +1692,17 @@ async function startPreviewRtcPeer(message = {}) {
     });
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
+    if (!ownsPreviewRtcSession()) return;
     sendPreviewRtcSignal({
       type: "answer",
-      sessionId: previewRtcSessionId,
+      sessionId: message.sessionId,
       sdp: peer.localDescription?.sdp || answer.sdp,
     });
   } catch (err) {
+    // A newer offer replaced (and closed) this peer, which also rejects the
+    // negotiation in flight here. The replacement owns the session now, so a
+    // stale failure must not tear it down.
+    if (!ownsPreviewRtcSession()) return;
     reportProjectionError("Preview capture could not start", err);
     closePreviewRtcPeer();
   }
@@ -3503,11 +3575,8 @@ async function loadMedia() {
     // (e.g. image -> video). Install the IPC listeners before the early return
     // so the "slipstream" message can swap us into a video later.
     installICPHandlers();
-    img = document.createElement("img");
-    img.src = mediaFile;
-    img.setAttribute("id", "bigPlayer");
-    document.body.appendChild(img);
     setProjectionVideoVisible(false);
+    await activateImageTarget();
     return;
   }
 

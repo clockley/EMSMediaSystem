@@ -5,7 +5,51 @@ import test from "node:test";
 import {
   createAsyncActionCoalescer,
   createLatestRequestGate,
+  createSerializedAsyncQueue,
 } from "../src/shared/async-operation-ownership.mjs";
+
+test("serialized async queue does not interleave transactions", async () => {
+  const queue = createSerializedAsyncQueue();
+  const events = [];
+  let releaseFirst;
+  let markFirstStarted;
+  const firstBlocked = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const firstStarted = new Promise((resolve) => {
+    markFirstStarted = resolve;
+  });
+
+  const first = queue.run(async () => {
+    events.push("first:start");
+    markFirstStarted();
+    await firstBlocked;
+    events.push("first:end");
+    return 1;
+  });
+  const second = queue.run(async () => {
+    events.push("second:start");
+    events.push("second:end");
+    return 2;
+  });
+
+  await firstStarted;
+  assert.deepEqual(events, ["first:start"]);
+  releaseFirst();
+  assert.deepEqual(await Promise.all([first, second]), [1, 2]);
+  assert.deepEqual(events, ["first:start", "first:end", "second:start", "second:end"]);
+});
+
+test("serialized async queue continues after a rejection", async () => {
+  const queue = createSerializedAsyncQueue();
+  const failed = queue.run(async () => {
+    throw new Error("expected failure");
+  });
+  const recovered = queue.run(async () => "continued");
+
+  await assert.rejects(failed, /expected failure/);
+  assert.equal(await recovered, "continued");
+});
 
 function deferred() {
   let resolve;

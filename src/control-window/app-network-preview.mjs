@@ -1300,6 +1300,11 @@ async function startNetworkPreviewRtcCapture() {
       offerToReceiveVideo: true,
     });
     await peer.setLocalDescription(offer);
+    // A newer capture can replace (and close) this peer while the offer is
+    // being created, which also rejects the pending negotiation below. The
+    // replacement owns the session from that point on, so neither a stale
+    // offer nor a stale teardown may touch it.
+    if (networkPreviewRtcPeer !== peer) return false;
     send("media-preview-rtc-to-media", {
       type: "offer",
       sessionId,
@@ -1307,6 +1312,7 @@ async function startNetworkPreviewRtcCapture() {
     });
     return true;
   } catch (err) {
+    if (networkPreviewRtcPeer !== peer) return false;
     console.error("Failed to start network preview RTC capture:", err);
     stopNetworkPreviewRtcCapture();
     return false;

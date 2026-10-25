@@ -46,7 +46,11 @@ async function activateAudiencePlayback(
     if (!isAcknowledged(activation)) {
       return {
         ok: false,
-        reason: "rejected",
+        // A failure from an obsolete request must not trigger recovery that
+        // closes or replaces the newer request's audience window.
+        reason: coordinator.matchesStagedPlayback({ playbackId: normalizedPlaybackId })
+          ? "rejected"
+          : "superseded",
         playbackId: normalizedPlaybackId,
         activation,
       };

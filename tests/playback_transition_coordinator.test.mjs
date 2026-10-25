@@ -36,6 +36,14 @@ const activationSource = await readFile(
   new URL("../src/shared/audience-playback-activation.mjs", import.meta.url),
   "utf8",
 );
+const mediaLoopSource = await readFile(
+  new URL("../src/control-window/app-media-loop.mjs", import.meta.url),
+  "utf8",
+);
+const logoHoldSource = await readFile(
+  new URL("../src/control-window/app-logo-hold.mjs", import.meta.url),
+  "utf8",
+);
 
 function declaredFunction(name) {
   const match = mediaSource.match(
@@ -242,6 +250,27 @@ test("a rejected slipstream restores the previously active playback", async () =
   assert.equal(coordinator.activePlaybackId(), "playback-live");
 });
 
+test("a rejected obsolete slipstream is classified as superseded", async () => {
+  const coordinator = new PlaybackTransitionCoordinator();
+  let rejectFirst;
+  const firstResponse = new Promise((resolve) => {
+    rejectFirst = resolve;
+  });
+  const first = activateAudienceSlipstream(
+    () => firstResponse,
+    { mediaFile: "first.mp4" },
+    { coordinator, playbackId: "playback-first" },
+  );
+
+  coordinator.stagePlayback("playback-second");
+  rejectFirst(false);
+  const obsolete = await first;
+
+  assert.equal(obsolete.ok, false);
+  assert.equal(obsolete.reason, "superseded");
+  assert.equal(coordinator.stagedPlaybackId(), "playback-second");
+});
+
 test("a rejected media play is returned as an activation failure", async () => {
   const reported = [];
   const context = vm.createContext({
@@ -441,4 +470,106 @@ test("closing the audience output invalidates playback ownership and in-flight s
   );
   assert.match(closeHandler, /desiredProjectionPreviewPlayback:\s*"paused"/);
   assert.match(closeHandler, /latestExplicitProjectionPauseState:\s*null/);
+});
+
+test("an image that cannot be decoded fails its audience activation", async () => {
+  const img = {
+    src: "",
+    style: {},
+    setAttribute() {},
+    async decode() {
+      throw new Error("broken image");
+    },
+  };
+  const context = vm.createContext({ img, mediaFile: "/media/missing.png" });
+  vm.runInContext(declaredFunction("awaitProjectionImageReady"), context);
+  vm.runInContext(declaredFunction("activateImageTarget"), context);
+
+  await assert.rejects(
+    () => vm.runInContext("activateImageTarget()", context),
+    /Projection image could not be loaded: \/media\/missing\.png/,
+  );
+});
+
+test("a decode that loses the element to a newer image does not fail that activation", async () => {
+  const img = {
+    src: "",
+    style: {},
+    setAttribute() {},
+    async decode() {
+      img.src = "/media/replacement.png";
+      throw new Error("aborted by a new source");
+    },
+  };
+  const context = vm.createContext({ img, mediaFile: "/media/first.png" });
+  vm.runInContext(declaredFunction("awaitProjectionImageReady"), context);
+  vm.runInContext(declaredFunction("activateImageTarget"), context);
+
+  await vm.runInContext("activateImageTarget()", context);
+});
+
+test("the audience window loads images before it reports itself ready", () => {
+  const loadMedia = declaredFunction("loadMedia");
+  assert.match(loadMedia, /await activateImageTarget\(\);/);
+  assert.doesNotMatch(loadMedia, /img\.src = mediaFile/);
+});
+
+test("a failed current slipstream blanks the surface instead of leaving it half-activated", () => {
+  const slipstream = declaredFunction("applySlipstreamActivation");
+  const activation = slipstream.indexOf("await activateVideoTarget(data);");
+  const teardown = slipstream.indexOf("teardownImageElement();", activation);
+  const rethrow = slipstream.indexOf("throw err;", teardown);
+  assert.ok(activation > 0 && teardown > activation && rethrow > teardown);
+});
+
+test("overlapping slipstreams serialize renderer work and suppress stale main-process commits", () => {
+  const wrapper = declaredFunction("applySlipstream");
+  const activation = declaredFunction("applySlipstreamActivation");
+  assert.match(wrapper, /\+\+slipstreamActivationGeneration/);
+  assert.match(wrapper, /slipstreamActivationQueue\.run/);
+  assert.match(activation, /if \(!ownsActivation\(\)\) return \{ playbackId: nextPlaybackId \};/);
+  assert.ok(
+    activation.indexOf("if (!ownsActivation()) return { playbackId: nextPlaybackId };") <
+      activation.indexOf("teardownTextPresentation();", activation.indexOf("catch (err)")),
+  );
+
+  const handlerStart = mainSource.indexOf('ipcMain.handle("slipstream-media-window"');
+  const handlerEnd = mainSource.indexOf('\n  ipcMain.on("vlcl"', handlerStart);
+  const handler = mainSource.slice(handlerStart, handlerEnd);
+  assert.match(handler, /\+\+mediaWindowSlipstreamGeneration/);
+  assert.match(handler, /if \(!isLatestSlipstream\(\)\) return acknowledgedPlayback\(\);/);
+  assert.ok(
+    handler.indexOf("if (!isLatestSlipstream()) return acknowledgedPlayback();") <
+      handler.indexOf("audienceContentKind ="),
+  );
+});
+
+test("a slipstream rejected by the renderer rebuilds the audience window", () => {
+  const slipstreamStart = presentationPlaybackSource.indexOf(
+    "async function slipstreamQueueItemAtIndex(",
+  );
+  const slipstreamEnd = presentationPlaybackSource.indexOf(
+    "\nasync function trySlipstreamNextQueueItem(",
+    slipstreamStart,
+  );
+  const slipstream = presentationPlaybackSource.slice(slipstreamStart, slipstreamEnd);
+  // Only a renderer-side rejection means the outgoing content was already
+  // released; the other failure reasons belong to a newer activation.
+  assert.match(slipstream, /opts\.reopenOnFailure === true/);
+  assert.match(slipstream, /slipstreamResult\.reason === "rejected"/);
+  assert.match(slipstream, /await reopenAudienceWindowForTransition\(/);
+  assert.match(slipstream, /opts\.recreateOnFailure === true/);
+  assert.match(slipstream, /await createMediaWindow\(\{/);
+
+  const reopen = presentationPlaybackSource.slice(
+    presentationPlaybackSource.indexOf("async function reopenAudienceWindowForTransition("),
+  );
+  assert.match(reopen, /setPendingClose\(transitionToken, startTime\)/);
+  assert.match(reopen, /await closeActiveMediaWindowNow\(\)/);
+
+  // Approving a changed media file is the one live swap with no close/reopen
+  // fallback of its own, so it has to ask for the recovery.
+  assert.match(mediaLoopSource, /slipstreamQueueItemAtIndex\([\s\S]*?reopenOnFailure: true/);
+  assert.match(logoHoldSource, /slipstreamQueueItemAtIndex\([\s\S]*?recreateOnFailure: true/);
+  assert.match(controlMediaSource, /const deferPlaybackForOutputHold = options\?\.underLogoHold === true/);
 });

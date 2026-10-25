@@ -44,6 +44,27 @@ export function createLatestRequestGate() {
 }
 
 /**
+ * Runs asynchronous operations one at a time in submission order. A rejected
+ * operation does not poison the queue, while its own caller still receives the
+ * rejection. This is useful for multi-step state transactions whose individual
+ * awaits must not interleave with the next transaction.
+ */
+export function createSerializedAsyncQueue() {
+  let tail = Promise.resolve();
+
+  return Object.freeze({
+    run(operation) {
+      if (typeof operation !== "function") {
+        throw new TypeError("A serialized operation must be a function");
+      }
+      const result = tail.catch(() => {}).then(operation);
+      tail = result.catch(() => {});
+      return result;
+    },
+  });
+}
+
+/**
  * Coalesces repeated UI actions for the same logical target while the first
  * action is running and for a short cooldown after it completes.  The cooldown
  * covers the two separate `click` tasks emitted by a physical double-click;

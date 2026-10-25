@@ -929,6 +929,24 @@ async function loadQueueItemIntoPreviewCue(index) {
   renderQueue();
 }
 
+/**
+ * Recover from a slipstream that could not swap the live surface in place. The
+ * renderer tears the outgoing content down before it activates the incoming
+ * item, so a failed activation leaves the audience with a blank window that no
+ * longer matches the schedule. Closing the window hands the item to the
+ * close/reopen path, which rebuilds the output from scratch.
+ */
+async function reopenAudienceWindowForTransition(transitionToken, startTime = 0) {
+  if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
+  const targetIndex = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+  if (targetIndex < 0) return false;
+  audiencePlaybackCoordinator.setPendingClose(transitionToken, startTime);
+  setSharedRendererState({ pendingQueueSwitchIndex: targetIndex });
+  setSharedRendererState({ pendingQueueSwitchStartTime: startTime });
+  await closeActiveMediaWindowNow();
+  return true;
+}
+
 async function takeQueueItemLive(index, startTime = 0, opts = {}) {
   if (index < 0 || index >= mediaQueue.length) return;
   if (!isScheduleItemCurrentlyPlayable(mediaQueue[index])) {
@@ -1010,15 +1028,7 @@ async function takeQueueItemLive(index, startTime = 0, opts = {}) {
     ) {
       return;
     }
-    const currentTargetIndex = audiencePlaybackCoordinator.indexOf(
-      transitionToken,
-      mediaQueue,
-    );
-    if (currentTargetIndex < 0) return;
-    audiencePlaybackCoordinator.setPendingClose(transitionToken, safeStart);
-    setSharedRendererState({ pendingQueueSwitchIndex: currentTargetIndex });
-    setSharedRendererState({ pendingQueueSwitchStartTime: safeStart });
-    await closeActiveMediaWindowNow();
+    await reopenAudienceWindowForTransition(transitionToken, safeStart);
     return;
   }
 
@@ -1999,32 +2009,74 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
     index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
     if (index < 0) return false;
-    const slipstreamResult = await activateAudienceSlipstream(
+    let slipstreamResult = await activateAudienceSlipstream(
       (activationPayload) => invoke("slipstream-media-window", activationPayload),
       slipstreamData,
     );
     const slipstreamSuccess = slipstreamResult.ok === true;
-    resolveQueuePresentationVideo();
-    if (!slipstreamSuccess) {
-      if (startupSyncStarted) finishProjectionPlaybackStartupSync();
-      if (scriptureTakeRevision !== null) {
-        confirmScriptureTake(scriptureTakeRevision, {
-          audience: false,
-          lowerThird: false,
-        });
-      }
-      return false;
-    }
+    let slipstreamRecovered = false;
     if (
       isBibleItem &&
+      slipstreamSuccess &&
       audiencePlaybackCoordinator.matchesActivePlayback({
         playbackId: slipstreamResult.playbackId,
       })
     ) {
-      // The renderer acknowledged and the activation helper committed this
-      // playback. Preserve that fact even if queue-transition ownership was
-      // cancelled while the IPC request was in flight.
+      // The renderer has committed this Scripture even if queue ownership is
+      // cancelled while the remaining local bookkeeping is in flight.
       scriptureAudienceStarted = true;
+    }
+    resolveQueuePresentationVideo();
+    if (!slipstreamSuccess) {
+      if (startupSyncStarted) finishProjectionPlaybackStartupSync();
+      // "rejected" means this request still owned the renderer when activation
+      // failed. Superseded failures belong to an older request and must never
+      // replace or close the newer output.
+      if (slipstreamResult.reason === "rejected" && opts.recreateOnFailure === true) {
+        if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
+        index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+        if (index < 0) return false;
+        const previousQueueIndex = currentQueueIndex;
+        const previousQueuePlaying = isQueuePlaying;
+        setSharedRendererState({ currentQueueIndex: index });
+        setSharedRendererState({ isQueuePlaying: true });
+        const recreated = await createMediaWindow({
+          transitionToken,
+          startTime: requestedStart,
+          resolvedBibleEntry,
+          underLogoHold,
+          presentationRevision: scriptureTakeRevision,
+          onAudienceStarted: () => {
+            scriptureAudienceStarted = true;
+          },
+        });
+        if (recreated) {
+          slipstreamResult = {
+            ok: true,
+            playbackId: audiencePlaybackCoordinator.activePlaybackId(),
+          };
+          slipstreamRecovered = true;
+        } else if (audiencePlaybackCoordinator.owns(transitionToken)) {
+          setSharedRendererState({ currentQueueIndex: previousQueueIndex });
+          setSharedRendererState({ isQueuePlaying: previousQueuePlaying });
+        }
+      }
+      if (
+        !slipstreamRecovered &&
+        opts.reopenOnFailure === true &&
+        slipstreamResult.reason === "rejected"
+      ) {
+        await reopenAudienceWindowForTransition(transitionToken, requestedStart);
+      }
+      if (!slipstreamRecovered) {
+        if (scriptureTakeRevision !== null) {
+          confirmScriptureTake(scriptureTakeRevision, {
+            audience: false,
+            lowerThird: false,
+          });
+        }
+        return false;
+      }
     }
     if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
     index = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);

@@ -86,3 +86,43 @@ test("media-library thumbnails no longer reference the removed KDE backend", () 
   assert.doesNotMatch(thumbnailSource, /kde-video-poster|linuxPosterDesktop/);
   assert.match(thumbnailSource, /exec\.CommandContext\(ctx, "gjs", backend\)/);
 });
+
+test("a superseded preview negotiation cannot tear down the capture that replaced it", () => {
+  const captureStart = networkPreviewSource.indexOf(
+    "async function startNetworkPreviewRtcCapture()",
+  );
+  const captureEnd = networkPreviewSource.indexOf(
+    "\nasync function handleMediaPreviewRtcSignal(",
+    captureStart,
+  );
+  assert.ok(captureStart >= 0 && captureEnd > captureStart);
+  const capture = networkPreviewSource.slice(captureStart, captureEnd);
+  // Replacing a capture closes the outgoing peer, which rejects the offer it
+  // still has in flight. Both the stale offer and the stale teardown have to
+  // recognize that they no longer own the session.
+  const offerGuard = capture.indexOf("if (networkPreviewRtcPeer !== peer) return false;");
+  const offerSend = capture.indexOf('type: "offer"');
+  const failureGuard = capture.indexOf(
+    "if (networkPreviewRtcPeer !== peer) return false;",
+    offerSend,
+  );
+  const teardown = capture.indexOf("stopNetworkPreviewRtcCapture();", failureGuard);
+  assert.ok(offerGuard >= 0 && offerGuard < offerSend);
+  assert.ok(failureGuard > offerSend && teardown > failureGuard);
+
+  const peerStart = mediaWindowSource.indexOf("async function startPreviewRtcPeer(");
+  const peerEnd = mediaWindowSource.indexOf(
+    "\nasync function handlePreviewRtcSignal(",
+    peerStart,
+  );
+  assert.ok(peerStart >= 0 && peerEnd > peerStart);
+  const startPeer = mediaWindowSource.slice(peerStart, peerEnd);
+  assert.match(startPeer, /const ownsPreviewRtcSession = \(\) =>/);
+  // The answer is labelled with the offer it replies to, never with whichever
+  // session happens to be current when it finishes.
+  assert.match(startPeer, /sessionId: message\.sessionId,\n\s+sdp: peer\.localDescription/);
+  const catchStart = startPeer.indexOf("} catch (err) {");
+  const catchGuard = startPeer.indexOf("if (!ownsPreviewRtcSession()) return;", catchStart);
+  const closePeer = startPeer.indexOf("closePreviewRtcPeer();", catchStart);
+  assert.ok(catchStart >= 0 && catchGuard > catchStart && closePeer > catchGuard);
+});
