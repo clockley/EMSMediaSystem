@@ -1,7 +1,7 @@
 # Copyright (C) 2025 Christian Lockley
 # Licensed under GNU General Public License v3
 #TODO: Add derived file path fixups for css, html, js and mjs files. This is needed to prevent refrencing the derived files in the source code.
-.PHONY: all all-paid dev dev-paid app app-dev bible bible-paid check-deps clean help js-minify rebuild status FORCE
+.PHONY: all all-paid dev dev-paid app app-dev bible bible-paid check-deps clean help js-minify rebuild status FORCE test test-js test-go test-go-songs test-go-bible test-go-media-library test-go-media-watcher test-songs-import
 
 # If any recipe step fails, remove the target instead of leaving a half-written (or empty) file.
 .DELETE_ON_ERROR:
@@ -434,7 +434,37 @@ endif
 	@test -f "$@"
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
 
-.PHONY: test-songs-import
+# JavaScript files and Go modules do not share fixtures, ports, or databases.
+# `make -j test` (what `yarn test` runs) overlaps them. `make test` without -j
+# still runs the same targets, one after another.
+test: test-js test-go
+	@echo "$(COLOR_GREEN)$(TICK) JavaScript and Go tests passed$(COLOR_RESET)"
+
+test-js:
+	@echo "$(COLOR_YELLOW)Running JavaScript tests$(COLOR_RESET)"
+	@$(NODE) --test tests/*.test.mjs
+	@echo "$(COLOR_GREEN)$(TICK) JavaScript tests passed$(COLOR_RESET)"
+
+test-go: test-go-songs test-go-bible test-go-media-library test-go-media-watcher
+
+define go-test
+@echo "$(COLOR_YELLOW)Running $(1) tests$(COLOR_RESET)"
+@CGO_ENABLED=0 "$(GO)" test -C "$(2)" ./... -count=1
+@echo "$(COLOR_GREEN)$(TICK) $(1) tests passed$(COLOR_RESET)"
+endef
+
+test-go-songs:
+	$(call go-test,Songs RPC,$(SONGS_RPC_ROOT))
+
+test-go-bible:
+	$(call go-test,Bible RPC,$(BIBLE_RPC_ROOT))
+
+test-go-media-library:
+	$(call go-test,media library RPC,$(MEDIA_LIBRARY_RPC_ROOT))
+
+test-go-media-watcher:
+	$(call go-test,media watcher,$(MEDIA_WATCHER_ROOT))
+
 test-songs-import:
 	@echo "$(COLOR_YELLOW)Running song import fixture tests$(COLOR_RESET)"
 	@CGO_ENABLED=0 "$(GO)" test -C "$(SONGS_RPC_ROOT)" ./internal/songimport/ -count=1
@@ -602,4 +632,7 @@ help:
 	@echo "  $(COLOR_GREEN)clean$(COLOR_RESET)     - Remove all build artifacts"
 	@echo "  $(COLOR_GREEN)rebuild$(COLOR_RESET)   - Clean and build all artifacts"
 	@echo "  $(COLOR_GREEN)status$(COLOR_RESET)    - Show build status"
+	@echo "  $(COLOR_GREEN)test$(COLOR_RESET)      - Run JavaScript and Go tests (use -j to overlap them)"
+	@echo "  $(COLOR_GREEN)test-js$(COLOR_RESET)   - Run the JavaScript test suite"
+	@echo "  $(COLOR_GREEN)test-go$(COLOR_RESET)   - Run every Go sidecar test module"
 	@echo "  $(COLOR_GREEN)help$(COLOR_RESET)      - Show this help message"
