@@ -1,10 +1,8 @@
-import { createReadStream } from "fs";
-import { createXXHash3 } from "hash-wasm";
-
 /** Algorithm used for media file content fingerprints. */
 export const MEDIA_FILE_HASH_ALG = "xxh3-64";
 
 const XXH3_64_RE = /^[a-f0-9]{16}$/i;
+let hashFileImplementation = null;
 
 export function isValidMediaFileHash(hex) {
   return typeof hex === "string" && XXH3_64_RE.test(hex);
@@ -33,19 +31,22 @@ export function baselineFileHashFields(digestHex) {
   };
 }
 
-async function streamHashFile(filePath, onData) {
-  const input = createReadStream(filePath);
-  input.on("data", onData);
-  await new Promise((resolve, reject) => {
-    input.on("end", resolve);
-    input.on("error", reject);
-  });
+/** Supply the process-local implementation used for on-demand media hashing. */
+export function configureMediaFileHasher(hashFile) {
+  if (typeof hashFile !== "function") {
+    throw new TypeError("Media file hasher must be a function");
+  }
+  hashFileImplementation = hashFile;
 }
 
-/** Stream-hash a local file with XXH3-64 (fast; suitable for large media). */
+/** Hash a local file through the configured XXH3-64 sidecar. */
 export async function hashMediaFile(filePath) {
-  const hasher = await createXXHash3(0, 0);
-  hasher.init();
-  await streamHashFile(filePath, (chunk) => hasher.update(chunk));
-  return hasher.digest();
+  if (!hashFileImplementation) {
+    throw new Error("Media file hasher is not configured");
+  }
+  const digest = await hashFileImplementation(filePath);
+  if (!isValidMediaFileHash(digest)) {
+    throw new Error("Media hashing sidecar returned an invalid XXH3-64 digest");
+  }
+  return digest.toLowerCase();
 }

@@ -114,6 +114,9 @@ BUILD_ARTIFACTS_DIR = build-artifacts
 # be supplied through the environment or command line; otherwise the shell's
 # PATH selects the matching go/GOROOT installation.
 GO ?= go
+# Shipped x64 sidecars must run on the original AMD64 baseline. Keep this
+# explicit so a developer or CI-level GOAMD64 setting cannot raise it.
+override GOAMD64_BASELINE := v1
 
 # .NET 8 SDK. Override with `make DOTNET=/path/to/dotnet`.
 # A mixed Microsoft SDK + Ubuntu runtime install leaves /usr/bin/dotnet unable
@@ -335,11 +338,11 @@ $(BIBLE_SIDECAR_BINS): $(BIBLE_RPC_GO_SOURCES) | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 	@echo "$(COLOR_YELLOW)Building Bible RPC sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
-	@powershell -NoProfile -c "$$env:CGO_ENABLED='0'; $$env:GOOS='$(GOOS_T)'; $$env:GOARCH='$(GOARCH_T)'; & '$(GO)' build -C '$(BIBLE_RPC_ROOT)' -trimpath -ldflags '-s -w' -o '$(CURDIR)/$@' '.'"
+	@powershell -NoProfile -c "$$env:CGO_ENABLED='0'; $$env:GOOS='$(GOOS_T)'; $$env:GOARCH='$(GOARCH_T)'; $$env:GOAMD64='$(GOAMD64_BASELINE)'; & '$(GO)' build -C '$(BIBLE_RPC_ROOT)' -trimpath -ldflags '-s -w' -o '$(CURDIR)/$@' '.'"
 else
 	@mkdir -p $(dir $@)
 	@echo "$(COLOR_YELLOW)Building Bible RPC sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
-	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) "$(GO)" build -C "$(BIBLE_RPC_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
+	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) GOAMD64=$(GOAMD64_BASELINE) "$(GO)" build -C "$(BIBLE_RPC_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
 	@[ "$(GOOS_T)" = "windows" ] || chmod 755 "$@"
 endif
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
@@ -349,11 +352,11 @@ $(MEDIA_WATCHER_BINS): $(MEDIA_WATCHER_GO_SOURCES) | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 	@echo "$(COLOR_YELLOW)Building media watcher sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
-	@powershell -NoProfile -c "$$env:CGO_ENABLED='0'; $$env:GOOS='$(GOOS_T)'; $$env:GOARCH='$(GOARCH_T)'; & '$(GO)' build -C '$(MEDIA_WATCHER_ROOT)' -trimpath -ldflags '-s -w' -o '$(CURDIR)/$@' '.'"
+	@powershell -NoProfile -c "$$env:CGO_ENABLED='0'; $$env:GOOS='$(GOOS_T)'; $$env:GOARCH='$(GOARCH_T)'; $$env:GOAMD64='$(GOAMD64_BASELINE)'; & '$(GO)' build -C '$(MEDIA_WATCHER_ROOT)' -trimpath -ldflags '-s -w' -o '$(CURDIR)/$@' '.'"
 else
 	@mkdir -p $(dir $@)
 	@echo "$(COLOR_YELLOW)Building media watcher sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
-	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) "$(GO)" build -C "$(MEDIA_WATCHER_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
+	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) GOAMD64=$(GOAMD64_BASELINE) "$(GO)" build -C "$(MEDIA_WATCHER_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
 	@[ "$(GOOS_T)" = "windows" ] || chmod 755 "$@"
 endif
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
@@ -362,10 +365,10 @@ endif
 $(MEDIA_LIBRARY_RPC_BINS): $(MEDIA_LIBRARY_RPC_GO_SOURCES) | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
-	@powershell -NoProfile -c "$$env:CGO_ENABLED='0'; $$env:GOOS='$(GOOS_T)'; $$env:GOARCH='$(GOARCH_T)'; & '$(GO)' build -C '$(MEDIA_LIBRARY_RPC_ROOT)' -trimpath -ldflags '-s -w' -o '$(CURDIR)/$@' '.'"
+	@powershell -NoProfile -c "$$env:CGO_ENABLED='0'; $$env:GOOS='$(GOOS_T)'; $$env:GOARCH='$(GOARCH_T)'; $$env:GOAMD64='$(GOAMD64_BASELINE)'; & '$(GO)' build -C '$(MEDIA_LIBRARY_RPC_ROOT)' -trimpath -ldflags '-s -w' -o '$(CURDIR)/$@' '.'"
 else
 	@mkdir -p $(dir $@)
-	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) "$(GO)" build -C "$(MEDIA_LIBRARY_RPC_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
+	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) GOAMD64=$(GOAMD64_BASELINE) "$(GO)" build -C "$(MEDIA_LIBRARY_RPC_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
 	@[ "$(GOOS_T)" = "windows" ] || chmod 755 "$@"
 endif
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
@@ -375,11 +378,11 @@ $(SONGS_SIDECAR_BINS): $(SONGS_RPC_GO_SOURCES) | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
 	@powershell -NoProfile -c "New-Item -ItemType Directory -Force -Path '$(dir $@)'" >nul 2>&1
 	@echo "$(COLOR_YELLOW)Building Songs RPC sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
-	@powershell -NoProfile -c "$$env:CGO_ENABLED='0'; $$env:GOOS='$(GOOS_T)'; $$env:GOARCH='$(GOARCH_T)'; & '$(GO)' build -C '$(SONGS_RPC_ROOT)' -trimpath -ldflags '-s -w' -o '$(CURDIR)/$@' '.'"
+	@powershell -NoProfile -c "$$env:CGO_ENABLED='0'; $$env:GOOS='$(GOOS_T)'; $$env:GOARCH='$(GOARCH_T)'; $$env:GOAMD64='$(GOAMD64_BASELINE)'; & '$(GO)' build -C '$(SONGS_RPC_ROOT)' -trimpath -ldflags '-s -w' -o '$(CURDIR)/$@' '.'"
 else
 	@mkdir -p $(dir $@)
 	@echo "$(COLOR_YELLOW)Building Songs RPC sidecar $(GOOS_T)/$(GOARCH_T) -> $@$(COLOR_RESET)"
-	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) "$(GO)" build -C "$(SONGS_RPC_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
+	@CGO_ENABLED=0 GOOS=$(GOOS_T) GOARCH=$(GOARCH_T) GOAMD64=$(GOAMD64_BASELINE) "$(GO)" build -C "$(SONGS_RPC_ROOT)" -trimpath -ldflags "-s -w" -o "$(CURDIR)/$@" .
 	@[ "$(GOOS_T)" = "windows" ] || chmod 755 "$@"
 endif
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"

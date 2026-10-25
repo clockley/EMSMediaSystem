@@ -46,6 +46,7 @@ import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import {
   baselineFileHashFields,
+  configureMediaFileHasher,
   hashMediaFile,
   MEDIA_FILE_HASH_ALG,
   storedFileHashFromRecord,
@@ -423,6 +424,7 @@ const mediaWatcher = new MediaWatcher({
     }
   },
 });
+configureMediaFileHasher((filePath) => mediaWatcher.hashFile(filePath));
 const mediaLibrary = new MediaLibraryRpcClient({
   app,
   devRoot: derivedRoot,

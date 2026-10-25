@@ -94,6 +94,18 @@ test("Makefile uses the Go command configured by the user environment", async ()
   assert.doesNotMatch(makefile, /\/usr\/local\/go\/bin\/go/);
 });
 
+test("shipped Go sidecars pin the original AMD64 CPU baseline", async () => {
+  const makefile = await readFile(new URL("../Makefile", import.meta.url), "utf8");
+  assert.match(makefile, /^override GOAMD64_BASELINE := v1$/m);
+  const sidecarBuilds = makefile
+    .split("\n")
+    .filter((line) => /\$\(GO\).* build -C/.test(line));
+  assert.equal(sidecarBuilds.length, 8);
+  for (const build of sidecarBuilds) {
+    assert.match(build, /GOAMD64.*GOAMD64_BASELINE/);
+  }
+});
+
 test("renderer file logging and its machine-specific path are removed", async () => {
   const sources = await Promise.all([
     readFile(new URL("../src/main-process/main.mjs", import.meta.url), "utf8"),

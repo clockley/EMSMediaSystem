@@ -98,6 +98,10 @@ type setWatchesParams struct {
 	Options watchOptionsPatch `json:"options,omitempty"`
 }
 
+type hashFileParams struct {
+	FilePath string `json:"filePath"`
+}
+
 type watchTarget struct {
 	OriginalPath string
 	Dir          string
@@ -966,6 +970,26 @@ func parseSetWatchesParams(raw json.RawMessage) ([]watchItem, watchOptions, erro
 	return nil, defaultWatchOptions(), errors.New("watch.set expects {items:[...]} or an item array")
 }
 
+func parseHashFileParams(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", errors.New("hash.file expects {filePath:string}")
+	}
+
+	var positional []json.RawMessage
+	if err := json.Unmarshal(raw, &positional); err == nil {
+		if len(positional) == 0 {
+			return "", errors.New("hash.file expects {filePath:string}")
+		}
+		raw = positional[0]
+	}
+
+	var params hashFileParams
+	if err := json.Unmarshal(raw, &params); err != nil || strings.TrimSpace(params.FilePath) == "" {
+		return "", errors.New("hash.file expects {filePath:string}")
+	}
+	return params.FilePath, nil
+}
+
 func handleRequest(server *watchServer, req rpcRequest) (any, *rpcError) {
 	switch req.Method {
 	case "watch.ready":
@@ -989,6 +1013,16 @@ func handleRequest(server *watchServer, req rpcRequest) (any, *rpcError) {
 		return server.setWatches(items, options), nil
 	case "watch.clear":
 		return server.clearWatches(), nil
+	case "hash.file":
+		filePath, err := parseHashFileParams(req.Params)
+		if err != nil {
+			return nil, &rpcError{Code: -32602, Message: err.Error()}
+		}
+		digest, err := hashLocalFile(filePath)
+		if err != nil {
+			return nil, &rpcError{Code: -32000, Message: err.Error()}
+		}
+		return digest, nil
 	default:
 		return nil, &rpcError{Code: -32601, Message: fmt.Sprintf("unknown method %q", req.Method)}
 	}

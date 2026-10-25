@@ -171,6 +171,45 @@ func TestHashLocalFileMatchesMediaHashAlgorithm(t *testing.T) {
 	}
 }
 
+func TestHashFileRPCMatchesMediaHashAlgorithm(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "hello.txt")
+	if err := os.WriteFile(filePath, []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	params, err := json.Marshal([]any{map[string]string{"filePath": filePath}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, rpcErr := handleRequest(nil, rpcRequest{
+		JSONRPC: "2.0",
+		Method:  "hash.file",
+		Params:  params,
+	})
+	if rpcErr != nil {
+		t.Fatalf("hash.file failed: %#v", rpcErr)
+	}
+	if digest, ok := result.(string); !ok || digest != "9555e8555c62dcfd" {
+		t.Fatalf("digest = %#v, want xxh3-64 digest", result)
+	}
+}
+
+func TestHashFileRPCRejectsMissingPath(t *testing.T) {
+	params, err := json.Marshal([]any{map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, rpcErr := handleRequest(nil, rpcRequest{
+		JSONRPC: "2.0",
+		Method:  "hash.file",
+		Params:  params,
+	})
+	if rpcErr == nil || rpcErr.Code != -32602 {
+		t.Fatalf("error = %#v, want invalid params", rpcErr)
+	}
+}
+
 func TestEventRelatesToTarget(t *testing.T) {
 	target := filepath.Join("/media", "sermon.pptx")
 	cases := []struct {

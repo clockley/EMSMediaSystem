@@ -82,6 +82,22 @@ test("media watcher routes merged notifications by queue item ID, independent of
   assert.deepEqual(notifications[0].payload.queueItemIds, ["upper", "lower"]);
 });
 
+test("media watcher delegates on-demand XXH3 hashing to its sidecar", async () => {
+  const watcher = new MediaWatcher({
+    app: {},
+    devRoot: "/tmp",
+    sendToRenderer() {},
+  });
+  watcher.sidecar = {
+    async hashFile(filePath) {
+      assert.equal(filePath, "/tmp/media.mp4");
+      return "9555e8555c62dcfd";
+    },
+  };
+
+  assert.equal(await watcher.hashFile("/tmp/media.mp4"), "9555e8555c62dcfd");
+});
+
 test("media-library thumbnails no longer reference the removed KDE backend", () => {
   assert.doesNotMatch(thumbnailSource, /kde-video-poster|linuxPosterDesktop/);
   assert.match(thumbnailSource, /exec\.CommandContext\(ctx, "gjs", backend\)/);

@@ -13,6 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const RPC_TIMEOUT_MS = 10000;
+const HASH_RPC_TIMEOUT_MS = 10 * 60 * 1000;
 const WATCH_DEBOUNCE_MS = 300;
 const WATCH_STABILITY_INTERVAL_MS = 500;
 const WATCH_STABILITY_SAMPLES = 3;
@@ -115,9 +116,21 @@ class MediaWatcherSidecarClient {
     return this.call("watch.clear");
   }
 
-  async call(method, params = []) {
+  async hashFile(filePath) {
+    const digest = await this.call(
+      "hash.file",
+      [{ filePath }],
+      HASH_RPC_TIMEOUT_MS,
+    );
+    if (typeof digest !== "string" || !/^[a-f0-9]{16}$/i.test(digest)) {
+      throw new Error("Media watcher returned an invalid XXH3-64 digest");
+    }
+    return digest.toLowerCase();
+  }
+
+  async call(method, params = [], timeoutMs = RPC_TIMEOUT_MS) {
     await this.ensureStarted();
-    return this.request(method, params);
+    return this.request(method, params, timeoutMs);
   }
 
   async ensureStarted() {
@@ -216,7 +229,7 @@ class MediaWatcherSidecarClient {
     }
   }
 
-  request(method, params = []) {
+  request(method, params = [], timeoutMs = RPC_TIMEOUT_MS) {
     const id = this.nextId;
     this.nextId += 1;
     const payload = JSON.stringify({
@@ -230,7 +243,7 @@ class MediaWatcherSidecarClient {
       const timer = setTimeout(() => {
         this.pending.delete(String(id));
         reject(new Error(`Media watcher RPC timed out: ${method}`));
-      }, RPC_TIMEOUT_MS);
+      }, timeoutMs);
       this.pending.set(String(id), { resolve, reject, timer });
       this.child.stdin.write(`${payload}\n`, "utf8", (err) => {
         if (!err) return;
@@ -317,6 +330,10 @@ export class MediaWatcher {
         error: err?.message || String(err),
       };
     }
+  }
+
+  async hashFile(filePath) {
+    return this.sidecar.hashFile(filePath);
   }
 
   closeAll() {

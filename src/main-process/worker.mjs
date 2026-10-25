@@ -19,11 +19,21 @@ import {
 } from "./staging-index.min.mjs";
 
 import {
+  configureMediaFileHasher,
   hashMediaFile,
   storedFileHashFromRecord,
   baselineFileHashFields,
   MEDIA_FILE_HASH_ALG,
 } from "../shared/media-file-hash.min.mjs";
+import { MediaWatcher } from "./media-watcher.min.mjs";
+
+const mediaHashWatcher = new MediaWatcher({
+  app: { isPackaged: !process.defaultApp },
+  devRoot: path.resolve(import.meta.dirname, "../.."),
+  sendToRenderer() {},
+});
+configureMediaFileHasher((filePath) => mediaHashWatcher.hashFile(filePath));
+process.once("exit", () => mediaHashWatcher.closeAll());
 
 const activeTasks = new Map(); // taskId -> cancelFlag { canceled: false }
 
