@@ -33,24 +33,24 @@
     "concurrently": "^10.0.6",
     "csso": "^5.0.5",
     "electron": "^34.0.0",
-    "electron-builder": "26.15.7",
+    "electron-builder": "26.18.0",
     "esbuild": "^0.28.2",
     "html-minifier-terser": "^7.2.0",
     "terser": "^5.51.2"
   },
   "dependencies": {
     "@aiden0z/pptx-renderer": "^1.4.0",
-    "atem-connection": "^3.9.0",
-    "dashjs": "^5.1.1",
+    "atem-connection": "^3.10.3",
+    "dashjs": "^5.2.1",
     "fflate": "^0.8.3",
     "hash-wasm": "^4.12.0",
     "hls.js": "v1.7.3",
-    "pdfjs-dist": "6.3.289",
+    "pdfjs-dist": "6.4.299",
     "write-file-atomic": "^7.0.1",
-    "yauzl": "^3.3.2",
+    "yauzl": "^3.4.0",
     "yazl": "^3.3.1",
     "youtubei.js": "^17.2.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "build": {
     "extends": "file:build-scripts/versioned-windows-installer.cjs",
