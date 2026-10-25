@@ -1747,7 +1747,6 @@ __metadata:
     yauzl: "npm:^3.4.0"
     yazl: "npm:^3.3.1"
     youtubei.js: "npm:^17.2.0"
-    zod: "npm:^4.6.7"
   languageName: unknown
   linkType: soft
 
@@ -4261,13 +4260,6 @@ __metadata:
     fflate: "npm:^0.8.2"
     meriyah: "npm:^6.1.4"
   checksum: 10c0/82ade381c6b1173b0fdb609a86c6a3c2d82db9c4add7dcaa06574507bb2586b885df4d5fd3f0d92e9cf67fd85a58158030f62bd576357432121785a52d167ab8
-  languageName: node
-  linkType: hard
-
-"zod@npm:^4.6.7":
-  version: 4.6.7
-  resolution: "zod@npm:4.6.7"
-  checksum: 10c0/4ce2eb14034317b7254e347ca37b5ad591cf8333147030cf05b9b5d31692d45073f7f2747aa50cf8c6b29012194d2b22978cecc89969cf34a0d18e89d0ee7d7b
   languageName: node
   linkType: hard
 
