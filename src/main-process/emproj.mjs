@@ -513,6 +513,14 @@ function normalizedScheduleIdentity(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function hasExplicitTopLevelScheduleMembership(item) {
+  return Boolean(
+    item &&
+      Object.prototype.hasOwnProperty.call(item, "groupId") &&
+      item.groupId === null,
+  );
+}
+
 function uniqueScheduleIdentity(item, prefix, usedIds) {
   let id = normalizedScheduleIdentity(item?.id);
   if (!id || usedIds.has(id)) {
@@ -554,9 +562,11 @@ function normalizeSequenceServiceGroups(rawSequence) {
       continue;
     }
     const explicitGroupId = normalizedScheduleIdentity(item.groupId);
-    const groupId = sectionIds.has(explicitGroupId) ? explicitGroupId : activeGroupId;
-    if (groupId) item.groupId = groupId;
-    else delete item.groupId;
+    item.groupId = sectionIds.has(explicitGroupId)
+      ? explicitGroupId
+      : hasExplicitTopLevelScheduleMembership(item)
+        ? null
+        : activeGroupId || null;
   }
   return sequence;
 }
@@ -588,9 +598,11 @@ function prepareRuntimeQueueServiceGroups(queue) {
       continue;
     }
     const explicitGroupId = normalizedScheduleIdentity(item.groupId);
-    const groupId = sectionIds.has(explicitGroupId) ? explicitGroupId : activeGroupId;
-    if (groupId) item.groupId = groupId;
-    else delete item.groupId;
+    item.groupId = sectionIds.has(explicitGroupId)
+      ? explicitGroupId
+      : hasExplicitTopLevelScheduleMembership(item)
+        ? null
+        : activeGroupId || null;
   }
   return queue;
 }
@@ -600,7 +612,7 @@ function sequenceQueueIdentityFields(item) {
   const groupId = normalizedScheduleIdentity(item?.groupId);
   return {
     id: id || `cue-${randomUUID()}`,
-    groupId: groupId || undefined,
+    groupId: groupId || (item?.groupId === null ? null : undefined),
   };
 }
 

@@ -63,6 +63,7 @@ import {
   isScheduleItemVisible,
   nextPlayableScheduleIndex,
   previousPlayableScheduleIndex,
+  scheduleSectionIndexForInsertion,
 } from "../shared/schedule-item-availability.mjs";
 import {
   NAVIGATION_STATES,
@@ -2530,6 +2531,13 @@ function insertQueueEntriesAfterSelection(entries, insertionPoint = null) {
     0,
     Math.min(requestedIndex, mediaQueue.length),
   );
+  const sectionIndex = scheduleSectionIndexForInsertion(mediaQueue, insertIndex);
+  const destinationGroupId = sectionIndex >= 0
+    ? mediaQueue[sectionIndex]?.id || null
+    : null;
+  for (const entry of nextEntries) {
+    if (entry?.type !== "section") entry.groupId = destinationGroupId;
+  }
   mediaQueue.splice(insertIndex, 0, ...nextEntries);
   shiftQueueIndexesForInsertion(insertIndex, nextEntries.length);
   revealNewQueueEntries(nextEntries);

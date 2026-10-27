@@ -374,7 +374,7 @@ function buildProjectQueueItemSnapshot(item) {
       : item.name;
   return {
     id: ensureProjectQueueItemId(item, "cue"),
-    groupId: normalizedQueueItemId(item.groupId) || undefined,
+    groupId: normalizedQueueItemId(item.groupId) || null,
     presentationId:
       bibleEntry && typeof item.presentationId === "string"
         ? item.presentationId
@@ -627,7 +627,9 @@ function applyProjectStateSnapshot(state, opts = {}) {
       const mediaType = restoredQueueMediaType(x.type, itemPath);
       const item = {
         id: normalizedQueueItemId(x.id) || `cue-${generateProjectGuid()}`,
-        groupId: normalizedQueueItemId(x.groupId) || undefined,
+        groupId: Object.prototype.hasOwnProperty.call(x, "groupId")
+          ? normalizedQueueItemId(x.groupId) || null
+          : undefined,
         presentationId: bibleEntry
           ? typeof x.presentationId === "string" && x.presentationId.trim()
             ? x.presentationId

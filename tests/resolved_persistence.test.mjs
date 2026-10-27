@@ -111,6 +111,7 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
       },
       {
         id: "cue-scripture-reading",
+        groupId: null,
         path: "bible://KJV%3AJohn%201%3A1-3",
         name: "John 1:1-3 KJV",
         type: "bible",
@@ -154,7 +155,7 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
     assert.equal(loadedSong.id, "cue-long-song");
     assert.equal(loadedSong.groupId, "section-opening");
     assert.equal(loadedBible.id, "cue-scripture-reading");
-    assert.equal(loadedBible.groupId, "section-opening");
+    assert.equal(loadedBible.groupId, null);
     assert.equal(loadedSong.currentSlideId, "play_v1:1");
     assert.equal(loadedSong.currentSequenceEntryId, "play_v1");
     assert.equal(
@@ -196,7 +197,7 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
       [
         { id: "section-opening", groupId: undefined },
         { id: "cue-long-song", groupId: "section-opening" },
-        { id: "cue-scripture-reading", groupId: "section-opening" },
+        { id: "cue-scripture-reading", groupId: null },
       ],
     );
   } finally {

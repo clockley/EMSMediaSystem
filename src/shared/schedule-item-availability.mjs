@@ -20,6 +20,15 @@ export function scheduleGroupIdForItem(item) {
   return normalizedScheduleIdentity(item.groupId);
 }
 
+export function isScheduleItemExplicitlyUngrouped(item) {
+  return Boolean(
+    item &&
+      !isScheduleSectionItem(item) &&
+      Object.prototype.hasOwnProperty.call(item, "groupId") &&
+      item.groupId === null,
+  );
+}
+
 export function synchronizeScheduleGroupMembership(
   items,
   { preserveExisting = false } = {},
@@ -40,12 +49,12 @@ export function synchronizeScheduleGroupMembership(
       continue;
     }
     const existingGroupId = scheduleGroupIdForItem(item);
-    const groupId =
-      preserveExisting && sectionIds.has(existingGroupId)
-        ? existingGroupId
-        : activeGroupId;
-    if (groupId) item.groupId = groupId;
-    else delete item.groupId;
+    const groupId = preserveExisting && sectionIds.has(existingGroupId)
+      ? existingGroupId
+      : preserveExisting && isScheduleItemExplicitlyUngrouped(item)
+        ? null
+        : activeGroupId || null;
+    item.groupId = groupId;
   }
   return list;
 }
@@ -70,9 +79,11 @@ export function scheduleSectionIndexesForItems(items) {
       continue;
     }
     const groupId = scheduleGroupIdForItem(item);
-    sectionIndexes[index] = groupId && sectionIndexById.has(groupId)
-      ? sectionIndexById.get(groupId)
-      : positionalSectionIndex;
+    sectionIndexes[index] = isScheduleItemExplicitlyUngrouped(item)
+      ? -1
+      : groupId && sectionIndexById.has(groupId)
+        ? sectionIndexById.get(groupId)
+        : positionalSectionIndex;
   }
   return sectionIndexes;
 }
@@ -95,8 +106,11 @@ export function scheduleSectionEndIndex(items, sectionIndex) {
   ) {
     return Math.max(0, Math.min(Number.isInteger(sectionIndex) ? sectionIndex + 1 : 0, list.length));
   }
+  const sectionIndexes = scheduleSectionIndexesForItems(list);
   for (let index = sectionIndex + 1; index < list.length; index += 1) {
-    if (isScheduleSectionItem(list[index])) return index;
+    if (isScheduleSectionItem(list[index]) || sectionIndexes[index] !== sectionIndex) {
+      return index;
+    }
   }
   return list.length;
 }
@@ -117,16 +131,14 @@ export function scheduleSectionIndexForInsertion(items, insertIndex) {
     0,
     Math.min(Number.isInteger(insertIndex) ? insertIndex : list.length, list.length),
   );
-  for (let index = boundary - 1; index >= 0; index -= 1) {
-    if (isScheduleSectionItem(list[index])) return index;
-  }
-  return -1;
+  if (boundary === 0) return -1;
+  return scheduleSectionIndexesForItems(list)[boundary - 1] ?? -1;
 }
 
 export function scheduleDropPlacementForTarget(
   items,
   targetIndex,
-  { afterTarget = false } = {},
+  { afterTarget = false, allowBeforeSection = false } = {},
 ) {
   const list = Array.isArray(items) ? items : [];
   if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= list.length) {
@@ -144,6 +156,14 @@ export function scheduleDropPlacementForTarget(
   }
 
   if (isScheduleSectionItem(list[targetIndex])) {
+    if (allowBeforeSection && !afterTarget) {
+      return {
+        insertIndex: targetIndex,
+        sectionIndex: -1,
+        targetIndex,
+        kind: "before-section",
+      };
+    }
     return {
       insertIndex: scheduleSectionEndIndex(list, targetIndex),
       sectionIndex: targetIndex,
@@ -153,7 +173,7 @@ export function scheduleDropPlacementForTarget(
   }
 
   const insertIndex = targetIndex + (afterTarget ? 1 : 0);
-  const sectionIndex = scheduleSectionIndexForInsertion(list, insertIndex);
+  const sectionIndex = scheduleSectionIndexForItem(list, targetIndex);
   return {
     insertIndex,
     sectionIndex,
@@ -170,7 +190,7 @@ export function scheduleDropPlacementForTarget(
 export function scheduleSectionBlockDropPlacement(
   items,
   targetIndex,
-  { afterSection = false } = {},
+  { afterSection = false, afterTarget = afterSection } = {},
 ) {
   const list = Array.isArray(items) ? items : [];
   if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= list.length) {
@@ -194,14 +214,11 @@ export function scheduleSectionBlockDropPlacement(
     };
   }
 
-  const nextSectionIndex = list.findIndex(
-    (item, index) => index > targetIndex && isScheduleSectionItem(item),
-  );
   return {
-    insertIndex: nextSectionIndex >= 0 ? nextSectionIndex : list.length,
-    sectionIndex: nextSectionIndex,
+    insertIndex: targetIndex + (afterTarget ? 1 : 0),
+    sectionIndex: -1,
     targetIndex,
-    kind: nextSectionIndex >= 0 ? "before-section" : "schedule-end",
+    kind: afterTarget ? "after-item" : "before-item",
   };
 }
 

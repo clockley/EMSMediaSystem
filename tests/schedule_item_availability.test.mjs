@@ -92,7 +92,7 @@ test("legacy positional sections migrate to explicit group ids", () => {
 
   assert.equal(firstCue.groupId, undefined);
   synchronizeScheduleGroupMembership(items, { preserveExisting: true });
-  assert.equal(items[0].groupId, undefined);
+  assert.equal(items[0].groupId, null);
   assert.equal(firstCue.groupId, first.id);
   assert.equal(secondCue.groupId, second.id);
 });
@@ -157,7 +157,43 @@ test("dragging whole sections snaps to section boundaries", () => {
     targetIndex: 4,
     kind: "after-section",
   });
-  assert.equal(scheduleSectionBlockDropPlacement(items, 0).insertIndex, 1);
+  assert.equal(scheduleSectionBlockDropPlacement(items, 0).insertIndex, 0);
+  assert.equal(
+    scheduleSectionBlockDropPlacement(items, 0, { afterTarget: true }).insertIndex,
+    1,
+  );
+});
+
+test("explicit top-level cues remain outside a preceding section", () => {
+  const first = { id: "group-welcome", type: "section", name: "Welcome" };
+  const groupedCue = { ...song, groupId: first.id };
+  const topLevelCue = { ...video, groupId: null };
+  const second = { id: "group-message", type: "section", name: "Message" };
+  const items = [first, groupedCue, topLevelCue, second];
+
+  assert.deepEqual(scheduleSectionIndexesForItems(items), [0, 0, -1, 3]);
+  assert.equal(scheduleSectionEndIndex(items, 0), 2);
+  assert.equal(scheduleSectionIndexForInsertion(items, 3), -1);
+  synchronizeScheduleGroupMembership(items, { preserveExisting: true });
+  assert.equal(topLevelCue.groupId, null);
+});
+
+test("a cue can be dropped before a section as a top-level item", () => {
+  const first = { id: "group-welcome", type: "section", name: "Welcome" };
+  const items = [first, { ...song, groupId: first.id }];
+
+  assert.deepEqual(
+    scheduleDropPlacementForTarget(items, 0, {
+      afterTarget: false,
+      allowBeforeSection: true,
+    }),
+    {
+      insertIndex: 0,
+      sectionIndex: -1,
+      targetIndex: 0,
+      kind: "before-section",
+    },
+  );
 });
 
 test("queue reordering adjusts insertion boundaries after removals", () => {
@@ -181,4 +217,61 @@ test("queue reordering adjusts insertion boundaries after removals", () => {
   const unchanged = reorderScheduleItemsAtInsertion(items, [1, 2], 3);
   assert.deepEqual(unchanged.items, items);
   assert.equal(unchanged.changed, false);
+});
+
+test("whole service groups can move above or below adjacent sections", () => {
+  const first = { id: "group-first", type: "section", name: "First" };
+  const firstCue = { type: "song", name: "First Cue", groupId: first.id };
+  const empty = { id: "group-empty", type: "section", name: "Empty" };
+  const last = { id: "group-last", type: "section", name: "Last" };
+  const lastCue = { type: "song", name: "Last Cue", groupId: last.id };
+  const items = [first, firstCue, empty, last, lastCue];
+
+  const membership = scheduleSectionIndexesForItems(items);
+  const firstGroupIndexes = membership
+    .map((sectionIndex, index) => sectionIndex === 0 ? index : -1)
+    .filter((index) => index >= 0);
+  const afterLast = scheduleSectionBlockDropPlacement(items, 4, {
+    afterSection: true,
+  });
+  const movedDown = reorderScheduleItemsAtInsertion(
+    items,
+    firstGroupIndexes,
+    afterLast.insertIndex,
+  );
+  assert.deepEqual(movedDown.items, [empty, last, lastCue, first, firstCue]);
+
+  const emptyIndex = movedDown.items.indexOf(empty);
+  const lastIndex = movedDown.items.indexOf(last);
+  const movedEmptyDown = reorderScheduleItemsAtInsertion(
+    movedDown.items,
+    [emptyIndex],
+    scheduleSectionBlockDropPlacement(movedDown.items, lastIndex, {
+      afterSection: true,
+    }).insertIndex,
+  );
+  assert.deepEqual(movedEmptyDown.items, [last, lastCue, empty, first, firstCue]);
+});
+
+test("whole service groups can move across top-level cues", () => {
+  const rootCue = { type: "song", name: "Prelude", groupId: null };
+  const service = { id: "group-service", type: "section", name: "Service" };
+  const serviceCue = { type: "song", name: "Welcome", groupId: service.id };
+  const items = [rootCue, service, serviceCue];
+
+  const movedUp = reorderScheduleItemsAtInsertion(items, [1, 2], 0);
+  assert.deepEqual(movedUp.items, [service, serviceCue, rootCue]);
+
+  const rootIndex = movedUp.items.indexOf(rootCue);
+  const placement = scheduleSectionBlockDropPlacement(
+    movedUp.items,
+    rootIndex,
+    { afterTarget: true },
+  );
+  const movedDown = reorderScheduleItemsAtInsertion(
+    movedUp.items,
+    [0, 1],
+    placement.insertIndex,
+  );
+  assert.deepEqual(movedDown.items, items);
 });

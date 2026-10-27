@@ -8140,6 +8140,21 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     font-weight: 700;
 }
 
+.section-drag-handle {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    color: color-mix(in srgb, currentColor 55%, transparent);
+    cursor: grab;
+}
+
+.queue-item--section:active .section-drag-handle,
+.queue-item--section.queue-item-dragging .section-drag-handle {
+    cursor: grabbing;
+}
+
 .queue-item--section:hover {
     background: color-mix(in srgb, var(--window-fg-color) 10%, var(--card-bg-color));
 }
@@ -9109,6 +9124,34 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 }
 
 .queue-item.is-selected .row-media-update-btn:focus-visible {
+    outline-color: #ffffff;
+}
+
+.queue-item .queue-ungroup-btn {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: inherit;
+    opacity: 0.68;
+}
+
+.queue-item .queue-ungroup-btn:hover {
+    background: color-mix(in srgb, currentColor 18%, transparent);
+    opacity: 1;
+}
+
+.queue-item .queue-ungroup-btn:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
+.queue-item.is-selected .queue-ungroup-btn:focus-visible {
     outline-color: #ffffff;
 }
 

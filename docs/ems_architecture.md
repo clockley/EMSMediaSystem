@@ -11,6 +11,7 @@ The authoritative layout and open/save rules are in [`spec.md`](./spec.md). Summ
 - **Archive Comment**: ZIP trailer JSON (`application/vnd.ems.project.comment+json`) with project GUID, app version, save timestamp, and SHA-256 of `manifest.json`.
 - **Members**: `mimetype`, `manifest.json`, `queue.json`, `assets.json`, `outputs.json`, `diagnostics.json`, optional `songs/`, `slides/`, `media/`, `presentations/`. `documents.json` is legacy read-only.
 - **Modes**: Working projects keep cue media as external paths; packed/portable projects embed those files. Theme assets and the output-hold logo are embedded in both modes.
+- **Schedule groups**: Every newly saved content cue includes `groupId`. A section id means the cue belongs to that service group; `null` means the cue is explicitly top-level. An omitted `groupId` is accepted only when opening legacy projects and is migrated from the cue's position.
 
 
 ## 2. Slides AST (Abstract Syntax Tree)

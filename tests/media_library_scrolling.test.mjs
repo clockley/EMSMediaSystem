@@ -371,7 +371,9 @@ test("Schedule accepts drops from library cards, preview media, and the OS file 
   assert.match(schedule, /mediaLibraryDragIsActive\(e\.dataTransfer\)/);
   assert.match(schedule, /resolveMediaLibraryDragItem\(droppedMediaLibraryItemId\)/);
   assert.match(schedule, /extractAndFilterDroppedMediaPaths\(e\.dataTransfer\)/);
-  assert.match(schedule, /applyDroppedMediaPaths\(\[item\.localPath\], \{ insertIndex, preserveWorkspace: true \}\)/);
+  assert.match(schedule, /applyDroppedMediaPaths\(\[item\.localPath\], \{/);
+  assert.match(schedule, /destinationGroupId: scheduleGroupIdForDropPlacement\(placement\)/);
+  assert.match(schedule, /preserveWorkspace: true/);
   assert.match(chrome, /#mediaLibraryPreview/);
 });
 

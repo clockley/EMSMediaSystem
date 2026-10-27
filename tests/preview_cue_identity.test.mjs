@@ -168,12 +168,75 @@ test("Scripture splitting re-resolves item identity after its asynchronous work"
     "\nexport {",
   );
   const finalLookup = split.lastIndexOf("mediaQueue.indexOf(originalItem)");
+  const membershipCopy = split.indexOf("splitEntry.groupId = originalItem.groupId");
   const splice = split.indexOf("mediaQueue.splice(currentIndex");
 
   assert.ok(finalLookup > split.indexOf("await queueEntriesForBibleScheduleEntry"));
+  assert.ok(membershipCopy > finalLookup);
+  assert.ok(splice > membershipCopy);
   assert.ok(splice > finalLookup);
+  assert.match(split, /hasOwnProperty\.call\(\s*originalItem,\s*"groupId"/);
   assert.match(split, /currentIndex === currentQueueIndex && isQueuePresentationActive\(\)/);
   assert.doesNotMatch(split, /mediaQueue\.splice\(index,/);
+});
+
+test("deferred schedule insertion follows its captured after-anchor", () => {
+  const capture = functionSource(
+    scheduleController,
+    "function captureQueueInsertionPoint(",
+    "function captureQueueInsertionPointAfterSelection(",
+  );
+  const resolve = functionSource(
+    scheduleController,
+    "function resolveQueueInsertionPoint(",
+    "function extendQueueSelectionTo(",
+  );
+  const section = { id: "section" };
+  const child = { id: "child" };
+  const next = { id: "next" };
+  const context = vm.createContext({
+    mediaQueue: [section, child, next],
+    section,
+    child,
+    next,
+    Number,
+    Math,
+    Object,
+  });
+  vm.runInContext(`${capture}\n${resolve}`, context);
+  vm.runInContext(
+    'point = captureQueueInsertionPoint(2, { preference: "after" })',
+    context,
+  );
+  vm.runInContext("mediaQueue.splice(0, 3, next, section, child)", context);
+
+  assert.equal(vm.runInContext("resolveQueueInsertionPoint(point)", context), 3);
+});
+
+test("deferred schedule membership follows a captured section id", () => {
+  const resolveGroup = functionSource(
+    scheduleController,
+    "function scheduleGroupIdForDropPlacement(",
+    "function queueDropPlacementWithStableContext(",
+  );
+  const target = { id: "target", type: "section" };
+  const other = { id: "other", type: "section" };
+  const context = vm.createContext({
+    mediaQueue: [other, target],
+    isQueueItemSection: (item) => item?.type === "section",
+    placement: { destinationGroupId: "target", sectionIndex: 0 },
+  });
+  vm.runInContext(resolveGroup, context);
+
+  assert.equal(
+    vm.runInContext("scheduleGroupIdForDropPlacement(placement)", context),
+    "target",
+  );
+  vm.runInContext("mediaQueue.splice(1, 1)", context);
+  assert.equal(
+    vm.runInContext("scheduleGroupIdForDropPlacement(placement)", context),
+    null,
+  );
 });
 
 test("pending media refresh follows the item and reloads the surface that owns it", () => {

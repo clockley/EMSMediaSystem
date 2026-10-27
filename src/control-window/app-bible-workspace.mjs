@@ -5797,6 +5797,16 @@ async function splitScheduledBiblePassageIntoVerses(index) {
     return false;
   }
 
+  const hasExplicitGroupMembership = Object.prototype.hasOwnProperty.call(
+    originalItem,
+    "groupId",
+  );
+  if (hasExplicitGroupMembership) {
+    for (const splitEntry of splitEntries) {
+      splitEntry.groupId = originalItem.groupId;
+    }
+  }
+
   invalidateQueueUndoToastAfterMutation();
   mediaQueue.splice(currentIndex, 1, ...splitEntries);
   shiftQueueIndexesForInsertion(currentIndex + 1, splitEntries.length - 1);
