@@ -509,6 +509,101 @@ function normalizeQueueSectionLabel(value) {
     : DEFAULT_QUEUE_SECTION_LABEL;
 }
 
+function normalizedScheduleIdentity(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function uniqueScheduleIdentity(item, prefix, usedIds) {
+  let id = normalizedScheduleIdentity(item?.id);
+  if (!id || usedIds.has(id)) {
+    do {
+      id = `${prefix}-${randomUUID()}`;
+    } while (usedIds.has(id));
+  }
+  usedIds.add(id);
+  return id;
+}
+
+function normalizeSequenceServiceGroups(rawSequence) {
+  const sequence = (Array.isArray(rawSequence) ? rawSequence : []).map((item) =>
+    item && typeof item === "object" ? { ...item } : item,
+  );
+  const usedIds = new Set();
+  for (const item of sequence) {
+    if (!item || typeof item !== "object") continue;
+    item.id = uniqueScheduleIdentity(
+      item,
+      item.type === "section" ? "section" : "cue",
+      usedIds,
+    );
+    if (item.type === "section") {
+      item.parentId = normalizedScheduleIdentity(item.parentId) || null;
+    }
+  }
+
+  const sectionIds = new Set(
+    sequence
+      .filter((item) => item?.type === "section")
+      .map((item) => item.id),
+  );
+  let activeGroupId = "";
+  for (const item of sequence) {
+    if (!item || typeof item !== "object") continue;
+    if (item.type === "section") {
+      activeGroupId = item.id;
+      continue;
+    }
+    const explicitGroupId = normalizedScheduleIdentity(item.groupId);
+    const groupId = sectionIds.has(explicitGroupId) ? explicitGroupId : activeGroupId;
+    if (groupId) item.groupId = groupId;
+    else delete item.groupId;
+  }
+  return sequence;
+}
+
+function prepareRuntimeQueueServiceGroups(queue) {
+  const usedIds = new Set();
+  for (const item of queue) {
+    if (!item || typeof item !== "object") continue;
+    item.id = uniqueScheduleIdentity(
+      item,
+      item.type === "section" ? "section" : "cue",
+      usedIds,
+    );
+    if (item.type === "section") {
+      item.parentId = normalizedScheduleIdentity(item.parentId) || null;
+    }
+  }
+
+  const sectionIds = new Set(
+    queue
+      .filter((item) => item?.type === "section")
+      .map((item) => item.id),
+  );
+  let activeGroupId = "";
+  for (const item of queue) {
+    if (!item || typeof item !== "object") continue;
+    if (item.type === "section") {
+      activeGroupId = item.id;
+      continue;
+    }
+    const explicitGroupId = normalizedScheduleIdentity(item.groupId);
+    const groupId = sectionIds.has(explicitGroupId) ? explicitGroupId : activeGroupId;
+    if (groupId) item.groupId = groupId;
+    else delete item.groupId;
+  }
+  return queue;
+}
+
+function sequenceQueueIdentityFields(item) {
+  const id = normalizedScheduleIdentity(item?.id);
+  const groupId = normalizedScheduleIdentity(item?.groupId);
+  return {
+    id: id || `cue-${randomUUID()}`,
+    groupId: groupId || undefined,
+  };
+}
+
 function queueSectionFromSequenceItem(item) {
   if (!item || typeof item !== "object" || item.type !== "section") return null;
   const result = {
@@ -517,6 +612,7 @@ function queueSectionFromSequenceItem(item) {
     collapsed: item.collapsed === true,
   };
   if (typeof item.id === "string" && item.id.length > 0) result.id = item.id;
+  result.parentId = normalizedScheduleIdentity(item.parentId) || null;
   return result;
 }
 
@@ -1015,6 +1111,7 @@ function queueItemFromSequenceItem(item, resolvedPath, asset = null) {
         ? basenameAny(originalPath)
         : basenameAny(resolvedPath);
   return {
+    ...sequenceQueueIdentityFields(item),
     path: resolvedPath,
     name: item?.label || basenameAny(resolvedPath),
     type: kind === "presentation" ? "pptx" : kind,
@@ -1068,6 +1165,7 @@ function buildBibleQueueItemFromSequenceItem(item, assetById, extractedMediaPath
   const reference = scriptureReference.reference;
   const version = scriptureReference.version;
   return {
+    ...sequenceQueueIdentityFields(item),
     path: bibleArchivePath(reference, version),
     name: `${reference} ${version}`.trim() || "Bible",
     type: "bible",
@@ -1128,6 +1226,7 @@ function buildSongQueueItemFromSequenceItem(item, assetById, extractedMediaPaths
         ? item.render.backgroundPath
         : "";
   return {
+    ...sequenceQueueIdentityFields(item),
     path: item?.type === "deck" ? `deck://${encodeURIComponent(songId)}` : songArchivePath(songId),
     name: item?.label || snapshot?.title || deckSnapshot?.title || "Song",
     type: item?.type === "deck" ? "deck" : "song",
@@ -1290,7 +1389,7 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
   } catch (err) {
     throw new Error(`Project queue.json is corrupt: ${err.message}`);
   }
-  const sequence = Array.isArray(queueJson.sequence) ? queueJson.sequence : [];
+  const sequence = normalizeSequenceServiceGroups(queueJson.sequence);
   let assetsJson = { assets: [] };
   const assetsJsonRaw = rootFiles.get("assets.json");
   if (assetsJsonRaw) {
@@ -1661,6 +1760,7 @@ async function saveEmprojSnapshotUnlocked(
   const packMedia = opts?.packMedia === true;
   const applicationInfo = normalizeApplicationInfo(appInfo);
   const queue = Array.isArray(snapshot?.mediaQueue) ? snapshot.mediaQueue : [];
+  prepareRuntimeQueueServiceGroups(queue);
   const projectScriptureOverrides = normalizeProjectScriptureOverrides(
     snapshot?.projectScriptureText?.presentation && typeof snapshot.projectScriptureText.presentation === "object"
       ? {
@@ -1958,12 +2058,11 @@ async function saveEmprojSnapshotUnlocked(
     if (item.type === "section") {
       itemCounter += 1;
       queueSequence.push({
-        id: typeof item.id === "string" && item.id.length > 0
-          ? item.id
-          : makeId("section", itemCounter),
+        id: item.id,
         label: normalizeQueueSectionLabel(item.name || item.label),
         type: "section",
         collapsed: item.collapsed === true,
+        parentId: normalizedScheduleIdentity(item.parentId) || null,
       });
       continue;
     }
@@ -1996,7 +2095,7 @@ async function saveEmprojSnapshotUnlocked(
       const itemTheme = await itemThemeForProjectArchive(item.itemTheme);
       if (itemTheme) projectScripture.itemTheme = itemTheme;
       queueSequence.push({
-        id: makeId("item", itemCounter),
+        ...sequenceQueueIdentityFields(item),
         label: `${scripture.reference || ""} ${scripture.version || "KJV"}`.trim() || "Bible",
         type: "scripture",
         source: {
@@ -2064,7 +2163,7 @@ async function saveEmprojSnapshotUnlocked(
         source.pageId = item.source?.pageId || item.render.currentSectionId;
       }
       queueSequence.push({
-        id: makeId("item", itemCounter),
+        ...sequenceQueueIdentityFields(item),
         label: item.name || snapshot?.title || "Song",
         type: item.type === "deck" ? "deck" : "song",
         source,
@@ -2224,7 +2323,7 @@ async function saveEmprojSnapshotUnlocked(
         })
       : undefined;
     queueSequence.push({
-      id: makeId("item", itemCounter),
+      ...sequenceQueueIdentityFields(item),
       label: item.name || basenameAny(sourcePath),
       type: isPresentation ? "presentation" : "media",
       assetId: assetId || undefined,

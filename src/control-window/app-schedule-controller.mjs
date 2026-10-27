@@ -18,7 +18,8 @@ import {
   scheduleSectionBlockDropPlacement,
   scheduleSectionEndIndex,
   scheduleSectionIndexForInsertion,
-  scheduleSectionIndexForItem,
+  scheduleSectionIndexesForItems,
+  synchronizeScheduleGroupMembership,
 } from "../shared/schedule-item-availability.mjs";
 import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
 
@@ -220,11 +221,17 @@ function sectionItemCount(sectionIndex) {
   if (!queueIndexInRange(sectionIndex) || !isQueueItemSection(mediaQueue[sectionIndex])) {
     return 0;
   }
+  const sectionIndexes = scheduleSectionIndexesForItems(mediaQueue);
   let count = 0;
-  for (let index = sectionIndex + 1; index < mediaQueue.length; index += 1) {
+  for (let index = 0; index < mediaQueue.length; index += 1) {
     const item = mediaQueue[index];
-    if (isQueueItemSection(item)) break;
-    if (isScheduleItemCurrentlyVisible(item)) count += 1;
+    if (
+      !isQueueItemSection(item) &&
+      sectionIndexes[index] === sectionIndex &&
+      isScheduleItemCurrentlyVisible(item)
+    ) {
+      count += 1;
+    }
   }
   return count;
 }
@@ -266,8 +273,8 @@ function renderQueue() {
         ? nextPlayableQueueIndexAfter(currentQueueIndex)
         : mediaQueue.findIndex((entry) => isScheduleItemCurrentlyPlayable(entry));
   const visibleQueueItems = [];
-  let currentSectionIndex = -1;
-  let collapsedSectionIndex = -1;
+  const sectionIndexes = scheduleSectionIndexesForItems(mediaQueue);
+  const visibleSectionItemCounts = new Map();
 
   mediaQueue.forEach((item, index) => {
     if (!isScheduleItemCurrentlyVisible(item)) return;
@@ -278,10 +285,19 @@ function renderQueue() {
         inSection: false,
         collapsedPreview: false,
       });
-      currentSectionIndex = index;
-      collapsedSectionIndex = item.collapsed === true ? index : -1;
       return;
     }
+    const sectionIndex = sectionIndexes[index];
+    if (sectionIndex >= 0) {
+      visibleSectionItemCounts.set(
+        sectionIndex,
+        (visibleSectionItemCounts.get(sectionIndex) || 0) + 1,
+      );
+    }
+    const collapsedSectionIndex =
+      sectionIndex >= 0 && mediaQueue[sectionIndex]?.collapsed === true
+        ? sectionIndex
+        : -1;
     const collapsedPreview =
       collapsedSectionIndex >= 0 &&
       sectionChildShouldShowWhenCollapsed(index, item, selectedQueueIndex, separatePreviewCue);
@@ -289,7 +305,7 @@ function renderQueue() {
     visibleQueueItems.push({
       item,
       index,
-      inSection: currentSectionIndex >= 0,
+      inSection: sectionIndex >= 0,
       collapsedPreview,
     });
   });
@@ -317,7 +333,7 @@ function renderQueue() {
             : index === selectedQueueIndex;
         if (isQueueItemSection(item)) {
           const collapsed = item.collapsed === true;
-          const childCount = sectionItemCount(index);
+          const childCount = visibleSectionItemCounts.get(index) || 0;
           const sectionName = item.name || DEFAULT_SCHEDULE_SECTION_NAME;
           const childLabel = childCount === 0
             ? "Empty section"
@@ -688,6 +704,7 @@ function insertQueueEntriesAt(entries, insertIndex) {
   if (!nextEntries.length) return -1;
   const index = Math.max(0, Math.min(insertIndex, mediaQueue.length));
   mediaQueue.splice(index, 0, ...nextEntries);
+  synchronizeScheduleGroupMembership(mediaQueue);
   shiftQueueIndexesForInsertion(index, nextEntries.length);
   revealNewQueueEntries(nextEntries);
   return index;
@@ -811,11 +828,14 @@ function reorderQueueEntriesAtInsertIndex(fromIndex, rawInsertIndex, options = {
   const sourceIsSection = isQueueItemSection(mediaQueue[fromIndex]);
   let movingIndexes;
   if (sourceIsSection) {
-    const endIndex = scheduleSectionEndIndex(mediaQueue, fromIndex);
-    movingIndexes = Array.from(
-      { length: Math.max(0, endIndex - fromIndex) },
-      (_, offset) => fromIndex + offset,
-    );
+    const sectionIndexes = scheduleSectionIndexesForItems(mediaQueue);
+    movingIndexes = mediaQueue
+      .map((_, index) =>
+        index === fromIndex || sectionIndexes[index] === fromIndex
+          ? index
+          : -1,
+      )
+      .filter((index) => index >= 0);
   } else if (options.forceSingle === true) {
     movingIndexes = [fromIndex];
   } else {
@@ -872,6 +892,7 @@ function reorderQueueEntriesAtInsertIndex(fromIndex, rawInsertIndex, options = {
   );
   if (!reordered.changed) return;
   mediaQueue.splice(0, mediaQueue.length, ...reordered.items);
+  synchronizeScheduleGroupMembership(mediaQueue);
 
   setSharedRendererState({ currentQueueIndex: activeItem ? mediaQueue.indexOf(activeItem) : -1 });
   setSharedRendererState({ previewCueIndex: cueItem ? mediaQueue.indexOf(cueItem) : -1 });
@@ -1080,6 +1101,7 @@ function removeFromQueue(index) {
   }
   invalidateQueueUndoToastAfterMutation();
   mediaQueue.splice(index, 1);
+  synchronizeScheduleGroupMembership(mediaQueue);
   if (previewAudioItem) {
     if (previewAudioItem === removedItem) {
       stopPreviewAudioCue();

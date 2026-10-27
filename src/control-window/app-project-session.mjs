@@ -90,6 +90,7 @@ import {
   updatePreviewCueUI,
 } from "./app-renderer.mjs";
 import { createSerializedAsyncQueue } from "../shared/async-operation-ownership.mjs";
+import { synchronizeScheduleGroupMembership } from "../shared/schedule-item-availability.mjs";
 
 const PROJECT_SCHEMA_VERSION = 2;
 
@@ -306,13 +307,49 @@ function queueItemFingerprintSnapshotFields(item, bibleEntry) {
   return {};
 }
 
+function normalizedQueueItemId(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function ensureProjectQueueItemId(item, prefix, usedIds = null) {
+  let id = normalizedQueueItemId(item?.id);
+  if (!id || usedIds?.has(id)) {
+    do {
+      id = `${prefix}-${generateProjectGuid()}`;
+    } while (usedIds?.has(id));
+  }
+  item.id = id;
+  usedIds?.add(id);
+  return id;
+}
+
+function ensureProjectQueueIdentityAndGroups({ preserveExistingGroups = false } = {}) {
+  const usedIds = new Set();
+  for (const item of mediaQueue) {
+    if (!item || typeof item !== "object") continue;
+    ensureProjectQueueItemId(item, item.type === "section" ? "section" : "cue", usedIds);
+    if (item.type === "section" && item.parentId == null) item.parentId = null;
+  }
+  synchronizeScheduleGroupMembership(mediaQueue, {
+    preserveExisting: preserveExistingGroups,
+  });
+}
+
+function buildProjectQueueSnapshot() {
+  // Save the membership that was loaded or deliberately assigned by queue
+  // mutations. Only missing or dangling group ids fall back to position.
+  ensureProjectQueueIdentityAndGroups({ preserveExistingGroups: true });
+  return mediaQueue.map(buildProjectQueueItemSnapshot);
+}
+
 function buildProjectQueueItemSnapshot(item) {
   if (item?.type === "section") {
     return {
-      id: typeof item.id === "string" && item.id.trim() ? item.id : undefined,
+      id: ensureProjectQueueItemId(item, "section"),
       type: "section",
       name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : "New Section",
       collapsed: item.collapsed === true,
+      parentId: normalizedQueueItemId(item.parentId) || null,
     };
   }
   const bibleEntry = isQueueItemBible(item)
@@ -336,6 +373,8 @@ function buildProjectQueueItemSnapshot(item) {
       ? songEntry.name || songEntry.songSnapshot?.title || "Song"
       : item.name;
   return {
+    id: ensureProjectQueueItemId(item, "cue"),
+    groupId: normalizedQueueItemId(item.groupId) || undefined,
     presentationId:
       bibleEntry && typeof item.presentationId === "string"
         ? item.presentationId
@@ -428,7 +467,7 @@ function buildProjectStateSnapshot(opts = {}) {
     currentMode,
     currentQueueIndex,
     previewCueIndex,
-    mediaQueue: mediaQueue.map(buildProjectQueueItemSnapshot),
+    mediaQueue: buildProjectQueueSnapshot(),
   };
 }
 
@@ -454,7 +493,7 @@ async function cleanupStagingForCurrentProjectBeforeSwitch() {
     await invoke("cleanup-project-staging", {
       projectPath: currentProjectPath || "",
       projectGuid: currentProjectGuid,
-      mediaQueue: mediaQueue.map(buildProjectQueueItemSnapshot),
+      mediaQueue: buildProjectQueueSnapshot(),
     });
   } catch (err) {
     console.error("cleanup-project-staging failed:", err);
@@ -560,6 +599,7 @@ function applyProjectStateSnapshot(state, opts = {}) {
           type: "section",
           name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : "New Section",
           collapsed: x.collapsed === true,
+          parentId: normalizedQueueItemId(x.parentId) || null,
         };
       }
       const itemPath = bibleEntry
@@ -586,6 +626,8 @@ function applyProjectStateSnapshot(state, opts = {}) {
             : queueBasename(itemPath);
       const mediaType = restoredQueueMediaType(x.type, itemPath);
       const item = {
+        id: normalizedQueueItemId(x.id) || `cue-${generateProjectGuid()}`,
+        groupId: normalizedQueueItemId(x.groupId) || undefined,
         presentationId: bibleEntry
           ? typeof x.presentationId === "string" && x.presentationId.trim()
             ? x.presentationId
@@ -654,6 +696,7 @@ function applyProjectStateSnapshot(state, opts = {}) {
       return item;
     })
     .filter(Boolean) });
+  ensureProjectQueueIdentityAndGroups({ preserveExistingGroups: true });
   Object.assign(bibleDesignerState, resolvedBibleStyleDefaults());
   setSharedRendererState({ selectedQueueAnchorIndex: -1 });
   const firstPlayableIndex = mediaQueue.findIndex((item) =>

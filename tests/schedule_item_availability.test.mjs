@@ -16,6 +16,8 @@ import {
   scheduleSectionEndIndex,
   scheduleSectionIndexForInsertion,
   scheduleSectionIndexForItem,
+  scheduleSectionIndexesForItems,
+  synchronizeScheduleGroupMembership,
 } from "../src/shared/schedule-item-availability.mjs";
 
 const song = { type: "song", path: "song://1", name: "Song" };
@@ -70,6 +72,7 @@ test("section boundaries remain correct with several sections", () => {
   assert.equal(scheduleSectionIndexForItem(items, 0), -1);
   assert.equal(scheduleSectionIndexForItem(items, 3), 1);
   assert.equal(scheduleSectionIndexForItem(items, 5), 4);
+  assert.deepEqual(scheduleSectionIndexesForItems(items), [-1, 1, 1, 1, 4, 4, 6]);
   assert.equal(scheduleSectionEndIndex(items, 1), 4);
   assert.equal(scheduleSectionEndIndex(items, 4), 6);
   assert.equal(scheduleSectionEndIndex(items, 6), 7);
@@ -78,6 +81,35 @@ test("section boundaries remain correct with several sections", () => {
   assert.equal(scheduleSectionIndexForInsertion(items, 4), 1);
   assert.equal(scheduleSectionIndexForInsertion(items, 6), 4);
   assert.equal(scheduleSectionIndexForInsertion(items, 7), 6);
+});
+
+test("legacy positional sections migrate to explicit group ids", () => {
+  const first = { id: "group-welcome", type: "section", name: "Welcome" };
+  const second = { id: "group-message", type: "section", name: "Message" };
+  const firstCue = { ...song };
+  const secondCue = { ...video };
+  const items = [{ ...bible }, first, firstCue, second, secondCue];
+
+  assert.equal(firstCue.groupId, undefined);
+  synchronizeScheduleGroupMembership(items, { preserveExisting: true });
+  assert.equal(items[0].groupId, undefined);
+  assert.equal(firstCue.groupId, first.id);
+  assert.equal(secondCue.groupId, second.id);
+});
+
+test("explicit group ids identify membership independently of cue position", () => {
+  const first = { id: "group-welcome", type: "section", name: "Welcome" };
+  const second = { id: "group-message", type: "section", name: "Message" };
+  const cue = { ...song, groupId: second.id };
+  const items = [first, cue, second];
+
+  assert.equal(scheduleSectionIndexForItem(items, 1), 2);
+  assert.deepEqual(scheduleSectionIndexesForItems(items), [0, 2, 2]);
+  synchronizeScheduleGroupMembership(items, { preserveExisting: true });
+  assert.equal(cue.groupId, second.id);
+  synchronizeScheduleGroupMembership(items);
+  assert.equal(cue.groupId, first.id);
+  assert.equal(scheduleSectionIndexForItem(items, 1), 0);
 });
 
 test("dropping on a section targets the end of that exact section", () => {

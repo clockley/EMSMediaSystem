@@ -21,11 +21,29 @@ test("schedule sections render as compact native hierarchy rows", async () => {
   assert.match(renderer, /class="section-count"/);
   assert.match(renderer, /class="section-menu-btn"/);
   assert.match(renderer, /"Empty section"/);
+  assert.match(renderer, /const sectionIndexes = scheduleSectionIndexesForItems\(mediaQueue\)/);
+  assert.match(renderer, /const visibleSectionItemCounts = new Map\(\)/);
+  assert.doesNotMatch(renderer, /scheduleSectionIndexForItem\(mediaQueue/);
 
   assert.match(css, /\.queue-item--section-child::before/);
   assert.match(css, /\.queue-item--section-child::after/);
   assert.match(css, /\.queue-item--section\.is-collapsed \.section-toggle-icon/);
   assert.match(css, /\.section-menu-btn:focus-visible/);
+});
+
+test("project snapshots preserve explicit service-group membership", async () => {
+  const source = await readFile(
+    new URL("../src/control-window/app-project-session.mjs", import.meta.url),
+    "utf8",
+  );
+  const snapshotStart = source.indexOf("function buildProjectQueueSnapshot()");
+  const snapshotEnd = source.indexOf("\nfunction buildProjectQueueItemSnapshot", snapshotStart);
+  const snapshotBuilder = source.slice(snapshotStart, snapshotEnd);
+
+  assert.match(
+    snapshotBuilder,
+    /ensureProjectQueueIdentityAndGroups\(\{ preserveExistingGroups: true \}\)/,
+  );
 });
 
 test("schedule section options are discoverable without a context click", async () => {

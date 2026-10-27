@@ -13,6 +13,7 @@ import {
 test("project round-trip preserves resolved slide identity and manual breaks", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "ems-resolved-persistence-"));
   const projectPath = path.join(root, "resolved.emproj");
+  const resavedProjectPath = path.join(root, "resolved-resaved.emproj");
   const song = JSON.parse(
     await readFile(new URL("fixtures/resolution/long-song.json", import.meta.url), "utf8"),
   );
@@ -69,6 +70,7 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
         collapsed: true,
       },
       {
+        id: "cue-long-song",
         path: "song://fixture_long_song",
         name: "Long Song",
         type: "song",
@@ -108,6 +110,7 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
         },
       },
       {
+        id: "cue-scripture-reading",
         path: "bible://KJV%3AJohn%201%3A1-3",
         name: "John 1:1-3 KJV",
         type: "bible",
@@ -128,6 +131,7 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
     ],
   };
   let loaded;
+  let reloaded;
   try {
     await saveEmprojSnapshot(
       projectPath,
@@ -145,7 +149,12 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
       type: "section",
       name: "Opening Worship",
       collapsed: true,
+      parentId: null,
     });
+    assert.equal(loadedSong.id, "cue-long-song");
+    assert.equal(loadedSong.groupId, "section-opening");
+    assert.equal(loadedBible.id, "cue-scripture-reading");
+    assert.equal(loadedBible.groupId, "section-opening");
     assert.equal(loadedSong.currentSlideId, "play_v1:1");
     assert.equal(loadedSong.currentSequenceEntryId, "play_v1");
     assert.equal(
@@ -175,7 +184,23 @@ test("project round-trip preserves resolved slide identity and manual breaks", a
       itemBackgroundBytes,
     );
     assert.deepEqual(loaded.projectOutputs, snapshot.projectOutputs);
+
+    await saveEmprojSnapshot(
+      resavedProjectPath,
+      loaded,
+      { name: "EMS Media System", version: "test" },
+    );
+    reloaded = await loadEmprojSnapshot(resavedProjectPath);
+    assert.deepEqual(
+      reloaded.mediaQueue.map((item) => ({ id: item.id, groupId: item.groupId })),
+      [
+        { id: "section-opening", groupId: undefined },
+        { id: "cue-long-song", groupId: "section-opening" },
+        { id: "cue-scripture-reading", groupId: "section-opening" },
+      ],
+    );
   } finally {
+    if (reloaded) await cleanupExtractedProjectMedia(reloaded);
     if (loaded) await cleanupExtractedProjectMedia(loaded);
     await rm(root, { recursive: true, force: true });
   }

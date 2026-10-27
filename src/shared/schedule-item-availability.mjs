@@ -11,15 +11,78 @@ export function isScheduleSectionItem(item) {
   return Boolean(item && item.type === "section");
 }
 
+function normalizedScheduleIdentity(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function scheduleGroupIdForItem(item) {
+  if (!item || isScheduleSectionItem(item)) return "";
+  return normalizedScheduleIdentity(item.groupId);
+}
+
+export function synchronizeScheduleGroupMembership(
+  items,
+  { preserveExisting = false } = {},
+) {
+  const list = Array.isArray(items) ? items : [];
+  const sectionIds = new Set(
+    list
+      .filter(isScheduleSectionItem)
+      .map((item) => normalizedScheduleIdentity(item.id))
+      .filter(Boolean),
+  );
+  let activeGroupId = "";
+
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    if (isScheduleSectionItem(item)) {
+      activeGroupId = normalizedScheduleIdentity(item.id);
+      continue;
+    }
+    const existingGroupId = scheduleGroupIdForItem(item);
+    const groupId =
+      preserveExisting && sectionIds.has(existingGroupId)
+        ? existingGroupId
+        : activeGroupId;
+    if (groupId) item.groupId = groupId;
+    else delete item.groupId;
+  }
+  return list;
+}
+
+export function scheduleSectionIndexesForItems(items) {
+  const list = Array.isArray(items) ? items : [];
+  const sectionIndexById = new Map();
+  for (let index = 0; index < list.length; index += 1) {
+    const item = list[index];
+    if (!isScheduleSectionItem(item)) continue;
+    const id = normalizedScheduleIdentity(item.id);
+    if (id && !sectionIndexById.has(id)) sectionIndexById.set(id, index);
+  }
+
+  const sectionIndexes = new Array(list.length).fill(-1);
+  let positionalSectionIndex = -1;
+  for (let index = 0; index < list.length; index += 1) {
+    const item = list[index];
+    if (isScheduleSectionItem(item)) {
+      positionalSectionIndex = index;
+      sectionIndexes[index] = index;
+      continue;
+    }
+    const groupId = scheduleGroupIdForItem(item);
+    sectionIndexes[index] = groupId && sectionIndexById.has(groupId)
+      ? sectionIndexById.get(groupId)
+      : positionalSectionIndex;
+  }
+  return sectionIndexes;
+}
+
 export function scheduleSectionIndexForItem(items, itemIndex) {
   const list = Array.isArray(items) ? items : [];
   if (!Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= list.length) {
     return -1;
   }
-  for (let index = itemIndex; index >= 0; index -= 1) {
-    if (isScheduleSectionItem(list[index])) return index;
-  }
-  return -1;
+  return scheduleSectionIndexesForItems(list)[itemIndex];
 }
 
 export function scheduleSectionEndIndex(items, sectionIndex) {
