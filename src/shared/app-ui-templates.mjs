@@ -172,9 +172,9 @@ export function generateMediaFormHTML() {
         <div class="list-header">
           <span class="queue-section-title">Schedule</span>
           <span class="queue-section-actions">
-            <button type="button" id="addQueueSectionBtn" class="queue-header-button" title="Add a section to the schedule" aria-label="Add schedule section">
+            <button type="button" id="addQueueSectionBtn" class="queue-header-button" title="Add a group to the schedule" aria-label="Add schedule group">
               <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M7.25 2.5h1.5v4.75h4.75v1.5H8.75v4.75h-1.5V8.75H2.5v-1.5h4.75V2.5z"/></svg>
-              <span>Section</span>
+              <span>Group</span>
             </button>
             <button type="button" id="clearQueueBtn" class="pill-button destructive-action" title="Clear the schedule" aria-label="Clear schedule" hidden>Clear</button>
           </span>

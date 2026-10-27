@@ -90,7 +90,10 @@ import {
   updatePreviewCueUI,
 } from "./app-renderer.mjs";
 import { createSerializedAsyncQueue } from "../shared/async-operation-ownership.mjs";
-import { synchronizeScheduleGroupMembership } from "../shared/schedule-item-availability.mjs";
+import {
+  DEFAULT_SCHEDULE_GROUP_NAME,
+  synchronizeScheduleGroupMembership,
+} from "../shared/schedule-item-availability.mjs";
 
 const PROJECT_SCHEMA_VERSION = 2;
 
@@ -347,7 +350,7 @@ function buildProjectQueueItemSnapshot(item) {
     return {
       id: ensureProjectQueueItemId(item, "section"),
       type: "section",
-      name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : "New Section",
+      name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : DEFAULT_SCHEDULE_GROUP_NAME,
       collapsed: item.collapsed === true,
       parentId: normalizedQueueItemId(item.parentId) || null,
     };
@@ -597,7 +600,7 @@ function applyProjectStateSnapshot(state, opts = {}) {
         return {
           id: typeof x.id === "string" && x.id.trim() ? x.id : `section-${generateProjectGuid()}`,
           type: "section",
-          name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : "New Section",
+          name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : DEFAULT_SCHEDULE_GROUP_NAME,
           collapsed: x.collapsed === true,
           parentId: normalizedQueueItemId(x.parentId) || null,
         };

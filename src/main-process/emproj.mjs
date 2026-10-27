@@ -19,6 +19,7 @@ import {
   storedFileHashFromRecord,
 } from "../shared/media-file-hash.mjs";
 import { normalizeToSongAST } from "../shared/app-song-utils.mjs";
+import { DEFAULT_SCHEDULE_GROUP_NAME } from "../shared/schedule-item-availability.mjs";
 import yauzl from "yauzl";
 import yazl from "yazl";
 
@@ -58,7 +59,7 @@ const SLIDE_TRANSITION_EFFECTS = new Set([
   "slide-right",
   "zoom",
 ]);
-const DEFAULT_QUEUE_SECTION_LABEL = "New Section";
+const DEFAULT_QUEUE_SECTION_LABEL = DEFAULT_SCHEDULE_GROUP_NAME;
 const SHA256_HASH_ALG = "sha256";
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 const PROJECT_GUID_RE =

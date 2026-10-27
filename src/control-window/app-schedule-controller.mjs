@@ -12,6 +12,7 @@ the Free Software Foundation, either version 3 of the License, or
  */
 
 import {
+  DEFAULT_SCHEDULE_GROUP_NAME,
   reorderScheduleItemsAtInsertion,
   scheduleGroupIdForItem,
   scheduleDropPlacementForTarget,
@@ -21,6 +22,7 @@ import {
   scheduleSectionIndexForInsertion,
   scheduleSectionIndexesForItems,
   synchronizeScheduleGroupMembership,
+  ungroupScheduleSectionMembers,
 } from "../shared/schedule-item-availability.mjs";
 import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
 
@@ -167,7 +169,7 @@ let recentlyAddedQueueItemsTimer = null;
 
 let queueDropIndicator = null;
 
-const DEFAULT_SCHEDULE_SECTION_NAME = "New Section";
+const DEFAULT_SCHEDULE_SECTION_NAME = DEFAULT_SCHEDULE_GROUP_NAME;
 
 function normalizeScheduleSectionName(value) {
   const name = String(value || "").trim();
@@ -370,7 +372,7 @@ function renderQueue() {
           const childCount = visibleSectionItemCounts.get(index) || 0;
           const sectionName = item.name || DEFAULT_SCHEDULE_SECTION_NAME;
           const childLabel = childCount === 0
-            ? "Empty section"
+            ? "Empty group"
             : `${childCount} item${childCount === 1 ? "" : "s"}`;
           const classes = [
             "queue-item",
@@ -380,10 +382,10 @@ function renderQueue() {
             recentlyAddedQueueItems.has(item) ? "is-newly-added" : "",
           ].filter(Boolean).join(" ");
           return `<div class="${classes}" role="listitem" tabindex="0" data-queue-index="${index}" draggable="true" ${isSelected ? 'data-selected="true"' : ""}>
-      <span class="section-drag-handle" title="Drag to move section" aria-label="Drag to move section">
+      <span class="section-drag-handle" title="Drag to move group" aria-label="Drag to move group">
         <svg width="12" height="18" viewBox="0 0 12 18" aria-hidden="true"><circle cx="3" cy="4" r="1" fill="currentColor"/><circle cx="9" cy="4" r="1" fill="currentColor"/><circle cx="3" cy="9" r="1" fill="currentColor"/><circle cx="9" cy="9" r="1" fill="currentColor"/><circle cx="3" cy="14" r="1" fill="currentColor"/><circle cx="9" cy="14" r="1" fill="currentColor"/></svg>
       </span>
-      <button type="button" class="section-toggle-btn" draggable="false" data-queue-section-toggle="${index}" aria-label="${collapsed ? "Expand section" : "Collapse section"}" aria-expanded="${collapsed ? "false" : "true"}" ${childCount === 0 ? "disabled" : ""}>
+      <button type="button" class="section-toggle-btn" draggable="false" data-queue-section-toggle="${index}" aria-label="${collapsed ? "Expand group" : "Collapse group"}" aria-expanded="${collapsed ? "false" : "true"}" ${childCount === 0 ? "disabled" : ""}>
         <svg class="section-toggle-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.75 6.25 3.25 3.5 3.25-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <span class="section-folder-icon" aria-hidden="true">
@@ -393,7 +395,7 @@ function renderQueue() {
         <span class="item-label" title="${escapeHtml(sectionName)}">${escapeHtml(sectionName)}</span>
         <span class="section-count">${childLabel}</span>
       </span>
-      <button type="button" class="section-menu-btn" draggable="false" data-queue-section-menu="${index}" title="Section options" aria-label="Options for ${escapeHtml(sectionName)}" aria-haspopup="menu">
+      <button type="button" class="section-menu-btn" draggable="false" data-queue-section-menu="${index}" title="Group options" aria-label="Options for ${escapeHtml(sectionName)}" aria-haspopup="menu">
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r="1.25" fill="currentColor"/><circle cx="8" cy="8" r="1.25" fill="currentColor"/><circle cx="13" cy="8" r="1.25" fill="currentColor"/></svg>
       </button>
     </div>`;
@@ -490,7 +492,7 @@ function renderQueue() {
       <span class="queue-item-trailing-actions">
       ${liveRemainingMarkup}
       ${autoStartBadgeMarkup}
-      ${inSection ? `<button type="button" class="queue-ungroup-btn" draggable="false" data-queue-ungroup="${index}" title="Move out of section" aria-label="Move out of section"><svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.25 3.25 2.5 7l3.75 3.75M3 7h6.25a3.25 3.25 0 0 1 3.25 3.25v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>` : ""}
+      ${inSection ? `<button type="button" class="queue-ungroup-btn" draggable="false" data-queue-ungroup="${index}" title="Move out of group" aria-label="Move out of group"><svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.25 3.25 2.5 7l3.75 3.75M3 7h6.25a3.25 3.25 0 0 1 3.25 3.25v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>` : ""}
       <button type="button" class="remove-btn" draggable="false" data-queue-remove="${index}" title="Remove from schedule" aria-label="Remove from schedule">✕</button>
       </span>
       ${liveProgressMarkup}
@@ -584,8 +586,8 @@ async function renameScheduleSection(index) {
   if (!queueIndexInRange(index) || !isQueueItemSection(mediaQueue[index])) return;
   const section = mediaQueue[index];
   const currentName = section.name || DEFAULT_SCHEDULE_SECTION_NAME;
-  const nextName = await showRendererPrompt("Section name", currentName, {
-    title: "Rename Section",
+  const nextName = await showRendererPrompt("Group name", currentName, {
+    title: "Rename Group",
     confirmLabel: "Rename",
     required: true,
     maxLength: 80,
@@ -604,8 +606,8 @@ async function renameScheduleSection(index) {
 
 async function addScheduleSectionAfterSelection() {
   const insertionPoint = captureQueueInsertionPointAfterSelection();
-  const name = await showRendererPrompt("Section name", DEFAULT_SCHEDULE_SECTION_NAME, {
-    title: "Add Section",
+  const name = await showRendererPrompt("Group name", DEFAULT_SCHEDULE_SECTION_NAME, {
+    title: "Add Group",
     confirmLabel: "Add",
     required: true,
     maxLength: 80,
@@ -1250,12 +1252,8 @@ function removeFromQueue(index) {
   }
   invalidateQueueUndoToastAfterMutation();
   if (isQueueItemSection(removedItem)) {
-    const removedGroupId = removedItem.id;
-    for (const item of mediaQueue) {
-      if (!isQueueItemSection(item) && scheduleGroupIdForItem(item) === removedGroupId) {
-        item.groupId = null;
-      }
-    }
+    // Removing a group keeps its cues; they become explicit top-level items.
+    ungroupScheduleSectionMembers(mediaQueue, index);
   }
   mediaQueue.splice(index, 1);
   synchronizeScheduleGroupMembership(mediaQueue, { preserveExisting: true });
@@ -1495,7 +1493,7 @@ function ensureScheduleSectionContextMenu() {
     <button type="button" role="menuitem" data-schedule-section-action="move-up">Move Up</button>
     <button type="button" role="menuitem" data-schedule-section-action="move-down">Move Down</button>
     <div class="song-context-menu__separator" role="separator"></div>
-    <button type="button" role="menuitem" data-schedule-section-action="remove" class="song-context-menu__destructive">Remove Section Header</button>
+    <button type="button" role="menuitem" data-schedule-section-action="remove" class="song-context-menu__destructive" title="Remove the group and keep its items in the schedule">Remove Group</button>
   `;
 
   menu.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -2071,7 +2069,7 @@ function installAddQueueSectionButton() {
     event.preventDefault();
     void addScheduleSectionAfterSelection().catch((err) => {
       console.error("Failed to add schedule section:", err);
-      showGnomeToast("Failed to add section");
+      showGnomeToast("Failed to add group");
     });
   });
 }

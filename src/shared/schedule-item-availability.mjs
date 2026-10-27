@@ -7,6 +7,10 @@ export function isBibleScheduleItem(item) {
   );
 }
 
+// Schedule sections are labeled "Groups" in the UI. This is the name used
+// whenever a group is created or loaded without a usable label.
+export const DEFAULT_SCHEDULE_GROUP_NAME = "New Group";
+
 export function isScheduleSectionItem(item) {
   return Boolean(item && item.type === "section");
 }
@@ -27,6 +31,36 @@ export function isScheduleItemExplicitlyUngrouped(item) {
       Object.prototype.hasOwnProperty.call(item, "groupId") &&
       item.groupId === null,
   );
+}
+
+/**
+ * Detach every member cue from the section at `sectionIndex` so the cues
+ * survive the section's removal as explicit top-level items. Membership is
+ * resolved exactly like the schedule UI (explicit `groupId`, falling back to
+ * position), and each member gets an explicit `groupId: null`; otherwise
+ * positional membership would re-adopt them into the preceding section.
+ * Returns the number of cues that were detached.
+ */
+export function ungroupScheduleSectionMembers(items, sectionIndex) {
+  const list = Array.isArray(items) ? items : [];
+  if (
+    !Number.isInteger(sectionIndex) ||
+    sectionIndex < 0 ||
+    sectionIndex >= list.length ||
+    !isScheduleSectionItem(list[sectionIndex])
+  ) {
+    return 0;
+  }
+  const sectionIndexes = scheduleSectionIndexesForItems(list);
+  let detached = 0;
+  for (let index = 0; index < list.length; index += 1) {
+    const item = list[index];
+    if (!item || typeof item !== "object" || isScheduleSectionItem(item)) continue;
+    if (sectionIndexes[index] !== sectionIndex) continue;
+    item.groupId = null;
+    detached += 1;
+  }
+  return detached;
 }
 
 export function synchronizeScheduleGroupMembership(
