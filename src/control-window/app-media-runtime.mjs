@@ -1550,7 +1550,7 @@ function playLocalMedia(event) {
       }
     }
     send("localMediaState", 0, "play");
-    addFilenameToTitlebar(removeFileProtocol(decodeURI(video.src)));
+    addFilenameToTitlebar(removeFileProtocol(video.src));
     setSharedRendererState({ isPlaying: true });
     setSharedRendererState({ playingMediaAudioOnly: true });
     setSharedRendererState({ isActiveMediaWindowCache: false });
@@ -2013,7 +2013,7 @@ async function playAudioOnlyLocally(startOverride = null) {
     currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
       ? mediaQueue[currentQueueIndex]
       : null;
-  let source = mediaFile || removeFileProtocol(decodeURI(localVideo.src || ""));
+  let source = mediaFile || removeFileProtocol(localVideo.src || "");
   if (queueItem && isFileBackedMediaPath(queueItem.path)) {
     source = await resolveQueueItemMediaPath(queueItem);
     setSharedRendererState({ activePreviewResolvedMediaFile: source });

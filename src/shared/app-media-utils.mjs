@@ -14,6 +14,12 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
+import {
+  isEmsMediaEligiblePath,
+  isEmsMediaUrl,
+  localPathFromFileUrl,
+} from "./ems-media-url.mjs";
+
 export const imageRegex = /\.(bmp|gif|jpe?g|png|webp|svg|ico)$/i;
 export const pptxRegex = /\.pptx$/i;
 export const bibleUriPrefix = "bible://";
@@ -202,16 +208,77 @@ export function localPathToFileUrl(filePath) {
   return normalized.startsWith("/") ? `file://${encoded}` : `file:///${encoded}`;
 }
 
+/**
+ * Synchronous bridge to the main-process opaque media registry. Until a
+ * renderer configures it, every local path keeps mapping to file://.
+ */
+let registerEmsMediaPath = null;
+const localPathByEmsMediaUrl = new Map();
+const emsMediaUrlByLocalPath = new Map();
+
+/**
+ * Enable `ems-media://` URLs for local MP4/M4V/MOV video in this renderer.
+ * `registerPath` must synchronously return the opaque URL registered by the
+ * main process. Pass null to disable.
+ */
+export function configureEmsMediaUrls(registerPath) {
+  const next = typeof registerPath === "function" ? registerPath : null;
+  if (next !== registerEmsMediaPath) {
+    localPathByEmsMediaUrl.clear();
+    emsMediaUrlByLocalPath.clear();
+  }
+  registerEmsMediaPath = next;
+  return registerEmsMediaPath !== null;
+}
+
+export function emsMediaUrlsEnabled() {
+  return registerEmsMediaPath !== null;
+}
+
 export function pathToMediaUrl(filePath, cacheBust) {
   if (!filePath || typeof filePath !== "string") return "";
   if (isBiblePath(filePath) || isSongPath(filePath)) return "";
-  if (/^(file|https?|rtsp|rtmp|blob):/i.test(filePath)) return filePath;
+  if (/^(https?|rtsp|rtmp|blob):/i.test(filePath) || isEmsMediaUrl(filePath)) return filePath;
 
-  let url = localPathToFileUrl(filePath);
+  let url = "";
+  const localPath = /^file:\/\//i.test(filePath) ? localPathFromFileUrl(filePath) : filePath;
+  if (registerEmsMediaPath && isEmsMediaEligiblePath(localPath)) {
+    const registered = emsMediaUrlByLocalPath.get(localPath) || registerEmsMediaPath(localPath);
+    if (isEmsMediaUrl(registered)) {
+      url = registered;
+      emsMediaUrlByLocalPath.set(localPath, registered);
+      localPathByEmsMediaUrl.set(registered.replace(/[?#].*$/, ""), localPath);
+    }
+  }
+  url ||= /^file:\/\//i.test(filePath) ? filePath : localPathToFileUrl(filePath);
   if (typeof cacheBust === "string" && cacheBust.length > 0) {
     url += `${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(cacheBust)}`;
   }
   return url;
+}
+
+/**
+ * Rewrite an `ems-media://` element source into the file:// URL that
+ * {@link pathToMediaUrl} would have produced for the same path (keeping any
+ * query/fragment), so code that strips "file://" or compares against file
+ * URLs behaves exactly as before. Other values are returned unchanged.
+ */
+export function mediaSourceAsFileUrl(source) {
+  if (typeof source !== "string" || !isEmsMediaUrl(source)) return source;
+  const localPath = localPathByEmsMediaUrl.get(source.replace(/[?#].*$/, ""));
+  if (!localPath) return source;
+  const suffix = source.match(/[?#].*$/)?.[0] || "";
+  return `${localPathToFileUrl(localPath)}${suffix}`;
+}
+
+/** Return the native path represented by a local file/ems-media source. */
+export function mediaSourceAsLocalPath(source) {
+  if (typeof source !== "string") return source;
+  if (isEmsMediaUrl(source)) {
+    return localPathByEmsMediaUrl.get(source.replace(/[?#].*$/, "")) || source;
+  }
+  if (!/^file:\/\//i.test(source)) return source;
+  return localPathFromFileUrl(source) || source;
 }
 
 export function clampMediaTime(time, duration) {
@@ -256,6 +323,9 @@ export function queueBasename(filePath) {
 
 function mediaTypeInspectionPath(filePath) {
   if (typeof filePath !== "string") return "";
+  if (isEmsMediaUrl(filePath.trim())) {
+    return localPathByEmsMediaUrl.get(filePath.trim().replace(/[?#].*$/, "")) || filePath;
+  }
   try {
     const url = new URL(filePath.trim());
     if (["http:", "https:", "rtsp:", "rtmp:", "file:", "blob:"].includes(url.protocol)) {

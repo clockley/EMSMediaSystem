@@ -839,7 +839,7 @@ function setupCustomMediaControls() {
             isLikelyAudioItem(currentPreviewSourcePath()) ||
             mediaElementLoadedAudioOnly(
               video,
-              mediaFile || removeFileProtocol(decodeURI(video.src)),
+              mediaFile || removeFileProtocol(video.src),
             ))
         ) {
           void playMedia();
@@ -2088,7 +2088,7 @@ function setSBFormMediaPlayer() {
       { once: true },
     );
   }
-  if (encodeURI(mediaFile) !== removeFileProtocol(video.src)) {
+  if (mediaFile !== removeFileProtocol(video.src)) {
     saveMediaFile();
   }
 

@@ -23,6 +23,11 @@ import {
   boxFitsMeasurement,
   findLargestFittingFontSize,
 } from "../shared/text-measure.mjs";
+import {
+  installEmsMediaCrossOriginPolicy,
+  isEmsMediaEligiblePath,
+  localPathFromFileUrl,
+} from "../shared/ems-media-url.min.mjs";
 
 const {
   ipcRenderer,
@@ -30,11 +35,21 @@ const {
   birth,
   attachCubicWaveShaper,
   timeRemaining,
+  emsMediaUrlForPath,
 } = window.electron;
 const sendTimeRemainingTick =
   timeRemaining?.sendTick ||
   (() => false);
 const disableContentTransitions = argv.includes("__disable-content-transitions=true");
+/**
+ * Local MP4/M4V/MOV clips are loaded through ems-media:// so the main process
+ * can hide non-IDR "sync samples" that make Chromium fail seeks with a fatal
+ * decode error. Those loads are cross-origin to this file:// page, so the
+ * policy marks them CORS (`crossorigin="anonymous"`) to keep Web Audio and
+ * captureStream() working. Installed before any element gets a source.
+ */
+installEmsMediaCrossOriginPolicy(window);
+const registeredProjectionMediaUrls = new Map();
 let video = null;
 /**
  * Live-stream player handles are hoisted to module scope so that slipstream
@@ -260,6 +275,24 @@ function setProjectionVideoVisible(visible) {
 }
 
 /**
+ * URL the projection <video> should load for `source`. Native paths of local
+ * MP4/M4V/MOV clips map to ems-media:// (see shared/ems-media-url.mjs); every
+ * other value (URLs, other containers, or no registry bridge) is used as before.
+ */
+function projectionVideoUrl(source) {
+  const localPath = /^file:\/\//i.test(source) ? localPathFromFileUrl(source) : source;
+  if (typeof emsMediaUrlForPath === "function" && isEmsMediaEligiblePath(localPath)) {
+    let registered = registeredProjectionMediaUrls.get(localPath);
+    if (!registered) {
+      registered = emsMediaUrlForPath(localPath);
+      if (registered) registeredProjectionMediaUrls.set(localPath, registered);
+    }
+    return registered || source;
+  }
+  return source;
+}
+
+/**
  * Point the projection <video> at `url`, or detach it entirely when `url` is
  * empty. Routing every source change through here keeps `videoSourceGeneration`
  * accurate, which is what stops a deferred seek for the previous clip from
@@ -267,16 +300,71 @@ function setProjectionVideoVisible(visible) {
  */
 function setProjectionVideoSource(url) {
   videoSourceGeneration += 1;
+  projectionVideoSource = typeof url === "string" ? url : "";
   if (!video) return;
   if (typeof url === "string" && url.length > 0) {
     // Per HTML5 spec, assigning to .src aborts the current load and resets the
     // media element. Don't call removeAttribute("src") + load() first — that
     // briefly puts the element in NETWORK_EMPTY and races the new src assignment.
-    video.src = url;
+    video.src = projectionVideoUrl(url);
     return;
   }
   video.removeAttribute("src");
   video.load();
+}
+
+/** Source last handed to {@link setProjectionVideoSource} (before URL mapping). */
+let projectionVideoSource = "";
+/** Whether the operator last asked the projection clip to play (vs. pause). */
+let projectionPlaybackRequested = false;
+/** Source generation created by the last decode recovery; it gets no second try. */
+let decodeRecoveryGeneration = -1;
+
+/**
+ * Recover once from a fatal MEDIA_ERR_DECODE on a local clip by reloading the
+ * same source and restoring its position and play state.
+ *
+ * ems-media already removes the known trigger (seeking to a non-IDR "sync
+ * sample"); this is a bounded safety net for anything it cannot repair. The
+ * reload itself is never retried, so a clip that keeps failing reports its
+ * error instead of looping. Returns true when a recovery was started.
+ */
+function recoverProjectionDecodeError() {
+  if (!video || liveStreamMode || isImg || isPptx || isText) return false;
+  if (video.error?.code !== 3) return false; // MediaError.MEDIA_ERR_DECODE
+  const source = projectionVideoSource;
+  if (!source || /^(?:https?|blob|rtsp|rtmp|data):/i.test(source)) return false;
+  if (decodeRecoveryGeneration === videoSourceGeneration) return false;
+
+  const resumeAt = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+  const resumePlaying = projectionPlaybackRequested;
+  console.warn(
+    `Projection decode error at ${resumeAt.toFixed(2)}s; reloading ${source} once.`,
+    video.error?.message || "",
+  );
+  tracePlayback("decode-recovery", "file=" + source, "t=" + resumeAt, "playing=" + resumePlaying);
+  beginPlaybackStateStabilizing();
+  setProjectionVideoSource(source);
+  const generation = videoSourceGeneration;
+  decodeRecoveryGeneration = generation;
+  // The end-of-media handler is bound to a source generation; rebind it so the
+  // reloaded clip can still advance the schedule when it finishes.
+  bindProjectionVideoEndHandler();
+  applyVideoStartTime(video, resumeAt)
+    .then(async () => {
+      if (generation !== videoSourceGeneration || !resumePlaying) return;
+      await video.play();
+    })
+    .catch((error) => {
+      if (generation !== videoSourceGeneration) return;
+      reportProjectionError("Projection media recovery failed", error);
+    })
+    .finally(() => {
+      if (generation !== videoSourceGeneration) return;
+      markPlaybackStateStable();
+      playbackStateUpdate();
+    });
+  return true;
 }
 
 function beginPlaybackStateStabilizing() {
@@ -3676,7 +3764,16 @@ async function bootstrapMediaWindow() {
   if (!video) {
     throw new Error("Projection media element #bigPlayer was not found.");
   }
+  video.addEventListener("play", () => {
+    projectionPlaybackRequested = true;
+  });
+  video.addEventListener("pause", () => {
+    // Chromium may pause the element while it reports a decode failure; that
+    // is not the operator pausing, so keep the request for the recovery.
+    if (!video.error) projectionPlaybackRequested = false;
+  });
   video.addEventListener("error", () => {
+    if (recoverProjectionDecodeError()) return;
     const err = video.error;
     const code = err?.code ? ` code ${err.code}` : "";
     const detail = err?.message || "unknown media element error";

@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld("electron", {
   },
   argv: process.argv,
   birth: mediaWindowBirth(process.argv),
+  emsMediaUrlForPath: (filePath) => ipcRenderer.sendSync("ems-media-register-path", filePath),
 
   createFadeOut: (duration = 3, debug = false) => {
     const fadePromise = audioFxPromise.then(

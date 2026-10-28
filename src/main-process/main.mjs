@@ -25,6 +25,7 @@ import {
   MessageChannelMain,
   screen,
   powerSaveBlocker,
+  protocol,
   session,
   shell,
 } from "electron/main";
@@ -104,6 +105,14 @@ import {
   normalizeSnapshotId,
   snapshotIdFromStagedFilename,
 } from "./staging-index.min.mjs";
+import {
+  createEmsMediaAccessToken,
+  createEmsMediaPathRegistry,
+  createEmsMediaProtocolHandler,
+  installEmsMediaProtocol,
+  registerEmsMediaSchemePrivileges,
+} from "./media-protocol.min.mjs";
+import { isEmsMediaUrl } from "../shared/ems-media-url.min.mjs";
 const derivedSrcDir = path.dirname(import.meta.dirname);
 const derivedRoot = path.dirname(derivedSrcDir);
 let sessionID = 0;
@@ -271,6 +280,17 @@ app.commandLine.appendSwitch("enable-features", "CustomizableSelectElement");
 // across the manifest fetch and all subsequent segment fetches. Must run
 // before `app.whenReady` so the network service starts in IPv4-only mode.
 app.commandLine.appendSwitch("disable-ipv6");
+
+// Local MP4/M4V/MOV clips are played through ems-media:// so the main process
+// can hide non-IDR "sync samples" from Chromium's seek index (Chromium >= 134
+// fails with PIPELINE_ERROR_DECODE when it seeks to one). Scheme privileges
+// must be registered before `app.whenReady`. Per-launch, unguessable media IDs
+// keep native paths out of URLs and limit the handler to registered resources.
+registerEmsMediaSchemePrivileges(protocol);
+const emsMediaAccessToken = createEmsMediaAccessToken();
+const emsMediaPathRegistry = createEmsMediaPathRegistry({
+  accessToken: emsMediaAccessToken,
+});
 
 settings.init(app.getPath("userData"));
 
@@ -4273,6 +4293,11 @@ function localFileSystemPathFromMediaPath(filePath) {
     throw new Error("Invalid file path");
   }
   const trimmed = filePath.trim();
+  if (isEmsMediaUrl(trimmed)) {
+    const localPath = emsMediaPathRegistry.pathForUrl(trimmed);
+    if (!localPath) throw new Error("Invalid file path");
+    return localPath;
+  }
   return /^file:\/\//i.test(trimmed) ? fileURLToPath(trimmed) : trimmed;
 }
 
@@ -5688,6 +5713,25 @@ async function handleShowRendererMessageBox(event, input = {}) {
 }
 
 function setIPC() {
+  ipcMain.on("ems-media-register-path", (event, filePath) => {
+    // Assigning `event.returnValue` sends the synchronous reply immediately and
+    // later assignments are ignored, so compute the answer first and assign it
+    // exactly once. (An early `= ""` default made every renderer receive "" and
+    // silently fall back to file://, bypassing the stss repair.)
+    const sender = event.sender;
+    const isOwnedRenderer = [win, mediaWindow, lowerThirdWindow].some(
+      (targetWindow) => targetWindow && !targetWindow.isDestroyed() && targetWindow.webContents === sender,
+    );
+    let url = "";
+    if (isOwnedRenderer) {
+      try {
+        url = emsMediaPathRegistry.registerPath(filePath) || "";
+      } catch (err) {
+        console.error("ems-media path registration failed:", err);
+      }
+    }
+    event.returnValue = url;
+  });
   ipcMain.handle("get-system-time", getSystemTIme);
   ipcMain.handle("get-platform", getPlatform);
   ipcMain.handle("get-youtube-metadata", handleGetYouTubeMetadata);
@@ -6320,6 +6364,15 @@ app.whenReady().then(async () => {
   mediaPresentationSession = session.fromPartition(
     "persist:ems-media-presentation",
   );
+
+  // One handler (and analysis cache) shared by the control window's
+  // defaultSession and the presentation session.
+  const emsMediaProtocolHandler = createEmsMediaProtocolHandler({
+    accessToken: emsMediaAccessToken,
+    pathForMediaId: emsMediaPathRegistry.pathForId,
+  });
+  await installEmsMediaProtocol(session.defaultSession, emsMediaProtocolHandler);
+  await installEmsMediaProtocol(mediaPresentationSession, emsMediaProtocolHandler);
 
   // Many googlevideo URLs expect a YouTube Referer; hls.js / dash.js XHRs
   // do not send one by default.

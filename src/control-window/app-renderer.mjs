@@ -51,7 +51,10 @@ import {
   slideTransitionOverrideSnapshot,
   songUriPrefix,
   isSongPath,
+  configureEmsMediaUrls,
+  mediaSourceAsLocalPath,
 } from "../shared/app-media-utils.mjs";
+import { installEmsMediaCrossOriginPolicy } from "../shared/ems-media-url.mjs";
 import { createOutputCommand } from "../shared/output-compositor.mjs";
 import { commandForShortcut, LIVE_COMMANDS } from "../shared/alert-shortcuts.mjs";
 import { stageContentFromPresentation } from "../shared/stage-content.mjs";
@@ -938,6 +941,12 @@ function attachElectronBridge() {
   invoke = ipcRenderer.invoke;
   on = ipcRenderer.on;
   getPathForFile = webUtils.getPathForFile;
+
+  // Local MP4/M4V/MOV clips load through ems-media:// so the main process can
+  // repair seek tables Chromium would otherwise freeze on. The policy keeps
+  // those cross-origin loads CORS-approved for Web Audio and captureStream.
+  installEmsMediaCrossOriginPolicy(window);
+  configureEmsMediaUrls(electron.emsMediaUrlForPath);
 
   configureMediaLibraryWorkspace({
     invoke,
@@ -1848,11 +1857,7 @@ function isLikelyAudioItem(filePath) {
 function mediaElementComparableSource(mediaEl = video) {
   const src = mediaEl?.src || "";
   if (!src) return "";
-  try {
-    return src.startsWith("file://") ? removeFileProtocol(decodeURI(src)) : decodeURI(src);
-  } catch {
-    return src;
-  }
+  return mediaSourceAsLocalPath(src);
 }
 
 function mediaSourcesMatch(left, right) {
@@ -3436,12 +3441,8 @@ function updateQueueFileLabel(name) {
 function normalizeMediaPathForCompare(filePath) {
   if (!filePath || typeof filePath !== "string") return "";
   try {
-    let s = filePath.trim();
-    if (s.startsWith("file://")) {
-      s = decodeURI(removeFileProtocol(s));
-    } else {
-      s = decodeURI(s);
-    }
+    let s = mediaSourceAsLocalPath(filePath.trim());
+    if (s === filePath.trim()) s = decodeURI(s);
     // The preview mirror loads media via pathToMediaUrl, which appends a
     // "?v=<hash>" cache-bust. The projection and queue entries carry the raw
     // path, so comparisons (mediaPathMatchesCurrentLiveMedia, endLocalMedia,
@@ -3654,7 +3655,7 @@ function themeAudienceMessageIfApplied(message, contentKind) {
  */
 
 function removeFileProtocol(filePath) {
-  return filePath.slice(7);
+  return mediaSourceAsLocalPath(filePath);
 }
 
 /**

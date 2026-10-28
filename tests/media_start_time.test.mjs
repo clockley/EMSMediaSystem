@@ -42,7 +42,7 @@ function preloadElectron(argv) {
   return electron;
 }
 
-async function startProjection(extraArguments, { seekOnly = false, stream = false } = {}) {
+async function startProjection(extraArguments, { seekOnly = false, stream = false, registry = false } = {}) {
   const argv = [
     "electron",
     "--type=renderer",
@@ -82,6 +82,12 @@ async function startProjection(extraArguments, { seekOnly = false, stream = fals
     mediaFile: "",
     video,
     videoSourceGeneration: 0,
+    // No registry bridge: projectionVideoUrl() passes sources through unchanged.
+    emsMediaUrlForPath: registry ? (source) => `ems-media://registered/${source.split("/").pop()}` : null,
+    registeredProjectionMediaUrls: new Map(),
+    localPathFromFileUrl: (source) => source.slice(7),
+    isEmsMediaEligiblePath: (source) => /\.mp4$/i.test(source),
+    projectionVideoSource: "",
     CUE_START_TOLERANCE_SECONDS: 0.25,
     HTMLMediaElement: { HAVE_METADATA: 1 },
     Date: { now: () => 2000125 },
@@ -104,6 +110,7 @@ async function startProjection(extraArguments, { seekOnly = false, stream = fals
   vm.runInContext([
     argumentParser[0],
     ...[
+      "projectionVideoUrl",
       "setProjectionVideoSource",
       "waitForMediaMetadata",
       "cueStartTimeWithinDuration",
@@ -123,8 +130,13 @@ async function startProjection(extraArguments, { seekOnly = false, stream = fals
   } else {
     await vm.runInContext("loadMedia()", context);
   }
-  return { birth, starts, currentTime: video.currentTime };
+  return { birth, starts, currentTime: video.currentTime, src: video.src };
 }
+
+test("projection registers legacy file URLs before loading local MP4 video", async () => {
+  const result = await startProjection(["__media-birth=1000.25"], { registry: true });
+  assert.equal(result.src, "ems-media://registered/clip.mp4");
+});
 
 for (const timestamp of ["1000.25", "__media-birth=1000.25"]) {
   for (const alertArguments of [[], ["__disable-content-transitions=true"]]) {

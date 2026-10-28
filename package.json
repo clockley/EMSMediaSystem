@@ -10,6 +10,7 @@
     "test:go": "make -j test-go",
     "test:slides": "node --test tests/resolved_*.test.mjs tests/song_slide_order.test.mjs tests/video_poster.test.mjs",
     "test:slides:browser": "electron --headless --no-sandbox tests/browser/resolved-measurement.electron.cjs",
+    "test:media-protocol:electron": "electron --headless --no-sandbox tests/browser/ems-media-protocol.electron.cjs",
     "start-paid": "yarn build:dev-paid && electron .",
     "build:dev": "make -j dev",
     "build:dev-paid": "make -j dev-paid",
@@ -32,7 +33,7 @@
   "devDependencies": {
     "concurrently": "^10.0.6",
     "csso": "^5.0.5",
-    "electron": "^34.0.0",
+    "electron": "^45.1.0",
     "electron-builder": "26.18.0",
     "esbuild": "^0.28.2",
     "html-minifier-terser": "^7.2.0",

@@ -212,6 +212,9 @@ contextBridge.exposeInMainWorld("electron", {
     isPortReady: () => Boolean(timeRemainingPort),
   },
   __dirname: import.meta.dirname,
+  // Synchronously registers a local video and returns its opaque ems-media URL.
+  // pathToMediaUrl is deliberately synchronous throughout the renderer.
+  emsMediaUrlForPath: (filePath) => ipcRenderer.sendSync("ems-media-register-path", filePath),
   bibleAPI,
   songsAPI,
   slidesAPI,

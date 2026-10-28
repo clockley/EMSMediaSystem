@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>ems-media seek release gate</title></head>
+<body>
+<video id="video" muted playsinline></video>
+<script>
+  window.runEmsMediaSeekTest = async (url) => {
+    const video = document.getElementById("video");
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const waitFor = (event, timeoutMs) => new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(false), timeoutMs);
+      video.addEventListener(event, () => {
+        clearTimeout(timeout);
+        resolve(true);
+      }, { once: true });
+    });
+    const errors = [];
+    video.addEventListener("error", () => {
+      errors.push(video.error ? `${video.error.code}:${video.error.message}` : "unknown media error");
+    });
+    let frames = 0;
+    const countFrame = () => {
+      frames++;
+      video.requestVideoFrameCallback(countFrame);
+    };
+    video.requestVideoFrameCallback(countFrame);
+    video.crossOrigin = "anonymous";
+    video.src = url;
+    if (!await waitFor("loadedmetadata", 10_000)) {
+      return { errors: [...errors, "loadedmetadata timeout"], badRounds: 1 };
+    }
+    await video.play().catch((error) => errors.push(`play:${error.message}`));
+    await sleep(1_000);
+
+    let seed = 1_234_567;
+    const random = () => ((seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff) / 0x7fffffff);
+    const rounds = [];
+    for (let round = 0; round < 6; round++) {
+      for (let seek = 0; seek < 40; seek++) {
+        video.currentTime = random() * (video.duration - 5);
+        await sleep(40);
+      }
+      const settleStarted = performance.now();
+      while (video.seeking && performance.now() - settleStarted < 6_000) await sleep(25);
+      const startFrames = frames;
+      const startTime = video.currentTime;
+      await sleep(1_500);
+      const result = {
+        seeking: video.seeking,
+        frames: frames - startFrames,
+        timeAdvanced: video.currentTime - startTime,
+        errorCount: errors.length,
+      };
+      result.ok = !result.seeking
+        && result.errorCount === 0
+        && result.frames > 3
+        && result.timeAdvanced > 0.5;
+      rounds.push(result);
+    }
+    return { errors, badRounds: rounds.filter((round) => !round.ok).length, rounds };
+  };
+</script>
+</body>
+</html>
