@@ -11,6 +11,8 @@ the Free Software Foundation, either version 3 of the License, or
  * Logo hold, output-hold recovery, and staged playback under hold.
  */
 
+import { requestAudienceOutputDevice } from "../shared/audience-output-device.mjs";
+
 import {
   __dirname,
   STREAMPLAYER,
@@ -83,15 +85,28 @@ function configureOutputHoldBridge() {
   });
 }
 
-async function startLogoHoldOnlyPresentation() {
+let logoHoldPresentationStartPromise = null;
+
+function startLogoHoldOnlyPresentation() {
+  if (logoHoldPresentationStartPromise) return logoHoldPresentationStartPromise;
+  const ownedRequest = performStartLogoHoldOnlyPresentation().finally(() => {
+    if (logoHoldPresentationStartPromise === ownedRequest) {
+      logoHoldPresentationStartPromise = null;
+    }
+  });
+  logoHoldPresentationStartPromise = ownedRequest;
+  return ownedRequest;
+}
+
+async function performStartLogoHoldOnlyPresentation() {
   const displaySelectEl =
     currentMode === STREAMPLAYER
       ? document.getElementById("dspSelctStreams")
       : document.getElementById("dspSelct");
-  const selectedDisplay = displaySelectEl?.value || null;
+  let selectedDisplay = displaySelectEl?.value || null;
   if (!selectedDisplay) {
-    showGnomeToast("Choose an audience output display");
-    return false;
+    selectedDisplay = await requestAudienceOutputDevice({ invoke });
+    if (!selectedDisplay) return false;
   }
 
   const ts = await invoke("get-system-time");

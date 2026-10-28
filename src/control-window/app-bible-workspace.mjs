@@ -14,6 +14,7 @@ the Free Software Foundation, either version 3 of the License, or
  */
 
 import { bibleTextVerseRows } from "../shared/app-bible-reference-utils.mjs";
+import { requestAudienceOutputDevice } from "../shared/audience-output-device.mjs";
 import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
 import { createAsyncActionCoalescer } from "../shared/async-operation-ownership.mjs";
 import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
@@ -191,6 +192,7 @@ let bibleLowerThirdPreviewSourceKey = "";
 let biblePreviewRenderToken = 0;
 let bibleAudienceOutputUpdateToken = 0;
 const bibleScheduleInsertionCoalescer = createAsyncActionCoalescer();
+const bibleShowNowCoalescer = createAsyncActionCoalescer();
 
 const bibleDesignerState = {
   version: "KJV",
@@ -3089,8 +3091,10 @@ async function showCuedBibleLowerThird() {
     return false;
   }
   if (!isPresentationActiveForBibleLowerThird()) {
-    if (!hasAudienceOutputSelected()) {
-      showGnomeToast("Choose an audience output display");
+    if (
+      !hasAudienceOutputSelected() &&
+      !(await requestAudienceOutputDevice({ invoke }))
+    ) {
       return false;
     }
     const started = await showBibleTextNow();
@@ -4373,17 +4377,25 @@ function syncActiveScheduledBiblePresentation() {
   return true;
 }
 
-async function showBibleTextNow() {
+function showBibleTextNow() {
+  return bibleShowNowCoalescer.run("bible:show-now", performShowBibleTextNow);
+}
+
+async function performShowBibleTextNow() {
   const entry = await currentBibleTextOnlyEntry();
   if (!entry) {
     showGnomeToast("Choose Bible text to show");
     return false;
   }
   const transientEntry = bibleEntryWithShowNowStyle(entry);
-  const wantsAudience = hasAudienceOutputSelected();
+  const sourceOwner = scripturePresentationSource(transientEntry.bible).id;
+  let wantsAudience = hasAudienceOutputSelected();
   const wantsLowerThird = hasLowerThirdOutputSelected();
   if (!wantsAudience && !wantsLowerThird) {
-    showGnomeToast("Choose an output display");
+    wantsAudience = Boolean(await requestAudienceOutputDevice({ invoke }));
+    if (!wantsAudience) return false;
+  }
+  if (scripturePresentationSource(bibleDesignerState).id !== sourceOwner) {
     return false;
   }
   const previousQueueIndex = currentQueueIndex;

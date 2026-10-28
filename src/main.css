@@ -2328,6 +2328,90 @@ ul {
     outline-offset: 2px;
 }
 
+/* Presentation recovery when no audience output has been selected. */
+.audience-output-dialog {
+    width: min(460px, calc(100vw - 40px));
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    color: var(--window-fg-color);
+    background: var(--window-bg-color);
+    box-shadow: 0 22px 64px rgb(0 0 0 / 42%);
+}
+
+.audience-output-dialog::backdrop {
+    background: rgb(0 0 0 / 48%);
+    backdrop-filter: blur(2px);
+}
+
+.audience-output-dialog__content {
+    display: grid;
+    gap: 12px;
+    padding: 22px;
+}
+
+.audience-output-dialog__content header {
+    display: grid;
+    gap: 6px;
+}
+
+.audience-output-dialog__content h2,
+.audience-output-dialog__content p {
+    margin: 0;
+}
+
+.audience-output-dialog__content h2 {
+    font-size: 20px;
+}
+
+.audience-output-dialog__content header p,
+.audience-output-dialog__status {
+    color: var(--text-color-secondary);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.audience-output-dialog__content label {
+    margin-top: 4px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.audience-output-dialog__content select {
+    width: 100%;
+    min-height: 40px;
+}
+
+.audience-output-dialog__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.audience-output-dialog__actions button {
+    min-height: 36px;
+    padding: 7px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    color: inherit;
+    background: var(--card-shade-color);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.audience-output-dialog__actions .suggested-action {
+    border-color: var(--accent-bg-color);
+    color: #ffffff;
+    background: var(--accent-bg-color);
+}
+
+.audience-output-dialog__actions button:disabled {
+    opacity: .5;
+    cursor: default;
+}
+
 /* --- Video Wrapper and View Area Styling --- */
 .video-wrapper {
     flex: 1;

@@ -11,6 +11,8 @@ the Free Software Foundation, either version 3 of the License, or
  * Live media runtime: play/pause, local media handlers, countdown overlay, and audience media window.
  */
 
+import { requestAudienceOutputDevice } from "../shared/audience-output-device.mjs";
+
 import {
   MEDIAPLAYER,
   NETWORK_PREVIEW_PREROLL_BUFFER_SECONDS,
@@ -1149,9 +1151,12 @@ async function playMedia(e) {
 
   if (!isPlaying) {
     return runPresentationStart(async () => {
-      if (!audioOnlyFile && !hasAudienceOutputSelected()) {
-        showGnomeToast("Choose an audience output display");
-        return;
+      if (
+        !audioOnlyFile &&
+        !hasAudienceOutputSelected() &&
+        !(await requestAudienceOutputDevice({ invoke }))
+      ) {
+        return false;
       }
       setSharedRendererState({ isPlaying: true });
       updateDynUI();
@@ -2165,7 +2170,14 @@ async function createMediaWindow(options) {
     currentMode === STREAMPLAYER
       ? document.getElementById("dspSelctStreams")
       : document.getElementById("dspSelct");
-  const selectedDisplay = displaySelectEl?.value || null;
+  let selectedDisplay = displaySelectEl?.value || null;
+  if (!selectedDisplay) {
+    selectedDisplay = await requestAudienceOutputDevice({ invoke });
+    if (!selectedDisplay) {
+      setSharedRendererState({ isActiveMediaWindowCache: false });
+      return false;
+    }
+  }
   setSharedRendererState({ activeLiveStream: liveStreamAtLiveEdge });
 
   if (liveStreamMode === true) {
@@ -2286,12 +2298,6 @@ async function createMediaWindow(options) {
       devTools: false,
     },
   };
-
-  if (!selectedDisplay) {
-    showGnomeToast("Choose an audience output display");
-    setSharedRendererState({ isActiveMediaWindowCache: false });
-    return false;
-  }
 
   const startupSyncNeeded =
     autoPlayEnabled && !liveStreamAtLiveEdge && !isTextItem && !isImgFile && !isPptxFile;

@@ -31,6 +31,7 @@ const deckLibraryQueryGate = createLatestRequestGate();
 const deckFolderQueryGate = createLatestRequestGate();
 const deckMutationGate = createLatestRequestGate();
 const scheduleInsertionCoalescer = createAsyncActionCoalescer();
+const showNowPresentationCoalescer = createAsyncActionCoalescer();
 let songEditorRevision = 0;
 let songEditorLibrarySaveInFlight = false;
 
@@ -3839,22 +3840,39 @@ async function syncActiveScheduledSongPresentation() {
   return sendSongTextToOutput(item);
 }
 
-async function showSongTextNow() {
-  if (!currentWorkspaceSong) {
+function showSongTextNow() {
+  const songOwner = currentWorkspaceSong;
+  const deckOwner = currentWorkspaceSongDeck;
+  return showNowPresentationCoalescer.run("audience:show-now", () =>
+    performShowSongTextNow({ songOwner, deckOwner }),
+  );
+}
+
+async function performShowSongTextNow({ songOwner, deckOwner }) {
+  if (!songOwner || currentWorkspaceSong !== songOwner) {
     showGnomeToast("Choose a song to show");
-    return false;
-  }
-  if (!hasAudienceOutputSelected()) {
-    showGnomeToast("Choose an audience output display");
     return false;
   }
 
   const transientEntry = buildSongQueueEntryFromDeck({
-    deck: currentWorkspaceSongDeck || currentWorkspaceSong,
+    deck: deckOwner || songOwner,
     render: currentSongRenderState,
     currentSectionId: currentSongSectionId,
   });
   if (!transientEntry) return false;
+
+  if (
+    !hasAudienceOutputSelected() &&
+    !(await requestAudienceOutputDevice({ invoke }))
+  ) {
+    return false;
+  }
+  if (
+    currentWorkspaceSong !== songOwner ||
+    currentWorkspaceSongDeck !== deckOwner
+  ) {
+    return false;
+  }
 
   try {
     const audienceStarted = isActiveMediaWindow()
@@ -7690,20 +7708,36 @@ async function syncActiveDeckPresentation() {
   return syncActiveScheduledSongPresentation();
 }
 
-async function showCurrentDeckNow() {
-  if (!currentDeck) {
-    showGnomeToast("Select a deck first");
-    return;
-  }
-  if (typeof hasAudienceOutputSelected === "function" && !hasAudienceOutputSelected()) {
-    showGnomeToast("Choose an audience output display");
-    return;
-  }
-  const entry = buildDeckQueueEntry({});
-  if (!entry) return;
+function showCurrentDeckNow() {
   const deckOwner = currentDeck;
   const pageOwner = currentDeckPageId;
   const editRevision = deckEditRevision;
+  return showNowPresentationCoalescer.run("audience:show-now", () =>
+    performShowCurrentDeckNow({ deckOwner, pageOwner, editRevision }),
+  );
+}
+
+async function performShowCurrentDeckNow({ deckOwner, pageOwner, editRevision }) {
+  if (!deckOwner || currentDeck !== deckOwner) {
+    showGnomeToast("Select a deck first");
+    return false;
+  }
+  if (
+    typeof hasAudienceOutputSelected === "function" &&
+    !hasAudienceOutputSelected() &&
+    !(await requestAudienceOutputDevice({ invoke }))
+  ) {
+    return false;
+  }
+  if (
+    currentDeck !== deckOwner ||
+    currentDeckPageId !== pageOwner ||
+    deckEditRevision !== editRevision
+  ) {
+    return false;
+  }
+  const entry = buildDeckQueueEntry({});
+  if (!entry) return false;
   try {
     const started = isActiveMediaWindow()
       ? activeMediaWindowContentType === "song"
@@ -7746,9 +7780,11 @@ async function showCurrentDeckNow() {
     if (typeof isActiveMediaWindowCache !== "undefined") setSharedRendererState({ isActiveMediaWindowCache: true });
     if (typeof updateDynUI === "function") updateDynUI();
     if (typeof renderQueue === "function") renderQueue();
+    return true;
   } catch (err) {
     console.error("Failed to show deck:", err);
     showGnomeToast(`Failed to show deck: ${err.message || err}`);
+    return false;
   }
 }
 
@@ -9093,6 +9129,7 @@ import {
   waitForTextFonts,
 } from "./app-renderer.mjs";
 import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
+import { requestAudienceOutputDevice } from "../shared/audience-output-device.mjs";
 import {
   createAsyncActionCoalescer,
   createLatestRequestGate,

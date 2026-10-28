@@ -271,6 +271,21 @@
         </div>
       </section>
     </div>
+    <dialog id="audienceOutputDialog" class="audience-output-dialog" aria-labelledby="audienceOutputDialogTitle" aria-describedby="audienceOutputDialogDescription">
+      <div class="audience-output-dialog__content">
+        <header>
+          <h2 id="audienceOutputDialogTitle">Choose an audience display</h2>
+          <p id="audienceOutputDialogDescription">Select where the presentation should appear. It will start after you choose a display.</p>
+        </header>
+        <label for="audienceOutputDialogSelect">Output display</label>
+        <select id="audienceOutputDialogSelect" class="display-select"></select>
+        <p id="audienceOutputDialogStatus" class="audience-output-dialog__status" role="status" hidden></p>
+        <div class="audience-output-dialog__actions">
+          <button id="audienceOutputDialogCancel" type="button">Cancel</button>
+          <button id="audienceOutputDialogConfirm" class="suggested-action" type="button">Use Display</button>
+        </div>
+      </div>
+    </dialog>
   </main>
   </div>
 </body>
