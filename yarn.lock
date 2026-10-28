@@ -1732,7 +1732,7 @@ __metadata:
     html-minifier-terser: "npm:^7.2.0"
     pdfjs-dist: "npm:6.4.299"
     terser: "npm:^5.51.2"
-    write-file-atomic: "npm:^7.0.1"
+    write-file-atomic: "npm:^8.0.0"
     yauzl: "npm:^3.4.0"
     yazl: "npm:^3.3.1"
     youtubei.js: "npm:^17.2.0"
@@ -4107,12 +4107,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"write-file-atomic@npm:^7.0.1":
-  version: 7.0.1
-  resolution: "write-file-atomic@npm:7.0.1"
+"write-file-atomic@npm:^8.0.0":
+  version: 8.0.0
+  resolution: "write-file-atomic@npm:8.0.0"
   dependencies:
     signal-exit: "npm:^4.0.1"
-  checksum: 10c0/69cebb64945e22928a24ae7e2a55bf54438c92d6f657c1fa5e96b7c7a50f6c022e7454ab5c259079bb35f60296242f3a21234c79320d64a8ad57675b56a2098d
+  checksum: 10c0/49567002e4747e6f738373bc3cda591948c45b39282b835bf51143b483800f6c2e6259d2c187dbe08951fe5752ddec7751e52a90033eff3e93ad04b64cc091ae
   languageName: node
   linkType: hard
 
