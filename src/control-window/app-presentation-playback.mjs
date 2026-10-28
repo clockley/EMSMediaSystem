@@ -1601,6 +1601,9 @@ async function playCurrentQueueItem(opts) {
       audience: audienceStarted,
       lowerThird: lowerThirdStarted,
     });
+    if (!audienceStarted && lowerThirdStarted) {
+      void syncStageContentFromQueueItem(item).catch(() => {});
+    }
     if (!audienceStarted && !lowerThirdStarted) {
       showGnomeToast("Choose an output display");
       setSharedRendererState({ isPlaying: false });
@@ -1625,6 +1628,9 @@ async function playCurrentQueueItem(opts) {
     const audienceStarted = wantsAudience
       ? await createMediaWindow({ textItem: item, songItem: true, transitionToken })
       : false;
+    if (!audienceStarted && lowerThirdStarted) {
+      void syncStageContentFromQueueItem(item).catch(() => {});
+    }
     if (!audienceStarted && !lowerThirdStarted) {
       showGnomeToast("Choose an output display");
       setSharedRendererState({ isPlaying: false });
@@ -2102,6 +2108,7 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     if (slipstreamAudienceType && slipstreamAudienceMessage) {
       sendAudienceTextMessage(slipstreamAudienceType, slipstreamAudienceMessage, {
         expectedPlaybackId: slipstreamResult.playbackId,
+        stageItem: nextItem,
       });
     }
     if (!isBibleItem && scripturePresentation.state.status !== "idle") {

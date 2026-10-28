@@ -69,6 +69,7 @@ import {
   mergeSongRenderState,
   navigationState,
   navigationStateBeforeStage,
+  mediaQueue,
   nextPlayableQueueItemStageText,
   pathToMediaUrl,
   projectScriptureOverrides,
@@ -109,6 +110,11 @@ import {
 } from "./app-renderer.mjs";
 
 import { createLatestRequestGate } from "../shared/async-operation-ownership.mjs";
+import {
+  mergeStageNotes,
+  scheduleGroupForItem,
+  scheduleItemStageNotes,
+} from "../shared/schedule-item-notes.mjs";
 
 const stageLayerRevisions = new Map();
 const liveThemeApplyGate = createLatestRequestGate();
@@ -240,7 +246,13 @@ function sendAudienceTextMessage(type, message, options = {}) {
       ? { ...outgoingMessage, playbackId: String(options.expectedPlaybackId) }
       : outgoingMessage,
   );
-  void syncStageContentFromAudienceMessage(type, themedMessage);
+  // Output startup and slipstream transitions can send the new audience
+  // payload before currentQueueIndex is committed. Capture the owning cue at
+  // the send boundary so stage notes cannot be borrowed from the outgoing cue.
+  const stageItem = Object.prototype.hasOwnProperty.call(options, "stageItem")
+    ? options.stageItem
+    : currentLiveQueueItem();
+  void syncStageContentFromAudienceMessage(type, themedMessage, stageItem);
   if (clearToggle && !applyClearState) {
     setSharedRendererState({ liveTextClearActive: false });
   }
@@ -248,14 +260,13 @@ function sendAudienceTextMessage(type, message, options = {}) {
   updateOutputHoldButtonStates();
 }
 
-function livePresentationForStage(type, message = {}) {
+function livePresentationForStage(type, message = {}, item = currentLiveQueueItem()) {
   const embedded = message?.resolvedPresentation;
   const embeddedCount = Array.isArray(embedded?.slides) ? embedded.slides.length : 0;
   if (embeddedCount > 1) return embedded;
   if (type === "song") {
-    const liveItem = currentLiveQueueItem();
-    const sourceItem = isQueueItemSong(liveItem)
-      ? songItemForAudienceResolution(liveItem)
+    const sourceItem = isQueueItemSong(item)
+      ? songItemForAudienceResolution(item)
       : songItemForAudienceResolution(currentSongPresentationItem());
     const live = sourceItem
       ? resolvedSongPresentation(sourceItem)?.resolvedPresentation
@@ -276,13 +287,28 @@ async function sendCachedStageContent() {
   return sendStageLayer("content", stageContentCache);
 }
 
-async function syncStageContentFromAudienceMessage(type, message = {}) {
-  const presentation = livePresentationForStage(type, message);
+/**
+ * Opted-in schedule notes for the live cue: its group's note, then its own.
+ * Never used for audience or lower-third payloads.
+ */
+function liveScheduleItemStageNotes(item = currentLiveQueueItem()) {
+  if (!item) return "";
+  return scheduleItemStageNotes(item, scheduleGroupForItem(mediaQueue, item));
+}
+
+async function syncStageContentFromAudienceMessage(
+  type,
+  message = {},
+  item = currentLiveQueueItem(),
+) {
+  const presentation = livePresentationForStage(type, message, item);
+  const itemIndex = mediaQueue.indexOf(item);
   const payload = stageContentFromPresentation(
     { ...message, resolvedPresentation: presentation || message?.resolvedPresentation },
     {
       type,
-      nextItemText: nextPlayableQueueItemStageText(),
+      nextItemText: nextPlayableQueueItemStageText(itemIndex),
+      itemNotes: liveScheduleItemStageNotes(item),
       slides: presentation?.slides,
     },
   );
@@ -295,16 +321,32 @@ async function syncStageContentFromAudienceMessage(type, message = {}) {
 
 async function syncStageContentFromQueueItem(item = currentLiveQueueItem()) {
   if (!item) return false;
-  if (isQueueItemSong(item) || isQueueItemBible(item)) {
-    return false;
-  }
-  const nextText = nextPlayableQueueItemStageText();
+  const nextText = nextPlayableQueueItemStageText(mediaQueue.indexOf(item));
+  // This generic path is also used when a text cue is lower-third-only and no
+  // audience payload exists to build richer stage content. Explicitly reset
+  // slide notes so content from the previous cue cannot linger.
   setSharedRendererState({ stageContentCache: {
     ...stageContentCache,
     current: queueItemStageLabel(item) || "Live content",
     next: nextText,
     serviceItem: queueItemStageLabel(item),
+    slideNotes: "",
+    notes: liveScheduleItemStageNotes(item),
   } });
+  return sendCachedStageContent();
+}
+
+/**
+ * Re-merge stage notes after a schedule note edit, without re-resolving
+ * slides. Only sends when the stage text actually changes.
+ */
+async function refreshStageNotesForLiveItem() {
+  const notes = mergeStageNotes(
+    liveScheduleItemStageNotes(),
+    stageContentCache.slideNotes || "",
+  );
+  if (notes === (stageContentCache.notes || "")) return false;
+  setSharedRendererState({ stageContentCache: { ...stageContentCache, notes } });
   return sendCachedStageContent();
 }
 
@@ -1090,6 +1132,7 @@ export {
   openStageControls,
   populateStageDisplaySelect,
   recentAlertMessages,
+  refreshStageNotesForLiveItem,
   rememberAudienceTextMessage,
   rememberRecentAlertMessage,
   renderAlertLists,

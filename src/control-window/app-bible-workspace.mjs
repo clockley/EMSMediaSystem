@@ -17,6 +17,7 @@ import { bibleTextVerseRows } from "../shared/app-bible-reference-utils.mjs";
 import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
 import { createAsyncActionCoalescer } from "../shared/async-operation-ownership.mjs";
 import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
+import { copyScheduleNoteFields } from "../shared/schedule-item-notes.mjs";
 
 import {
   DEFAULT_ITEM_SLIDE_TRANSITION,
@@ -170,6 +171,7 @@ import {
   syncConfidenceMonitorCarousel,
   syncLowerThirdFeatureAvailability,
   syncLowerThirdRendererPreviewCapture,
+  syncStageContentFromQueueItem,
   syncSlideTransitionControls,
   themeLowerThirdMessageIfApplied,
   themedAudienceMessage,
@@ -4450,6 +4452,9 @@ async function showBibleTextNow() {
       showGnomeToast("No Bible output started");
       return false;
     }
+    if (!audienceStarted && lowerThirdStarted) {
+      void syncStageContentFromQueueItem(transientEntry).catch(() => {});
+    }
     setSharedRendererState({ activeMediaWindowContentType: audienceStarted ? "bible" : null });
     setSharedRendererState({ isPlaying: true });
     setSharedRendererState({ isQueuePlaying: false });
@@ -4535,6 +4540,7 @@ async function slipstreamBiblePresentation(
   setSharedRendererState({ activeMediaWindowContentType: "bible" });
   sendAudienceTextMessage("bible", audienceMessage, {
     expectedPlaybackId: activation.playbackId,
+    stageItem: null,
   });
   return true;
 }
@@ -5786,6 +5792,7 @@ async function splitScheduledBiblePassageIntoVerses(index) {
     splitEntries.push(queueEntry);
   }
   if (splitEntries.length <= 1) return false;
+  copyScheduleNoteFields(originalItem, splitEntries[0]);
 
   const currentIndex = mediaQueue.indexOf(originalItem);
   if (currentIndex < 0) {

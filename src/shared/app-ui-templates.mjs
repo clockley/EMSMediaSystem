@@ -185,11 +185,35 @@ export function generateMediaFormHTML() {
             <span class="list-placeholder-hint">Add media, network items, or Bible text</span>
           </div>
         </div>
-        <div id="queueStartControls" class="queue-start-controls" hidden>
-          <span class="queue-start-controls__title">Start this item</span>
-          <div class="queue-start-mode" role="group" aria-label="Start this item">
-            <button type="button" class="queue-start-mode__button" data-queue-start-mode="manual" aria-pressed="true" title="Wait until Present is pressed">Press Present</button>
-            <button type="button" class="queue-start-mode__button" data-queue-start-mode="auto" aria-pressed="false" title="Start when the previous item finishes">After previous</button>
+        <div id="queueStartControls" class="queue-start-controls queue-item-inspector" hidden>
+          <div id="queueStartModeGroup" class="queue-start-controls__start">
+            <span class="queue-start-controls__title">Start this item</span>
+            <div class="queue-start-mode" role="group" aria-label="Start this item">
+              <button type="button" class="queue-start-mode__button" data-queue-start-mode="manual" aria-pressed="true" title="Wait until Present is pressed">Press Present</button>
+              <button type="button" class="queue-start-mode__button" data-queue-start-mode="auto" aria-pressed="false" title="Start when the previous item finishes">After previous</button>
+            </div>
+          </div>
+          <div id="queueNoteEditor" class="queue-note-editor" data-expanded="false">
+            <button type="button" id="queueNoteAddBtn" class="queue-note-editor__add" aria-keyshortcuts="N" title="Add a note for this item (N)">
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.25h9c.69 0 1.25.56 1.25 1.25v5.94c0 .33-.13.65-.37.88l-3.56 3.56c-.23.24-.55.37-.88.37H3.5c-.69 0-1.25-.56-1.25-1.25v-9.5c0-.69.56-1.25 1.25-1.25Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 5v5M5.5 7.5h5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              <span id="queueNoteAddLabel">Add note</span>
+              <kbd class="queue-note-editor__kbd" aria-hidden="true">N</kbd>
+            </button>
+            <div class="queue-note-editor__body">
+              <div class="queue-note-editor__header">
+                <label for="queueNoteInput" id="queueNoteLabel" class="queue-note-editor__label">Note</label>
+                <span id="queueNoteStatus" class="queue-note-editor__status" role="status" aria-live="polite"></span>
+              </div>
+              <textarea id="queueNoteInput" class="queue-note-editor__input" rows="2" maxlength="2000" spellcheck="true" aria-describedby="queueNoteHint"></textarea>
+              <div class="queue-note-editor__footer">
+                <label class="queue-note-editor__stage" title="Show this note on the stage display for the worship team">
+                  <input type="checkbox" id="queueNoteStageToggle">
+                  <span>Show on stage display</span>
+                </label>
+                <span id="queueNoteCount" class="queue-note-editor__count" aria-hidden="true"></span>
+              </div>
+              <span id="queueNoteHint" class="visually-hidden">Saved automatically. Never shown to the audience. Press Escape when done.</span>
+            </div>
           </div>
         </div>
       </div>

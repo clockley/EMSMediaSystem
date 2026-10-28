@@ -1,4 +1,5 @@
 import { blocksToText } from "./app-slide-utils.mjs";
+import { mergeStageNotes } from "./schedule-item-notes.mjs";
 
 export function stageSlideText(slide) {
   if (!slide || typeof slide !== "object") return "";
@@ -28,7 +29,7 @@ function activeSlideIndex(slides, presentation) {
 
 export function stageContentFromPresentation(
   message = {},
-  { type = "", nextItemText = "", slides: overrideSlides = null } = {},
+  { type = "", nextItemText = "", itemNotes = "", slides: overrideSlides = null } = {},
 ) {
   const presentation = message?.resolvedPresentation || null;
   const slides = Array.isArray(overrideSlides)
@@ -49,6 +50,7 @@ export function stageContentFromPresentation(
     nextFromNavigation || (activeIndex >= 0 ? slides[activeIndex + 1] : null);
   const next =
     stageSlideText(nextSlide) || String(nextItemText || "").trim();
+  const slideNotes = String(slides[activeIndex]?.notes || message.notes || "").trim();
   return {
     current: current || fallbackCurrentLabel(type),
     next,
@@ -59,7 +61,10 @@ export function stageContentFromPresentation(
       message.sectionLabel ||
       "",
     ).trim(),
-    notes: String(slides[activeIndex]?.notes || message.notes || "").trim(),
+    // Schedule-item notes (already filtered to stage opt-in by the caller)
+    // come first; the active page's own notes follow.
+    notes: mergeStageNotes(itemNotes, slideNotes),
+    slideNotes,
     serviceItem: String(
       message.title || message.referenceText || message.reference || "",
     ).trim(),

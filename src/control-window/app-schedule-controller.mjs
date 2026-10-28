@@ -25,6 +25,12 @@ import {
   ungroupScheduleSectionMembers,
 } from "../shared/schedule-item-availability.mjs";
 import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
+import {
+  SCHEDULE_NOTE_MAX_LENGTH,
+  scheduleItemHasNote,
+  scheduleItemNoteText,
+  scheduleNotePreview,
+} from "../shared/schedule-item-notes.mjs";
 
 import {
   BIBLE_VERSE_DRAG_MIME,
@@ -107,10 +113,12 @@ import {
   releaseOutputHoldsAndGoLiveQueueIndex,
   renderStateForLibrarySong,
   recordScheduledMediaPaths,
+  refreshStageNotesForLiveItem,
   resetPreviewSurfaceToEmptyState,
   resolveMediaLibraryDragItem,
   restoreCountdownForLiveMedia,
   saveMediaFile,
+  scheduleAutosaveProjectState,
   schedulePptxThumbnailRefresh,
   selectedQueueAnchorIndex,
   setSBFormMediaPlayer,
@@ -170,6 +178,465 @@ let recentlyAddedQueueItemsTimer = null;
 let queueDropIndicator = null;
 
 const DEFAULT_SCHEDULE_SECTION_NAME = DEFAULT_SCHEDULE_GROUP_NAME;
+
+/* ------------------------------------------------------------------------ *
+ * Schedule item notes
+ *
+ * Operator-only notes on cues and groups. Editing is modeless: the inspector
+ * below the schedule writes straight into the queue item, and persistence,
+ * row refresh, and stage updates are debounced. Notes never enter audience
+ * or lower-third payloads; the stage sees them only when opted in.
+ * ------------------------------------------------------------------------ */
+
+const SCHEDULE_NOTE_COMMIT_DELAY_MS = 350;
+const SCHEDULE_NOTE_COUNT_THRESHOLD = Math.floor(SCHEDULE_NOTE_MAX_LENGTH * 0.8);
+
+const SCHEDULE_NOTE_ICON =
+  '<svg class="schedule-note-icon" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.25h9c.69 0 1.25.56 1.25 1.25v5.94c0 .33-.13.65-.37.88l-3.56 3.56c-.23.24-.55.37-.88.37H3.5c-.69 0-1.25-.56-1.25-1.25v-9.5c0-.69.56-1.25 1.25-1.25Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M9.25 13.6V10.5c0-.55.45-1 1-1h3.1M5 5.75h6M5 8.25h3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+
+const SCHEDULE_NOTE_ADD_ICON =
+  '<svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.25h9c.69 0 1.25.56 1.25 1.25v5.94c0 .33-.13.65-.37.88l-3.56 3.56c-.23.24-.55.37-.88.37H3.5c-.69 0-1.25-.56-1.25-1.25v-9.5c0-.69.56-1.25 1.25-1.25Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 5v5M5.5 7.5h5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+
+const SCHEDULE_NOTE_STAGE_ICON =
+  '<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.25h12v8H2zM5.5 14h5M8 11.25V14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+
+/** Queue item currently bound to the inspector's note editor. */
+let noteEditorItem = null;
+/** Keep the editor open while its note is still empty (after Add note / N). */
+let noteEditorExpanded = false;
+/** Unpersisted keystrokes exist for `noteEditorItem`. */
+let noteEditorDirty = false;
+let noteCommitTimer = null;
+let noteStatusTimer = null;
+let noteSaveStatusRevision = 0;
+let noteRowsRefreshFrame = 0;
+
+function isElementShown(element) {
+  if (!element) return false;
+  return typeof element.checkVisibility === "function"
+    ? element.checkVisibility()
+    : element.offsetParent !== null;
+}
+
+function scheduleNotePreviewMarkup(item, index) {
+  const text = scheduleItemNoteText(item);
+  if (!text) return "";
+  const preview = scheduleNotePreview(text);
+  const onStage = item.notesOnStage === true;
+  const moreMarkup = preview.truncated && !preview.text.endsWith("…")
+    ? '<span class="queue-item-note__more" aria-hidden="true">…</span>'
+    : "";
+  const stageMarkup = onStage
+    ? `<span class="queue-item-note__stage" title="Also shown on the stage display">${SCHEDULE_NOTE_STAGE_ICON}<span class="visually-hidden">Shown on stage</span></span>`
+    : "";
+  return `<button type="button" class="queue-item-note${onStage ? " queue-item-note--stage" : ""}" draggable="false" data-queue-note-edit="${index}" title="${escapeHtml(text)}" aria-label="Edit note: ${escapeHtml(preview.text)}">${SCHEDULE_NOTE_ICON}<span class="queue-item-note__text">${escapeHtml(preview.text)}</span>${moreMarkup}${stageMarkup}</button>`;
+}
+
+function scheduleNoteAddButtonMarkup(item, index) {
+  if (scheduleItemHasNote(item)) return "";
+  const name = isQueueItemBible(item) ? bibleQueueItemDisplayName(item) : item?.name || "item";
+  return `<button type="button" class="queue-note-add-btn" draggable="false" data-queue-note-edit="${index}" title="Add note (N)" aria-label="Add note to ${escapeHtml(name)}">${SCHEDULE_NOTE_ADD_ICON}</button>`;
+}
+
+function noteEditorElements() {
+  return {
+    controls: document.getElementById("queueStartControls"),
+    editor: document.getElementById("queueNoteEditor"),
+    input: document.getElementById("queueNoteInput"),
+    stage: document.getElementById("queueNoteStageToggle"),
+    status: document.getElementById("queueNoteStatus"),
+    count: document.getElementById("queueNoteCount"),
+    addButton: document.getElementById("queueNoteAddBtn"),
+    addLabel: document.getElementById("queueNoteAddLabel"),
+    label: document.getElementById("queueNoteLabel"),
+  };
+}
+
+function setScheduleNoteStatus(text, { transient = true } = {}) {
+  const { status } = noteEditorElements();
+  if (!status) return;
+  if (noteStatusTimer !== null) {
+    window.clearTimeout(noteStatusTimer);
+    noteStatusTimer = null;
+  }
+  status.textContent = text;
+  status.dataset.visible = text ? "true" : "false";
+  if (text && transient) {
+    noteStatusTimer = window.setTimeout(() => {
+      noteStatusTimer = null;
+      status.dataset.visible = "false";
+    }, 1600);
+  }
+}
+
+function updateScheduleNoteCount() {
+  const { input, count } = noteEditorElements();
+  if (!input || !count) return;
+  const length = input.value.length;
+  count.textContent = length >= SCHEDULE_NOTE_COUNT_THRESHOLD
+    ? `${length} / ${SCHEDULE_NOTE_MAX_LENGTH}`
+    : "";
+}
+
+/** Coalesce row re-renders so a burst of note edits repaints the list once. */
+function scheduleNoteRowsRefresh() {
+  if (noteRowsRefreshFrame) return;
+  noteRowsRefreshFrame = window.requestAnimationFrame(() => {
+    noteRowsRefreshFrame = 0;
+    renderQueue();
+  });
+}
+
+function persistScheduleNoteChange({ status = "Saved" } = {}) {
+  const statusRevision = ++noteSaveStatusRevision;
+  if (status) setScheduleNoteStatus("Saving…", { transient: false });
+  void Promise.resolve(scheduleAutosaveProjectState()).then((saved) => {
+    if (statusRevision !== noteSaveStatusRevision) return;
+    if (saved) {
+      if (status) setScheduleNoteStatus(status);
+    } else {
+      setScheduleNoteStatus("Autosave failed", { transient: false });
+    }
+  });
+  void Promise.resolve(refreshStageNotesForLiveItem()).catch(() => {});
+  scheduleNoteRowsRefresh();
+}
+
+/** Persist pending keystrokes for the bound item. Safe to call at any time. */
+function flushScheduleNoteEdit() {
+  if (noteCommitTimer !== null) {
+    window.clearTimeout(noteCommitTimer);
+    noteCommitTimer = null;
+  }
+  if (!noteEditorDirty) return false;
+  noteEditorDirty = false;
+  if (!noteEditorItem || !mediaQueue.includes(noteEditorItem)) return false;
+  persistScheduleNoteChange();
+  return true;
+}
+
+function syncScheduleNoteEditor(item) {
+  const els = noteEditorElements();
+  if (!els.editor || !els.input) return;
+  const focused = document.activeElement === els.input;
+  if (item !== noteEditorItem) {
+    flushScheduleNoteEdit();
+    // A completed save for the previously selected item must not paint a
+    // misleading status into the newly selected item's editor.
+    noteSaveStatusRevision += 1;
+    noteEditorItem = item;
+    noteEditorExpanded = false;
+    els.input.value = typeof item?.notes === "string" ? item.notes : "";
+    setScheduleNoteStatus("");
+  } else if (item && !focused && !noteEditorDirty) {
+    // Pick up changes made elsewhere (context menu, undo) without ever
+    // clobbering an in-progress edit.
+    const value = typeof item.notes === "string" ? item.notes : "";
+    if (els.input.value !== value) els.input.value = value;
+  }
+  els.editor.hidden = !item;
+  if (!item) return;
+  const isSection = isQueueItemSection(item);
+  if (els.stage) els.stage.checked = item.notesOnStage === true;
+  const expanded = noteEditorExpanded || focused || els.input.value.trim().length > 0;
+  els.editor.dataset.expanded = expanded ? "true" : "false";
+  if (els.addLabel) els.addLabel.textContent = isSection ? "Add group note" : "Add note";
+  if (els.label) els.label.textContent = isSection ? "Group note" : "Note";
+  els.input.placeholder = isSection
+    ? "Applies to the whole group, e.g. \u201cLights to 40%\u201d or \u201cBand stays on stage\u201d"
+    : "Cues and reminders, e.g. \u201cSkip verse 3\u201d or \u201cFade music under prayer\u201d";
+  updateScheduleNoteCount();
+}
+
+/**
+ * Select `index` (if needed), expand the inspector's note editor, and focus
+ * it with the caret at the end. Used by N, row previews, the hover button,
+ * callouts, and context menus.
+ */
+function openScheduleNoteEditor(index) {
+  if (!queueIndexInRange(index)) return false;
+  const item = mediaQueue[index];
+  if (
+    selectedQueueIndexForDisplay() !== index ||
+    selectedQueueItems.size > 1 ||
+    !selectedQueueItems.has(item)
+  ) {
+    setSelectedQueueAnchor(index, { explicit: true });
+  }
+  updateQueueSelectionVisual();
+  noteEditorExpanded = true;
+  syncScheduleNoteEditor(item);
+  const { input, editor, controls } = noteEditorElements();
+  if (!input || !editor || editor.hidden || controls?.hidden) return false;
+  input.focus({ preventScroll: true });
+  const end = input.value.length;
+  input.setSelectionRange(end, end);
+  editor.scrollIntoView({ block: "nearest" });
+  return true;
+}
+
+function finishScheduleNoteEditing() {
+  flushScheduleNoteEdit();
+  const { input } = noteEditorElements();
+  const index = noteEditorItem ? mediaQueue.indexOf(noteEditorItem) : -1;
+  input?.blur();
+  const row = index >= 0
+    ? document.querySelector(`.queue-item[data-queue-index="${index}"]`)
+    : null;
+  if (row?.hasAttribute("tabindex")) row.focus({ preventScroll: true });
+}
+
+function removeScheduleItemNote(index) {
+  if (!queueIndexInRange(index)) return;
+  const item = mediaQueue[index];
+  if (!scheduleItemHasNote(item)) return;
+  const previous = { notes: item.notes, notesOnStage: item.notesOnStage === true };
+  if (noteEditorItem === item) {
+    if (noteCommitTimer !== null) window.clearTimeout(noteCommitTimer);
+    noteCommitTimer = null;
+    noteEditorDirty = false;
+    noteEditorExpanded = false;
+    noteEditorElements().input?.blur();
+  }
+  delete item.notes;
+  delete item.notesOnStage;
+  persistScheduleNoteChange({ status: "" });
+  updateQueueStartControls();
+  showGnomeToast("Note removed", {
+    onUndo: () => {
+      if (!mediaQueue.includes(item) || scheduleItemHasNote(item)) return;
+      item.notes = previous.notes;
+      if (previous.notesOnStage) item.notesOnStage = true;
+      persistScheduleNoteChange({ status: "" });
+      updateQueueStartControls();
+    },
+  });
+}
+
+function scheduleNoteMenuMarkup() {
+  return `
+    <div class="song-context-menu__separator" role="separator" data-schedule-note-menu></div>
+    <button type="button" role="menuitem" data-schedule-note-menu data-schedule-note-action="edit">Add Note</button>
+    <button type="button" role="menuitemcheckbox" aria-checked="false" data-schedule-note-menu data-schedule-note-action="stage">Show Note on Stage</button>
+    <button type="button" role="menuitem" data-schedule-note-menu data-schedule-note-action="remove">Remove Note</button>
+  `;
+}
+
+function setScheduleItemNoteOnStage(index, onStage) {
+  if (!queueIndexInRange(index)) return;
+  const item = mediaQueue[index];
+  if (onStage) item.notesOnStage = true;
+  else delete item.notesOnStage;
+  persistScheduleNoteChange({ status: onStage ? "Shown on stage" : "Hidden from stage" });
+  updateQueueStartControls();
+}
+
+/**
+ * Add note actions to an already-positioned schedule context menu (song,
+ * Scripture, group, or generic item), then keep it inside the viewport.
+ */
+function attachScheduleNoteMenuItems(menu, index) {
+  if (!menu || menu.hidden || !queueIndexInRange(index)) return;
+  if (!menu.querySelector("[data-schedule-note-menu]")) {
+    const destructiveSeparator = menu.querySelector(
+      ".song-context-menu__separator:not([data-schedule-note-menu])",
+    );
+    if (destructiveSeparator) {
+      destructiveSeparator.insertAdjacentHTML("beforebegin", scheduleNoteMenuMarkup());
+    } else {
+      menu.insertAdjacentHTML("beforeend", scheduleNoteMenuMarkup());
+    }
+    menu.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-schedule-note-action]");
+      if (!button || !menu.contains(button)) return;
+      event.stopPropagation();
+      const targetIndex = menu._queueIndex;
+      menu.setAttribute("hidden", "");
+      const action = button.getAttribute("data-schedule-note-action");
+      if (action === "edit") {
+        requestAnimationFrame(() => openScheduleNoteEditor(targetIndex));
+      } else if (action === "stage") {
+        setScheduleItemNoteOnStage(
+          targetIndex,
+          mediaQueue[targetIndex]?.notesOnStage !== true,
+        );
+      } else if (action === "remove") {
+        removeScheduleItemNote(targetIndex);
+      }
+    });
+  }
+  const item = mediaQueue[index];
+  const hasNote = scheduleItemHasNote(item);
+  const editButton = menu.querySelector('[data-schedule-note-action="edit"]');
+  const stageButton = menu.querySelector('[data-schedule-note-action="stage"]');
+  const removeButton = menu.querySelector('[data-schedule-note-action="remove"]');
+  if (editButton) {
+    editButton.textContent = hasNote
+      ? "Edit Note"
+      : isQueueItemSection(item)
+        ? "Add Group Note"
+        : "Add Note";
+  }
+  if (stageButton) {
+    const onStage = item.notesOnStage === true;
+    stageButton.hidden = !hasNote;
+    stageButton.style.display = hasNote ? "" : "none";
+    stageButton.setAttribute("aria-checked", onStage ? "true" : "false");
+    stageButton.textContent = onStage ? "\u2713 Show Note on Stage" : "Show Note on Stage";
+  }
+  if (removeButton) {
+    removeButton.hidden = !hasNote;
+    removeButton.style.display = hasNote ? "" : "none";
+  }
+  const rect = menu.getBoundingClientRect();
+  if (rect.bottom > window.innerHeight - 8) {
+    menu.style.top = `${Math.round(Math.max(8, window.innerHeight - rect.height - 8))}px`;
+  }
+  if (rect.right > window.innerWidth - 8) {
+    menu.style.left = `${Math.round(Math.max(8, window.innerWidth - rect.width - 8))}px`;
+  }
+}
+
+function hideScheduleItemContextMenu() {
+  document.getElementById("scheduleItemContextMenu")?.setAttribute("hidden", "");
+}
+
+/** Context menu for media, presentation, and audio cues, which had none. */
+function ensureScheduleItemContextMenu() {
+  let menu = document.getElementById("scheduleItemContextMenu");
+  if (menu) return menu;
+  menu = document.createElement("div");
+  menu.id = "scheduleItemContextMenu";
+  menu.className = "song-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.hidden = true;
+  menu.innerHTML = `
+    <div class="song-context-menu__separator" role="separator"></div>
+    <button type="button" role="menuitem" data-schedule-item-action="remove" class="song-context-menu__destructive">Remove from Schedule</button>
+  `;
+  menu.addEventListener("pointerdown", (event) => event.stopPropagation());
+  menu.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-schedule-item-action]");
+    if (!button) return;
+    event.stopPropagation();
+    const index = menu._queueIndex;
+    hideScheduleItemContextMenu();
+    if (button.getAttribute("data-schedule-item-action") === "remove") {
+      removeFromQueue(index);
+    }
+  });
+  document.body.appendChild(menu);
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (event.target.closest?.("#scheduleItemContextMenu")) return;
+      hideScheduleItemContextMenu();
+    },
+    true,
+  );
+  window.addEventListener("resize", hideScheduleItemContextMenu);
+  window.addEventListener("scroll", hideScheduleItemContextMenu, true);
+  return menu;
+}
+
+function showScheduleItemContextMenu(event, index) {
+  event.preventDefault();
+  event.stopPropagation();
+  hideScheduleBibleContextMenu();
+  hideScheduleSongContextMenu();
+  hideScheduleSectionContextMenu();
+  const menu = ensureScheduleItemContextMenu();
+  menu._queueIndex = index;
+  menu.hidden = false;
+  menu.style.left = `${Math.round(Math.max(8, event.clientX))}px`;
+  menu.style.top = `${Math.round(Math.max(8, event.clientY))}px`;
+}
+
+function installScheduleNoteEditor() {
+  const els = noteEditorElements();
+  if (!els.editor || !els.input || els.editor.dataset.noteEditorBound === "1") return;
+  els.editor.dataset.noteEditorBound = "1";
+  const { editor, input, stage, addButton } = els;
+
+  addButton?.addEventListener("click", (event) => {
+    event.preventDefault();
+    const index = noteEditorItem ? mediaQueue.indexOf(noteEditorItem) : -1;
+    openScheduleNoteEditor(index);
+  });
+
+  input.addEventListener("input", () => {
+    const item = noteEditorItem;
+    if (!item) return;
+    if (input.value.trim()) item.notes = input.value;
+    else {
+      delete item.notes;
+      delete item.notesOnStage;
+      if (stage) stage.checked = false;
+    }
+    noteEditorDirty = true;
+    noteEditorExpanded = true;
+    noteSaveStatusRevision += 1;
+    setScheduleNoteStatus("");
+    updateScheduleNoteCount();
+    if (noteCommitTimer !== null) window.clearTimeout(noteCommitTimer);
+    noteCommitTimer = window.setTimeout(() => {
+      noteCommitTimer = null;
+      flushScheduleNoteEdit();
+    }, SCHEDULE_NOTE_COMMIT_DELAY_MS);
+  });
+
+  input.addEventListener("keydown", (event) => {
+    const done =
+      event.key === "Escape" ||
+      (event.key === "Enter" && (event.ctrlKey || event.metaKey));
+    if (!done) return;
+    // Escape must never reach the global handler, where it stops the live
+    // presentation.
+    event.preventDefault();
+    event.stopPropagation();
+    finishScheduleNoteEditing();
+  });
+
+  stage?.addEventListener("change", () => {
+    const index = noteEditorItem ? mediaQueue.indexOf(noteEditorItem) : -1;
+    if (index < 0) return;
+    flushScheduleNoteEdit();
+    setScheduleItemNoteOnStage(index, stage.checked);
+  });
+
+  editor.addEventListener("focusout", () => {
+    flushScheduleNoteEdit();
+    // Defer so focus moving to the stage checkbox (inside the editor) does not
+    // collapse the editor under the pointer.
+    requestAnimationFrame(() => {
+      if (editor.contains(document.activeElement)) return;
+      if (!input.value.trim()) noteEditorExpanded = false;
+      updateQueueStartControls();
+    });
+  });
+
+  // N edits the selected item's note in one keystroke. Ignored while typing
+  // or when a dialog or menu is open.
+  document.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented || event.repeat || event.isComposing) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key !== "n" && event.key !== "N") return;
+    const target = event.target;
+    if (
+      target?.isContentEditable ||
+      ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName) ||
+      target?.closest?.('[role="dialog"], [role="menu"]')
+    ) {
+      return;
+    }
+    if ([...document.querySelectorAll('[aria-modal="true"]')].some(isElementShown)) return;
+    if (!isElementShown(document.getElementById("mediaQueueList"))) return;
+    const index = selectedQueueIndexForDisplay();
+    if (!queueIndexInRange(index)) return;
+    event.preventDefault();
+    openScheduleNoteEditor(index);
+  });
+}
 
 function normalizeScheduleSectionName(value) {
   const name = String(value || "").trim();
@@ -309,6 +776,7 @@ function renderQueue() {
   const visibleQueueItems = [];
   const sectionIndexes = scheduleSectionIndexesForItems(mediaQueue);
   const visibleSectionItemCounts = new Map();
+  const visibleSectionNoteCounts = new Map();
 
   mediaQueue.forEach((item, index) => {
     if (!isScheduleItemCurrentlyVisible(item)) return;
@@ -328,6 +796,12 @@ function renderQueue() {
         sectionIndex,
         (visibleSectionItemCounts.get(sectionIndex) || 0) + 1,
       );
+      if (scheduleItemHasNote(item)) {
+        visibleSectionNoteCounts.set(
+          sectionIndex,
+          (visibleSectionNoteCounts.get(sectionIndex) || 0) + 1,
+        );
+      }
     }
     const collapsedSectionIndex =
       sectionIndex >= 0 && mediaQueue[sectionIndex]?.collapsed === true
@@ -374,6 +848,10 @@ function renderQueue() {
           const childLabel = childCount === 0
             ? "Empty group"
             : `${childCount} item${childCount === 1 ? "" : "s"}`;
+          const hiddenNoteCount = collapsed ? visibleSectionNoteCounts.get(index) || 0 : 0;
+          const hiddenNotesMarkup = hiddenNoteCount > 0
+            ? `<span class="section-note-count" title="Items in this collapsed group have notes">${SCHEDULE_NOTE_ICON}${hiddenNoteCount} note${hiddenNoteCount === 1 ? "" : "s"}</span>`
+            : "";
           const classes = [
             "queue-item",
             "queue-item--section",
@@ -393,7 +871,8 @@ function renderQueue() {
       </span>
       <span class="item-text section-text">
         <span class="item-label" title="${escapeHtml(sectionName)}">${escapeHtml(sectionName)}</span>
-        <span class="section-count">${childLabel}</span>
+        <span class="section-count">${childLabel}${hiddenNotesMarkup}</span>
+        ${scheduleNotePreviewMarkup(item, index)}
       </span>
       <button type="button" class="section-menu-btn" draggable="false" data-queue-section-menu="${index}" title="Group options" aria-label="Options for ${escapeHtml(sectionName)}" aria-haspopup="menu">
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r="1.25" fill="currentColor"/><circle cx="8" cy="8" r="1.25" fill="currentColor"/><circle cx="13" cy="8" r="1.25" fill="currentColor"/></svg>
@@ -417,6 +896,7 @@ function renderQueue() {
           isCued ? "is-cued" : "",
           isUpNext ? "is-up-next" : "",
           item.pendingMediaUpdate?.status === "ready" ? "queue-item--pending-update" : "",
+          scheduleItemHasNote(item) ? "has-note" : "",
         ].filter(Boolean).join(" ");
         const cueStartMarkup = hasCueStart
           ? `<span class="item-cue-start">Start @ ${formatCueTime(cueStartTime)}</span>`
@@ -488,10 +968,12 @@ function renderQueue() {
       <span class="item-text">
         <span class="item-label" title="${escapeHtml(item.name)}">${escapeHtml(isQueueItemBible(item) ? bibleQueueItemDisplayName(item) : item.name)}</span>
         ${secondaryMarkup}
+        ${scheduleNotePreviewMarkup(item, index)}
       </span>
       <span class="queue-item-trailing-actions">
       ${liveRemainingMarkup}
       ${autoStartBadgeMarkup}
+      ${scheduleNoteAddButtonMarkup(item, index)}
       ${inSection ? `<button type="button" class="queue-ungroup-btn" draggable="false" data-queue-ungroup="${index}" title="Move out of group" aria-label="Move out of group"><svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.25 3.25 2.5 7l3.75 3.75M3 7h6.25a3.25 3.25 0 0 1 3.25 3.25v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>` : ""}
       <button type="button" class="remove-btn" draggable="false" data-queue-remove="${index}" title="Remove from schedule" aria-label="Remove from schedule">✕</button>
       </span>
@@ -554,10 +1036,19 @@ function updateQueueStartControls() {
   const controls = document.getElementById("queueStartControls");
   if (!controls) return;
   const index = selectedQueueIndexForDisplay();
+  const item = queueIndexInRange(index) ? mediaQueue[index] : null;
   const hasPlayableSelection =
-    queueIndexInRange(index) && isScheduleItemCurrentlyPlayable(mediaQueue[index]);
-  controls.hidden = !hasPlayableSelection;
+    Boolean(item) && !isQueueItemSection(item) && isScheduleItemCurrentlyPlayable(item);
+  // Notes are edited one item at a time; any visible cue or group qualifies,
+  // including items that cannot currently play (e.g. missing media).
+  const noteTarget =
+    item && selectedQueueItems.size <= 1 && isScheduleItemCurrentlyVisible(item)
+      ? item
+      : null;
+  controls.hidden = !hasPlayableSelection && !noteTarget;
   controls.dataset.queueIndex = hasPlayableSelection ? String(index) : "";
+  const startGroup = document.getElementById("queueStartModeGroup");
+  if (startGroup) startGroup.hidden = !hasPlayableSelection;
   controls.querySelectorAll("[data-queue-start-mode]").forEach((button) => {
     const mode = button.getAttribute("data-queue-start-mode");
     const active =
@@ -567,6 +1058,7 @@ function updateQueueStartControls() {
     button.setAttribute("aria-pressed", active ? "true" : "false");
     button.disabled = !hasPlayableSelection;
   });
+  syncScheduleNoteEditor(noteTarget);
 }
 
 function setScheduleSectionCollapsed(index, collapsed) {
@@ -1476,6 +1968,7 @@ function showScheduleSongContextMenu(event, index) {
   const top = Math.max(8, Math.min(event.clientY, window.innerHeight - menuRect.height - 8));
   menu.style.left = `${Math.round(left)}px`;
   menu.style.top = `${Math.round(top)}px`;
+  attachScheduleNoteMenuItems(menu, index);
 }
 
 function ensureScheduleSectionContextMenu() {
@@ -1566,6 +2059,7 @@ function showScheduleSectionContextMenu(event, index, options = {}) {
   const top = Math.max(8, Math.min(requestedTop, window.innerHeight - menuRect.height - 8));
   menu.style.left = `${Math.round(left)}px`;
   menu.style.top = `${Math.round(top)}px`;
+  attachScheduleNoteMenuItems(menu, index);
 }
 
 async function resumeQueueFromManualBoundaryIfReady(index) {
@@ -1599,7 +2093,7 @@ function installMediaQueueListDelegation() {
   list.dataset.queueDelegation = "1";
   const scheduleDropRoot = list.closest(".queue-section") || list;
   const queueRowActionSelector =
-    "[data-queue-remove], [data-queue-ungroup], [data-queue-reload-update], [data-queue-keep-update], [data-queue-apply-update], [data-queue-section-toggle], [data-queue-section-menu]";
+    "[data-queue-remove], [data-queue-ungroup], [data-queue-reload-update], [data-queue-keep-update], [data-queue-apply-update], [data-queue-section-toggle], [data-queue-section-menu], [data-queue-note-edit]";
   list.addEventListener("contextmenu", (event) => {
     if (event.target.closest(queueRowActionSelector)) return;
     const row = event.target.closest(".queue-item[data-queue-index]");
@@ -1610,13 +2104,27 @@ function installMediaQueueListDelegation() {
     updateQueueSelectionVisual();
     if (isQueueItemBible(mediaQueue[index])) {
       showScheduleBibleContextMenu(event, index);
+      attachScheduleNoteMenuItems(document.getElementById("scheduleBibleContextMenu"), index);
     } else if (isQueueItemSection(mediaQueue[index])) {
       showScheduleSectionContextMenu(event, index);
     } else if (["song", "deck"].includes(mediaQueue[index]?.type)) {
       showScheduleSongContextMenu(event, index);
+    } else {
+      showScheduleItemContextMenu(event, index);
+      attachScheduleNoteMenuItems(document.getElementById("scheduleItemContextMenu"), index);
     }
   });
   list.addEventListener("click", (e) => {
+    const noteEditTarget = e.target.closest("[data-queue-note-edit]");
+    if (noteEditTarget && list.contains(noteEditTarget)) {
+      e.preventDefault();
+      cancelPendingQueueItemActivation();
+      lastQueueItemClick = null;
+      openScheduleNoteEditor(
+        Number.parseInt(noteEditTarget.getAttribute("data-queue-note-edit"), 10),
+      );
+      return;
+    }
     const sectionMenuButton = e.target.closest("[data-queue-section-menu]");
     if (sectionMenuButton && list.contains(sectionMenuButton)) {
       e.preventDefault();
@@ -2053,6 +2561,7 @@ function installQueueStartControls() {
     if (!queueIndexInRange(index)) return;
     setQueueItemAutoAdvance(index, button.getAttribute("data-queue-start-mode") === "auto");
   });
+  installScheduleNoteEditor();
   if (!installQueueStartControls.liveProgressTimer) {
     installQueueStartControls.liveProgressTimer = window.setInterval(
       updateScheduleLiveProgress,
@@ -2093,6 +2602,7 @@ export {
   installQueueStartControls,
   nextPlayableQueueItemStageText,
   onClearMediaQueueClick,
+  openScheduleNoteEditor,
   queueDragFromIndex,
   queueDropIndicator,
   queueDropInsertIndexFromEvent,

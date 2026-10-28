@@ -90,6 +90,7 @@ import {
   updatePreviewCueUI,
 } from "./app-renderer.mjs";
 import { createSerializedAsyncQueue } from "../shared/async-operation-ownership.mjs";
+import { scheduleNoteFields } from "../shared/schedule-item-notes.mjs";
 import {
   DEFAULT_SCHEDULE_GROUP_NAME,
   synchronizeScheduleGroupMembership,
@@ -104,6 +105,8 @@ const PROJECT_GUID_RE =
 
 let autosaveWriteTimer = null;
 
+let autosaveWriteWaiters = [];
+
 let currentProjectPath = "";
 
 let currentProjectStorageMode = "working";
@@ -117,6 +120,10 @@ let currentProjectCreated = new Date().toISOString();
 // complete transaction prevents a newer read from replacing (and cleaning) the
 // pending snapshot while an older renderer application is still in progress.
 const projectOpenQueue = createSerializedAsyncQueue();
+
+// Autosave IPC writes must complete in submission order. Otherwise a slow,
+// older snapshot can finish after a newer note edit and overwrite it.
+const autosaveWriteQueue = createSerializedAsyncQueue();
 
 function resetCurrentProjectIdentity() {
   currentProjectGuid = generateProjectGuid();
@@ -353,6 +360,7 @@ function buildProjectQueueItemSnapshot(item) {
       name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : DEFAULT_SCHEDULE_GROUP_NAME,
       collapsed: item.collapsed === true,
       parentId: normalizedQueueItemId(item.parentId) || null,
+      ...scheduleNoteFields(item),
     };
   }
   const bibleEntry = isQueueItemBible(item)
@@ -378,6 +386,7 @@ function buildProjectQueueItemSnapshot(item) {
   return {
     id: ensureProjectQueueItemId(item, "cue"),
     groupId: normalizedQueueItemId(item.groupId) || null,
+    ...scheduleNoteFields(item),
     presentationId:
       bibleEntry && typeof item.presentationId === "string"
         ? item.presentationId
@@ -603,6 +612,7 @@ function applyProjectStateSnapshot(state, opts = {}) {
           name: typeof x.name === "string" && x.name.trim() ? x.name.trim() : DEFAULT_SCHEDULE_GROUP_NAME,
           collapsed: x.collapsed === true,
           parentId: normalizedQueueItemId(x.parentId) || null,
+          ...scheduleNoteFields(x),
         };
       }
       const itemPath = bibleEntry
@@ -633,6 +643,7 @@ function applyProjectStateSnapshot(state, opts = {}) {
         groupId: Object.prototype.hasOwnProperty.call(x, "groupId")
           ? normalizedQueueItemId(x.groupId) || null
           : undefined,
+        ...scheduleNoteFields(x),
         presentationId: bibleEntry
           ? typeof x.presentationId === "string" && x.presentationId.trim()
             ? x.presentationId
@@ -786,15 +797,27 @@ function applyProjectStateSnapshot(state, opts = {}) {
 }
 
 function scheduleAutosaveProjectState() {
+  const completion = new Promise((resolve) => {
+    autosaveWriteWaiters.push(resolve);
+  });
   if (autosaveWriteTimer !== null) {
     clearTimeout(autosaveWriteTimer);
   }
-  autosaveWriteTimer = setTimeout(() => {
+  autosaveWriteTimer = setTimeout(async () => {
     autosaveWriteTimer = null;
-    void invoke("save-autosave-project-state", buildProjectStateSnapshot()).catch(
-      (err) => console.error("autosave failed:", err),
-    );
+    const waiters = autosaveWriteWaiters;
+    autosaveWriteWaiters = [];
+    let saved = true;
+    try {
+      const snapshot = buildProjectStateSnapshot();
+      await autosaveWriteQueue.run(() => invoke("save-autosave-project-state", snapshot));
+    } catch (err) {
+      saved = false;
+      console.error("autosave failed:", err);
+    }
+    for (const resolve of waiters) resolve(saved);
   }, AUTOSAVE_WRITE_DEBOUNCE_MS);
+  return completion;
 }
 
 async function stampBaselineForQueueItems(items, opts = {}) {
@@ -831,7 +854,16 @@ async function flushAutosaveOnClose() {
     clearTimeout(autosaveWriteTimer);
     autosaveWriteTimer = null;
   }
-  await invoke("save-autosave-project-state", buildProjectStateSnapshot());
+  const waiters = autosaveWriteWaiters;
+  autosaveWriteWaiters = [];
+  try {
+    const snapshot = buildProjectStateSnapshot();
+    await autosaveWriteQueue.run(() => invoke("save-autosave-project-state", snapshot));
+    for (const resolve of waiters) resolve(true);
+  } catch (error) {
+    for (const resolve of waiters) resolve(false);
+    throw error;
+  }
 }
 
 /** Re-stamp baselines for all file items so the preflight resets after a save. */

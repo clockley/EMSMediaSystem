@@ -3669,7 +3669,12 @@ async function sendSongTextToOutput(item = null, options = {}) {
   }
   if (!stillOwnsAudience()) return false;
   if (expectedPlaybackId) message.playbackId = expectedPlaybackId;
-  sendAudienceTextMessage("song", message);
+  const stageItem = Object.prototype.hasOwnProperty.call(options, "stageItem")
+    ? options.stageItem
+    : item
+      ? mediaQueue.includes(item) ? item : null
+      : currentLiveQueueItem();
+  sendAudienceTextMessage("song", message, { stageItem });
   return true;
 }
 
@@ -3722,6 +3727,7 @@ async function slipstreamSongTextToOutput(item) {
   }
   sendAudienceTextMessage("song", audienceMessage, {
     expectedPlaybackId: activation.playbackId,
+    stageItem: null,
   });
   return true;
 }
@@ -7996,7 +8002,7 @@ async function checkIfSongInLibrary(songId) {
 function reconcileSongQueueEntryInPlace(item, updatedEntry) {
   if (!item || !updatedEntry) return item;
   const preserved = {};
-  for (const key of ["id", "autoAdvance", "cueStartTime", "cueVolume", "loop", "itemTheme"]) {
+  for (const key of ["id", "autoAdvance", "cueStartTime", "cueVolume", "loop", "itemTheme", ...SCHEDULE_NOTE_FIELDS]) {
     if (Object.prototype.hasOwnProperty.call(item, key)) preserved[key] = item[key];
   }
   for (const key of Object.keys(item)) {
@@ -9092,3 +9098,4 @@ import {
   createLatestRequestGate,
 } from "../shared/async-operation-ownership.mjs";
 import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
+import { SCHEDULE_NOTE_FIELDS } from "../shared/schedule-item-notes.mjs";

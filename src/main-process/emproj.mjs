@@ -20,6 +20,7 @@ import {
 } from "../shared/media-file-hash.mjs";
 import { normalizeToSongAST } from "../shared/app-song-utils.mjs";
 import { DEFAULT_SCHEDULE_GROUP_NAME } from "../shared/schedule-item-availability.mjs";
+import { scheduleNoteFields } from "../shared/schedule-item-notes.mjs";
 import yauzl from "yauzl";
 import yazl from "yazl";
 
@@ -125,6 +126,20 @@ function normalizeArchivePath(p) {
 function basenameAny(p) {
   const parts = String(p || "").split(/[/\\]/);
   return parts[parts.length - 1] || String(p || "");
+}
+
+function stableBundledBaseName(normalizedPath, preferredName = "") {
+  const sourceBase = path.basename(normalizedPath);
+  const sourceExt = path.extname(sourceBase);
+  let preferredBase = basenameAny(preferredName).trim();
+  if (preferredBase && sourceExt) {
+    const preferredExt = path.extname(preferredBase);
+    if (preferredExt.toLowerCase() !== sourceExt.toLowerCase()) {
+      preferredBase += sourceExt;
+    }
+  }
+  const rawBase = preferredBase || sourceBase || `asset${sourceExt}`;
+  return rawBase.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 
 function normalizeProjectSlideTransition(transition = {}, { allowInherit = false } = {}) {
@@ -1000,6 +1015,16 @@ async function extractEntryToFile(zipfile, entry, outPath) {
   return hasher.digest();
 }
 
+function extractedArchiveEntryPath(extractRoot, archivePath) {
+  const archiveExtension = path.posix.extname(archivePath).toLowerCase();
+  const safeExtension = /^\.[a-z0-9]{1,15}$/.test(archiveExtension)
+    ? archiveExtension
+    : "";
+  const digest = createHash(SHA256_HASH_ALG).update(archivePath).digest("hex");
+  const folder = archivePath.startsWith("presentations/") ? "presentations" : "media";
+  return path.join(extractRoot, folder, `${digest}${safeExtension}`);
+}
+
 function manifestIntegrityHashes(manifestJson) {
   const hashes = manifestJson?.integrity?.hashes;
   if (!hashes || typeof hashes !== "object") return null;
@@ -1362,7 +1387,12 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
           return;
         }
         if (inZipPath.startsWith("media/") || inZipPath.startsWith("presentations/")) {
-          const outPath = path.join(extractRoot, inZipPath);
+          // Archive member names are metadata, not safe filesystem names. Older
+          // autosaves could repeatedly prefix bundled names until a single path
+          // component exceeded the host filesystem's limit. Flattening to an
+          // archive-path digest recovers those projects and keeps temp
+          // extraction paths comfortably below platform path limits.
+          const outPath = extractedArchiveEntryPath(extractRoot, inZipPath);
           entryHashes.set(inZipPath, await extractEntryToFile(zipfile, entry, outPath));
           extractedMediaPaths.set(inZipPath, outPath);
         }
@@ -1687,7 +1717,13 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
       }
       return queueItem;
     }))
-  ).filter(Boolean);
+  )
+    // Operator notes are common to every cue type and to groups, so they are
+    // restored here once instead of in each type-specific builder.
+    .map((queueItem, index) =>
+      queueItem ? Object.assign(queueItem, scheduleNoteFields(sequence[index])) : queueItem,
+    )
+    .filter(Boolean);
   for (const item of mediaQueue) {
     if (!item || typeof item !== "object") continue;
     if (item.type === "section") continue;
@@ -1805,10 +1841,16 @@ async function saveEmprojSnapshotUnlocked(
   const fileEntries = [];
   let itemCounter = 0;
 
-  function bundledArchivePathForFile(normalizedPath, kind, assetIndex) {
+  function bundledArchivePathForFile(
+    normalizedPath,
+    kind,
+    assetIndex,
+    preferredName = "",
+  ) {
     const folder = contentLocationForKind(kind);
-    const safeBase = path.basename(normalizedPath).replace(/[^A-Za-z0-9._-]/g, "_");
-    const bundledName = `${String(assetIndex).padStart(4, "0")}_${safeBase}`;
+    const prefix = `${String(assetIndex).padStart(4, "0")}_`;
+    const safeBase = stableBundledBaseName(normalizedPath, preferredName);
+    const bundledName = `${prefix}${safeBase}`;
     return `${folder}/${bundledName}`;
   }
 
@@ -1848,6 +1890,7 @@ async function saveEmprojSnapshotUnlocked(
             normalizedPath,
             kind,
             existing.assetIndex,
+            existing.assetRecord?.originalName || fallback.originalName,
           );
           ensureFileEntry(normalizedPath, bundledPath);
           existing.bundledPath = bundledPath;
@@ -1875,7 +1918,12 @@ async function saveEmprojSnapshotUnlocked(
       const assetId = makeId("asset", assetIndex);
       let bundledPath = normalizedPath;
       if (packMedia || forcePack) {
-        bundledPath = bundledArchivePathForFile(normalizedPath, kind, assetIndex);
+        bundledPath = bundledArchivePathForFile(
+          normalizedPath,
+          kind,
+          assetIndex,
+          fallback.originalName,
+        );
         ensureFileEntry(normalizedPath, bundledPath);
       }
       if (
@@ -2076,6 +2124,7 @@ async function saveEmprojSnapshotUnlocked(
         type: "section",
         collapsed: item.collapsed === true,
         parentId: normalizedScheduleIdentity(item.parentId) || null,
+        ...scheduleNoteFields(item),
       });
       continue;
     }
@@ -2109,6 +2158,7 @@ async function saveEmprojSnapshotUnlocked(
       if (itemTheme) projectScripture.itemTheme = itemTheme;
       queueSequence.push({
         ...sequenceQueueIdentityFields(item),
+        ...scheduleNoteFields(item),
         label: `${scripture.reference || ""} ${scripture.version || "KJV"}`.trim() || "Bible",
         type: "scripture",
         source: {
@@ -2177,6 +2227,7 @@ async function saveEmprojSnapshotUnlocked(
       }
       queueSequence.push({
         ...sequenceQueueIdentityFields(item),
+        ...scheduleNoteFields(item),
         label: item.name || snapshot?.title || "Song",
         type: item.type === "deck" ? "deck" : "song",
         source,
@@ -2248,7 +2299,12 @@ async function saveEmprojSnapshotUnlocked(
             const assetIndex = fileIndex.size + 1;
             assetId = makeId("asset", assetIndex);
             if (packMedia) {
-              bundledPath = bundledArchivePathForFile(normalizedPath, kind, assetIndex);
+              bundledPath = bundledArchivePathForFile(
+                normalizedPath,
+                kind,
+                assetIndex,
+                item.originalName,
+              );
               ensureFileEntry(normalizedPath, bundledPath);
             }
             if (
@@ -2337,6 +2393,7 @@ async function saveEmprojSnapshotUnlocked(
       : undefined;
     queueSequence.push({
       ...sequenceQueueIdentityFields(item),
+      ...scheduleNoteFields(item),
       label: item.name || basenameAny(sourcePath),
       type: isPresentation ? "presentation" : "media",
       assetId: assetId || undefined,
