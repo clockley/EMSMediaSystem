@@ -49,7 +49,7 @@
     "write-file-atomic": "^8.0.0",
     "yauzl": "^3.4.0",
     "yazl": "^3.3.1",
-    "youtubei.js": "^17.2.0"
+    "youtubei.js": "^18.3.0"
   },
   "build": {
     "extends": "file:build-scripts/versioned-windows-installer.cjs",

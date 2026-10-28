@@ -1735,7 +1735,7 @@ __metadata:
     write-file-atomic: "npm:^8.0.0"
     yauzl: "npm:^3.4.0"
     yazl: "npm:^3.3.1"
-    youtubei.js: "npm:^17.2.0"
+    youtubei.js: "npm:^18.3.0"
   languageName: unknown
   linkType: soft
 
@@ -2724,10 +2724,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"meriyah@npm:^6.1.4":
-  version: 6.1.4
-  resolution: "meriyah@npm:6.1.4"
-  checksum: 10c0/d792a12df453b9e86c2bb70e73adf41b2d0fa88125381143e4d339d309ddcbb7aeb108e286411dcb19be82539d29b881279c613ae03ce514b7c296c72e9a8d00
+"meriyah@npm:^7.3.1":
+  version: 7.4.1
+  resolution: "meriyah@npm:7.4.1"
+  checksum: 10c0/0608450f1b7d2b4be40e1211ae1040d94c400b865a224d0dfc012ffa9855121c9bf7503c19ff256194bb907d174b6509154bf8b33fc121f37bc7855fbd16cf1c
   languageName: node
   linkType: hard
 
@@ -4212,14 +4212,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"youtubei.js@npm:^17.2.0":
-  version: 17.2.0
-  resolution: "youtubei.js@npm:17.2.0"
+"youtubei.js@npm:^18.3.0":
+  version: 18.3.0
+  resolution: "youtubei.js@npm:18.3.0"
   dependencies:
     "@bufbuild/protobuf": "npm:^2.0.0"
     fflate: "npm:^0.8.2"
-    meriyah: "npm:^6.1.4"
-  checksum: 10c0/82ade381c6b1173b0fdb609a86c6a3c2d82db9c4add7dcaa06574507bb2586b885df4d5fd3f0d92e9cf67fd85a58158030f62bd576357432121785a52d167ab8
+    meriyah: "npm:^7.3.1"
+  checksum: 10c0/5c99266f727c5e8600f8204d860755fa630504e95d49589c3bf91f328233fc9df81196af3c2a4e8dc637a27e660ec6ff2ee198dabc281108fb415da418c4aad1
   languageName: node
   linkType: hard
 
