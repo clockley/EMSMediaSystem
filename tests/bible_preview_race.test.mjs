@@ -184,9 +184,17 @@ test("an acknowledged Scripture slipstream remains live after queue ownership lo
 });
 
 test("Show Now exceptions settle owned takes and restore an unused queue selection", () => {
+  const showNowAction = functionSource(
+    bibleWorkspace,
+    "function showBibleTextNow",
+    "async function performShowBibleTextNow",
+  );
+  assert.match(showNowAction, /bibleShowNowCoalescer\.run/);
+  assert.match(showNowAction, /performShowBibleTextNow/);
+
   const showNow = functionSource(
     bibleWorkspace,
-    "async function showBibleTextNow",
+    "async function performShowBibleTextNow",
     "async function slipstreamBiblePresentation",
   );
   assert.match(showNow, /let presentationRevision = null/);

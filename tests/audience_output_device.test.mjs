@@ -134,8 +134,13 @@ test("only the presentation attempt that opened the dialog may continue", async 
   const doc = fakeDocument();
   let invokeCount = 0;
   let resolveChoice;
+  let markChooserOpened;
+  const chooserOpened = new Promise((resolve) => {
+    markChooserOpened = resolve;
+  });
   const chooseDisplay = () => new Promise((resolve) => {
     resolveChoice = resolve;
+    markChooserOpened();
   });
   const options = {
     doc,
@@ -148,7 +153,7 @@ test("only the presentation attempt that opened the dialog may continue", async 
 
   const first = requestAudienceOutputDevice(options);
   const second = requestAudienceOutputDevice(options);
-  await Promise.resolve();
+  await chooserOpened;
   resolveChoice("projector");
 
   assert.equal(await first, "projector");

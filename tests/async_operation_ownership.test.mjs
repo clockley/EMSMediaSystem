@@ -185,12 +185,21 @@ test("async UI handlers validate stable ownership after awaits", async () => {
   assert.doesNotMatch(songShowNow, /currentSongRenderState\s*=/);
   assert.match(songShowNow, /queueItem: null/);
 
+  const deckShowNowAction = functionSource(
+    songs,
+    "function showCurrentDeckNow(",
+    "async function performShowCurrentDeckNow(",
+  );
+  assert.match(deckShowNowAction, /const deckOwner = currentDeck/);
+  assert.match(deckShowNowAction, /const editRevision = deckEditRevision/);
+  assert.match(deckShowNowAction, /showNowPresentationCoalescer\.run/);
+  assert.match(deckShowNowAction, /performShowCurrentDeckNow\(\{ deckOwner, pageOwner, editRevision \}\)/);
+
   const deckShowNow = functionSource(
     songs,
-    "async function showCurrentDeckNow(",
+    "async function performShowCurrentDeckNow(",
     "function scheduleCurrentDeck(",
   );
-  assert.match(deckShowNow, /const deckOwner = currentDeck/);
   assert.match(deckShowNow, /currentDeck === deckOwner/);
   assert.match(deckShowNow, /deckEditRevision === editRevision/);
   assert.ok(

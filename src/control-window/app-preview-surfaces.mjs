@@ -353,13 +353,17 @@ function updatePreviewEmptyState() {
   );
   const hasImage = !!document.querySelector(".video-wrapper img#preview");
   const pptxVisible = isPptxPreviewVisible();
-  const bibleVisible = document.getElementById("bibleWorkspace")?.hidden === false;
+  const workspaceVisible = [
+    "bibleWorkspace",
+    "songsWorkspace",
+    "slidesWorkspace",
+  ].some((id) => document.getElementById(id)?.hidden === false);
   const empty =
     mediaQueue.length === 0 &&
     !hasPreviewSrc &&
     !hasImage &&
     !pptxVisible &&
-    !bibleVisible;
+    !workspaceVisible;
   overlay.hidden = !empty;
 }
 

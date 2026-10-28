@@ -276,15 +276,19 @@ test("Show Now slipstreams songs and decks over an existing non-song output", as
   const helperStart = source.indexOf("async function slipstreamSongTextToOutput(");
   const helperEnd = source.indexOf("\nfunction liveSongAudienceTextMessageForClear", helperStart);
   const helper = source.slice(helperStart, helperEnd);
-  const songStart = source.indexOf("async function showSongTextNow(");
+  const songActionStart = source.indexOf("function showSongTextNow(");
+  const songStart = source.indexOf("async function performShowSongTextNow(", songActionStart);
   const songEnd = source.indexOf("\nasync function insertSongInSchedule", songStart);
-  const deckStart = source.indexOf("async function showCurrentDeckNow(");
+  const deckActionStart = source.indexOf("function showCurrentDeckNow(");
+  const deckStart = source.indexOf("async function performShowCurrentDeckNow(", deckActionStart);
   const deckEnd = source.indexOf("\nfunction scheduleCurrentDeck", deckStart);
 
   assert.match(helper, /invoke\("slipstream-media-window"/);
   assert.match(helper, /isText: true/);
   assert.match(helper, /activation\.reason !== "rejected"/);
   assert.match(helper, /return createMediaWindow\(\{/);
+  assert.match(source.slice(songActionStart, songStart), /showNowPresentationCoalescer\.run/);
+  assert.match(source.slice(deckActionStart, deckStart), /showNowPresentationCoalescer\.run/);
   assert.match(source.slice(songStart, songEnd), /slipstreamSongTextToOutput\(transientEntry\)/);
   assert.match(source.slice(deckStart, deckEnd), /slipstreamSongTextToOutput\(entry\)/);
 });
