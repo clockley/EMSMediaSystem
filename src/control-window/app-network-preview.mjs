@@ -62,6 +62,7 @@ import {
   refreshPreviewControlsForCurrentMedia,
   renderQueue,
   saveMediaFile,
+  seekMediaElementSuppressed,
   send,
   setConfidenceMonitorActive,
   setPreviewCueVideoLocalAudio,
@@ -621,11 +622,9 @@ async function seekNetworkPreviewTransport(seekTime) {
     Number.isFinite(video.duration) &&
     video.duration > 0
   ) {
-    beginPreviewForwardingSuppression();
-    try {
-      video.currentTime = clampMediaTime(safe, video.duration);
-    } catch {}
-    endPreviewForwardingSuppression();
+    // The helper keeps forwarding suppressed until the async seeking/seeked
+    // events have been delivered, so the mirror cannot echo this seek back.
+    void seekMediaElementSuppressed(video, clampMediaTime(safe, video.duration));
   }
   window.setTimeout(() => {
     void refreshNetworkPreviewTransportState();

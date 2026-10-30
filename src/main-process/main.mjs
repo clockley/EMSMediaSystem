@@ -6062,12 +6062,6 @@ function setIPC() {
   });
   ipcMain.on("set-display-index", handleSetDisplayIndex);
   ipcMain.on("set-lower-third-display-index", handleSetLowerThirdDisplayIndex);
-  ipcMain.on("media-seekto", (event, seekTime) => {
-    win?.webContents.send("timeGoto-message", {
-      currentTime: seekTime,
-      timestamp: Date.now(),
-    });
-  });
   ipcMain.on("minimize-window", (event) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
     senderWindow.minimize();

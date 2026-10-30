@@ -31,7 +31,6 @@ import {
   applyVideoPoster,
   audioOnlyFile,
   beginLiveMediaWindowEpoch,
-  beginPreviewForwardingSuppression,
   beginProjectionPlaybackStartupSync,
   bibleShowNowModeActive,
   clampMediaTime,
@@ -53,7 +52,6 @@ import {
   desiredProjectionPreviewPlayback,
   disableNativeVideoControls,
   durationTimeDisplay,
-  endPreviewForwardingSuppression,
   fileEnded,
   finishProjectionPlaybackStartupSync,
   getHostnameOrBasename,
@@ -120,6 +118,7 @@ import {
   paintCountdownFor,
   pathToMediaUrl,
   pauseLivePreviewMirrorFromProjection,
+  pauseMediaElementSuppressed,
   pauseQueuePresentationAtBoundary,
   pendingCueVolume,
   pendingQueueSwitchIndex,
@@ -170,6 +169,7 @@ import {
   scheduleMediaWatchSync,
   scripturePresentation,
   seekMedia,
+  seekMediaElementSuppressed,
   send,
   sendBibleTextToOutput,
   sendPptxSlideToMediaWindow,
@@ -180,6 +180,7 @@ import {
   setSharedRendererState,
   setupCustomMediaControls,
   shouldAdvanceAfterCurrentItemEnds,
+  shouldSuppressMediaElementForwarding,
   shouldSuppressPreviewForwarding,
   showGnomeToast,
   showPreviewWarningToast,
@@ -597,8 +598,15 @@ async function handlePlaybackState(event, playbackState) {
   ) {
     return;
   }
+  const explicitPositionSeek =
+    playbackState?.positionIntent === "explicit-seek" &&
+    Number.isFinite(playbackState.currentTime);
+  if (explicitPositionSeek) {
+    pidController?.reset();
+    setSharedRendererState({ targetTime: playbackState.currentTime });
+  }
   if (networkPreviewUsesRendererCapture()) {
-    if (playbackState.syncPhase === "stabilizing") {
+    if (playbackState.syncPhase === "stabilizing" && !explicitPositionSeek) {
       beginProjectionPlaybackStartupSync();
       return;
     }
@@ -614,13 +622,15 @@ async function handlePlaybackState(event, playbackState) {
       Number.isFinite(playbackState.currentTime) &&
       Number.isFinite(video.duration) &&
       video.duration > 0 &&
-      Math.abs(video.currentTime - playbackState.currentTime) > 0.5
+      Math.abs(video.currentTime - playbackState.currentTime) >
+        (explicitPositionSeek ? 0.001 : 0.5)
     ) {
-      beginPreviewForwardingSuppression();
-      try {
-        video.currentTime = clampMediaTime(playbackState.currentTime, video.duration);
-      } catch {}
-      endPreviewForwardingSuppression();
+      // Suppression must outlive the async seeking/seeked events; the helper
+      // owns the window. No need to sequence the play/pause below on it.
+      void seekMediaElementSuppressed(
+        video,
+        clampMediaTime(playbackState.currentTime, video.duration),
+      );
     }
     if (playbackState.playing && video.paused) {
       void playNetworkPreviewMirror("playback state sync").catch((err) => {
@@ -629,12 +639,7 @@ async function handlePlaybackState(event, playbackState) {
         }
       });
     } else if (!playbackState.playing && !video.paused) {
-      beginPreviewForwardingSuppression();
-      try {
-        video.pause();
-      } finally {
-        endPreviewForwardingSuppression();
-      }
+      await pauseMediaElementSuppressed(video);
     }
     return;
   }
@@ -649,7 +654,7 @@ async function handlePlaybackState(event, playbackState) {
   // While the projection is swapping/starting a source it marks playback-state
   // updates as stabilizing; those pause/play events are browser churn, not user
   // intent, so the live preview waits for the first stable state.
-  if (playbackState.syncPhase === "stabilizing") {
+  if (playbackState.syncPhase === "stabilizing" && !explicitPositionSeek) {
     beginProjectionPlaybackStartupSync();
     return;
   }
@@ -664,7 +669,8 @@ async function handlePlaybackState(event, playbackState) {
     if (
       Number.isFinite(playbackState.currentTime) &&
       Number.isFinite(video.currentTime) &&
-      Math.abs(video.currentTime - playbackState.currentTime) > 0.25
+      Math.abs(video.currentTime - playbackState.currentTime) >
+        (explicitPositionSeek ? 0.001 : 0.25)
     ) {
       beginPidSeekSuppression();
       video.playbackRate = 1;
@@ -684,7 +690,7 @@ async function handlePlaybackState(event, playbackState) {
     return;
   }
   if (!playbackState.playing) {
-    if (playbackState.pauseIntent !== "explicit") {
+    if (playbackState.pauseIntent !== "explicit" && !explicitPositionSeek) {
       finishProjectionPlaybackStartupSync();
       return;
     }
@@ -693,27 +699,12 @@ async function handlePlaybackState(event, playbackState) {
     setSharedRendererState({ latestExplicitProjectionPauseState: playbackState });
     finishProjectionPlaybackStartupSync();
     setSharedRendererState({ masterPauseState: true });
-    if (video.paused) {
-      return;
-    }
     await pauseLivePreviewMirrorFromProjection(playbackState);
   }
 }
 
 function handlePlayPause(event, arg) {
   setSharedRendererState({ mediaSessionPause: arg });
-}
-
-function handleMediaseek(event, seekTime) {
-  if (shouldSuppressPreviewForwarding()) {
-    return;
-  }
-  if (video) {
-    const newTime = video.currentTime + seekTime;
-    if (newTime >= 0 && newTime <= video.duration) {
-      video.currentTime = newTime;
-    }
-  }
 }
 
 function handleMediaPlayback(isImgFile, sourcePath = mediaFile, cacheBust) {
@@ -1672,9 +1663,14 @@ function seekLocalMedia(e) {
   // a dedicated overlay (previewCueVideo) with its own seek handler, so
   // any seek that lands here is either projection→preview sync or an
   // explicit user scrub of the live mirror — never a cue write.
-  if (shouldSuppressPreviewForwarding()) {
+  const mediaElementSuppressed = shouldSuppressMediaElementForwarding(
+    e.target,
+    e.type,
+  );
+  if (mediaElementSuppressed || shouldSuppressPreviewForwarding()) {
     tracePlayback(
       "seekLocalMedia SUPPRESSED",
+      "element=" + mediaElementSuppressed,
       "suppress=" + suppressPreviewForwarding,
       "depth=" + previewForwardingSuppressionDepth,
       "startupPending=" + projectionPlaybackStartupPending,
@@ -1714,7 +1710,10 @@ function seekingLocalMedia(e) {
   // See seekLocalMedia: the cue write is deliberately outside the suppression
   // gate so an in-progress scrub is still recorded.
   syncTrackedPreviewStartTime(e.target, { force: true });
-  if (shouldSuppressPreviewForwarding()) {
+  if (
+    shouldSuppressMediaElementForwarding(e.target, e.type) ||
+    shouldSuppressPreviewForwarding()
+  ) {
     return;
   }
   if (e.target.isConnected) {
@@ -1864,7 +1863,10 @@ function pauseLocalMedia(event) {
     syncPreviewAudioTrackState();
     return;
   }
-  if (shouldSuppressPreviewForwarding()) {
+  if (
+    shouldSuppressMediaElementForwarding(event.target, event.type) ||
+    shouldSuppressPreviewForwarding()
+  ) {
     setSharedRendererState({ localTimeStampUpdateIsRunning: false });
     updatePreviewCueUI();
     return;
@@ -2569,7 +2571,6 @@ export {
   handleCanPlayThrough,
   handleImageDisplay,
   handleMediaPlayback,
-  handleMediaseek,
   handlePlayPause,
   handlePlaybackState,
   hybridSync,

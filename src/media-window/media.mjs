@@ -2273,16 +2273,19 @@ function matchYouTubeUrl(url) {
   }
 }
 
-function playbackStateUpdate() {
+function playbackStateUpdate(options = {}) {
   // A true live-edge stream has no meaningful preview mirror; don't forward its
   // play/pause state (these listeners persist for the window's lifetime and may
   // still be attached from an earlier non-stream clip).
   if (streamActsAsLiveEdge) return;
+  const positionIntent =
+    options?.positionIntent === "explicit-seek" ? "explicit-seek" : undefined;
   const playbackState = {
     currentTime: video.currentTime,
     playing: !video.paused,
     syncPhase: playbackSyncPhase,
     pauseIntent: consumePauseSyncIntent(),
+    ...(positionIntent ? { positionIntent } : {}),
     playbackId: audiencePlaybackId,
     audienceSessionId,
     sourceGeneration: videoSourceGeneration,
@@ -2292,6 +2295,36 @@ function playbackStateUpdate() {
     video.volume = strtvl;
     strtvl = null;
   }
+}
+
+/**
+ * Media Session seek actions originate in the projection renderer, whose
+ * video is the authoritative transport. Apply the position there first, then
+ * publish an explicit one-shot position intent so the control mirror follows
+ * even when it is already paused.
+ */
+function seekProjectionMediaFromSession(requestedTime) {
+  if (
+    !video ||
+    streamActsAsLiveEdge ||
+    isText ||
+    isPptx ||
+    isImg ||
+    !Number.isFinite(requestedTime) ||
+    !Number.isFinite(video.duration) ||
+    video.duration <= 0
+  ) {
+    return false;
+  }
+
+  const target = Math.max(0, Math.min(video.duration, requestedTime));
+  try {
+    video.currentTime = target;
+  } catch {
+    return false;
+  }
+  playbackStateUpdate({ positionIntent: "explicit-seek" });
+  return true;
 }
 
 /**
@@ -2309,11 +2342,14 @@ function bindProjectionVideoEndHandler() {
   video.onended = () => {
     // An ended task queued for the outgoing resource can run after a source
     // replacement. Require both the captured source identity and the element's
-    // current ended state before it is allowed to advance the schedule.
+    // current end-of-clip state before it is allowed to advance the schedule.
+    // A seek to the final position between the end being reached and this
+    // task running (e.g. a mirrored timeGoto from the control window) leaves
+    // `video.ended` false, so the position is checked as well.
     if (
       sourceGeneration !== videoSourceGeneration ||
       playbackId !== audiencePlaybackId ||
-      !video.ended
+      !projectionVideoAtEnd(video)
     ) {
       return;
     }
@@ -2345,14 +2381,20 @@ function installVideoPlaybackWiring() {
 
   navigator.mediaSession.setActionHandler("play", playMediaSessionHandler);
   navigator.mediaSession.setActionHandler("pause", pauseMediaSessionHandler);
-  navigator.mediaSession.setActionHandler("seekbackward", () => {
-    ipcRenderer.send("media-seek", -10);
+  navigator.mediaSession.setActionHandler("seekbackward", (details = {}) => {
+    const offset = Number.isFinite(details.seekOffset)
+      ? Math.max(0, details.seekOffset)
+      : 10;
+    seekProjectionMediaFromSession(video.currentTime - offset);
   });
-  navigator.mediaSession.setActionHandler("seekforward", () => {
-    ipcRenderer.send("media-seek", 10);
+  navigator.mediaSession.setActionHandler("seekforward", (details = {}) => {
+    const offset = Number.isFinite(details.seekOffset)
+      ? Math.max(0, details.seekOffset)
+      : 10;
+    seekProjectionMediaFromSession(video.currentTime + offset);
   });
   navigator.mediaSession.setActionHandler("seekto", (details) => {
-    ipcRenderer.send("media-seekto", details.seekTime);
+    seekProjectionMediaFromSession(details?.seekTime);
   });
 
   video.addEventListener("play", playbackStateUpdate);
@@ -2364,10 +2406,29 @@ function installVideoPlaybackWiring() {
 
   sendRemainingTime(video);
   video.addEventListener("pause", () => {
+    // A natural end fires `pause` immediately before `ended`. Writing
+    // currentTime here (even to the position it already has) starts a seek,
+    // and Chromium reports `video.ended === false` while that seek is pending,
+    // so the ended handler below saw a "not ended" element and dropped the
+    // end-of-clip IPC that drives schedule auto-advance. Only snap a pause the
+    // operator made just short of the end.
+    if (projectionVideoAtEnd(video) || video.seeking) return;
     if (video.duration - video.currentTime < 0.1) {
       video.currentTime = video.duration;
     }
   });
+}
+
+/**
+ * True when the projection clip has played to its end. `ended` alone is not
+ * enough: a seek that lands on the final position (including a same-position
+ * write) clears it even though the clip is finished.
+ */
+function projectionVideoAtEnd(mediaEl) {
+  if (!mediaEl) return false;
+  if (mediaEl.ended) return true;
+  const duration = mediaEl.duration;
+  return Number.isFinite(duration) && duration > 0 && mediaEl.currentTime >= duration;
 }
 
 const DEFAULT_TEXT_PRESENTATION = Object.freeze({

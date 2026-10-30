@@ -55,6 +55,9 @@ import {
   mediaSourceAsLocalPath,
 } from "../shared/app-media-utils.mjs";
 import { installEmsMediaCrossOriginPolicy } from "../shared/ems-media-url.mjs";
+import {
+  MediaElementForwardingSuppression,
+} from "../shared/media-element-forwarding-suppression.mjs";
 import { createOutputCommand } from "../shared/output-compositor.mjs";
 import { commandForShortcut, LIVE_COMMANDS } from "../shared/alert-shortcuts.mjs";
 import { stageContentFromPresentation } from "../shared/stage-content.mjs";
@@ -821,7 +824,6 @@ import {
   ensurePreviewAudioElement,
   handleImageDisplay,
   handleMediaPlayback,
-  handleMediaseek,
   handlePlayPause,
   handlePlaybackState,
   hybridSync,
@@ -1392,6 +1394,8 @@ let suppressPreviewForwarding = false;
  * depth > 0.
  */
 let previewForwardingSuppressionDepth = 0;
+const mediaElementForwardingSuppression =
+  new MediaElementForwardingSuppression();
 function beginPreviewForwardingSuppression() {
   previewForwardingSuppressionDepth += 1;
   suppressPreviewForwarding = true;
@@ -1485,6 +1489,17 @@ function restoreLivePreviewMirrorMuteState(mediaEl = video) {
   livePreviewMirrorMutedState = null;
 }
 
+/**
+ * True while the live mirror's `muted` flag is owned by the autoplay
+ * workaround in playLivePreviewMirrorSafely rather than by the operator. In
+ * that state a mute on #preview says nothing about the audience volume.
+ */
+function isLivePreviewMirrorInternallyMuted(mediaEl = video) {
+  return Boolean(
+    mediaEl && mediaEl === video && livePreviewMirrorMutedState !== null && mediaEl.muted,
+  );
+}
+
 function beginProjectionPlaybackStartupSync() {
   projectionPlaybackStartupGeneration += 1;
   projectionPlaybackStartupPending = true;
@@ -1521,6 +1536,7 @@ async function playVideoSafely(mediaEl, context = "", options = {}) {
     return true;
   } catch (error) {
     if (isPlayInterruptedError(error)) {
+      options.onInterrupted?.(error);
       return false;
     }
     const suffix = context ? ` (${context})` : "";
@@ -1553,11 +1569,21 @@ async function playLivePreviewMirrorSafely(context = "") {
   if (!video || isImg(video.src)) return false;
   beginPreviewForwardingSuppression();
   try {
-    if (await playVideoSafely(video, context, { logFailure: false })) {
+    let interruptedByPause = false;
+    if (
+      await playVideoSafely(video, context, {
+        logFailure: false,
+        onInterrupted: () => {
+          interruptedByPause = true;
+        },
+      })
+    ) {
       return true;
     }
 
-    if (!isActiveMediaWindow() || video.muted) {
+    // A play() that was cut short by a pause() is not an autoplay refusal;
+    // the pause is the newer intent, so a muted retry would fight it.
+    if (interruptedByPause || !isActiveMediaWindow() || video.muted) {
       return false;
     }
 
@@ -1570,17 +1596,49 @@ async function playLivePreviewMirrorSafely(context = "") {
   }
 }
 
-async function pauseLivePreviewMirrorFromProjection(playbackState) {
-  if (!video || video.paused) return;
-  beginPreviewForwardingSuppression();
-  try {
-    if (Number.isFinite(playbackState?.currentTime)) {
-      video.currentTime = playbackState.currentTime;
-    }
-    await video.pause();
-  } finally {
-    endPreviewForwardingSuppression();
+function shouldSuppressMediaElementForwarding(mediaEl, eventName) {
+  return mediaElementForwardingSuppression.shouldSuppress(mediaEl, eventName);
+}
+
+/**
+ * Write `currentTime` on a preview element as a projection→preview sync (not
+ * operator intent), keeping forwarding suppressed until the resulting
+ * `seeking`/`seeked` events have been delivered. Returns the promise for the
+ * suppression window; callers that do not need to sequence on it may `void` it.
+ */
+async function seekMediaElementSuppressed(mediaEl, time) {
+  if (!mediaEl || !Number.isFinite(time)) return;
+  await mediaElementForwardingSuppression.suppressSeek(mediaEl, time);
+}
+
+/**
+ * Pause a preview element (optionally seeking it first) as a
+ * projection→preview sync, keeping forwarding suppressed until the resulting
+ * `pause` (and `seeked`) events have been delivered.
+ */
+async function pauseMediaElementSuppressed(mediaEl, options = {}) {
+  if (!mediaEl) return;
+  const settled = [];
+  if (Number.isFinite(options.currentTime)) {
+    const target = Number.isFinite(mediaEl.duration) && mediaEl.duration > 0
+      ? clampMediaTime(options.currentTime, mediaEl.duration)
+      : Math.max(0, options.currentTime);
+    settled.push(mediaElementForwardingSuppression.suppressSeek(mediaEl, target));
   }
+  const wasPlaying = !mediaEl.paused;
+  if (wasPlaying) {
+    settled.push(mediaElementForwardingSuppression.suppressPause(mediaEl));
+  } else {
+    mediaEl.pause();
+  }
+  await Promise.all(settled);
+}
+
+async function pauseLivePreviewMirrorFromProjection(playbackState) {
+  if (!video) return;
+  await pauseMediaElementSuppressed(video, {
+    currentTime: playbackState?.currentTime,
+  });
 }
 
 async function reconcileStalePlaybackSync(generation) {
@@ -2364,7 +2422,10 @@ function getLivePreviewDisplayVolume() {
       ? 0
       : networkPreviewTransportState.volume;
   }
-  return video?.muted ? 0 : (video?.volume ?? 1);
+  // An autoplay-workaround mute on the mirror does not change the audience
+  // volume, so it must not read as 0 on the operator's slider either.
+  if (video?.muted && !isLivePreviewMirrorInternallyMuted(video)) return 0;
+  return video?.volume ?? 1;
 }
 
 /** Persist the in-memory cue slider value onto the active queue entry. */
@@ -3934,6 +3995,7 @@ export {
   projectionPlaybackStartupPending,
   queueStartIndexForPresent,
   reconcileStalePlaybackSync,
+  shouldSuppressMediaElementForwarding,
   shouldSuppressPreviewForwarding,
   showPreviewWarningToast,
   stashLivePreview,
@@ -3965,7 +4027,6 @@ export {
   ensureStreamsPanelBuilt,
   focusableControls,
   getPreviewControlMediaElement,
-  handleMediaseek,
   handleOutputHoldShortcut,
   handlePlayPause,
   handlePlaybackState,
@@ -4190,6 +4251,9 @@ export {
   restoreStagedPreviewPlayback,
   restoreWorkspacePreviewForQueueItem,
   seekMedia,
+  seekMediaElementSuppressed,
+  pauseMediaElementSuppressed,
+  isLivePreviewMirrorInternallyMuted,
   selectNavigationForQueueItem,
   sendSongTextToOutput,
   setCueStartTime,

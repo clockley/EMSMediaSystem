@@ -28,6 +28,10 @@ const controlRendererSource = await readFile(
   new URL("../src/control-window/app-renderer.mjs", import.meta.url),
   "utf8",
 );
+const operatorChromeSource = await readFile(
+  new URL("../src/control-window/app-operator-chrome.mjs", import.meta.url),
+  "utf8",
+);
 const presentationPlaybackSource = await readFile(
   new URL("../src/control-window/app-presentation-playback.mjs", import.meta.url),
   "utf8",
@@ -50,6 +54,30 @@ function declaredFunction(name) {
     new RegExp(`^(?:async )?function ${name}\\([^]*?^\\}`, "m"),
   );
   assert.ok(match, `media renderer declares ${name}`);
+  return match[0];
+}
+
+function controlDeclaredFunction(name) {
+  const match = controlMediaSource.match(
+    new RegExp(`^(?:async )?function ${name}\\([^]*?^\\}`, "m"),
+  );
+  assert.ok(match, `control renderer declares ${name}`);
+  return match[0];
+}
+
+function rendererDeclaredFunction(name) {
+  const match = controlRendererSource.match(
+    new RegExp(`^(?:async )?function ${name}\\([^]*?^\\}`, "m"),
+  );
+  assert.ok(match, `control renderer state declares ${name}`);
+  return match[0];
+}
+
+function operatorDeclaredFunction(name) {
+  const match = operatorChromeSource.match(
+    new RegExp(`^(?:async )?function ${name}\\([^]*?^\\}`, "m"),
+  );
+  assert.ok(match, `operator chrome declares ${name}`);
   return match[0];
 }
 
@@ -297,6 +325,213 @@ test("a rejected media play is returned as an activation failure", async () => {
   assert.deepEqual(reported, [["Could not start", "decoder rejected playback"]]);
 });
 
+test("Media Session seeking is projection-owned and publishes explicit position intent", () => {
+  const sent = [];
+  const video = {
+    currentTime: 20,
+    duration: 120,
+    paused: true,
+  };
+  const context = vm.createContext({
+    audiencePlaybackId: "playback-1",
+    audienceSessionId: "session-1",
+    consumePauseSyncIntent: () => "implicit",
+    ipcRenderer: {
+      send(channel, payload) {
+        sent.push([channel, payload]);
+      },
+    },
+    isImg: false,
+    isPptx: false,
+    isText: false,
+    playbackSyncPhase: "stable",
+    streamActsAsLiveEdge: false,
+    strtvl: null,
+    video,
+    videoSourceGeneration: 7,
+  });
+  vm.runInContext(declaredFunction("playbackStateUpdate"), context);
+  vm.runInContext(declaredFunction("seekProjectionMediaFromSession"), context);
+
+  assert.equal(
+    vm.runInContext("seekProjectionMediaFromSession(35)", context),
+    true,
+  );
+  assert.equal(video.currentTime, 35);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0][0], "playback-state-change");
+  assert.equal(sent[0][1].currentTime, 35);
+  assert.equal(sent[0][1].playing, false);
+  assert.equal(sent[0][1].pauseIntent, "implicit");
+  assert.equal(sent[0][1].positionIntent, "explicit-seek");
+  assert.equal(sent[0][1].playbackId, "playback-1");
+  assert.equal(sent[0][1].sourceGeneration, 7);
+
+  assert.equal(
+    vm.runInContext("seekProjectionMediaFromSession(-10)", context),
+    true,
+  );
+  assert.equal(video.currentTime, 0, "projection seeks are clamped locally");
+});
+
+test("a paused control mirror applies an explicit projection seek", async () => {
+  const pauseCalls = [];
+  const video = {
+    currentTime: 12,
+    duration: 120,
+    paused: true,
+  };
+  const context = vm.createContext({
+    activeMediaWindowContentType: "video",
+    audiencePlaybackCoordinator: {
+      matchesExpectedPlayback: () => true,
+      matchesStagedPlayback: () => false,
+    },
+    beginProjectionPlaybackStartupSync() {
+      context.startupSyncBegan = true;
+    },
+    desiredProjectionPreviewPlayback: null,
+    finishProjectionPlaybackStartupSync() {},
+    isBiblePath: () => false,
+    isSongPath: () => false,
+    latestExplicitProjectionPauseState: null,
+    mediaFile: "/media/clip.mp4",
+    networkPreviewUsesRendererCapture: () => false,
+    pauseMediaElementSuppressed: async (_mediaEl, options) => {
+      pauseCalls.push(options);
+      video.currentTime = options.currentTime;
+    },
+    pidController: { reset() {} },
+    playbackStateSyncGeneration: 0,
+    setSharedRendererState(patch) {
+      Object.assign(context, patch);
+    },
+    video,
+  });
+  context.playbackState = {
+    audienceSessionId: "session-1",
+    currentTime: 42,
+    pauseIntent: "implicit",
+    playbackId: "playback-1",
+    playing: false,
+    positionIntent: "explicit-seek",
+    sourceGeneration: 3,
+    syncPhase: "stabilizing",
+  };
+  vm.runInContext(
+    rendererDeclaredFunction("pauseLivePreviewMirrorFromProjection"),
+    context,
+  );
+  vm.runInContext(controlDeclaredFunction("handlePlaybackState"), context);
+
+  await vm.runInContext("handlePlaybackState(null, playbackState)", context);
+
+  assert.equal(context.startupSyncBegan, undefined);
+  assert.equal(pauseCalls.length, 1);
+  assert.equal(pauseCalls[0].currentTime, 42);
+  assert.equal(video.currentTime, 42);
+  assert.equal(context.masterPauseState, true);
+  assert.equal(context.desiredProjectionPreviewPlayback, "paused");
+  assert.equal(context.targetTime, 42);
+});
+
+test("legacy Media Session seek IPC is removed", () => {
+  assert.doesNotMatch(mediaSource, /ipcRenderer\.send\("media-seek(?:to)?"/);
+  assert.doesNotMatch(mainSource, /ipcMain\.on\("media-seekto"/);
+  assert.doesNotMatch(controlMediaSource, /function handleMediaseek\(/);
+  assert.match(
+    declaredFunction("installVideoPlaybackWiring"),
+    /seekProjectionMediaFromSession\(video\.currentTime [+-] offset\)/,
+  );
+});
+
+test("live mute control uses volume zero without taking autoplay mute ownership", () => {
+  const handlers = { button: {}, slider: {}, video: {} };
+  const forwardedVolumes = [];
+  const icon = { innerHTML: "" };
+  const slider = {
+    dataset: {},
+    style: {},
+    value: 70,
+    addEventListener(type, handler) {
+      handlers.slider[type] = handler;
+    },
+    blur() {},
+  };
+  const button = {
+    addEventListener(type, handler) {
+      handlers.button[type] = handler;
+    },
+  };
+  const video = {
+    id: "preview",
+    defaultMuted: true,
+    muted: true,
+    volume: 0.7,
+    addEventListener(type, handler) {
+      handlers.video[type] = handler;
+    },
+  };
+  const elements = {
+    gtkVolBtn: button,
+    gtkVolIcon: icon,
+    gtkVolSlider: slider,
+    preview: video,
+  };
+  const context = vm.createContext({
+    STREAMPLAYER: "stream-player",
+    currentMode: "media-player",
+    currentQueueIndex: -1,
+    document: {
+      getElementById(id) {
+        return elements[id] || null;
+      },
+    },
+    getLivePreviewDisplayVolume: () => video.volume,
+    getPreviewCueDisplayVolume: () => null,
+    gtkUpdateVolIcon: null,
+    isLivePreviewMirrorInternallyMuted: (mediaEl) =>
+      mediaEl === video && mediaEl.muted,
+    isLiveStream: () => false,
+    isPreviewCueVolumeActive: () => false,
+    mediaFile: "clip.mp4",
+    mediaQueue: [],
+    networkPreviewTransportState: { muted: false, volume: 1 },
+    networkPreviewUsesRendererCapture: () => false,
+    pendingCueVolume: null,
+    setActiveCueVolume() {},
+    setNetworkPreviewVolume() {},
+    setSharedRendererState() {},
+    streamVolume: 1,
+    vlCtl(volume) {
+      forwardedVolumes.push(volume);
+    },
+  });
+  context.video = video;
+  vm.runInContext(operatorDeclaredFunction("setupGtkVolumeControl"), context);
+  vm.runInContext(operatorDeclaredFunction("handleVolumeChange"), context);
+  vm.runInContext("setupGtkVolumeControl()", context);
+
+  handlers.button.click();
+  vm.runInContext("handleVolumeChange({ target: video })", context);
+  assert.equal(video.volume, 0);
+  assert.equal(video.muted, true, "the autoplay workaround keeps mute ownership");
+  assert.equal(Number(slider.value), 0);
+  assert.deepEqual(forwardedVolumes, [0]);
+
+  handlers.button.click();
+  vm.runInContext("handleVolumeChange({ target: video })", context);
+  assert.equal(video.volume, 0.7);
+  assert.equal(video.muted, true, "operator unmute only restores logical volume");
+  assert.equal(Number(slider.value), 70);
+  assert.deepEqual(forwardedVolumes, [0, 0.7]);
+
+  slider.value = 45;
+  handlers.slider.input();
+  assert.equal(video.volume, 0.45);
+  assert.equal(video.muted, true, "slider input also leaves physical mute alone");
+});
+
 test("stale video end handlers cannot report the replacement playback", () => {
   const sent = [];
   const video = {
@@ -321,6 +556,7 @@ test("stale video end handlers cannot report the replacement playback", () => {
       },
     },
   });
+  vm.runInContext(declaredFunction("projectionVideoAtEnd"), context);
   vm.runInContext(declaredFunction("bindProjectionVideoEndHandler"), context);
   vm.runInContext("bindProjectionVideoEndHandler()", context);
   const staleHandler = video.onended;
@@ -337,6 +573,43 @@ test("stale video end handlers cannot report the replacement playback", () => {
   assert.equal(sent[0][0], "media-playback-ended");
   assert.equal(sent[0][1].playbackId, "playback-2");
   assert.equal(sent[0][1].sourceGeneration, 2);
+
+  // A seek that lands on the final position (e.g. a same-position write from
+  // the near-end pause handler) clears `ended` while the clip is still
+  // finished. The end must still be reported, or auto-advance never runs.
+  video.ended = false;
+  video.currentTime = 10;
+  video.onended();
+  assert.equal(sent.length, 2);
+
+  // A seek back into the clip is a real cancellation of the end.
+  video.currentTime = 4;
+  video.onended();
+  assert.equal(sent.length, 2);
+
+  // A replaced source (no metadata yet) is never reported as ended.
+  video.currentTime = 0;
+  video.duration = Number.NaN;
+  video.onended();
+  assert.equal(sent.length, 2);
+});
+
+test("a natural end does not seek the projection before its ended handler runs", () => {
+  const wiring = declaredFunction("installVideoPlaybackWiring");
+  const pauseListener = wiring.match(
+    /video\.addEventListener\("pause", \(\) => \{([^]*?)\n  \}\);/,
+  );
+  assert.ok(pauseListener, "projection snaps near-end pauses to the clip end");
+  assert.match(
+    pauseListener[1],
+    /if \(projectionVideoAtEnd\(video\) \|\| video\.seeking\) return;/,
+    "the snap is skipped once the clip has ended or a seek is pending",
+  );
+  assert.ok(
+    pauseListener[1].indexOf("projectionVideoAtEnd(video)") <
+      pauseListener[1].indexOf("video.currentTime = video.duration"),
+    "the end check happens before the currentTime write",
+  );
 });
 
 test("main process rejects playback IPC from a non-active audience renderer", () => {

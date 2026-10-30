@@ -32,7 +32,6 @@ import {
   attachCubicWaveShaper,
   audioOnlyFile,
   beginPidSeekSuppression,
-  beginPreviewForwardingSuppression,
   bibleLowerThirdOutputActive,
   bibleUiEnabled,
   bindTransportTimeDisplay,
@@ -60,7 +59,6 @@ import {
   durationTimeDisplay,
   endLiveAudioPresentation,
   endLocalMedia,
-  endPreviewForwardingSuppression,
   enqueuePathsFromFilePicker,
   ensureLiveAudioElement,
   ensureMediaCountdownDigitNodes,
@@ -79,7 +77,6 @@ import {
   getPreviewCueDisplayVolume,
   handleMediaPreviewRtcSignal,
   handleMediaWindowClosed,
-  handleMediaseek,
   hideMediaLibraryWorkspace,
   handleOutputHoldShortcut,
   handlePlayPause,
@@ -103,6 +100,7 @@ import {
   isImg,
   isLikelyAudioItem,
   isLiveStream,
+  isLivePreviewMirrorInternallyMuted,
   isLocalAppWindowPresentationActive,
   isNetworkVideoPreviewCueActive,
   isPlayInterruptedError,
@@ -157,6 +155,7 @@ import {
   pathToMediaUrl,
   pauseLocalMedia,
   pauseMedia,
+  pauseMediaElementSuppressed,
   pendingCueVolume,
   pidController,
   playLivePreviewMirrorSafely,
@@ -673,12 +672,7 @@ function setupCustomMediaControls() {
     if (mediaIsNetworkTransport(mediaEl)) {
       setNetworkPreviewTransportPaused(true);
       await send("play-ctl", "pause");
-      beginPreviewForwardingSuppression();
-      try {
-        mediaEl.pause();
-      } finally {
-        endPreviewForwardingSuppression();
-      }
+      await pauseMediaElementSuppressed(mediaEl);
       return;
     }
     mediaEl?.pause();
@@ -1344,7 +1338,7 @@ function setupGtkVolumeControl() {
       ? v == 0
       : networkPreviewUsesRendererCapture()
         ? networkPreviewTransportState.muted
-        : video.muted;
+        : video.muted && !isLivePreviewMirrorInternallyMuted(video);
     if (mutedForIcon || v == 0) {
       // Muted Icon: Cone + Mute Cross
       icon.innerHTML =
@@ -1386,10 +1380,7 @@ function setupGtkVolumeControl() {
     const v = slider.value / 100;
     if (isPreviewCueVolumeActive()) {
       setActiveCueVolume(v);
-      const savedMuted = video.muted;
-      video.muted = false;
       updateIcon(slider.value);
-      video.muted = savedMuted;
     } else if (networkPreviewUsesRendererCapture()) {
       setNetworkPreviewVolume(v, v === 0);
       if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
@@ -1397,8 +1388,9 @@ function setupGtkVolumeControl() {
       }
       updateIcon(slider.value);
     } else {
+      // Operator mute is represented by volume 0. Leave the physical muted
+      // flag to the autoplay workaround so UI changes cannot steal its state.
       video.volume = v;
-      if (v > 0) video.muted = false;
       if (currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length) {
         mediaQueue[currentQueueIndex].cueVolume = v;
       }
@@ -1409,7 +1401,7 @@ function setupGtkVolumeControl() {
   video.addEventListener("volumechange", () => {
     if (isPreviewCueVolumeActive()) return;
     if (networkPreviewUsesRendererCapture()) return;
-    if (video.muted) {
+    if (video.muted && !isLivePreviewMirrorInternallyMuted(video)) {
       slider.value = 0;
     } else {
       slider.value = Math.round(video.volume * 100);
@@ -1429,10 +1421,7 @@ function setupGtkVolumeControl() {
         setActiveCueVolume(0);
       }
       slider.value = Math.round(pendingCueVolume * 100);
-      const savedMuted = video.muted;
-      video.muted = pendingCueVolume === 0;
       updateIcon(slider.value);
-      video.muted = savedMuted;
     } else if (networkPreviewUsesRendererCapture()) {
       const currentVol = networkPreviewTransportState.muted
         ? 0
@@ -1448,13 +1437,16 @@ function setupGtkVolumeControl() {
       }
       updateIcon(slider.value);
     } else {
-      if (video.muted) {
-        video.volume = lastVolume > 0 ? lastVolume : 1;
-        video.muted = false;
+      if (video.volume === 0) {
+        const restored = lastVolume > 0 ? lastVolume : 1;
+        video.volume = restored;
+        slider.value = Math.round(restored * 100);
       } else {
         lastVolume = video.volume;
-        video.muted = true;
+        video.volume = 0;
+        slider.value = 0;
       }
+      updateIcon(slider.value);
     }
   });
 
@@ -1721,7 +1713,6 @@ function installIPCHandler() {
     }
     send("close-media-window", 0);
   });
-  on("media-seek", handleMediaseek);
   on("window-maximized", handleWindowMax);
   on("open-project-path", async (_event, filePath) => {
     try {
@@ -2250,6 +2241,13 @@ function handleVolumeChange(event) {
   if (currentMode === STREAMPLAYER) {
     setSharedRendererState({ streamVolume: event.target.value });
     vlCtl(streamVolume);
+    return;
+  }
+  // playLivePreviewMirrorSafely may mute #preview purely to get a refused
+  // play() to start. That physical mute is mirror-internal; operator mute is
+  // represented by volume 0, so always forward the logical volume here.
+  if (isLivePreviewMirrorInternallyMuted(event.target)) {
+    vlCtl(event.target.volume);
     return;
   }
   event.target.muted ? vlCtl(0) : vlCtl(event.target.volume);
