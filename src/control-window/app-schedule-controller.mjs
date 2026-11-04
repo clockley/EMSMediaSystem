@@ -48,6 +48,7 @@ import {
   clearVideoPreviewCueOverlay,
   createQueueEntry,
   currentMode,
+  currentProjectGuid,
   currentQueueIndex,
   currentWorkspaceSong,
   currentWorkspaceSongDeck,
@@ -1104,6 +1105,8 @@ async function renameScheduleSection(index) {
 }
 
 async function addScheduleSectionAfterSelection() {
+  const scheduleAtPrompt = mediaQueue;
+  const projectAtPrompt = currentProjectGuid;
   const insertionPoint = captureQueueInsertionPointAfterSelection();
   const name = await showRendererPrompt("Group name", DEFAULT_SCHEDULE_SECTION_NAME, {
     title: "Add Group",
@@ -1111,7 +1114,7 @@ async function addScheduleSectionAfterSelection() {
     required: true,
     maxLength: 80,
   });
-  if (name === null) return;
+  if (name === null || mediaQueue !== scheduleAtPrompt || currentProjectGuid !== projectAtPrompt) return;
   invalidateQueueUndoToastAfterMutation();
   const insertIndex = resolveQueueInsertionPoint(insertionPoint);
   insertQueueEntriesAt([createScheduleSectionEntry(name)], insertIndex);
@@ -2088,10 +2091,24 @@ async function resumeQueueFromManualBoundaryIfReady(index) {
   updateDynUI();
   renderQueue();
   const item = mediaQueue[index];
-  await playCurrentQueueItem({
-    preservePreviewSeek: false,
+  const transitionToken = audiencePlaybackCoordinator.begin(item, {
     startTime: queueItemCueStartTime(item),
   });
+  try {
+    const started = await playCurrentQueueItem({
+      preservePreviewSeek: false,
+      startTime: queueItemCueStartTime(item),
+      transitionToken,
+    });
+    if (!audiencePlaybackCoordinator.owns(transitionToken)) return;
+    if (started) audiencePlaybackCoordinator.complete(transitionToken);
+    else audiencePlaybackCoordinator.cancel();
+  } catch (error) {
+    if (audiencePlaybackCoordinator.owns(transitionToken)) {
+      audiencePlaybackCoordinator.cancel();
+    }
+    throw error;
+  }
 }
 
 function installMediaQueueListDelegation() {
@@ -2410,6 +2427,10 @@ function installMediaQueueListDelegation() {
   });
 
   scheduleDropRoot.addEventListener("drop", async (e) => {
+    const scheduleAtDrop = mediaQueue;
+    const projectAtDrop = currentProjectGuid;
+    const dropStillTargetsSchedule = () =>
+      mediaQueue === scheduleAtDrop && currentProjectGuid === projectAtDrop;
     const hasInternalQueueDrag = queueDragFromIndex >= 0;
     const droppedSongId = songDragSongId;
     const droppedBibleVersePayload = bibleVerseDragPayloadFromDataTransfer(e.dataTransfer);
@@ -2421,6 +2442,7 @@ function installMediaQueueListDelegation() {
       hideQueueDropIndicator();
       try {
         const item = await resolveMediaLibraryDragItem(droppedMediaLibraryItemId);
+        if (!dropStillTargetsSchedule()) return;
         if (!item?.localPath || item.availability !== "available") {
           showGnomeToast("This media item is not available");
           return;
@@ -2445,6 +2467,7 @@ function installMediaQueueListDelegation() {
       clearSongDragVisualState();
       try {
         const song = await songsAPI.get(droppedSongId);
+        if (!dropStillTargetsSchedule()) return;
         const entry = buildSongQueueEntryFromDeck({
           deck: song,
           render: renderStateForLibrarySong(song),
@@ -2475,6 +2498,7 @@ function installMediaQueueListDelegation() {
       }
       try {
         const entries = await queueEntriesForBibleVerseDragPayload(droppedBibleVersePayload);
+        if (!dropStillTargetsSchedule()) return;
         if (!entries.length) {
           showGnomeToast("No Bible verses found");
           return;
@@ -2543,6 +2567,7 @@ function installMediaQueueListDelegation() {
         return;
       }
       const paths = await extractAndFilterDroppedMediaPaths(e.dataTransfer);
+      if (!dropStillTargetsSchedule()) return;
       applyDroppedMediaPaths(paths, {
         insertIndex: resolveQueueDropInsertIndex(placement),
         destinationGroupId: scheduleGroupIdForDropPlacement(placement),

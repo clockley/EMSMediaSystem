@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 import { clampMediaTime, clampQueueStartTime } from "../src/shared/app-media-utils.mjs";
+import { PlaybackTransitionCoordinator } from "../src/shared/playback-transition-coordinator.mjs";
 
 const sourceFiles = await Promise.all([
   "app-renderer.mjs", "app-media-runtime.mjs", "app-presentation-playback.mjs",
@@ -74,6 +75,7 @@ function harness({ audio = false, cue = false, paused = true } = {}) {
     console, document, window: { setTimeout, clearTimeout }, queueMicrotask,
     AbortController, performance, clampMediaTime, clampQueueStartTime,
     audienceActive: false, sent: [], pidSeeking: false,
+    audiencePlaybackCoordinator: new PlaybackTransitionCoordinator(),
     mediaQueue: [item], currentQueueIndex: 0, previewCueIndex: cue ? 0 : -1,
     previewAudioCueIndex: cue && audio ? 0 : -1,
     previewCueVideoIndex: cue && !audio ? 0 : -1,

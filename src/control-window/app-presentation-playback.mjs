@@ -1486,6 +1486,8 @@ async function loadQueueItemIntoControlWindow(item, opts) {
 }
 
 async function playCurrentQueueItem(opts) {
+  const transitionToken = opts?.transitionToken;
+  if (transitionToken && !audiencePlaybackCoordinator.owns(transitionToken)) return false;
   // Taking an item live transfers ownership of the main preview/scrubber to
   // that item. Invalidate any slower preview-only request (notably YouTube
   // resolution) before it can attach to the shared video element afterward.
@@ -1496,13 +1498,13 @@ async function playCurrentQueueItem(opts) {
   setSharedRendererState({ mediaPlaybackEndedPending: false });
   setSharedRendererState({ itc: performance.now() * 0.001 });
   const item = mediaQueue[currentQueueIndex];
-  const transitionToken = opts?.transitionToken;
   const transitionStillOwnsItem = () =>
     !transitionToken ||
     (audiencePlaybackCoordinator.owns(transitionToken) &&
       transitionToken.item === item &&
       audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue) >= 0);
   const failPlaybackStart = (message, error = null) => {
+    if (!transitionStillOwnsItem()) return false;
     if (error) console.error("Failed to start scheduled playback:", error);
     setSharedRendererState({ isPlaying: false });
     setSharedRendererState({ isQueuePlaying: false });
@@ -1515,10 +1517,14 @@ async function playCurrentQueueItem(opts) {
     return false;
   };
   if (!item) {
+    if (!transitionStillOwnsItem()) return false;
     setSharedRendererState({ currentQueueIndex: -1 });
     return failPlaybackStart("");
   }
   if (!isScheduleItemCurrentlyPlayable(item)) {
+    if (transitionToken) {
+      return failPlaybackStart("The selected schedule item is no longer playable");
+    }
     const next = nextPlayableQueueIndexAfter(currentQueueIndex);
     if (next >= 0) {
       setSharedRendererState({ currentQueueIndex: next });
@@ -1539,6 +1545,7 @@ async function playCurrentQueueItem(opts) {
     (isNetworkStreamSource(item.path) || Boolean(item.networkSource));
   try {
     await clearLowerThirdForUnsupportedMediaSource(item);
+    if (!transitionStillOwnsItem()) return false;
     if (!isQueueItemBible(item) && scripturePresentation.state.status !== "idle") {
       scripturePresentation.dispatch({ type: "STOPPED" });
     }
@@ -1549,6 +1556,7 @@ async function playCurrentQueueItem(opts) {
     if (!transitionStillOwnsItem()) return false;
     if (loaded === false) return failPlaybackStart("");
   } catch (error) {
+    if (!transitionStillOwnsItem()) return false;
     return failPlaybackStart(
       error?.message || "Could not load the scheduled item",
       error,
@@ -1569,6 +1577,7 @@ async function playCurrentQueueItem(opts) {
         error,
       );
     }
+    if (!transitionStillOwnsItem()) return false;
     if (!entry) {
       return failPlaybackStart("Could not load the scheduled Scripture text");
     }
@@ -1582,6 +1591,7 @@ async function playCurrentQueueItem(opts) {
     ) {
       return failPlaybackStart("");
     }
+    if (!transitionStillOwnsItem()) return false;
     const wantsAudience = requestedOutputRoles
       ? requestedOutputRoles.audience === true
       : hasAudienceOutputSelected();
@@ -1600,6 +1610,7 @@ async function playCurrentQueueItem(opts) {
           presentationRevision,
         )
       : false;
+    if (!transitionStillOwnsItem()) return false;
     const audienceStarted = wantsAudience
       ? await createMediaWindow({
           textItem: item,
@@ -1608,6 +1619,7 @@ async function playCurrentQueueItem(opts) {
           transitionToken,
         })
       : false;
+    if (!transitionStillOwnsItem()) return false;
     confirmScriptureTake(presentationRevision, {
       audience: audienceStarted,
       lowerThird: lowerThirdStarted,
@@ -1636,6 +1648,7 @@ async function playCurrentQueueItem(opts) {
     ) {
       return failPlaybackStart("");
     }
+    if (!transitionStillOwnsItem()) return false;
     const wantsAudience = requestedOutputRoles
       ? requestedOutputRoles.audience === true
       : hasAudienceOutputSelected();
@@ -1645,9 +1658,11 @@ async function playCurrentQueueItem(opts) {
     const lowerThirdStarted = wantsLowerThird
       ? await updateLowerThirdForSupportedScheduleItem(item)
       : false;
+    if (!transitionStillOwnsItem()) return false;
     const audienceStarted = wantsAudience
       ? await createMediaWindow({ textItem: item, songItem: true, transitionToken })
       : false;
+    if (!transitionStillOwnsItem()) return false;
     if (!audienceStarted && lowerThirdStarted) {
       void syncStageContentFromQueueItem(item).catch(() => {});
     }
@@ -1670,10 +1685,12 @@ async function playCurrentQueueItem(opts) {
   ) {
     return failPlaybackStart("");
   }
+  if (!transitionStillOwnsItem()) return false;
 
   const iM = isImg(mediaFile);
   if (iM) {
     const started = await createMediaWindow({ transitionToken });
+    if (!transitionStillOwnsItem()) return false;
     if (!started) return failPlaybackStart("");
     if (localVideo) {
       localVideo.currentTime = 0;
@@ -1692,8 +1709,11 @@ async function playCurrentQueueItem(opts) {
   if (isAudioItem) {
     if (isActiveMediaWindow()) {
       await closeActiveMediaWindowNow();
+      if (!transitionStillOwnsItem()) return false;
     }
-    await playAudioOnlyLocally(opts?.startTime);
+    const started = await playAudioOnlyLocally(opts?.startTime);
+    if (!transitionStillOwnsItem()) return false;
+    if (!started) return failPlaybackStart("");
     return true;
   }
 
@@ -1709,6 +1729,7 @@ async function playCurrentQueueItem(opts) {
         : validMediaStartTime(projectionVideo?.currentTime),
     transitionToken,
   });
+  if (!transitionStillOwnsItem()) return false;
   if (!started) return failPlaybackStart("");
   return true;
 }
@@ -2471,7 +2492,9 @@ async function handleMediaWindowClosed(event, id) {
         audioOnlyFile ||
         classifyQueueMediaType(item.path) === "audio"
       ) {
-        await playAudioOnlyLocally(switchStartTime);
+        if (!(await playAudioOnlyLocally(switchStartTime))) {
+          throw new Error("Could not start the scheduled audio");
+        }
       } else {
         const started = await createMediaWindow({ transitionToken });
         if (!started) throw new Error("Could not start the audience output");
@@ -2483,6 +2506,7 @@ async function handleMediaWindowClosed(event, id) {
       clearCueAfterTake(idx);
       audiencePlaybackCoordinator.complete(transitionToken);
     } catch (error) {
+      if (!audiencePlaybackCoordinator.owns(transitionToken)) return;
       audiencePlaybackCoordinator.cancel();
       console.error("Failed to switch the live schedule item after closing the output:", error);
       setSharedRendererState({ isPlaying: false });

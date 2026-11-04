@@ -11,6 +11,8 @@ the Free Software Foundation, either version 3 of the License, or
  * Media loop controls, file-watch pinning, and pending media-update approval.
  */
 
+import { createMediaWatchIdentityRegistry } from "../shared/media-watch-identity.mjs";
+
 import {
   acknowledgePreflightWarningForItem,
   activeMediaWindowContentType,
@@ -77,6 +79,7 @@ import {
 } from "./app-renderer.mjs";
 
 const mediaLoopByPath = new Map();
+const mediaWatchIdentity = createMediaWatchIdentityRegistry();
 
 function mediaPathSupportsLoop(filePath) {
   if (!filePath || typeof filePath !== "string") return false;
@@ -350,14 +353,14 @@ function scheduleMediaWatchSync() {
 
 async function syncMediaWatches() {
   const watchItems = mediaQueue
-    .map((item, index) => {
+    .map((item) => {
       if (isEmbeddedScheduleItem(item)) return null;
       const liveSource = queueItemLiveSource(item);
       if (!liveSource || liveSource.mode !== "linked") return null;
       const originalPath = liveSource.originalPath || item.path;
       if (!isFileBackedMediaPath(originalPath)) return null;
       return {
-        queueItemId: String(index),
+        queueItemId: mediaWatchIdentity.idFor(item),
         originalPath,
         pinnedFileHash: liveSource.pinnedFileHash || item.fileHash,
         pinnedSizeBytes: Number.isFinite(liveSource.pinnedSizeBytes)
@@ -550,7 +553,7 @@ function markQueueItemMediaUpdate(payload) {
   let changed = false;
   let visibleReadyChange = false;
   mediaQueue.forEach((item, index) => {
-    if (payloadQueueItemIds && !payloadQueueItemIds.has(String(index))) return;
+    if (payloadQueueItemIds && ![...payloadQueueItemIds].some((id) => mediaWatchIdentity.matches(item, id))) return;
     const liveSource = queueItemLiveSource(item);
     if (!liveSource || liveSource.mode !== "linked") return;
     if (normalizeMediaPathForCompare(liveSource.originalPath || item.path) !== originalPath) {
@@ -585,7 +588,7 @@ function markQueueItemMediaUpdate(payload) {
     applyMediaUpdateMissingFlag(item, pendingMediaUpdate.status);
     if (pendingMediaUpdate.status === "ready") visibleReadyChange = true;
     changed = true;
-    if (payloadQueueItemIds?.has(String(index))) {
+    if (payloadQueueItemIds?.size) {
       setSharedRendererState({ selectedQueueAnchorIndex: queueIndexInRange(selectedQueueAnchorIndex)
         ? selectedQueueAnchorIndex
         : index });

@@ -1059,17 +1059,38 @@ async function playMedia(e) {
     const startIdx = queueStartIndexForPresent();
     const item = mediaQueue[startIdx];
     return runPresentationStart(async () => {
+      if (!item) return;
+      const transitionToken = audiencePlaybackCoordinator.begin(item);
       const presentStartTime = presentationStartTimeForQueueItem(
         startIdx,
         requestedPreviewStartTime,
       );
       setSharedRendererState({ isQueuePlaying: true });
       setSharedRendererState({ currentQueueIndex: startIdx });
-      await playCurrentQueueItem({
-        preservePreviewSeek: false,
-        startTime: presentStartTime,
-      });
-      if (previewCueIndex === startIdx) clearCueAfterTake(startIdx);
+      let started;
+      try {
+        started = await playCurrentQueueItem({
+          preservePreviewSeek: false,
+          startTime: presentStartTime,
+          transitionToken,
+        });
+      } catch (error) {
+        if (audiencePlaybackCoordinator.owns(transitionToken)) {
+          audiencePlaybackCoordinator.cancel();
+        }
+        throw error;
+      }
+      if (!audiencePlaybackCoordinator.owns(transitionToken)) return;
+      if (!started) {
+        audiencePlaybackCoordinator.cancel();
+        return;
+      }
+      const committedIndex = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
+      if (committedIndex >= 0) {
+        setSharedRendererState({ currentQueueIndex: committedIndex });
+        if (mediaQueue[previewCueIndex] === item) clearCueAfterTake(committedIndex);
+      }
+      audiencePlaybackCoordinator.complete(transitionToken);
     });
   }
 
@@ -1086,16 +1107,30 @@ async function playMedia(e) {
       invalidateQueueUndoToastAfterMutation();
       setSharedRendererState({ mediaQueue: [createQueueEntry(mediaFile)] });
       setSharedRendererState({ currentQueueIndex: 0 });
+      const transitionToken = audiencePlaybackCoordinator.begin(mediaQueue[0]);
       renderQueue();
       if (video !== null && !isImg(mediaFile)) {
         video.pause();
       }
       saveMediaFile();
       setSharedRendererState({ isQueuePlaying: true });
-      await playCurrentQueueItem({
-        preservePreviewSeek: false,
-        startTime: requestedPreviewStartTime,
-      });
+      let started;
+      try {
+        started = await playCurrentQueueItem({
+          preservePreviewSeek: false,
+          startTime: requestedPreviewStartTime,
+          transitionToken,
+        });
+      } catch (error) {
+        if (audiencePlaybackCoordinator.owns(transitionToken)) {
+          audiencePlaybackCoordinator.cancel();
+        }
+        throw error;
+      }
+      if (audiencePlaybackCoordinator.owns(transitionToken)) {
+        if (started) audiencePlaybackCoordinator.complete(transitionToken);
+        else audiencePlaybackCoordinator.cancel();
+      }
     });
   }
 
@@ -2013,18 +2048,28 @@ async function playAudioOnlyLocally(startOverride = null) {
   resolveQueuePresentationVideo();
   hidePptxPreview();
   const localVideo = video;
-  if (!localVideo) return;
+  if (!localVideo) return false;
   const token = nextLiveStartToken();
   const audio = ensureLiveAudioElement();
   const queueItem =
     currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
       ? mediaQueue[currentQueueIndex]
       : null;
+  const stillOwnsStart = () =>
+    token === liveStartToken &&
+    (!queueItem || mediaQueue[currentQueueIndex] === queueItem);
   let source = mediaFile || removeFileProtocol(localVideo.src || "");
-  if (queueItem && isFileBackedMediaPath(queueItem.path)) {
-    source = await resolveQueueItemMediaPath(queueItem);
-    setSharedRendererState({ activePreviewResolvedMediaFile: source });
+  try {
+    if (queueItem && isFileBackedMediaPath(queueItem.path)) {
+      source = await resolveQueueItemMediaPath(queueItem);
+      if (!stillOwnsStart()) return false;
+      setSharedRendererState({ activePreviewResolvedMediaFile: source });
+    }
+  } catch (error) {
+    if (stillOwnsStart()) console.error("Audio-only source resolution failed:", error);
+    return false;
   }
+  if (!stillOwnsStart()) return false;
 
   // The playback start position for an audio-only queue item is the explicit
   // cue start time on the queue entry (set by "Cue from Current Position").
@@ -2037,10 +2082,7 @@ async function playAudioOnlyLocally(startOverride = null) {
   // (or from the cue point I explicitly set), not from wherever I last
   // scrubbed the preview to.
   const audioUrl = pathToMediaUrl(source, queueItemMediaCacheBust(queueItem));
-  const queueCueStart =
-    currentQueueIndex >= 0 && currentQueueIndex < mediaQueue.length
-      ? queueItemCueStartTime(mediaQueue[currentQueueIndex])
-      : 0;
+  const queueCueStart = queueItem ? queueItemCueStartTime(queueItem) : 0;
   const requestedStart =
     Number.isFinite(startOverride) && startOverride > 0 ? startOverride : queueCueStart;
   const startAt = Number.isFinite(requestedStart) && requestedStart > 0 ? requestedStart : 0;
@@ -2070,36 +2112,40 @@ async function playAudioOnlyLocally(startOverride = null) {
       audio.load();
       await waitForLoadedMetadata(audio);
     }
-    if (token !== liveStartToken) return;
+    if (!stillOwnsStart()) return false;
     if (Number.isFinite(startAt) && startAt > 0) {
       await seekMedia(audio, startAt);
     }
-    if (token !== liveStartToken) return;
+    if (!stillOwnsStart()) return false;
     consumePendingCueVolume();
     audio.volume = localVideo.volume;
     audio.muted = false;
     audio.loop = loopTargetEnabled(liveLoopTarget(source));
     await audio.play();
-    if (token !== liveStartToken) return;
+    if (!stillOwnsStart()) return false;
     localVideo.pause();
     // Immediately sync the custom controls to liveAudio's state so the user sees
     // correct duration, position, and play icon without waiting for the first
     // timeupdate event. This also handles the case where the liveAudio.loadedmetadata
     // event fired while video.src still pointed to a different file (preview mode).
     refreshLiveAudioControls();
+    return true;
   } catch (err) {
     console.error("Audio-only local playback failed:", err);
     // Playback failed — undo the live-audio state flags so that guards in
     // endLocalMedia and pauseLocalMedia don't treat this as an active
     // presentation and permanently block subsequent queue advances.
-    if (token === liveStartToken) {
+    if (stillOwnsStart()) {
       setSharedRendererState({ liveAudioQueueIndex: -1 });
       setSharedRendererState({ playingMediaAudioOnly: false });
       setSharedRendererState({ isPlaying: false });
+      send("localMediaState", 0, "stop");
       updateDynUI();
     }
+    return false;
+  } finally {
+    updateTimestamp();
   }
-  updateTimestamp();
 }
 
 async function createMediaWindow(options) {
