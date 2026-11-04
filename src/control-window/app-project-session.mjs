@@ -14,10 +14,12 @@ the Free Software Foundation, either version 3 of the License, or
 import {
   MEDIAPLAYER,
   OUTPUT_HOLD_TRANSITION_MS,
+  activeLowerThirdContentType,
   appliedPresentationTheme,
   applyOutputHoldPreferences,
   applyPinnedMediaSource,
   bibleDesignerState,
+  bibleLowerThirdOutputActive,
   bibleQueuePath,
   bibleStyleDirtyState,
   classifyQueueMediaType,
@@ -32,6 +34,7 @@ import {
   getPathForFile,
   invalidateQueueUndoToastAfterMutation,
   invoke,
+  isActiveMediaWindow,
   isBiblePath,
   isFileBackedMediaPath,
   isNetworkStreamSource,
@@ -39,6 +42,7 @@ import {
   isQueueItemSong,
   isQueueItemTransitionCapable,
   isQueuePresentationActive,
+  isLocalAppWindowPresentationActive,
   isScheduleItemCurrentlyPlayable,
   isSongPath,
   liveSourcePinnedModifiedTime,
@@ -68,12 +72,14 @@ import {
   projectScriptureTextFromOverrides,
   projectStageConfig,
   projectThemeDefaults,
+  queueClearBlockedByLivePresentation,
   queueBasename,
   queueIndexInRange,
   queueItemCueStartTime,
   queueItemLiveSource,
   queueItemUsesPackagedMedia,
   refreshMissingFlagsAndWarn,
+  resetStageContentForProjectChange,
   renderQueue,
   resolvedBibleStyleDefaults,
   restoreOperatingMode,
@@ -108,6 +114,9 @@ let autosaveWriteTimer = null;
 let autosaveWriteWaiters = [];
 
 let currentProjectPath = "";
+
+// A recovered autosave is a session copy, not a project file to overwrite.
+let currentProjectNeedsSaveAs = false;
 
 let currentProjectStorageMode = "working";
 
@@ -487,6 +496,21 @@ function projectSessionIsActive() {
   return Boolean(currentProjectPath) || mediaQueue.length > 0;
 }
 
+function projectSwitchBlockedByLiveOutput() {
+  return queueClearBlockedByLivePresentation() ||
+    isActiveMediaWindow() ||
+    isLocalAppWindowPresentationActive() ||
+    bibleLowerThirdOutputActive ||
+    Boolean(activeLowerThirdContentType);
+}
+
+function assertProjectSwitchIsIdle() {
+  if (!projectSwitchBlockedByLiveOutput()) return;
+  const error = new Error("Stop the live presentation before opening another project.");
+  error.code = "EMS_PROJECT_SWITCH_BLOCKED";
+  throw error;
+}
+
 async function syncActiveProjectPathToMain(projectPath) {
   try {
     await invoke("set-active-project-path", {
@@ -498,10 +522,34 @@ async function syncActiveProjectPathToMain(projectPath) {
   }
 }
 
-async function cleanupStagingForCurrentProjectBeforeSwitch() {
+async function preserveCurrentProjectBeforeSwitch() {
   if (!projectSessionIsActive()) return;
+  // The shared recovery autosave is replaced by the incoming project. Commit
+  // this one to its own file before allowing that replacement.
+  const saved = currentProjectPath && !currentProjectNeedsSaveAs
+    ? await saveCurrentProjectInStorageMode({ quiet: true })
+    : await saveProjectAsDialog();
+  if (!saved) {
+    const error = new Error("Save the current project before opening another one.");
+    error.code = "EMS_PROJECT_SWITCH_BLOCKED";
+    throw error;
+  }
   try {
     await flushAutosaveOnClose();
+  } catch (error) {
+    const switchError = new Error("Autosave failed; project switch cancelled", { cause: error });
+    switchError.code = "EMS_AUTOSAVE_FAILED";
+    throw switchError;
+  }
+  // A presentation may have started while the project file was being saved.
+  assertProjectSwitchIsIdle();
+}
+
+async function cleanupStagingForCurrentProjectBeforeSwitch({ alreadyPreserved = false } = {}) {
+  if (!projectSessionIsActive()) return;
+  if (!alreadyPreserved) await preserveCurrentProjectBeforeSwitch();
+  assertProjectSwitchIsIdle();
+  try {
     await invoke("cleanup-project-staging", {
       projectPath: currentProjectPath || "",
       projectGuid: currentProjectGuid,
@@ -518,9 +566,18 @@ function applyProjectStateSnapshot(state, opts = {}) {
 
   const applyState = async () => {
     const skipStagingCleanup = opts.skipStagingCleanup === true;
+    if (!skipStagingCleanup) assertProjectSwitchIsIdle();
     if (!skipStagingCleanup && projectSessionIsActive()) {
-      await cleanupStagingForCurrentProjectBeforeSwitch();
+      await cleanupStagingForCurrentProjectBeforeSwitch({
+        alreadyPreserved: opts.outgoingProjectPreserved === true,
+      });
     }
+    if (!skipStagingCleanup) assertProjectSwitchIsIdle();
+
+    const nextStageProfile = ["current-only", "current-next", "notes", "clock"].includes(state.projectOutputs?.stage?.profile)
+      ? state.projectOutputs.stage.profile
+      : "current-next";
+    await resetStageContentForProjectChange(nextStageProfile);
 
     const nextProjectPath =
       typeof state.projectPath === "string" ? state.projectPath : currentProjectPath || "";
@@ -554,9 +611,7 @@ function applyProjectStateSnapshot(state, opts = {}) {
     applyOutputHoldPreferences(normalizeOutputHoldPreferences(state.projectOutputHold));
   }
   if (state.projectOutputs?.stage) {
-    const profile = ["current-only", "current-next", "notes", "clock"].includes(state.projectOutputs.stage.profile)
-      ? state.projectOutputs.stage.profile
-      : "current-next";
+    const profile = nextStageProfile;
     stageContentCache.profile = profile;
     setSharedRendererState({ projectStageConfig: {
       display: String(state.projectOutputs.stage.display || ""),
@@ -792,6 +847,7 @@ function applyProjectStateSnapshot(state, opts = {}) {
 
   return applyState().catch((err) => {
     console.error("Failed to apply project state:", err);
+    if (err?.code === "EMS_AUTOSAVE_FAILED" || err?.code === "EMS_PROJECT_SWITCH_BLOCKED") throw err;
     return false;
   });
 }
@@ -810,7 +866,8 @@ function scheduleAutosaveProjectState() {
     let saved = true;
     try {
       const snapshot = buildProjectStateSnapshot();
-      await autosaveWriteQueue.run(() => invoke("save-autosave-project-state", snapshot));
+      const result = await autosaveWriteQueue.run(() => invoke("save-autosave-project-state", snapshot));
+      if (result?.ok !== true) throw new Error("Autosave was not committed");
     } catch (err) {
       saved = false;
       console.error("autosave failed:", err);
@@ -858,7 +915,8 @@ async function flushAutosaveOnClose() {
   autosaveWriteWaiters = [];
   try {
     const snapshot = buildProjectStateSnapshot();
-    await autosaveWriteQueue.run(() => invoke("save-autosave-project-state", snapshot));
+    const result = await autosaveWriteQueue.run(() => invoke("save-autosave-project-state", snapshot));
+    if (result?.ok !== true) throw new Error("Autosave was not committed");
     for (const resolve of waiters) resolve(true);
   } catch (error) {
     for (const resolve of waiters) resolve(false);
@@ -1019,7 +1077,7 @@ async function openProjectDialog() {
     await openProjectByPath(res.filePaths[0]);
   } catch (err) {
     console.error("Failed to open project:", err);
-    showGnomeToast("Failed to open project");
+    showGnomeToast(["EMS_AUTOSAVE_FAILED", "EMS_PROJECT_SWITCH_BLOCKED"].includes(err?.code) ? err.message : "Failed to open project");
   }
 }
 
@@ -1029,6 +1087,9 @@ async function openProjectByPath(filePath) {
 }
 
 async function openProjectByPathSerialized(filePath) {
+  assertProjectSwitchIsIdle();
+  if (projectSessionIsActive()) await preserveCurrentProjectBeforeSwitch();
+  assertProjectSwitchIsIdle();
   const project = await invoke("read-project-file", filePath);
   let committed = false;
   try {
@@ -1036,13 +1097,14 @@ async function openProjectByPathSerialized(filePath) {
     if (!(
       await applyProjectStateSnapshot(
         { ...parsed, projectPath: filePath },
-        { deferMainActivation: true },
+        { deferMainActivation: true, outgoingProjectPreserved: true },
       )
     )) {
       throw new Error("Project does not contain a valid queue.");
     }
     await invoke("commit-project-file-open", { openToken: project.openToken });
     committed = true;
+    currentProjectNeedsSaveAs = false;
   } finally {
     if (!committed && project?.openToken) {
       await invoke("discard-project-file-open", { openToken: project.openToken }).catch(
@@ -1061,27 +1123,29 @@ async function openProjectByPathSerialized(filePath) {
 
 async function saveProjectAsDialog() {
   const previousProjectPath = currentProjectPath;
+  const previousNeedsSaveAs = currentProjectNeedsSaveAs;
   const previousProjectStorageMode = currentProjectStorageMode;
   const previousProjectGuid = currentProjectGuid;
   const previousProjectCreated = currentProjectCreated;
   try {
-    const defaultPath = currentProjectPath || "Untitled.emproj";
+    const defaultPath = currentProjectNeedsSaveAs ? "Untitled.emproj" : currentProjectPath || "Untitled.emproj";
     const res = await invoke("show-save-project-dialog", { defaultPath });
     if (!res || res.canceled || !res.filePath) return false;
     if (previousProjectPath) {
       resetCurrentProjectIdentity();
     }
     currentProjectPath = res.filePath;
-    currentProjectStorageMode = "working";
+    currentProjectStorageMode = previousNeedsSaveAs ? previousProjectStorageMode : "working";
     await syncCurrentPptxSlideForProjectSnapshot();
     const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
     const result = await invoke("write-project-file", {
       filePath: currentProjectPath,
       data,
-      mode: "working",
+      mode: currentProjectStorageMode,
       activateProject: true,
     });
     currentProjectGuid = normalizeProjectGuid(result?.projectGuid) || currentProjectGuid;
+    currentProjectNeedsSaveAs = false;
     if (typeof result?.projectCreated === "string" && result.projectCreated.length > 0) {
       currentProjectCreated = result.projectCreated;
     }
@@ -1091,6 +1155,7 @@ async function saveProjectAsDialog() {
     return true;
   } catch (err) {
     currentProjectPath = previousProjectPath;
+    currentProjectNeedsSaveAs = previousNeedsSaveAs;
     currentProjectStorageMode = previousProjectStorageMode;
     currentProjectGuid = previousProjectGuid;
     currentProjectCreated = previousProjectCreated;
@@ -1101,7 +1166,7 @@ async function saveProjectAsDialog() {
 }
 
 async function saveProject() {
-  if (!currentProjectPath) {
+  if (!currentProjectPath || currentProjectNeedsSaveAs) {
     return saveProjectAsDialog();
   }
   return saveCurrentProjectInStorageMode();
@@ -1141,6 +1206,7 @@ async function restoreAutosavedProjectState() {
     const state = await invoke("load-autosave-project-state");
     if (!state) return;
     if (await applyProjectStateSnapshot(state, { skipStagingCleanup: true })) {
+      currentProjectNeedsSaveAs = true;
       await fallbackUnavailableBibleTranslationsOnLoad();
       await refreshMissingFlagsAndWarn();
     }

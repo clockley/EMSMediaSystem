@@ -1544,7 +1544,10 @@ function handleWindowMax(event, isMaximized) {
 function installIPCHandler() {
   timeRemaining?.onTick?.((duration, currentTime, timestamp, mediaPath) => {
     handleTimeMessage(duration, currentTime, timestamp, mediaPath);
-    const remaining = Math.max(0, Math.ceil((Number(duration) || 0) - (Number(currentTime) || 0)));
+    if (activeMediaWindowContentType !== "video") return;
+    if (!mediaPath || !mediaPathMatchesCurrentLiveMedia(mediaPath)) return;
+    if (!Number.isFinite(duration) || !Number.isFinite(currentTime) || duration <= 0 || currentTime < 0) return;
+    const remaining = Math.max(0, Math.ceil(duration - currentTime));
     if (remaining === lastStageCountdownSecond) return;
     setSharedRendererState({ lastStageCountdownSecond: remaining });
     const hours = Math.floor(remaining / 3600);
@@ -1552,8 +1555,6 @@ function installIPCHandler() {
     const seconds = remaining % 60;
     const countdown = `${hours ? `${hours}:` : ""}${String(minutes).padStart(hours ? 2 : 1, "0")}:${String(seconds).padStart(2, "0")}`;
     void sendStageLayer("widgets", {
-      serviceItem: stageContentCache.serviceItem || "",
-      mediaRemaining: countdown,
       countdown,
     }).catch(() => {});
   });
@@ -1719,7 +1720,7 @@ function installIPCHandler() {
       await openProjectByPath(filePath);
     } catch (err) {
       console.error("Failed to open project from launcher:", err);
-      showGnomeToast("Failed to open project");
+      showGnomeToast(["EMS_AUTOSAVE_FAILED", "EMS_PROJECT_SWITCH_BLOCKED"].includes(err?.code) ? err.message : "Failed to open project");
     }
   });
 }
@@ -2494,17 +2495,22 @@ async function loadOpMode(mode) {
             await openProjectByPath(droppedProject);
           } catch (err) {
             console.error("Failed to open dropped project:", err);
-            showGnomeToast("Failed to open project");
+            showGnomeToast(["EMS_AUTOSAVE_FAILED", "EMS_PROJECT_SWITCH_BLOCKED"].includes(err?.code) ? err.message : "Failed to open project");
           }
           return;
         }
         showGnomeToast("Drop media on the Schedule to use it, or on Media to keep it");
       });
-      on("app-close-autosave-requested", () => {
+      on("app-close-autosave-requested", (_event, requestId) => {
         void flushAutosaveOnClose()
-          .catch((err) => console.error("Close autosave failed:", err))
-          .finally(() => {
-            send("app-close-autosave-complete");
+          .then(() => send("app-close-autosave-complete", { requestId, ok: true }))
+          .catch((err) => {
+            console.error("Close autosave failed:", err);
+            send("app-close-autosave-complete", {
+              requestId,
+              ok: false,
+              error: err?.message || String(err),
+            });
           });
       });
 

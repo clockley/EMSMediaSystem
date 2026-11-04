@@ -8926,6 +8926,10 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 .media-library__filters button { padding: 5px 11px; border: 1px solid var(--border-color); border-radius: 999px; background: var(--card-bg-color); color: inherit; white-space: nowrap; }
 .media-library__filters button.is-active { border-color: var(--accent-bg-color); background: color-mix(in srgb, var(--accent-bg-color) 16%, var(--card-bg-color)); }
 
+.media-library__query-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 14px 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--destructive-bg-color, #c01c28) 55%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--destructive-bg-color, #c01c28) 12%, var(--card-bg-color)); font-size: 12px; }
+.media-library__query-error[hidden] { display: none; }
+.media-library__query-error button { flex: 0 0 auto; }
+
 .media-library__folder-bar { display: flex; align-items: center; min-width: 0; padding: 0 14px 10px; }
 .media-library__folder-bar[hidden] { display: none; }
 .media-library__path {

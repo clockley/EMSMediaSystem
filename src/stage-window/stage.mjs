@@ -28,9 +28,9 @@ function render() {
   root.dataset.profile = content.profile || widgets.profile || "current-next";
   setText("stageCurrent", content.current || "Waiting for live content");
   setText("stageNext", content.next || "—");
-  setText("stageServiceItem", widgets.serviceItem || content.serviceItem || "");
-  setText("stageSectionLabel", widgets.sectionLabel || content.sectionLabel || "");
-  setText("stageNotes", widgets.notes || content.notes || "");
+  setText("stageServiceItem", content.serviceItem || widgets.serviceItem || "");
+  setText("stageSectionLabel", content.sectionLabel || widgets.sectionLabel || "");
+  setText("stageNotes", content.notes || widgets.notes || "");
   setText("stageCountdown", widgets.countdown || widgets.mediaRemaining || content.countdown || "");
   renderOverlay("stageAlert", "stageAlertTitle", "stageAlertMessage", state.layers.alert);
   renderOverlay("stagePrivateMessage", "stagePrivateTitle", "stagePrivateText", state.layers.privateMessage);

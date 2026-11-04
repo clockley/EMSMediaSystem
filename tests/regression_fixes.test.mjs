@@ -47,13 +47,12 @@ test("output windows install cleanup before loading their renderer", async () =>
   assert.match(stage, /catch \(error\)[\s\S]*created\.destroy\(\)[\s\S]*throw error/);
 });
 
-test("display changes relocate and restore the lower-third window", async () => {
+test("a disconnected lower-third display closes its fullscreen window", async () => {
   const source = await readFile(new URL("../src/main-process/main.mjs", import.meta.url), "utf8");
   const displayChange = source.slice(source.indexOf("async function handleDisplayChange"), source.indexOf("function handlePlayCtl"));
-  assert.match(displayChange, /if \(lowerThirdWindow && !lowerThirdWindow\.isDestroyed\(\)\)/);
-  assert.match(displayChange, /wasLowerThirdDisplayDisconnected = true/);
-  assert.match(displayChange, /settings\.getSync\("lastLowerThirdDisplayIndex"\)/);
-  assert.match(displayChange, /wasLowerThirdDisplayDisconnected = false/);
+  const lowerThird = displayChange.slice(displayChange.indexOf("if (lowerThirdWindow"), displayChange.indexOf("if (mediaWindow"));
+  assert.match(lowerThird, /if \(!isOnValidDisplay \|\| !targetSelection\) \{\s+[^}]*lowerThirdWindow\.close\(\)/);
+  assert.doesNotMatch(lowerThird, /getPrimaryDisplay\(\)/);
 });
 
 test("application shutdown includes settings persistence in awaited cleanup", async () => {

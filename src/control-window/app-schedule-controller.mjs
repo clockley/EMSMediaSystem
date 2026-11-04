@@ -987,6 +987,13 @@ function renderQueue() {
   updateScheduleLiveProgress();
   updatePreviewCueUI();
   syncMediaLibraryOperationalMetadata();
+  if (hasLiveItem) {
+    // A schedule edit can change the next cue or its group notes without
+    // changing the slide currently on the audience output.
+    void refreshStageNotesForLiveItem().catch((error) =>
+      console.error("Failed to refresh stage content after schedule edit:", error),
+    );
+  }
 }
 
 function liveProgressMediaElement() {
@@ -2531,7 +2538,7 @@ function installMediaQueueListDelegation() {
           await openProjectByPath(droppedProject);
         } catch (err) {
           console.error("Failed to open dropped project:", err);
-          showGnomeToast("Failed to open project");
+          showGnomeToast(["EMS_AUTOSAVE_FAILED", "EMS_PROJECT_SWITCH_BLOCKED"].includes(err?.code) ? err.message : "Failed to open project");
         }
         return;
       }

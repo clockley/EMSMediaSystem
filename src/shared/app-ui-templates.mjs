@@ -69,6 +69,10 @@ function mediaLibraryWorkspaceMarkup() {
           <button type="button" data-media-kind="audio" aria-pressed="false">Audio</button>
           <button type="button" data-media-kind="presentation" aria-pressed="false">Presentations</button>
         </div>
+        <div id="mediaLibraryQueryError" class="media-library__query-error" role="alert" hidden>
+          <span>Media could not be loaded. The results below may be out of date.</span>
+          <button id="mediaLibraryRetryQueryBtn" class="pill-button secondary" type="button">Retry</button>
+        </div>
         <nav id="mediaLibraryFolderBar" class="media-library__folder-bar" aria-label="Location" hidden></nav>
         <div id="mediaLibraryItems" class="media-library__items" role="listbox" aria-label="Media items" tabindex="0"></div>
         <div id="mediaLibraryEmpty" class="media-library__empty" role="status" hidden>

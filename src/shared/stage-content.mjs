@@ -48,12 +48,13 @@ export function stageContentFromPresentation(
     : null;
   const nextSlide =
     nextFromNavigation || (activeIndex >= 0 ? slides[activeIndex + 1] : null);
-  const next =
-    stageSlideText(nextSlide) || String(nextItemText || "").trim();
+  const nextSlideText = stageSlideText(nextSlide);
+  const next = nextSlideText || String(nextItemText || "").trim();
   const slideNotes = String(slides[activeIndex]?.notes || message.notes || "").trim();
   return {
     current: current || fallbackCurrentLabel(type),
     next,
+    nextIsItem: !nextSlideText && Boolean(next),
     sectionLabel: String(
       slides[activeIndex]?.sectionLabel ||
       slides[activeIndex]?.sectionName ||

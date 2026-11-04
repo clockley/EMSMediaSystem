@@ -118,6 +118,8 @@ import {
 
 const stageLayerRevisions = new Map();
 const liveThemeApplyGate = createLatestRequestGate();
+let stageWidgetsOwnerItem = null;
+let stageContentUpdateRevision = 0;
 
 let currentAlertsSnapshot = { alert: null, queue: [], nurseryAlerts: [] };
 
@@ -287,6 +289,39 @@ async function sendCachedStageContent() {
   return sendStageLayer("content", stageContentCache);
 }
 
+async function clearStageWidgetsIfLiveItemChanged(item, nextServiceItem) {
+  const owner = item || null;
+  if (owner === stageWidgetsOwnerItem && nextServiceItem === (stageContentCache.serviceItem || "")) return;
+  stageWidgetsOwnerItem = owner;
+  setSharedRendererState({ lastStageCountdownSecond: -1 });
+  await sendStageLayer("widgets", {}, "layer.clear");
+}
+
+async function resetStageContentForProjectChange(profile = "current-next") {
+  stageContentUpdateRevision += 1;
+  stageWidgetsOwnerItem = null;
+  const empty = {
+    current: "Waiting for live content",
+    next: "",
+    nextIsItem: false,
+    serviceItem: "",
+    sectionLabel: "",
+    notes: "",
+    slideNotes: "",
+    countdown: "",
+    profile,
+  };
+  setSharedRendererState({ stageContentCache: empty, lastStageCountdownSecond: -1 });
+  const status = await invoke("get-output-status").catch(() => null);
+  if (status?.sessionId) setSharedRendererState({ stageSessionIdCache: status.sessionId });
+  await sendStageLayer("widgets", {}, "layer.clear").catch((error) =>
+    console.error("Could not clear stage widgets for project change:", error),
+  );
+  await sendStageLayer("content", empty).catch((error) =>
+    console.error("Could not reset stage content for project change:", error),
+  );
+}
+
 /**
  * Opted-in schedule notes for the live cue: its group's note, then its own.
  * Never used for audience or lower-third payloads.
@@ -301,6 +336,7 @@ async function syncStageContentFromAudienceMessage(
   message = {},
   item = currentLiveQueueItem(),
 ) {
+  const updateRevision = ++stageContentUpdateRevision;
   const presentation = livePresentationForStage(type, message, item);
   const itemIndex = mediaQueue.indexOf(item);
   const payload = stageContentFromPresentation(
@@ -312,6 +348,8 @@ async function syncStageContentFromAudienceMessage(
       slides: presentation?.slides,
     },
   );
+  await clearStageWidgetsIfLiveItemChanged(item, payload.serviceItem);
+  if (updateRevision !== stageContentUpdateRevision) return false;
   setSharedRendererState({ stageContentCache: {
     ...stageContentCache,
     ...payload,
@@ -321,7 +359,11 @@ async function syncStageContentFromAudienceMessage(
 
 async function syncStageContentFromQueueItem(item = currentLiveQueueItem()) {
   if (!item) return false;
+  const updateRevision = ++stageContentUpdateRevision;
   const nextText = nextPlayableQueueItemStageText(mediaQueue.indexOf(item));
+  const serviceItem = queueItemStageLabel(item);
+  await clearStageWidgetsIfLiveItemChanged(item, serviceItem);
+  if (updateRevision !== stageContentUpdateRevision) return false;
   // This generic path is also used when a text cue is lower-third-only and no
   // audience payload exists to build richer stage content. Explicitly reset
   // slide notes so content from the previous cue cannot linger.
@@ -329,7 +371,8 @@ async function syncStageContentFromQueueItem(item = currentLiveQueueItem()) {
     ...stageContentCache,
     current: queueItemStageLabel(item) || "Live content",
     next: nextText,
-    serviceItem: queueItemStageLabel(item),
+    nextIsItem: Boolean(nextText),
+    serviceItem,
     slideNotes: "",
     notes: liveScheduleItemStageNotes(item),
   } });
@@ -341,12 +384,18 @@ async function syncStageContentFromQueueItem(item = currentLiveQueueItem()) {
  * slides. Only sends when the stage text actually changes.
  */
 async function refreshStageNotesForLiveItem() {
+  const item = currentLiveQueueItem();
+  if (!item) return false;
   const notes = mergeStageNotes(
-    liveScheduleItemStageNotes(),
+    liveScheduleItemStageNotes(item),
     stageContentCache.slideNotes || "",
   );
-  if (notes === (stageContentCache.notes || "")) return false;
-  setSharedRendererState({ stageContentCache: { ...stageContentCache, notes } });
+  const nextIsItem = stageContentCache.nextIsItem === true || !(stageContentCache.next || "");
+  const next = nextIsItem
+    ? nextPlayableQueueItemStageText(mediaQueue.indexOf(item))
+    : stageContentCache.next;
+  if (notes === (stageContentCache.notes || "") && next === (stageContentCache.next || "")) return false;
+  setSharedRendererState({ stageContentCache: { ...stageContentCache, notes, next, nextIsItem: nextIsItem && Boolean(next) } });
   return sendCachedStageContent();
 }
 
@@ -1133,6 +1182,7 @@ export {
   populateStageDisplaySelect,
   recentAlertMessages,
   refreshStageNotesForLiveItem,
+  resetStageContentForProjectChange,
   rememberAudienceTextMessage,
   rememberRecentAlertMessage,
   renderAlertLists,

@@ -125,7 +125,6 @@ const isDevMode = process.env.ems_dev === "true";
 const openDevConsole = process.env.ems_dev_console === "true";
 let lastKnownDisplayState = null;
 let wasDisplayDisconnected = false;
-let wasLowerThirdDisplayDisconnected = false;
 let aboutWindow = null;
 let helpWindow = null;
 let queueSwitchDialogWindow = null;
@@ -1158,13 +1157,11 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
     });
     lowerThirdWindow = createdLowerThirdWindow;
     lowerThirdContentKind = "none";
-    wasLowerThirdDisplayDisconnected = false;
     let creationComplete = false;
     const releaseLowerThirdWindow = () => {
       if (lowerThirdWindow === createdLowerThirdWindow) {
         lowerThirdWindow = null;
         lowerThirdContentKind = "none";
-        wasLowerThirdDisplayDisconnected = false;
         if (creationComplete && win && !win.isDestroyed()) {
           win.webContents.send("lower-third-window-closed");
         }
@@ -1629,13 +1626,9 @@ async function handleDisplayChange() {
     const savedDisplay = settings.getSync("lastLowerThirdDisplayIndex");
     const targetSelection = resolveDisplaySelection(savedDisplay);
     if (!isOnValidDisplay || !targetSelection) {
-      wasLowerThirdDisplayDisconnected = true;
-      lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(screen.getPrimaryDisplay()));
-      lowerThirdWindow.setFullScreen(true);
-    } else if (wasLowerThirdDisplayDisconnected) {
-      lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
-      lowerThirdWindow.setFullScreen(true);
-      wasLowerThirdDisplayDisconnected = false;
+      // A keyed fullscreen surface must not cover the operator's primary
+      // display when its assigned output disappears.
+      lowerThirdWindow.close();
     }
   }
 
@@ -2420,7 +2413,6 @@ function handleSetLowerThirdDisplayIndex(event, index) {
     }
     lowerThirdWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
     lowerThirdWindow.setFullScreen(true);
-    wasLowerThirdDisplayDisconnected = false;
   }
 }
 
@@ -5461,24 +5453,72 @@ async function handlePreflightCheckMedia(_, items) {
 
 function wireMainWindowCloseAutosave(mainWindow) {
   allowMainWindowClose = false;
+  let closeRequestInProgress = false;
+
+  const requestAutosave = () => new Promise((resolve) => {
+    const requestId = randomUUID();
+    let settled = false;
+    let timer = null;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      ipcMain.removeListener("app-close-autosave-complete", onAutosaveComplete);
+      resolve(result);
+    };
+    const onAutosaveComplete = (event, result) => {
+      if (event.sender !== mainWindow.webContents || result?.requestId !== requestId) return;
+      finish(result?.ok === true
+        ? { ok: true }
+        : { ok: false, error: result?.error || "The project could not be saved." });
+    };
+    ipcMain.on("app-close-autosave-complete", onAutosaveComplete);
+    timer = setTimeout(() => finish({ ok: false, error: "The save did not finish within 30 seconds." }), 30000);
+    try {
+      mainWindow.webContents.send("app-close-autosave-requested", requestId);
+    } catch (error) {
+      finish({ ok: false, error: error?.message || String(error) });
+    }
+  });
+
+  const finishClose = () => {
+    allowMainWindowClose = true;
+    if (!mainWindow.isDestroyed()) mainWindow.close();
+  };
+
   mainWindow.on("close", (event) => {
     if (allowMainWindowClose) return;
     if (!mainWindow.webContents || mainWindow.webContents.isDestroyed()) return;
     event.preventDefault();
-    let finished = false;
-    const finishClose = () => {
-      if (finished) return;
-      finished = true;
-      ipcMain.removeListener("app-close-autosave-complete", onAutosaveComplete);
-      allowMainWindowClose = true;
-      if (!mainWindow.isDestroyed()) {
-        mainWindow.close();
+    if (closeRequestInProgress) return;
+    closeRequestInProgress = true;
+    void (async () => {
+      while (!mainWindow.isDestroyed()) {
+        const result = await requestAutosave();
+        if (mainWindow.isDestroyed()) return;
+        if (result.ok) {
+          finishClose();
+          return;
+        }
+        const choice = await dialog.showMessageBox(mainWindow, {
+          type: "warning",
+          title: "Project save failed",
+          message: "The current project could not be saved before closing.",
+          detail: result.error,
+          buttons: ["Retry Save", "Cancel Close", "Exit Without Saving"],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (choice.response === 0) continue;
+        if (choice.response === 2) finishClose();
+        return;
       }
-    };
-    const onAutosaveComplete = () => finishClose();
-    ipcMain.once("app-close-autosave-complete", onAutosaveComplete);
-    mainWindow.webContents.send("app-close-autosave-requested");
-    setTimeout(finishClose, 30000);
+    })().catch((error) => {
+      console.error("Could not complete the close autosave flow:", error);
+    }).finally(() => {
+      closeRequestInProgress = false;
+    });
   });
 }
 

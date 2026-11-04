@@ -86,7 +86,6 @@ let playbackSyncPhase = "stable";
 let videoSourceGeneration = 0;
 /** Tags the next paused playback-state-change as operator intent, not source churn. */
 let explicitPauseSyncPending = false;
-let lastTimeRemainingMediaFile = "";
 var img = null;
 var mediaFile;
 var loopFile = false;
@@ -2228,14 +2227,7 @@ function sendRemainingTime(video) {
       const duration = video.duration;
       const playbackTime = video.currentTime;
       const timestamp = Date.now() + (currentTime - performance.now());
-      const mediaFileChanged = mediaFile !== lastTimeRemainingMediaFile;
-      if (mediaFileChanged) {
-        if (sendTimeRemainingTick(duration, playbackTime, timestamp, mediaFile)) {
-          lastTimeRemainingMediaFile = mediaFile;
-        }
-      } else {
-        sendTimeRemainingTick(duration, playbackTime, timestamp);
-      }
+      sendTimeRemainingTick(duration, playbackTime, timestamp, mediaFile);
       lastTime = currentTime;
     }
     requestAnimationFrame(send);

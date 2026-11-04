@@ -599,8 +599,15 @@ async function refreshSnapshot() {
   renderSources();
 }
 
+function showMediaLibraryQueryError(show) {
+  const error = element("mediaLibraryQueryError");
+  if (error) error.hidden = !show;
+  const liveRegion = element("mediaLibraryLiveRegion");
+  if (show && liveRegion) liveRegion.textContent = "Media could not be loaded. Retry the query.";
+}
+
 async function runQuery({ append = false } = {}) {
-  if (append && (!state.hasMore || state.loadingMore)) return;
+  if (append && (!state.hasMore || state.loadingMore)) return false;
   if (append) state.loadingMore = true;
   const requestId = ++state.requestId;
   const offset = append ? state.items.length : 0;
@@ -617,13 +624,20 @@ async function runQuery({ append = false } = {}) {
       }),
       bridge.invoke("media-library:list-folders", state.sourceId, state.parentId),
     ]);
-    if (requestId !== state.requestId) return;
+    if (requestId !== state.requestId) return false;
     state.items = append ? state.items.concat(result.items) : result.items;
     state.total = result.total;
     state.hasMore = result.hasMore;
     state.folders = Array.isArray(folders) ? folders : [];
     renderItems({ appendFrom: append ? offset : -1 });
     renderFolders();
+    showMediaLibraryQueryError(false);
+    return true;
+  } catch (error) {
+    if (requestId !== state.requestId) return false;
+    console.error("Media library query failed:", error);
+    showMediaLibraryQueryError(true);
+    return false;
   } finally {
     if (append) state.loadingMore = false;
   }
@@ -679,9 +693,9 @@ async function refresh({ preserveScroll = true } = {}) {
   state.restoringScroll = Boolean(anchor);
   try {
     await refreshSnapshot();
-    await runQuery();
+    if (!await runQuery()) return;
     while (anchor && state.hasMore && state.items.length < anchor.loadedCount) {
-      await runQuery({ append: true });
+      if (!await runQuery({ append: true })) break;
     }
     if (anchor) {
       await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -689,6 +703,7 @@ async function refresh({ preserveScroll = true } = {}) {
     }
   } catch (err) {
     console.error("Media library refresh failed:", err);
+    showMediaLibraryQueryError(true);
     bridge.showToast("Media could not be loaded");
   } finally {
     state.restoringScroll = false;
@@ -1570,6 +1585,7 @@ function bindEvents(workspace) {
     if (action === "clear-filter") setKind("");
     if (action === "refresh") void bridge.invoke("media-library:rescan", state.sourceId === "all" ? "" : state.sourceId).then(refresh);
   });
+  element("mediaLibraryRetryQueryBtn")?.addEventListener("click", () => void refresh());
 
   let searchTimer = null;
   element("mediaLibrarySearch")?.addEventListener("input", (event) => {

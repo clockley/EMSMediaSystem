@@ -903,14 +903,15 @@ function sendPptxSlideToMediaWindow(
     playbackId: String(playbackId || ""),
     transition: livePptxItem ? slideTransitionPayloadForQueueItem(livePptxItem) : undefined,
   });
-  const nextSlide =
-    Number.isInteger(slideIndex) && slideIndex + 1 < pptxSlideCount
-      ? `Slide ${slideIndex + 2}`
-      : nextPlayableQueueItemStageText();
+  const hasFollowingSlide = Number.isInteger(slideIndex) && slideIndex + 1 < pptxSlideCount;
+  const nextSlide = hasFollowingSlide
+    ? `Slide ${slideIndex + 2}`
+    : nextPlayableQueueItemStageText();
   setSharedRendererState({ stageContentCache: {
     ...stageContentCache,
     current: `Slide ${Math.max(1, (Number(slideIndex) || 0) + 1)}`,
     next: nextSlide,
+    nextIsItem: !hasFollowingSlide && Boolean(nextSlide),
     serviceItem: queueItemStageLabel(livePptxItem) || "",
   } });
   void sendCachedStageContent().catch(() => {});

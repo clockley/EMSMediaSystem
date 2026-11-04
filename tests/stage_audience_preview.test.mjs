@@ -62,18 +62,18 @@ test("existing confidence captures still prevent conditional focus", () => {
 test("stage content owns service item and notes; widgets only add the countdown", () => {
   assert.match(renderer, /setText\("stageServiceItem", content\.serviceItem \|\| widgets\.serviceItem/);
   assert.match(renderer, /setText\("stageNotes", content\.notes \|\| widgets\.notes/);
-  assert.match(liveOutputs, /function clearStageWidgetsIfLiveItemChanged\(item, previousServiceItem\)/);
-  assert.match(liveOutputs, /item && previousItem\s+\? item === previousItem/);
+  assert.match(liveOutputs, /function clearStageWidgetsIfLiveItemChanged\(item, nextServiceItem\)/);
+  assert.match(liveOutputs, /owner === stageWidgetsOwnerItem && nextServiceItem === \(stageContentCache\.serviceItem \|\| ""\)/);
   assert.equal(
-    liveOutputs.match(/clearStageWidgetsIfLiveItemChanged\(item, previousServiceItem\);/g)?.length,
+    liveOutputs.match(/await clearStageWidgetsIfLiveItemChanged\(item, (?:payload\.serviceItem|serviceItem)\);/g)?.length,
     2,
   );
-  assert.match(liveOutputs, /sendStageLayer\("widgets", \{\}, "layer\.clear"\)/);
+  assert.match(liveOutputs, /await sendStageLayer\("widgets", \{\}, "layer\.clear"\)/);
 });
 
 test("stage Next and notes refresh after schedule edits for the live cue", () => {
   assert.match(liveOutputs, /stageContentCache\.nextIsItem === true \|\| !\(stageContentCache\.next \|\| ""\)/);
-  assert.match(scheduleController, /if \(hasLiveItem\) \{\s+\/\/[^\n]*\n\s+void Promise\.resolve\(refreshStageNotesForLiveItem\(\)\)/);
+  assert.match(scheduleController, /if \(hasLiveItem\) \{[\s\S]*?void refreshStageNotesForLiveItem\(\)/);
 });
 
 test("stage preload exposes pull and push audience-source APIs", () => {

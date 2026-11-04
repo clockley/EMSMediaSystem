@@ -229,20 +229,21 @@ test("stage media previews resolve pinned snapshots before reading files", () =>
 });
 
 test("project changes clear stale stage content before auto-start", () => {
-  const reset = projectSession.indexOf('current: "Waiting for live content"');
-  const autoStart = projectSession.indexOf("ensureStageOutput({ quiet: true })", reset);
-  assert.ok(reset >= 0);
-  assert.ok(autoStart > reset);
-  assert.match(projectSession.slice(reset, autoStart), /nextMedia: null/);
-  assert.match(projectSession.slice(reset, autoStart), /notes: ""/);
+  const reset = projectSession.indexOf("await resetStageContentForProjectChange(nextStageProfile)");
+  const activate = projectSession.indexOf("currentProjectPath = nextProjectPath", reset);
+  assert.ok(reset >= 0 && activate > reset);
+  assert.match(liveOutputs, /async function resetStageContentForProjectChange\(profile = "current-next"\)/);
+  assert.match(liveOutputs, /await sendStageLayer\("widgets", \{\}, "layer\.clear"\)/);
+  assert.match(liveOutputs, /current: "Waiting for live content"/);
+  assert.match(liveOutputs, /notes: ""/);
 });
 
 test("stage countdown ticks are finite and carry cue identity every time", () => {
   assert.match(mediaWindow, /sendTimeRemainingTick\(duration, playbackTime, timestamp, mediaFile\)/);
   assert.doesNotMatch(mediaWindow, /sendTimeRemainingTick\(duration, playbackTime, timestamp\);/);
-  assert.match(operatorChrome, /if \(mediaPath && !mediaPathMatchesCurrentLiveMedia\(mediaPath\)\) return/);
-  assert.match(operatorChrome, /!Number\.isFinite\(total\)/);
-  assert.match(operatorChrome, /!Number\.isFinite\(elapsed\)/);
+  assert.match(operatorChrome, /if \(!mediaPath \|\| !mediaPathMatchesCurrentLiveMedia\(mediaPath\)\) return/);
+  assert.match(operatorChrome, /!Number\.isFinite\(duration\)/);
+  assert.match(operatorChrome, /!Number\.isFinite\(currentTime\)/);
 });
 
 test("media-library PowerPoint cards use the shared first-slide helper", () => {
