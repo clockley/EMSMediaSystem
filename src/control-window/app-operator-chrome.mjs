@@ -643,8 +643,19 @@ function setupCustomMediaControls() {
     }
     return false;
   };
+  // True while the operator is previewing a separate cue that has no
+  // scrubbable element of its own (an image cue, or an audio/video cue whose
+  // overlay has not finished loading). currentControlMedia() falls back to
+  // the live element in that state, so without this guard the transport
+  // re-appears (e.g. on hover or live loadedmetadata) and scrubbing it would
+  // seek the live output while the operator is looking at the preview.
+  const liveControlsSuppressedByCue = (mediaEl) =>
+    (mediaEl === video || mediaEl === liveAudio) &&
+    isPreparingSeparateCue() &&
+    !cueMediaEl();
   const controlMediaTimelineSeekable = (mediaEl) =>
     !isPreviewWorkspaceOverlayVisible() &&
+    !liveControlsSuppressedByCue(mediaEl) &&
     !controlMediaHidesTimeline(mediaEl) &&
     controlMediaDuration(mediaEl) > 0;
   const setTimelineControlsHidden = (hidden) => {
@@ -703,7 +714,8 @@ function setupCustomMediaControls() {
     timeline.max = 100;
 
     const duration = controlMediaDuration(mediaEl);
-    const overlayBlocksTransport = isPreviewWorkspaceOverlayVisible();
+    const overlayBlocksTransport =
+      isPreviewWorkspaceOverlayVisible() || liveControlsSuppressedByCue(mediaEl);
     const hidesTimeline = controlMediaHidesTimeline(mediaEl);
     const hasSeekableMedia = duration > 0 && !hidesTimeline && !overlayBlocksTransport;
     const currentTime = controlMediaCurrentTime(mediaEl);
@@ -740,6 +752,7 @@ function setupCustomMediaControls() {
   const updateControlsForTime = (mediaEl) => {
     if (mediaEl !== currentControlMedia()) return;
     if (previewTransportLoadIsPending()) return;
+    if (liveControlsSuppressedByCue(mediaEl)) return;
     if (controlMediaHidesTimeline(mediaEl)) return;
     const duration = controlMediaDuration(mediaEl);
     const currentTime = controlMediaCurrentTime(mediaEl);
