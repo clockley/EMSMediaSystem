@@ -49,6 +49,16 @@ test("operator state only reports live for the exact resolved slide", () => {
     ),
     false,
   );
+  assert.equal(
+    resolvedPreviewMessagesMatch(message("slide-1"), {
+      contentKind: "scripture",
+      resolvedPresentation: {
+        source: { id: "KJV:John 3:16-18" },
+        navigation: {},
+      },
+    }),
+    false,
+  );
 });
 
 function fakeSurface(width, height) {

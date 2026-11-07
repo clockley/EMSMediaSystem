@@ -12,6 +12,7 @@ the Free Software Foundation, either version 3 of the License, or
  */
 
 import { requestAudienceOutputDevice } from "../shared/audience-output-device.mjs";
+import { syncPreviewMediaAudioTracks } from "../shared/preview-audio-tracks.mjs";
 
 import {
   MEDIAPLAYER,
@@ -419,6 +420,7 @@ function ensurePreviewCueVideoElement() {
 
 function setPreviewCueVideoLocalAudio(el = previewCueVideo) {
   if (!el) return;
+  syncPreviewMediaAudioTracks(el, !activePresentationOwnsPreviewAudio());
   const vol = Math.max(
     0,
     Math.min(
@@ -696,6 +698,7 @@ async function loadAudioQueueItemIntoPreviewCue(index, item, startTime, loadToke
     setSharedRendererState({ previewAudioCueIndex: committedIndex });
   }
   audio.src = audioUrl;
+  syncPreviewAudioCueAudibility();
 
   await waitForLoadedMetadata(audio);
   committedIndex = previewCueIndexForItem(item, token);
@@ -1042,6 +1045,7 @@ async function takeQueueItemLive(index, startTime = 0, opts = {}) {
   setSharedRendererState({ currentQueueIndex: currentTargetIndex });
   setSharedRendererState({ isQueuePlaying: true });
   setSharedRendererState({ isPlaying: true });
+  syncPreviewAudioTrackState();
   updateDynUI();
   const started = await playCurrentQueueItem({
     preservePreviewSeek: false,
@@ -1510,6 +1514,7 @@ async function playCurrentQueueItem(opts) {
     setSharedRendererState({ isQueuePlaying: false });
     setSharedRendererState({ isActiveMediaWindowCache: false });
     setSharedRendererState({ activeMediaWindowContentType: null });
+    syncPreviewMediaAfterPresentationStateChange();
     send("set-output-content-status", "none");
     if (message) showGnomeToast(message);
     updateDynUI();
@@ -1565,6 +1570,7 @@ async function playCurrentQueueItem(opts) {
   renderQueue();
 
   setSharedRendererState({ isPlaying: true });
+  syncPreviewAudioTrackState();
   updateDynUI();
 
   if (isQueueItemBible(item)) {
@@ -1770,6 +1776,7 @@ async function advanceQueueAfterMediaWindowClosed() {
       setSelectedQueueAnchor(targetIndex);
       renderQueue();
       setSharedRendererState({ isPlaying: true });
+      syncPreviewAudioTrackState();
       updateDynUI();
       const started = await playCurrentQueueItem({
         preservePreviewSeek: false,
@@ -1805,6 +1812,7 @@ async function advanceQueueAfterMediaWindowClosed() {
       setSelectedQueueAnchor(targetIndex);
       renderQueue();
       setSharedRendererState({ isPlaying: true });
+      syncPreviewAudioTrackState();
       updateDynUI();
       const started = await playCurrentQueueItem({
         preservePreviewSeek: false,
@@ -2418,6 +2426,7 @@ async function handleMediaWindowClosed(event, id) {
       renderQueue();
 
       setSharedRendererState({ isPlaying: true });
+      syncPreviewAudioTrackState();
       updateDynUI();
 
       const iM = isImg(mediaFile);
@@ -2444,6 +2453,7 @@ async function handleMediaWindowClosed(event, id) {
         ) {
           setSharedRendererState({ isPlaying: false });
           setSharedRendererState({ isQueuePlaying: false });
+          syncPreviewMediaAfterPresentationStateChange();
           updateDynUI();
           renderQueue();
           return;
@@ -2460,6 +2470,7 @@ async function handleMediaWindowClosed(event, id) {
           showGnomeToast("No Bible output started");
           setSharedRendererState({ isPlaying: false });
           setSharedRendererState({ isQueuePlaying: false });
+          syncPreviewMediaAfterPresentationStateChange();
           updateDynUI();
           renderQueue();
           return;
@@ -2472,6 +2483,7 @@ async function handleMediaWindowClosed(event, id) {
         ) {
           setSharedRendererState({ isPlaying: false });
           setSharedRendererState({ isQueuePlaying: false });
+          syncPreviewMediaAfterPresentationStateChange();
           updateDynUI();
           renderQueue();
           return;
@@ -2484,6 +2496,7 @@ async function handleMediaWindowClosed(event, id) {
           showGnomeToast("No song output started");
           setSharedRendererState({ isPlaying: false });
           setSharedRendererState({ isQueuePlaying: false });
+          syncPreviewMediaAfterPresentationStateChange();
           updateDynUI();
           renderQueue();
           return;
@@ -2513,6 +2526,7 @@ async function handleMediaWindowClosed(event, id) {
       setSharedRendererState({ isQueuePlaying: false });
       setSharedRendererState({ isActiveMediaWindowCache: false });
       setSharedRendererState({ activeMediaWindowContentType: null });
+      syncPreviewMediaAfterPresentationStateChange();
       send("set-output-content-status", "none");
       updateDynUI();
       renderQueue();

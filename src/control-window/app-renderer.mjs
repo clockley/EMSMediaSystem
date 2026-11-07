@@ -168,6 +168,7 @@ import {
 } from "../shared/app-bible-scripture-render.mjs";
 import { waitForTextFonts } from "../shared/text-measure.mjs";
 import {
+  applyLowerThirdPreviewScale,
   installLowerThirdPreviewScaleObserver,
   renderLowerThirdPreview,
   renderOperatorPreviewState,
@@ -4691,6 +4692,7 @@ export {
   activeLowerThirdContentType,
   activeMediaWindowContentType,
   appliedPresentationTheme,
+  applyLowerThirdPreviewScale,
   applyOperatorSelectionContrast,
   applyScriptureRenderToPreview,
   arrangementSequenceEntries,

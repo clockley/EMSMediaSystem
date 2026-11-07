@@ -106,10 +106,11 @@ export function resolvedPreviewMessagesMatch(liveMessage, previewMessage) {
   const previewSlideId =
     previewMessage.slideId || previewMessage.resolvedPresentation?.navigation?.activeSlideId || "";
   if (liveSourceId && previewSourceId) {
-    return (
-      liveSourceId === previewSourceId &&
-      (!liveSlideId || !previewSlideId || liveSlideId === previewSlideId)
-    );
+    if (liveSourceId !== previewSourceId) return false;
+    if (liveSlideId || previewSlideId) {
+      return liveSlideId === previewSlideId;
+    }
+    return true;
   }
   return (
     String(liveMessage.contentKind || "") === String(previewMessage.contentKind || "") &&

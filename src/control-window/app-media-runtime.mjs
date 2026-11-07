@@ -12,6 +12,7 @@ the Free Software Foundation, either version 3 of the License, or
  */
 
 import { requestAudienceOutputDevice } from "../shared/audience-output-device.mjs";
+import { syncPreviewMediaAudioTracks } from "../shared/preview-audio-tracks.mjs";
 
 import {
   MEDIAPLAYER,
@@ -23,6 +24,7 @@ import {
   __dirname,
   activeLiveStream,
   activeMediaWindowContentType,
+  activePresentationOwnsPreviewAudio,
   activeNetworkPreviewSource,
   activePreviewResolvedMediaFile,
   activeResolvedMediaFile,
@@ -381,31 +383,31 @@ function waitForMediaElementBuffer(
   });
 }
 
-function syncPreviewAudioTrackState() {
-  if (!video?.audioTracks || typeof video.audioTracks.length !== "number") {
-    return;
-  }
+function previewAudioCueShouldBeAudible() {
+  const cue = currentPreviewCue();
+  return Boolean(
+    cue &&
+      isQueueItemAudio(cue.item) &&
+      previewAudioCueIndex === cue.index &&
+      !activePresentationOwnsPreviewAudio(),
+  );
+}
 
+function syncPreviewAudioTrackState() {
+  const presentationOwnsAudio = activePresentationOwnsPreviewAudio();
   const previewShouldBeAudible =
     !networkPreviewUsesRendererCapture() &&
     !shouldSuppressPreviewForwarding() &&
-    !isLocalAppWindowPresentationActive() &&
-    !isActiveMediaWindow();
-  for (let i = 0; i < video.audioTracks.length; i += 1) {
-    video.audioTracks[i].enabled = previewShouldBeAudible;
-  }
+    !presentationOwnsAudio;
+  syncPreviewMediaAudioTracks(video, previewShouldBeAudible);
+  syncPreviewMediaAudioTracks(previewCueVideo, !presentationOwnsAudio);
+  syncPreviewMediaAudioTracks(previewAudio, previewAudioCueShouldBeAudible());
 }
 
 function syncPreviewAudioCueAudibility() {
   if (!previewAudio) return;
-  const cue = currentPreviewCue();
-  const shouldBeAudible = Boolean(
-    cue &&
-      isQueueItemAudio(cue.item) &&
-      previewAudioCueIndex === cue.index &&
-      !isQueuePresentationActive() &&
-      !isActiveMediaWindow(),
-  );
+  const shouldBeAudible = previewAudioCueShouldBeAudible();
+  syncPreviewMediaAudioTracks(previewAudio, shouldBeAudible);
   previewAudio.muted = !shouldBeAudible;
   previewAudio.volume = shouldBeAudible ? (pendingCueVolume ?? 1) : 0;
 }
@@ -1177,6 +1179,22 @@ async function playMedia(e) {
 
   if (!isPlaying) {
     return runPresentationStart(async () => {
+      const restoreFailedStart = () => {
+        if (isActiveMediaWindow() || playingMediaAudioOnly) return;
+        setSharedRendererState({ isPlaying: false });
+        syncPreviewMediaAfterPresentationStateChange();
+        updateDynUI();
+      };
+      const startOutput = async (operation) => {
+        try {
+          const started = await operation();
+          if (started === false) restoreFailedStart();
+          return started;
+        } catch (error) {
+          restoreFailedStart();
+          throw error;
+        }
+      };
       if (
         !audioOnlyFile &&
         !hasAudienceOutputSelected() &&
@@ -1185,10 +1203,11 @@ async function playMedia(e) {
         return false;
       }
       setSharedRendererState({ isPlaying: true });
+      syncPreviewAudioTrackState();
       updateDynUI();
       if (currentMode === MEDIAPLAYER) {
         if (iM) {
-          await createMediaWindow();
+          if ((await startOutput(() => createMediaWindow())) === false) return false;
           video.currentTime = 0;
           if (!video.paused) {
             video.removeAttribute("src");
@@ -1198,15 +1217,13 @@ async function playMedia(e) {
         }
       } else if (currentMode === STREAMPLAYER) {
         setSharedRendererState({ audioOnlyFile: false });
-        await createMediaWindow();
-        return;
+        return startOutput(() => createMediaWindow());
       }
       if (audioOnlyFile) {
-        await playAudioOnlyLocally();
-        return;
+        return startOutput(() => playAudioOnlyLocally());
       }
 
-      await createMediaWindow();
+      return startOutput(() => createMediaWindow());
     });
   } else {
     // The header button reads "Stop" while a presentation is live; keep that
@@ -2140,6 +2157,7 @@ async function playAudioOnlyLocally(startOverride = null) {
       setSharedRendererState({ playingMediaAudioOnly: false });
       setSharedRendererState({ isPlaying: false });
       send("localMediaState", 0, "stop");
+      syncPreviewMediaAfterPresentationStateChange();
       updateDynUI();
     }
     return false;
@@ -2381,6 +2399,7 @@ async function createMediaWindow(options) {
     );
   };
   setSharedRendererState({ isActiveMediaWindowCache: true });
+  syncPreviewAudioTrackState();
   if (isTextItem) {
     // Do not expose a fresh text renderer to live-update paths until its first
     // payload has committed. Otherwise a style edit can supersede the initial

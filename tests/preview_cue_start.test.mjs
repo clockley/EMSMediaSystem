@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 import { clampMediaTime, clampQueueStartTime } from "../src/shared/app-media-utils.mjs";
 import { PlaybackTransitionCoordinator } from "../src/shared/playback-transition-coordinator.mjs";
+import { syncPreviewMediaAudioTracks } from "../src/shared/preview-audio-tracks.mjs";
 
 const sourceFiles = await Promise.all([
   "app-renderer.mjs", "app-media-runtime.mjs", "app-presentation-playback.mjs",
@@ -130,7 +131,7 @@ function harness({ audio = false, cue = false, paused = true } = {}) {
     syncStageContentFromQueueItem: async () => {},
     // Reloading the preview is a real transition boundary: it loses currentTime.
     loadQueueItemIntoControlWindow: async () => { main.load(); },
-    createMediaWindow: async (options) => { state.outputStartTime = options.startTime; },
+    createMediaWindow: async (options) => { state.outputStartTime = options.startTime; return true; },
     saveMediaFile: () => { state.startTime = 0; main.load(); },
     clearCueAfterTake: () => { state.previewCueIndex = -1; },
     toggleLocalAudioOnlyPlaybackFromControls: async () => false,
@@ -147,7 +148,7 @@ function harness({ audio = false, cue = false, paused = true } = {}) {
     "updateDynUI", "resolveQueuePresentationVideo", "hidePptxPreview", "nextPreviewLoadToken",
     "clearLowerThirdForUnsupportedMediaSource", "consumePendingCueVolume",
     "syncPreviewAudioTrackState", "addFilenameToTitlebar", "refreshLiveAudioControls",
-    "updateTimestamp",
+    "syncPreviewMediaAfterPresentationStateChange", "updateTimestamp",
   ]) state[name] = () => {};
   vm.createContext(state);
   const names = [
@@ -164,6 +165,64 @@ function harness({ audio = false, cue = false, paused = true } = {}) {
   state.setupCustomMediaControls();
   return { state, item, main, controlMedia, liveAudio, elements };
 }
+
+function installPreviewTrackSync(state) {
+  state.activePresentationOwnsPreviewAudio = () => state.isPlaying || state.audienceActive;
+  state.shouldSuppressPreviewForwarding = () => false;
+  state.syncPreviewMediaAudioTracks = syncPreviewMediaAudioTracks;
+  state.syncPreviewMediaAfterPresentationStateChange = () => state.syncPreviewAudioTrackState();
+  vm.runInContext([
+    productionFunction("previewAudioCueShouldBeAudible"),
+    productionFunction("syncPreviewAudioTrackState"),
+  ].join("\n"), state);
+}
+
+test("a video cue loses audio before the audience window finishes starting", async () => {
+  const { state } = harness({ cue: true });
+  const track = { enabled: true };
+  state.previewCueVideo.audioTracks = [track];
+  installPreviewTrackSync(state);
+  let finishStart;
+  state.createMediaWindow = () => new Promise((resolve) => { finishStart = resolve; });
+
+  const pending = state.playMedia();
+  for (let i = 0; i < 10 && !finishStart; i += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(typeof finishStart, "function");
+  assert.equal(track.enabled, false);
+
+  finishStart(true);
+  await pending;
+});
+
+test("a failed audience start restores the video cue's audio track", async () => {
+  const { state } = harness({ cue: true });
+  const track = { enabled: true };
+  state.previewCueVideo.audioTracks = [track];
+  installPreviewTrackSync(state);
+  state.createMediaWindow = async () => false;
+
+  await state.playMedia();
+  assert.equal(state.isPlaying, false);
+  assert.equal(track.enabled, true);
+});
+
+test("a failed direct media start restores preview audio", async () => {
+  const { state, main } = harness();
+  const track = { enabled: true };
+  main.audioTracks = [track];
+  state.currentMode = state.STREAMPLAYER;
+  state.mediaQueue = [];
+  state.currentQueueIndex = -1;
+  state.document.getElementById("mdFile").value = "/clip.mp4";
+  installPreviewTrackSync(state);
+  state.createMediaWindow = async () => false;
+
+  assert.equal(await state.playMedia(), false);
+  assert.equal(state.isPlaying, false);
+  assert.equal(track.enabled, true);
+});
 
 for (const audio of [false, true]) {
   for (const cue of [false, true]) {

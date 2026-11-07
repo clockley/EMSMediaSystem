@@ -3411,9 +3411,18 @@ function installSongLowerThirdPreviewScaleObserver() {
   const shell = document.getElementById("songLowerThirdPreviewShell");
   installLowerThirdPreviewScaleObserver(
     shell,
-    renderSongLowerThirdControls,
+    syncSongLowerThirdPreviewOutputScale,
     "_songLowerThirdPreviewScaleObserver",
   );
+}
+
+function syncSongLowerThirdPreviewOutputScale() {
+  const shell = document.getElementById("songLowerThirdPreviewShell");
+  if (!shell) return;
+  applyLowerThirdPreviewScale(shell, selectedBiblePreviewOutputSize("lowerThirdDspSelct"), {
+    fit: "width",
+    align: "bottom",
+  });
 }
 
 function renderSongLowerThirdControls() {
@@ -9000,6 +9009,7 @@ import {
   activeLowerThirdContentType,
   activeMediaWindowContentType,
   appliedPresentationTheme,
+  applyLowerThirdPreviewScale,
   applyOperatorSelectionContrast,
   applyScriptureRenderToPreview,
   arrangementSequenceEntries,

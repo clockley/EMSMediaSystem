@@ -25,7 +25,6 @@ import {
 } from "./text-measure.mjs";
 import {
   applyLowerThirdPreviewScale,
-  installLowerThirdPreviewScaleObserver,
 } from "./lower-third-preview.mjs";
 
 export const SCRIPTURE_FONT_FAMILY = "'CMG Sans'";
@@ -1008,9 +1007,4 @@ export function installBiblePreviewScaleObserver() {
   } else {
     window.addEventListener("resize", syncBiblePreviewOutputScale);
   }
-  installLowerThirdPreviewScaleObserver(
-    document.getElementById("bibleLowerThirdPreviewShell"),
-    syncBiblePreviewOutputScale,
-    "_bibleLowerThirdPreviewScaleObserver",
-  );
 }

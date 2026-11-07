@@ -156,6 +156,7 @@ function audioHarness({ fileBacked, resolvePath, play }) {
     send: (...args) => sends.push(args),
     addFilenameToTitlebar() {},
     syncPreviewAudioTrackState() {},
+    syncPreviewMediaAfterPresentationStateChange() {},
     updateDynUI() {},
     normalizeMediaPathForCompare: (value) => value,
     waitForLoadedMetadata: async () => {},
