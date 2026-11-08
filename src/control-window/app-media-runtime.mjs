@@ -515,6 +515,11 @@ async function toggleLocalAudioOnlyPlaybackFromControls() {
   send("localMediaState", 0, "stop");
   removeFilenameFromTitlebar();
   setSharedRendererState({ localTimeStampUpdateIsRunning: false });
+  // The preview <video> the operator may have scrubbed during the audio-only
+  // presentation is typically already paused, so the pause-event re-sync in
+  // pauseLocalMedia never fires here. Re-enable its audio tracks explicitly
+  // now that no presentation owns preview audio.
+  syncPreviewMediaAfterPresentationStateChange();
   updateDynUI();
 
   return true;
@@ -2045,6 +2050,11 @@ async function endLiveAudioPresentation() {
     removeFilenameFromTitlebar();
     setSharedRendererState({ masterPauseState: false });
     setSharedRendererState({ localTimeStampUpdateIsRunning: false });
+    // The presentation no longer owns preview audio: re-enable the audio
+    // tracks that were suppressed on any media the operator scrubbed while
+    // the audio-only item was live. The queue hand-offs below re-sync again
+    // for whatever they start or restore.
+    syncPreviewMediaAfterPresentationStateChange();
 
     if (wasAudioOnlyQueueItem) {
       if (shouldAdvanceAfterCurrentItemEnds()) {
