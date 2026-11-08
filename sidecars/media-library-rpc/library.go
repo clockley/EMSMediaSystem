@@ -1209,6 +1209,76 @@ func (s *libraryService) RemoveAddedItems(itemIDs []string) (int, error) {
 	return len(removed), nil
 }
 
+func (s *libraryService) RemoveMissingItems(itemIDs []string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureReadyLocked(); err != nil {
+		return 0, err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	removed := []string{}
+	thumbnailPaths := []string{}
+	affectedSources := map[string]struct{}{}
+	for _, id := range itemIDs {
+		var sourceID, availability string
+		// Only a genuinely absent row may be skipped. Treating a lookup failure
+		// as "not found" would report a removal that never happened.
+		switch err := tx.QueryRow(`SELECT source_id, availability FROM items WHERE id=?`, id).Scan(&sourceID, &availability); {
+		case errors.Is(err, sql.ErrNoRows):
+			continue
+		case err != nil:
+			_ = tx.Rollback()
+			return 0, err
+		}
+		if availability != "missing" {
+			continue
+		}
+		paths, err := deleteThumbnailsTx(tx, `item_id=?`, id)
+		if err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		thumbnailPaths = append(thumbnailPaths, paths...)
+		for _, statement := range []string{
+			`DELETE FROM recent_activity WHERE item_id=?`,
+			`DELETE FROM items_fts WHERE item_id=?`,
+			`DELETE FROM items WHERE id=?`,
+		} {
+			if _, err := tx.Exec(statement, id); err != nil {
+				_ = tx.Rollback()
+				return 0, err
+			}
+		}
+		affectedSources[sourceID] = struct{}{}
+		removed = append(removed, id)
+	}
+	if len(removed) == 0 {
+		_ = tx.Rollback()
+		return 0, nil
+	}
+	for sourceID := range affectedSources {
+		if _, err := tx.Exec(`UPDATE sources SET item_count=(SELECT COUNT(*) FROM items WHERE source_id=?) WHERE id=?`, sourceID, sourceID); err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+	}
+	change, err := recordChangeTx(tx, "items-removed", removed)
+	if err == nil {
+		err = tx.Commit()
+	} else {
+		_ = tx.Rollback()
+	}
+	if err != nil {
+		return 0, err
+	}
+	s.removeThumbnailFiles(thumbnailPaths)
+	s.notifyChange(change)
+	return len(removed), nil
+}
+
 func scanItem(scanner interface{ Scan(...any) error }) (itemView, int, error) {
 	var item itemView
 	var recent sql.NullString

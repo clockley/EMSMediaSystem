@@ -5798,6 +5798,7 @@ function setIPC() {
   ipcMain.handle("media-library:add-dropped-paths", (_event, paths) => mediaLibrary.addDroppedPaths(paths));
   ipcMain.handle("media-library:remove-source", (_event, sourceId) => mediaLibrary.removeSource(sourceId));
   ipcMain.handle("media-library:remove-added-items", (_event, itemIds) => mediaLibrary.removeAddedItems(itemIds));
+  ipcMain.handle("media-library:remove-missing-items", (_event, itemIds) => mediaLibrary.removeMissingItems(itemIds));
   ipcMain.handle("media-library:rescan", (_event, sourceId) =>
     sourceId ? mediaLibrary.scanSource(sourceId) : mediaLibrary.refreshAll());
   ipcMain.handle("media-library:record-activity", (_event, activity) => mediaLibrary.recordActivity(activity));

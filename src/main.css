@@ -9120,6 +9120,10 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     pointer-events: auto;
 }
 .media-library__preview svg { width: 52px; height: 52px; fill: none; stroke: currentColor; stroke-width: 1.3; }
+.media-library__preview-missing { display: grid; justify-items: center; gap: 6px; padding: 24px; text-align: center; color: #ffffffb8; }
+.media-library__preview-missing svg { opacity: 0.55; }
+.media-library__preview-missing strong { color: #fff; font-size: 15px; font-weight: 700; }
+.media-library__preview-missing span { font-size: 12px; max-width: 36ch; }
 .media-library__preview-controls svg { width: 20px; height: 20px; fill: currentColor; stroke: none; }
 .media-library__preview-controls [data-library-preview-mute-icon] { width: 16px; height: 16px; }
 .media-library__preview-controls [data-library-preview-mute-icon] path[fill="none"] { fill: none; stroke: currentColor; }

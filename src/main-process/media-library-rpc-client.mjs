@@ -139,6 +139,7 @@ export class MediaLibraryRpcClient {
   addDroppedPaths(paths) { return this.call("library.drop.add", [paths]); }
   removeSource(id) { return this.call("library.source.remove", [id]); }
   removeAddedItems(ids) { return this.call("library.items.removeAdded", [ids]); }
+  removeMissingItems(ids) { return this.call("library.items.removeMissing", [ids]); }
   scanSource(id) { return this.call("library.source.rescan", [id]); }
   refreshAll() { return this.call("library.source.rescan", []); }
   recordActivity(activity) { return this.call("library.activity.record", [activity]); }

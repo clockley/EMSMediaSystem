@@ -383,6 +383,7 @@ test("a failed Media query displays a retry state and recovers after success", a
     bridge, state, pickerRequest: null, PAGE_SIZE: 60,
     element: (id) => elements.get(id),
     renderItems: () => {}, renderFolders: () => {},
+    refreshOpenDetailsForAvailabilityChange: () => {},
     console: { error: () => {} },
   };
   const runQuery = vm.runInNewContext(`${code}\nrunQuery`, context);

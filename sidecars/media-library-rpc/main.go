@@ -199,6 +199,12 @@ func dispatch(service *libraryService, req rpcRequest) (any, error) {
 			return nil, fmt.Errorf("item ids are required")
 		}
 		return service.RemoveAddedItems(params[0])
+	case "library.items.removeMissing":
+		var params [][]string
+		if err := json.Unmarshal(req.Params, &params); err != nil || len(params) == 0 {
+			return nil, fmt.Errorf("item ids are required")
+		}
+		return service.RemoveMissingItems(params[0])
 	case "library.activity.record":
 		activity, err := firstParam[activityInput](req.Params)
 		if err != nil {

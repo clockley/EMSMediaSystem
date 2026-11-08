@@ -407,6 +407,56 @@ func TestExplicitRemovalDeletesThumbnailRowsAndFiles(t *testing.T) {
 		}
 		assertThumbnailRemoved(t, service, item.ID, thumb.Output)
 	})
+
+	t.Run("RemoveMissingItems", func(t *testing.T) {
+		sourceRoot := filepath.Join(root, "source-with-missing")
+		if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		imagePath := filepath.Join(sourceRoot, "soon-missing.png")
+		writePNG(t, imagePath)
+		source, err := service.AddSource(sourceRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.ScanSource(source.ID); err != nil {
+			t.Fatal(err)
+		}
+		result, err := service.Query(queryOptions{SourceID: source.ID, Limit: 10})
+		if err != nil || result.Total != 1 {
+			t.Fatalf("query=%#v err=%v", result, err)
+		}
+		item := result.Items[0]
+		if removed, err := service.RemoveMissingItems([]string{item.ID}); err != nil || removed != 0 {
+			t.Fatalf("available item was removed: removed=%d err=%v", removed, err)
+		}
+		if err := os.Remove(imagePath); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.ScanSource(source.ID); err != nil {
+			t.Fatal(err)
+		}
+		missing, err := service.GetItem(item.ID)
+		if err != nil || missing == nil || missing.Availability != "missing" {
+			t.Fatalf("missing item=%#v err=%v", missing, err)
+		}
+		removed, err := service.RemoveMissingItems([]string{item.ID})
+		if err != nil || removed != 1 {
+			t.Fatalf("removed=%d err=%v", removed, err)
+		}
+		gone, err := service.GetItem(item.ID)
+		if err != nil || gone != nil {
+			t.Fatalf("item still present=%#v err=%v", gone, err)
+		}
+		var thumbnailRows int
+		if err := service.db.QueryRow(`SELECT COUNT(*) FROM thumbnails WHERE item_id=?`, item.ID).Scan(&thumbnailRows); err != nil || thumbnailRows != 0 {
+			t.Fatalf("thumbnail rows=%d err=%v", thumbnailRows, err)
+		}
+		var sourceCount int
+		if err := service.db.QueryRow(`SELECT item_count FROM sources WHERE id=?`, source.ID).Scan(&sourceCount); err != nil || sourceCount != 0 {
+			t.Fatalf("source item_count=%d err=%v", sourceCount, err)
+		}
+	})
 }
 
 func TestRemoveSourceRollsBackEveryRelatedTableOnDeleteFailure(t *testing.T) {

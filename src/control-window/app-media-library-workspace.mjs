@@ -30,6 +30,7 @@ let bridge = null;
 let installed = false;
 let refreshTimer = null;
 let pickerRequest = null;
+let detailsAvailability = "";
 let posterObserver = null;
 let layoutObserver = null;
 let activePosterJobs = 0;
@@ -632,6 +633,7 @@ async function runQuery({ append = false } = {}) {
     renderItems({ appendFrom: append ? offset : -1 });
     renderFolders();
     showMediaLibraryQueryError(false);
+    if (!append) refreshOpenDetailsForAvailabilityChange();
     return true;
   } catch (error) {
     if (requestId !== state.requestId) return false;
@@ -717,6 +719,16 @@ function scheduleRefresh(delay = 120) {
 
 function detailsAreOpen() {
   return Boolean(state.selectedId) && element("mediaLibraryDetails")?.hidden === false;
+}
+
+// A missing file can reappear (and an open file can vanish) between refreshes.
+// Re-render the open details pane so the placeholder is swapped for the real
+// preview — or vice versa — as soon as the library reports the change.
+function refreshOpenDetailsForAvailabilityChange() {
+  if (!detailsAreOpen()) return;
+  const item = selectedItem();
+  if (!item || item.availability === detailsAvailability) return;
+  showDetails(item);
 }
 
 function syncMediaLibraryLayout(width) {
@@ -968,7 +980,21 @@ function markPreviewMediaDraggable(media, item) {
   media.dataset.mediaItemId = item.id;
 }
 
+function missingPreviewNode(item) {
+  const status = document.createElement("div");
+  status.className = "media-library__preview-missing";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-label", `${item.displayName} is missing`);
+  status.innerHTML = `
+    <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M6 9h20l-3 7 7 5-6 8 3 10H6z"/><path d="M42 9H30l-3 7 7 5-6 8 3 10h11z"/><circle cx="15" cy="19" r="4"/></svg>
+    <strong>File is missing</strong>
+    <span>This file could not be found on disk. The preview will load if the file becomes available again.</span>
+  `;
+  return status;
+}
+
 function previewNode(item) {
+  if (item.availability === MEDIA_AVAILABILITY.missing) return missingPreviewNode(item);
   if (item.availability !== MEDIA_AVAILABILITY.available || !item.localPath) {
     const wrapper = document.createElement("div");
     wrapper.innerHTML = kindIcon(item.kind);
@@ -1242,6 +1268,7 @@ function showDetails(item, { focus = false, inspect = false } = {}) {
   preview.replaceChildren(previewNode(item));
   preview.draggable = false;
   delete preview.dataset.mediaItemId;
+  detailsAvailability = item.availability;
   if (item.kind === "presentation" && item.availability === MEDIA_AVAILABILITY.available && item.localPath) {
     void loadPresentationPreview(item, preview);
   }
@@ -1271,6 +1298,7 @@ function closeDetails({ preserveScroll = true } = {}) {
   restoreMediaScrollAnchorAfterLayout(null);
   disposePresentationPreview();
   state.selectedId = "";
+  detailsAvailability = "";
   const details = element("mediaLibraryDetails");
   const preview = element("mediaLibraryPreview");
   preview?.querySelectorAll("video, audio").forEach((media) => media.pause());
@@ -1337,6 +1365,7 @@ function ensureMediaLibraryContextMenu() {
   menu.hidden = true;
   menu.innerHTML = `
     <button type="button" role="menuitem" data-media-library-action="add-schedule">Add to Schedule</button>
+    <button type="button" role="menuitem" data-media-library-action="remove-missing" hidden>Remove Missing Entry</button>
   `;
 
   menu.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -1346,8 +1375,10 @@ function ensureMediaLibraryContextMenu() {
     if (!button) return;
     const item = menu._mediaItem;
     hideMediaLibraryContextMenu();
-    if (button.getAttribute("data-media-library-action") !== "add-schedule") return;
-    if (item) void addItemToSchedule(item);
+    const action = button.getAttribute("data-media-library-action");
+    if (!item) return;
+    if (action === "add-schedule") void addItemToSchedule(item);
+    else if (action === "remove-missing") void removeMissingLibraryItem(item);
   });
 
   document.body.appendChild(menu);
@@ -1378,6 +1409,8 @@ function showMediaLibraryContextMenu(event, item) {
     action.disabled = item.availability !== MEDIA_AVAILABILITY.available || !item.localPath;
     action.textContent = pickerRequest ? "Choose" : "Add to Schedule";
   }
+  const removeAction = menu.querySelector("[data-media-library-action='remove-missing']");
+  if (removeAction) removeAction.hidden = item.availability !== MEDIA_AVAILABILITY.missing;
   menu.hidden = false;
   menu.style.left = "0px";
   menu.style.top = "0px";
@@ -1386,6 +1419,33 @@ function showMediaLibraryContextMenu(event, item) {
   const top = Math.max(8, Math.min(event.clientY, window.innerHeight - menuRect.height - 8));
   menu.style.left = `${Math.round(left)}px`;
   menu.style.top = `${Math.round(top)}px`;
+}
+
+async function removeMissingLibraryItem(item) {
+  if (!item || item.availability !== MEDIA_AVAILABILITY.missing) return;
+  const confirmation = await bridge.invoke("show-renderer-message-box", {
+    type: "question",
+    title: "Remove Missing Entry",
+    message: `Remove “${item.displayName}” from Media?`,
+    detail: "The file could not be found on disk. Removing the entry also deletes its cached thumbnails.",
+    buttons: ["Cancel", "Remove"],
+    defaultId: 0,
+    cancelId: 0,
+  });
+  if (confirmation?.response !== 1) return;
+  try {
+    const removed = await bridge.invoke("media-library:remove-missing-items", [item.id]);
+    if (!removed) {
+      bridge.showToast("This entry could not be removed");
+      return;
+    }
+    if (state.selectedId === item.id) closeDetails({ preserveScroll: false });
+    bridge.showToast(`Removed ${item.displayName} from Media`);
+    await refresh();
+  } catch (error) {
+    console.error("Failed to remove missing Media item:", error);
+    bridge.showToast("This entry could not be removed");
+  }
 }
 
 async function addItemToSchedule(item = selectedItem()) {
