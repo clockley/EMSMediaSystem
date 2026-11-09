@@ -368,21 +368,383 @@ const LAST_BIBLE_VERSION_SETTING_KEY = "lastBibleVersion";
 
 const DEFAULT_BIBLE_VERSION = "KJV";
 
+const BIBLE_REFERENCE_VERSION_SUFFIX_MAX_WORDS = 4;
+
+const BIBLE_ALIAS_STOP_WORDS = new Set(["of", "the", "and"]);
+
+const bibleBookLookupByVersion = new Map();
+const bibleBookLookupRequestByVersion = new Map();
+let bibleReferenceSuggestionsRequestId = 0;
+
 let bibleVerseDragPayload = null;
 
 const BIBLE_VERSE_DRAG_MIME = "application/x-ems-bible-verses";
 
+function normalizeBibleLookupToken(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function bibleAliasWords(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function addBibleBookDerivedAliasCandidate(candidateMap, alias, canonicalBookName) {
+  const key = normalizeBibleLookupToken(alias);
+  if (!key || !canonicalBookName) return;
+  if (!candidateMap.has(key)) {
+    candidateMap.set(key, new Set());
+  }
+  candidateMap.get(key).add(canonicalBookName);
+}
+
+function collectBibleBookAliasStrings(rawBook = {}, canonicalBookName = "") {
+  const aliases = new Set();
+  const add = (value) => {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (text) aliases.add(text);
+  };
+
+  add(canonicalBookName);
+  add(rawBook?.name);
+  add(rawBook?.abbreviation);
+  add(rawBook?.shortName);
+  add(rawBook?.short);
+  add(rawBook?.title);
+  add(rawBook?.osis);
+
+  if (Array.isArray(rawBook?.aliases)) {
+    for (const alias of rawBook.aliases) add(alias);
+  }
+
+  return aliases;
+}
+
+function buildBibleBookDerivedAliases(canonicalBookName) {
+  const words = bibleAliasWords(canonicalBookName);
+  if (!words.length) return [];
+
+  const significant = words.filter((word) => !BIBLE_ALIAS_STOP_WORDS.has(word));
+  const sourceWords = significant.length ? significant : words;
+  const aliases = new Set();
+
+  aliases.add(sourceWords.join(" "));
+  aliases.add(sourceWords.join(""));
+
+  if (sourceWords.length >= 2) {
+    const first = sourceWords[0];
+    const second = sourceWords[1];
+    aliases.add(`${first} ${second}`);
+    aliases.add(`${first}${second}`);
+    if (second.length >= 3) {
+      const shortSecond = second.slice(0, 3);
+      aliases.add(`${first} ${shortSecond}`);
+      aliases.add(`${first}${shortSecond}`);
+    }
+  }
+
+  const initials = sourceWords.map((word) => word[0]).join("");
+  if (initials.length >= 2) aliases.add(initials);
+
+  if (sourceWords.length === 1 && sourceWords[0].length >= 3) {
+    aliases.add(sourceWords[0].slice(0, 3));
+  }
+
+  return Array.from(aliases);
+}
+
+function compactBibleReferenceSpacing(reference) {
+  const normalized = normalizeScriptureReference(reference || "");
+  if (!normalized) return "";
+  const compactMatch = normalized.match(
+    /^((?:\d+\s*)?[A-Za-z][A-Za-z\s.'’-]*?)\s*(\d+)(?:(?:\s*:\s*|\s+)([\d,\-\s]+))?$/,
+  );
+  if (!compactMatch) return normalized;
+  const book = String(compactMatch[1] || "").trim();
+  const chapter = Number.parseInt(compactMatch[2], 10);
+  if (!book || !Number.isFinite(chapter) || chapter <= 0) return normalized;
+  const verseSelector = String(compactMatch[3] || "")
+    .trim()
+    .replace(/\s*,\s*/g, ",")
+    .replace(/\s*-\s*/g, "-");
+  return verseSelector ? `${book} ${chapter}:${verseSelector}` : `${book} ${chapter}`;
+}
+
+function levenshteinDistanceWithin(source, target, maxDistance) {
+  if (source === target) return 0;
+  const sourceLength = source.length;
+  const targetLength = target.length;
+  if (Math.abs(sourceLength - targetLength) > maxDistance) {
+    return maxDistance + 1;
+  }
+
+  const previous = Array.from({ length: targetLength + 1 }, (_unused, index) => index);
+  const current = new Array(targetLength + 1);
+
+  for (let i = 1; i <= sourceLength; i += 1) {
+    current[0] = i;
+    let minInRow = current[0];
+    for (let j = 1; j <= targetLength; j += 1) {
+      const cost = source[i - 1] === target[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + cost,
+      );
+      if (current[j] < minInRow) minInRow = current[j];
+    }
+    if (minInRow > maxDistance) return maxDistance + 1;
+    for (let j = 0; j <= targetLength; j += 1) {
+      previous[j] = current[j];
+    }
+  }
+
+  return previous[targetLength];
+}
+
+async function bibleBookLookupForVersion(version) {
+  const normalizedVersion = normalizedProjectBibleVersion(version || DEFAULT_BIBLE_VERSION);
+  if (bibleBookLookupByVersion.has(normalizedVersion)) {
+    return bibleBookLookupByVersion.get(normalizedVersion);
+  }
+  if (bibleBookLookupRequestByVersion.has(normalizedVersion)) {
+    return bibleBookLookupRequestByVersion.get(normalizedVersion);
+  }
+
+  const request = (async () => {
+    try {
+      const metadata = await bibleAPI.getBookMetadata(normalizedVersion);
+      if (
+        metadata?.error || !Array.isArray(metadata?.books) ||
+        (metadata.version && metadata.version !== normalizedVersion)
+      ) return null;
+
+      const aliasToBook = new Map();
+      const aliasCandidates = new Map();
+      const canonicalByToken = new Map();
+      for (const rawBook of metadata.books) {
+        const bookName = String(rawBook?.name || "").trim();
+        if (!bookName) continue;
+        canonicalByToken.set(normalizeBibleLookupToken(bookName), bookName);
+
+        for (const alias of collectBibleBookAliasStrings(rawBook, bookName)) {
+          addBibleBookDerivedAliasCandidate(aliasCandidates, alias, bookName);
+        }
+
+        for (const derivedAlias of buildBibleBookDerivedAliases(bookName)) {
+          addBibleBookDerivedAliasCandidate(
+            aliasCandidates,
+            derivedAlias,
+            bookName,
+          );
+        }
+      }
+
+      const ambiguousAliases = new Set();
+      for (const [aliasKey, matchedBooks] of aliasCandidates) {
+        if (matchedBooks.size !== 1) {
+          ambiguousAliases.add(aliasKey);
+          continue;
+        }
+        aliasToBook.set(aliasKey, matchedBooks.values().next().value);
+      }
+      // A full canonical name always outranks another book's shorthand.
+      for (const [key, bookName] of canonicalByToken) {
+        aliasToBook.set(key, bookName);
+        ambiguousAliases.delete(key);
+      }
+      const lookup = {
+        aliasToBook,
+        aliasKeys: Array.from(aliasToBook.keys()),
+        ambiguousAliases,
+      };
+      bibleBookLookupByVersion.set(normalizedVersion, lookup);
+      return lookup;
+    } catch {
+      // Do not permanently cache a transient sidecar/API failure.
+      return null;
+    }
+  })();
+
+  bibleBookLookupRequestByVersion.set(normalizedVersion, request);
+  try {
+    return await request;
+  } finally {
+    if (bibleBookLookupRequestByVersion.get(normalizedVersion) === request) {
+      bibleBookLookupRequestByVersion.delete(normalizedVersion);
+    }
+  }
+}
+
+function bibleVersionAliasMap() {
+  const map = new Map();
+  const addVersionAlias = (alias, version) => {
+    const key = normalizeBibleLookupToken(alias);
+    const normalizedVersion = normalizedProjectBibleVersion(version || DEFAULT_BIBLE_VERSION);
+    if (!key || !normalizedVersion || map.has(key)) return;
+    map.set(key, normalizedVersion);
+  };
+
+  addVersionAlias(DEFAULT_BIBLE_VERSION, DEFAULT_BIBLE_VERSION);
+  const versionSelect = document.getElementById("bibleVersionSelect");
+  if (versionSelect) {
+    for (const option of Array.from(versionSelect.options)) {
+      addVersionAlias(option.value, option.value);
+      addVersionAlias(option.textContent || option.value, option.value);
+    }
+  }
+  for (const metadata of bibleVersionMetadataByKey.values()) {
+    const abbreviation = normalizedProjectBibleVersion(metadata?.abbreviation || DEFAULT_BIBLE_VERSION);
+    addVersionAlias(abbreviation, abbreviation);
+    addVersionAlias(metadata?.version, abbreviation);
+    addVersionAlias(metadata?.name, abbreviation);
+    addVersionAlias(metadata?.attribution?.abbreviation, abbreviation);
+    addVersionAlias(metadata?.attribution?.version, abbreviation);
+    addVersionAlias(metadata?.attribution?.shortText, abbreviation);
+    addVersionAlias(metadata?.attribution?.text, abbreviation);
+  }
+  return map;
+}
+
+function splitBibleReferenceVersionSuffix(rawReference, fallbackVersion) {
+  const normalizedInput = normalizeScriptureReference(rawReference || "");
+  const fallback = normalizedProjectBibleVersion(fallbackVersion || DEFAULT_BIBLE_VERSION);
+  if (!normalizedInput) {
+    return {
+      reference: "",
+      version: fallback,
+      explicitVersion: false,
+    };
+  }
+
+  const tokens = normalizedInput.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) {
+    return {
+      reference: normalizedInput,
+      version: fallback,
+      explicitVersion: false,
+    };
+  }
+
+  const aliases = bibleVersionAliasMap();
+  const maxWords = Math.min(BIBLE_REFERENCE_VERSION_SUFFIX_MAX_WORDS, tokens.length - 1);
+  for (let words = maxWords; words >= 1; words -= 1) {
+    const suffix = tokens.slice(tokens.length - words).join(" ");
+    const suffixKey = normalizeBibleLookupToken(suffix);
+    if (!suffixKey || !aliases.has(suffixKey)) continue;
+    const reference = tokens.slice(0, tokens.length - words).join(" ").trim();
+    if (!reference) continue;
+    return {
+      reference,
+      version: aliases.get(suffixKey),
+      explicitVersion: true,
+    };
+  }
+
+  return {
+    reference: normalizedInput,
+    version: fallback,
+    explicitVersion: false,
+  };
+}
+
+async function resolveCanonicalBibleBookName(bookCandidate, version) {
+  const candidate = String(bookCandidate || "").trim();
+  if (!candidate) return "";
+  const candidateKey = normalizeBibleLookupToken(candidate);
+  if (!candidateKey) return "";
+
+  const lookup = await bibleBookLookupForVersion(version);
+  if (!lookup) return "";
+  const directMatch = lookup.aliasToBook.get(candidateKey);
+  if (directMatch) return directMatch;
+  if (lookup.ambiguousAliases.has(candidateKey) || candidateKey.length < 3) return "";
+
+  const fuzzyLimit = candidateKey.length >= 8 ? 3 : 2;
+  const numberPrefix = candidateKey.match(/^\d+/)?.[0] || "";
+  const bestBooks = new Set();
+  let bestDistance = fuzzyLimit + 1;
+  for (const aliasKey of lookup.aliasKeys) {
+    const bookName = lookup.aliasToBook.get(aliasKey);
+    // Never turn 2 John into John/1 John, or an unnumbered book into a numbered one.
+    if ((aliasKey.match(/^\d+/)?.[0] || "") !== numberPrefix ||
+        (normalizeBibleLookupToken(bookName).match(/^\d+/)?.[0] || "") !== numberPrefix) continue;
+    const distance = levenshteinDistanceWithin(candidateKey, aliasKey, fuzzyLimit);
+    if (distance > fuzzyLimit || distance > bestDistance) continue;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestBooks.clear();
+    }
+    bestBooks.add(bookName);
+  }
+
+  if (bestBooks.size === 1) {
+    return bestBooks.values().next().value;
+  }
+
+  return "";
+}
+
+async function normalizeBibleReferenceQueryForLookup(reference, version) {
+  let query = compactBibleReferenceSpacing(reference || "");
+  if (!query) return "";
+  const parsed = parseScriptureReference(query);
+  const resolvedBook = await resolveCanonicalBibleBookName(parsed.book, version);
+  if (!resolvedBook || !parsed.book) return query;
+
+  if (Number.isFinite(parsed.chapter) && parsed.chapter > 0) {
+    const verseSelector = String(parsed.verseSelector || "").trim();
+    const suffix = verseSelector ? `:${verseSelector}` : "";
+    return normalizeScriptureReference(`${resolvedBook} ${parsed.chapter}${suffix}`);
+  }
+  return normalizeScriptureReference(resolvedBook);
+}
+
+async function parseBibleReferenceLookupInput(rawReference, options = {}) {
+  const fallbackVersion = normalizedProjectBibleVersion(
+    options?.version || bibleDesignerState.version || DEFAULT_BIBLE_VERSION,
+  );
+  const withVersion = options?.allowVersionSuffix
+    ? splitBibleReferenceVersionSuffix(rawReference, fallbackVersion)
+    : {
+      reference: normalizeScriptureReference(rawReference || ""),
+      version: fallbackVersion,
+      explicitVersion: false,
+    };
+  const version = normalizedProjectBibleVersion(withVersion.version || fallbackVersion);
+  const reference = await normalizeBibleReferenceQueryForLookup(withVersion.reference, version);
+  return {
+    reference,
+    version,
+    explicitVersion: Boolean(withVersion.explicitVersion),
+  };
+}
+
 async function normalizeBibleReferenceInput(
   rawReference,
   version = bibleDesignerState.version || DEFAULT_BIBLE_VERSION,
+  options = {},
 ) {
+  const parsedInput = await parseBibleReferenceLookupInput(rawReference, {
+    version,
+    allowVersionSuffix: options?.allowVersionSuffix === true,
+  });
+  if (!parsedInput.reference) return null;
   try {
     const resolved = await bibleAPI.resolveReference(
-      version,
-      rawReference,
+      parsedInput.version,
+      parsedInput.reference,
     );
     if (resolved && !resolved.error && resolved.reference) {
       return {
+        version: parsedInput.version,
+        explicitVersion: parsedInput.explicitVersion,
         book: resolved.book,
         bookAbbreviation: resolved.bookAbbreviation || "",
         chapter: resolved.chapter,
@@ -402,9 +764,15 @@ async function normalizeBibleReferenceInput(
 }
 
 async function bibleReferenceSuggestionsForInput(rawReference) {
-  const query = String(rawReference || "").trim();
+  const sourceVersion = bibleDesignerState.version || DEFAULT_BIBLE_VERSION;
+  const parsedInput = await parseBibleReferenceLookupInput(rawReference, {
+    version: sourceVersion,
+    allowVersionSuffix: true,
+  });
+  if ((bibleDesignerState.version || DEFAULT_BIBLE_VERSION) !== sourceVersion) return [];
+  const query = String(parsedInput.reference || "").trim();
   if (!query) return [];
-  const requestedVersion = bibleDesignerState.version || DEFAULT_BIBLE_VERSION;
+  const requestedVersion = parsedInput.version || bibleDesignerState.version || DEFAULT_BIBLE_VERSION;
   try {
     const result = await bibleAPI.suggestReferences(
       requestedVersion,
@@ -412,7 +780,7 @@ async function bibleReferenceSuggestionsForInput(rawReference) {
     );
     if (
       bibleVersionValue(bibleDesignerState.version || DEFAULT_BIBLE_VERSION) !==
-        bibleVersionValue(requestedVersion) ||
+        bibleVersionValue(sourceVersion) ||
       bibleVersionValue(result?.version || "") !== bibleVersionValue(requestedVersion)
     ) {
       return [];
@@ -424,7 +792,10 @@ async function bibleReferenceSuggestionsForInput(rawReference) {
         const reference = String(suggestion?.reference || suggestion?.book || "").trim();
         const book = String(suggestion?.book || reference).trim();
         if (!reference || !book) return null;
-        const value = type === "book" ? `${book} 1:1` : reference;
+        const baseValue = type === "book" ? `${book} 1:1` : reference;
+        const value = parsedInput.explicitVersion
+          ? `${baseValue} ${requestedVersion}`
+          : baseValue;
         return {
           type,
           label: String(suggestion?.label || reference).trim(),
@@ -562,6 +933,7 @@ function positionBibleReferenceSuggestionsOverlay() {
 }
 
 function hideBibleReferenceSuggestions() {
+  bibleReferenceSuggestionsRequestId += 1;
   const suggestionsEl = document.getElementById("bibleReferenceSuggestions");
   const referenceInput = document.getElementById("bibleReferenceInput");
   const toggleButton = document.getElementById("bibleReferenceToggle");
@@ -635,9 +1007,22 @@ async function renderBibleReferenceSuggestions(options = {}) {
   const referenceInput = document.getElementById("bibleReferenceInput");
   if (!suggestionsEl || !referenceInput) return;
 
+  // Clear selectable old rows immediately, not only after the new RPC completes.
+  hideBibleReferenceSuggestions();
+  const requestId = ++bibleReferenceSuggestionsRequestId;
+  const requestedInput = referenceInput.value;
+  const requestedVersion = bibleDesignerState.version;
+  const versionSelect = document.getElementById("bibleVersionSelect");
+  const requestedControlVersion = versionSelect?.value;
   const suggestions = options.showAll
     ? await bibleReferenceAllBooks()
-    : await bibleReferenceSuggestionsForInput(referenceInput.value);
+    : await bibleReferenceSuggestionsForInput(requestedInput);
+  if (
+    requestId !== bibleReferenceSuggestionsRequestId ||
+    referenceInput.value !== requestedInput ||
+    bibleDesignerState.version !== requestedVersion ||
+    versionSelect?.value !== requestedControlVersion
+  ) return;
   if (!suggestions.length) {
     hideBibleReferenceSuggestions();
     return;
@@ -2220,12 +2605,25 @@ async function syncBibleStateFromControls() {
     (referenceInput?.value || bibleDesignerState.reference) === requestedReferenceInput;
   const resolvedReference = await normalizeBibleReferenceInput(
     requestedReferenceInput,
+    nextVersion,
+    { allowVersionSuffix: true },
   );
   // Resolving a reference crosses the sidecar boundary. If the operator chose
   // another reference or translation while it was in flight, this result no
   // longer owns the controls and must not put the old reference back into state.
   if (!controlsStillMatchRequest()) return false;
-  if (bibleDesignerState.version !== nextVersion) {
+  const effectiveVersion = normalizedProjectBibleVersion(
+    resolvedReference?.version || nextVersion,
+  );
+  if (versionSelect && versionSelect.value !== effectiveVersion) {
+    const hasVersionOption = Array.from(versionSelect.options).some(
+      (option) => option.value === effectiveVersion,
+    );
+    if (hasVersionOption) {
+      versionSelect.value = effectiveVersion;
+    }
+  }
+  if (bibleDesignerState.version !== effectiveVersion) {
     bibleDesignerState.text = "";
     bibleDesignerState.selectedVerses = [];
     bibleDesignerState.verseRows = [];
@@ -2233,9 +2631,9 @@ async function syncBibleStateFromControls() {
     bibleDesignerState.currentSlideId = null;
     bibleDesignerState.lowerThirdSegmentIndex = 0;
     bibleDesignerState.currentLowerThirdSlideId = null;
-    persistBibleVersion(nextVersion);
+    persistBibleVersion(effectiveVersion);
   }
-  bibleDesignerState.version = nextVersion;
+  bibleDesignerState.version = effectiveVersion;
   bibleDesignerState.look = normalizeScriptureLook(lookSelect?.value || bibleDesignerState.look);
   if (resolvedReference) {
     bibleDesignerState.book = resolvedReference.book;
@@ -4919,6 +5317,7 @@ function persistBibleVersion(version) {
 
 function setBibleDesignerVersion(version, opts = {}) {
   const normalized = normalizedProjectBibleVersion(version || DEFAULT_BIBLE_VERSION);
+  if (bibleDesignerState.version !== normalized) hideBibleReferenceSuggestions();
   bibleDesignerState.version = normalized;
   bibleDesignerState.attribution = bibleAttributionForVersion(normalized);
   if (opts.persist !== false) {
@@ -5514,15 +5913,20 @@ async function refreshBibleBrowser() {
 }
 
 async function jumpBibleReferenceToBrowser() {
+  const versionSelect = document.getElementById("bibleVersionSelect");
   const referenceInput = document.getElementById("bibleReferenceInput");
   hideBibleReferenceSuggestions();
   setBibleNavigatorMode("browse", { runSearch: false });
   const requestedReferenceInput = referenceInput?.value || "";
-  const requestedVersion = document.getElementById("bibleVersionSelect")?.value || bibleDesignerState.version;
-  const resolvedReference = await normalizeBibleReferenceInput(requestedReferenceInput);
+  const requestedVersion = versionSelect?.value || bibleDesignerState.version;
+  const resolvedReference = await normalizeBibleReferenceInput(
+    requestedReferenceInput,
+    requestedVersion,
+    { allowVersionSuffix: true },
+  );
   if (
     (referenceInput?.value || "") !== requestedReferenceInput ||
-    (document.getElementById("bibleVersionSelect")?.value || bibleDesignerState.version) !== requestedVersion
+    (versionSelect?.value || bibleDesignerState.version) !== requestedVersion
   ) {
     return false;
   }
@@ -5531,9 +5935,24 @@ async function jumpBibleReferenceToBrowser() {
     return false;
   }
   const nextReference = resolvedReference;
+  const nextVersion = normalizedProjectBibleVersion(nextReference.version || requestedVersion);
+  const previousVersion = bibleDesignerState.version;
+  const previousReference = bibleDesignerState.reference;
+  if (nextVersion !== bibleDesignerState.version) {
+    setBibleDesignerVersion(nextVersion, { syncControls: false });
+    syncBibleVersionAttributionDisplay();
+  }
+  if (versionSelect && versionSelect.value !== nextVersion) {
+    const hasVersionOption = Array.from(versionSelect.options).some(
+      (option) => option.value === nextVersion,
+    );
+    if (hasVersionOption) {
+      versionSelect.value = nextVersion;
+    }
+  }
   const referenceChanged =
-    bibleDesignerState.version !== requestedVersion ||
-    bibleDesignerState.reference !== nextReference.reference;
+    previousVersion !== nextVersion ||
+    previousReference !== nextReference.reference;
   bibleDesignerState.book = nextReference.book;
   bibleDesignerState.bookAbbreviation = nextReference.bookAbbreviation || "";
   bibleDesignerState.chapter = nextReference.chapter;

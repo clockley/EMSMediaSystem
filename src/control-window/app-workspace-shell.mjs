@@ -1798,7 +1798,8 @@ function installBibleMediaControls() {
     positionBibleReferenceSuggestionsOverlay();
   });
   referenceInput.addEventListener("blur", () => {
-    window.setTimeout(() => hideBibleReferenceSuggestions(), 120);
+    // Suggestion mousedown prevents blur; other focus changes invalidate immediately.
+    hideBibleReferenceSuggestions();
   });
   referenceToggle?.addEventListener("mousedown", (event) => {
     event.preventDefault();
