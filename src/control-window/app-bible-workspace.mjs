@@ -173,6 +173,7 @@ import {
   syncLowerThirdFeatureAvailability,
   syncLowerThirdRendererPreviewCapture,
   syncStageContentFromQueueItem,
+  syncStreamRendererPreviewCapture,
   syncSlideTransitionControls,
   themeLowerThirdMessageIfApplied,
   themedAudienceMessage,
@@ -4435,6 +4436,7 @@ async function performShowBibleTextNow() {
         clearSongShowNowPresentation();
         updateDynUI();
         renderQueue();
+        syncStreamRendererPreviewCapture();
         rememberRecentScripture(entry.bible);
         confirmScriptureTake(presentationRevision, {
           audience: true,

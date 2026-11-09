@@ -345,6 +345,7 @@ function getPreferencesWindowBounds() {
 let mediaWindow = null;
 let lowerThirdWindow = null;
 let stageWindow = null;
+let stageWindowPendingReconnect = false;
 let audienceSessionId = randomUUID();
 const audienceLayerCommands = new Map();
 let audienceHealth = "inactive";
@@ -634,6 +635,34 @@ function stopMediaPlaybackPowerHint() {
       console.log("No active Power Save Blocker to stop.");
     }
   });
+}
+
+// Keeps connected displays awake while any presentation output window
+// (audience, lower-third, or stage) is open, independent of media playback.
+// Without this, the OS blanks the stage monitor after its display-sleep
+// timeout whenever nothing is actively playing.
+let outputWindowPowerBlockerId;
+
+function syncOutputWindowPowerBlocker() {
+  const anyOutputWindowOpen =
+    (mediaWindow && !mediaWindow.isDestroyed()) ||
+    (lowerThirdWindow && !lowerThirdWindow.isDestroyed()) ||
+    (stageWindow && !stageWindow.isDestroyed());
+  if (anyOutputWindowOpen) {
+    if (
+      outputWindowPowerBlockerId === undefined ||
+      !powerSaveBlocker.isStarted(outputWindowPowerBlockerId)
+    ) {
+      outputWindowPowerBlockerId = powerSaveBlocker.start(
+        "prevent-display-sleep",
+      );
+    }
+  } else if (outputWindowPowerBlockerId !== undefined) {
+    if (powerSaveBlocker.isStarted(outputWindowPowerBlockerId)) {
+      powerSaveBlocker.stop(outputWindowPowerBlockerId);
+    }
+    outputWindowPowerBlockerId = undefined;
+  }
 }
 
 function installTimeRemainingMessagePort() {
@@ -1239,6 +1268,7 @@ function currentOutputStatus() {
 }
 
 function publishOutputStatus() {
+  syncOutputWindowPowerBlocker();
   if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
     win.webContents.send("output-status", currentOutputStatus());
   }
@@ -1563,6 +1593,7 @@ function handleStageOutputCommand(event, command) {
 function handleSetStageDisplayIndex(_event, selection) {
   const target = resolveDisplaySelection(selection);
   settings.set(STAGE_DISPLAY_KEY, target?.value || "").catch(console.error);
+  if (!target) stageWindowPendingReconnect = false;
   if (stageWindow && !stageWindow.isDestroyed()) {
     if (!target) stageWindow.close();
     else {
@@ -1608,12 +1639,19 @@ async function handleDisplayChange() {
     const stageDisplayStillConnected = isWindowOnConnectedDisplay(bounds, currentDisplays);
     // Never fail a disconnected confidence display over to the audience or
     // primary monitor: close it and require an explicit operator selection.
-    if (!stageDisplayStillConnected) stageWindow.close();
+    if (!stageDisplayStillConnected) {
+      stageWindowPendingReconnect = true;
+      stageWindow.close();
+    }
   }
 
-  if (!stageWindow || stageWindow.isDestroyed()) {
+  if (stageWindowPendingReconnect && (!stageWindow || stageWindow.isDestroyed())) {
     const savedStageDisplay = settings.getSync(STAGE_DISPLAY_KEY) || "";
     if (savedStageDisplay && resolveDisplaySelection(savedStageDisplay)) {
+      // Reconnect only a stage output that this handler closed when its
+      // display disappeared. Display sleep/wake and metrics changes must not
+      // spontaneously open a stage window the operator never started.
+      stageWindowPendingReconnect = false;
       void handleCreateStageWindow(null, savedStageDisplay).catch((error) => {
         console.error("Failed to reconnect stage output:", error);
       });

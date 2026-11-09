@@ -3909,6 +3909,7 @@ async function performShowSongTextNow({ songOwner, deckOwner }) {
     setSharedRendererState({ isActiveMediaWindowCache: true });
     updateDynUI();
     renderQueue();
+    syncStreamRendererPreviewCapture();
     return true;
   } catch (err) {
     console.error("Failed to show song:", err);
@@ -7789,6 +7790,7 @@ async function performShowCurrentDeckNow({ deckOwner, pageOwner, editRevision })
     if (typeof isActiveMediaWindowCache !== "undefined") setSharedRendererState({ isActiveMediaWindowCache: true });
     if (typeof updateDynUI === "function") updateDynUI();
     if (typeof renderQueue === "function") renderQueue();
+    syncStreamRendererPreviewCapture();
     return true;
   } catch (err) {
     console.error("Failed to show deck:", err);
@@ -9132,6 +9134,7 @@ import {
   songShowNowSourceId,
   songsAPI,
   syncSlideTransitionControls,
+  syncStreamRendererPreviewCapture,
   textToSegmentsBlocks,
   themeLowerThirdMessageIfApplied,
   updateDynUI,
