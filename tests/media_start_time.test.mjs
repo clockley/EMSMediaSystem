@@ -54,6 +54,7 @@ async function startProjection(extraArguments, { seekOnly = false, stream = fals
   ];
   const { birth } = preloadElectron(argv);
   const starts = [];
+  const stageMedia = [];
   const video = {
     currentTime: 0,
     duration: 120,
@@ -78,10 +79,16 @@ async function startProjection(extraArguments, { seekOnly = false, stream = fals
     isText: false,
     isImg: false,
     isPptx: false,
+    isLowerThirdOutput: false,
     liveStreamMode: false,
     mediaFile: "",
     video,
     videoSourceGeneration: 0,
+    audiencePlaybackId: "test-playback",
+    audienceSessionId: "test-session",
+    pptxMediaGeneration: 0,
+    pptxMediaLoad: null,
+    window: { _pptxMediaViewer: null },
     // No registry bridge: projectionVideoUrl() passes sources through unchanged.
     emsMediaUrlForPath: registry ? (source) => `ems-media://registered/${source.split("/").pop()}` : null,
     registeredProjectionMediaUrls: new Map(),
@@ -95,6 +102,10 @@ async function startProjection(extraArguments, { seekOnly = false, stream = fals
       invoke: async (channel) => channel === "get-system-time"
         ? { systemTime: 1000.75, ipcTimestamp: 2000000 }
         : "linux",
+      send(channel, payload) {
+        assert.equal(channel, "stage-local-media");
+        stageMedia.push({ ...payload });
+      },
     },
     document: { getElementById: () => null },
     attachCubicWaveShaper: async () => {},
@@ -112,6 +123,9 @@ async function startProjection(extraArguments, { seekOnly = false, stream = fals
     ...[
       "projectionVideoUrl",
       "setProjectionVideoSource",
+      "publishStageLocalMedia",
+      "disposePptxMediaLoad",
+      "teardownPptxViewer",
       "waitForMediaMetadata",
       "cueStartTimeWithinDuration",
       "holdVideoStartTime",
@@ -130,12 +144,26 @@ async function startProjection(extraArguments, { seekOnly = false, stream = fals
   } else {
     await vm.runInContext("loadMedia()", context);
   }
-  return { birth, starts, currentTime: video.currentTime, src: video.src };
+  return {
+    birth, starts, currentTime: video.currentTime, src: video.src, stageMedia,
+    pptxMediaGeneration: context.pptxMediaGeneration,
+  };
 }
 
 test("projection registers legacy file URLs before loading local MP4 video", async () => {
   const result = await startProjection(["__media-birth=1000.25"], { registry: true });
   assert.equal(result.src, "ems-media://registered/clip.mp4");
+  assert.equal(result.pptxMediaGeneration, 1, "video startup invalidates prior PowerPoint work");
+  assert.deepEqual(result.stageMedia, [
+    {
+      kind: "text", url: "", slideIndex: 0,
+      playbackId: "test-playback", audienceSessionId: "test-session", sourceGeneration: 0,
+    },
+    {
+      kind: "video", url: "ems-media://registered/clip.mp4", slideIndex: 0,
+      playbackId: "test-playback", audienceSessionId: "test-session", sourceGeneration: 1,
+    },
+  ]);
 });
 
 for (const timestamp of ["1000.25", "__media-birth=1000.25"]) {

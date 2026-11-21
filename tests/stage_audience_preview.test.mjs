@@ -38,20 +38,30 @@ test("stage widgets remain present beside the audience preview", () => {
   }
 });
 
-test("stage renderer uses Electron's receiver-bound WebRTC media source", () => {
-  assert.match(renderer, /navigator\.mediaDevices\.getUserMedia\(\{/);
-  assert.match(renderer, /chromeMediaSource: "tab"/);
-  assert.match(renderer, /chromeMediaSourceId: sourceId/);
-  assert.match(renderer, /applyConstraints\?\.\(AUDIENCE_PREVIEW_CONSTRAINTS\)/);
-  assert.match(renderer, /audioTrack\.stop\(\)/);
-  assert.match(renderer, /addEventListener\("ended"/);
-  assert.match(renderer, /api\.onAudienceSource\(refreshAudienceSource\)/);
-  assert.match(renderer, /if \(audienceStartPromise\) return;/);
+test("stage renderer wires live audience WebRTC peer relay with local media fallback", () => {
+  assert.match(renderer, /import \{ LocalVideoRelay \} from "\.\.\/shared\/local-video-relay\.min\.mjs";/);
+  assert.match(renderer, /createStageVideoSync\(\{ video: document\.getElementById\("stageAudiencePreview"\) \}\)/);
+  assert.match(renderer, /api\.onAudienceSource\?\.\(/);
+  assert.match(renderer, /api\.onAudiencePeerSignal\?\.\(/);
+  assert.match(renderer, /api\.sendAudiencePeerSignal/);
+  assert.match(renderer, /api\.getAudienceSource/);
+  assert.match(renderer, /api\.onLocalMedia\?\.\(syncLocalMedia\)/);
+  assert.match(renderer, /api\.onLocalPlayback\?\.\(syncLocalPlayback\)/);
+  assert.match(renderer, /api\.getLocalMedia\?\.\(\)/);
   assert.match(renderer, /removeAudienceSourceListener\?\.\(\)/);
+  assert.match(renderer, /removeAudiencePeerListener\?\.\(\)/);
+  assert.match(renderer, /removeLocalMediaListener\?\.\(\)/);
+  assert.match(renderer, /removeLocalPlaybackListener\?\.\(\)/);
   assert.match(renderer, /clearInterval\(clockInterval\)/);
-  assert.match(renderer, /clearNextPptx\(\);\s+stopAudiencePreview\(\);/);
-  assert.match(renderer, /stageDisposed \|\|\s+!audienceSource\.available/);
-  assert.doesNotMatch(renderer, /getDisplayMedia|captureStream|RTCPeerConnection|CaptureController/);
+  assert.match(renderer, /clearNextPptx\(\);\s+clearCurrentPptx\(\);\s+stageVideoSync\.dispose\(\);/);
+  assert.match(renderer, /stageNativeSlides\.dispose\(\);/);
+  assert.doesNotMatch(renderer, /getDisplayMedia|getUserMedia|captureStream|CaptureController/);
+  assert.doesNotMatch(renderer, /stage-preview-frame|createStagePreviewSnapshot/);
+  assert.doesNotMatch(preload, /stage-preview-frame|createStagePreviewSnapshot/);
+  assert.match(mediaWindow, /createStageAudiencePeerHost/);
+  assert.match(mediaWindow, /ipcRenderer\.on\("stage-audience-peer"/);
+  assert.match(main, /ipcMain\.on\("stage-audience-peer", handleStageAudiencePeer\)/);
+  assert.match(main, /mediaPresentationSession\.setDisplayMediaRequestHandler\(\s*handleAudienceSelfDisplayMediaRequest/);
 });
 
 test("existing confidence captures still prevent conditional focus", () => {
@@ -72,31 +82,19 @@ test("stage content owns service item and notes; widgets only add the countdown"
 });
 
 test("stage Next and notes refresh after schedule edits for the live cue", () => {
-  assert.match(liveOutputs, /stageContentCache\.nextIsItem === true \|\| !\(stageContentCache\.next \|\| ""\)/);
+  assert.match(liveOutputs, /function stageNextContentForItem\(item = currentLiveQueueItem\(\), options = \{\}\)/);
   assert.match(scheduleController, /if \(hasLiveItem\) \{[\s\S]*?void refreshStageNotesForLiveItem\(\)/);
 });
 
-test("stage preload exposes pull and push audience-source APIs", () => {
+test("stage preload exposes audience RTC peer signaling alongside local snapshots, playback and PPTX", () => {
   assert.match(preload, /ipcRenderer\.invoke\("stage-audience-source"\)/);
-  assert.match(preload, /ipcRenderer\.on\("stage-audience-source", listener\)/);
-  assert.match(preload, /ipcRenderer\.on\("stage-audience-refresh", listener\)/);
-});
-
-test("stage reacquires its audience track only after replacement content paints", () => {
-  assert.match(mediaWindow, /notifyAudienceContentRenderedAfterPaint\("slipstream", nextPlaybackId\)/);
-  assert.match(mediaWindow, /notifyAudienceContentRenderedAfterPaint\("pptx-slide", playbackId\)/);
-  assert.match(mediaWindow, /notifyAudienceContentRenderedAfterPaint\("text", audiencePlaybackId\)/);
-  assert.match(mediaWindow, /ipcRenderer\.send\("audience-content-rendered"/);
-  assert.match(main, /ipcMain\.on\("audience-content-rendered", \(event, payload\) =>/);
-  assert.match(main, /event\.sender !== mediaWindow\.webContents/);
-  assert.match(main, /publishStageAudienceRefresh\(payload\?\.reason\)/);
-  assert.match(renderer, /api\.onAudienceRefresh\(reacquireAudiencePreview\)/);
-  assert.match(renderer, /if \(refresh\?\.reason !== "slipstream"\) return;/);
-  assert.match(renderer, /audienceSource = \{ available: false, sourceId: null \}/);
-  assert.match(renderer, /audienceReplacementPending = true;[\s\S]*?refreshAudienceSource\(\)/);
-  assert.match(renderer, /const previousStream = audienceStream;[\s\S]*?previousStream\.getTracks\(\)/);
-  assert.match(renderer, /removeAudienceRefreshListener\?\.\(\)/);
-  assert.doesNotMatch(renderer, /AUDIENCE_REACQUIRE_PAINT_DELAY_MS|audienceReacquireTimer/);
+  assert.match(preload, /ipcRenderer\.send\("stage-audience-peer", message\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("stage-local-media"\)/);
+  for (const channel of ["stage-audience-source", "stage-audience-peer", "stage-local-media", "stage-local-playback"]) {
+    assert.ok(preload.includes(`ipcRenderer.on("${channel}", listener)`));
+    assert.ok(preload.includes(`ipcRenderer.removeListener("${channel}", listener)`));
+  }
+  assert.match(preload, /ipcRenderer\.invoke\("stage-next-pptx", deckKey\)/);
 });
 
 test("stage audience preview does not use the display-media WebFrame handler", () => {
@@ -105,15 +103,44 @@ test("stage audience preview does not use the display-media WebFrame handler", (
     main.indexOf("function handleSetDisplayMediaCaptureTarget"),
   );
   assert.doesNotMatch(handler, /stageWindow\.webContents\.mainFrame|isStageWindowFrame/);
-  assert.match(main, /mediaWindow\.webContents\.getMediaSourceId\(requestWebContents\)/);
 });
 
-test("audience source IPC registers a fresh source to the stage receiver", () => {
-  assert.match(main, /ipcMain\.handle\("stage-audience-source", handleGetStageAudienceSource\)/);
-  assert.match(main, /function handleGetStageAudienceSource\(event\) \{\s+if \(!stageWindow \|\| event\.sender !== stageWindow\.webContents\)/);
-  assert.match(main, /currentStageAudienceSource\(event\.sender\)/);
-  assert.match(main, /function publishOutputStatus\(\) \{[\s\S]*?publishStageAudienceSource\(\);\s+\}/);
-  assert.match(main, /stageWindow\.webContents\.send\("stage-audience-source", source\)/);
-  assert.match(main, /!mediaWindow\.webContents\.isLoadingMainFrame\(\)/);
-  assert.match(main, /sourceId: mediaWindow\.webContents\.getMediaSourceId\(requestWebContents\)/);
+test("audience publishes local visuals and main exposes local stage IPC", () => {
+  assert.match(main, /ipcMain\.on\("stage-local-media", handleStageLocalMedia\)/);
+  assert.match(main, /ipcMain\.handle\("stage-local-media", \(event\) => \{\s+if \(!stageWindow \|\| event\.sender !== stageWindow\.webContents\) return null;\s+return currentStageLocalMedia\(\);/);
+  assert.match(main, /stageWindow\.webContents\.send\("stage-local-playback", playbackState\)/);
+  for (const kind of ["video", "image", "pptx", "text", "native"]) {
+    assert.ok(mediaWindow.includes(`publishStageLocalMedia("${kind}"`));
+  }
+  assert.doesNotMatch(mediaWindow, /publishStageLocalMedia\("audio"/);
+  assert.match(html, /id="stageCurrentImage"/);
+  assert.match(html, /id="stageCurrentPptx"/);
+  assert.match(html, /id="stageCurrentAudio"/);
+  assert.doesNotMatch(html, /<audio\b/);
+});
+
+test("stage native viewport uses the shared native renderer factory and lifecycle", () => {
+  assert.match(html, /<div id="stageCurrentNative" class="stage-native-viewport"[^>]*hidden[^>]*><\/div>/);
+  assert.match(css, /\.stage-native-viewport \{[^}]*width: 100%;[^}]*height: 100%;[^}]*overflow: hidden/);
+  assert.match(renderer, /^import \{ createNativeSlideRenderer \} from "\.\.\/shared\/native-slide-renderer\.min\.mjs";/m);
+  assert.match(renderer, /const stageNativeSlides = createNativeSlideRenderer\(\{ viewport: document\.getElementById\("stageCurrentNative"\) \}\);/);
+  assert.match(renderer, /const isNative = media\?\.kind === "native" && Boolean\(media\.presentation\)/);
+  assert.match(renderer, /nativeViewport\.hidden = !isNative/);
+  assert.match(renderer, /stageNativeSlides\.render\(media\.presentation\)/);
+  assert.match(renderer, /else if \(currentNativeActive\) \{\s+stageNativeSlides\.clear\(\)/);
+  assert.match(renderer, /stageNativeSlides\.dispose\(\)/);
+});
+
+test("only audience applyTextMessage publishes native resolved text at audience output dimensions", () => {
+  const applyText = mediaWindow.match(/^function applyTextMessage\(message\) \{[\s\S]*?^\}/m)?.[0];
+  assert.ok(applyText, "real audience text application function exists");
+  assert.match(applyText, /const lowerThirdOutput = isLowerThirdOutput \|\| safeMessage\.outputRole === "lower-third"/);
+  assert.match(applyText, /if \(!lowerThirdOutput\) \{\s+publishStageLocalMedia\("native", "", 0, \{\s+\.\.\.safeMessage,\s+outputSize: \{ width: window\.innerWidth, height: window\.innerHeight \},\s+\}\);\s+\}/);
+  assert.equal(mediaWindow.match(/publishStageLocalMedia\("native"/g)?.length, 1);
+  assert.doesNotMatch(mediaWindow.replace(applyText, ""), /publishStageLocalMedia\("native"/);
+  const publish = mediaWindow.match(/^function publishStageLocalMedia\([^\n]*\) \{[\s\S]*?^\}/m)?.[0];
+  assert.ok(publish);
+  assert.match(publish, /if \(isLowerThirdOutput\) return;/);
+  assert.match(publish, /\.\.\.\(presentation \? \{ presentation \} : \{\}\)/);
+  assert.doesNotMatch(liveOutputs, /publishStageLocalMedia\("native"/);
 });

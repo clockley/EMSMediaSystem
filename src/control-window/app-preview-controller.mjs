@@ -51,6 +51,7 @@ import {
   normalizeMediaPathForCompare,
   pptxRegex,
   queueItemStageLabel,
+  refreshStageNotesForLiveItem,
   resolveQueuePresentationVideo,
   restoreLivePreview,
   scheduleAutosaveProjectState,
@@ -60,6 +61,7 @@ import {
   setSharedRendererState,
   slideTransitionPayloadForQueueItem,
   stageContentCache,
+  stageNextContentForItem,
   stopLiveAudioPresentation,
   stopPreviewAudioCue,
   syncPreviewAudioTrackState,
@@ -903,18 +905,37 @@ function sendPptxSlideToMediaWindow(
     playbackId: String(playbackId || ""),
     transition: livePptxItem ? slideTransitionPayloadForQueueItem(livePptxItem) : undefined,
   });
-  const hasFollowingSlide = Number.isInteger(slideIndex) && slideIndex + 1 < pptxSlideCount;
-  const nextSlide = hasFollowingSlide
-    ? `Slide ${slideIndex + 2}`
-    : nextPlayableQueueItemStageText();
-  setSharedRendererState({ stageContentCache: {
-    ...stageContentCache,
-    current: `Slide ${Math.max(1, (Number(slideIndex) || 0) + 1)}`,
-    next: nextSlide,
-    nextIsItem: !hasFollowingSlide && Boolean(nextSlide),
-    serviceItem: queueItemStageLabel(livePptxItem) || "",
-  } });
-  void sendCachedStageContent().catch(() => {});
+  const hasNextSlide = Number.isInteger(slideIndex) && slideIndex + 1 < pptxSlideCount;
+  const nextSlide = hasNextSlide ? `Slide ${slideIndex + 2}` : "";
+  const nextItemText = nextPlayableQueueItemStageText();
+  const nextIsItem = !hasNextSlide && Boolean(nextItemText);
+  const nextContent =
+    typeof stageNextContentForItem === "function"
+      ? stageNextContentForItem(livePptxItem, {
+          nextSlide,
+          nextItemText,
+          nextIsItem,
+          nextPptxSlideIndex: hasNextSlide ? slideIndex + 1 : null,
+          currentMediaSourcePath: activeResolvedMediaFile || livePptxPath,
+        })
+      : {
+          next: nextSlide || nextItemText || "",
+          nextSlide,
+          nextIsItem,
+        };
+  setSharedRendererState({
+    stageContentCache: {
+      ...stageContentCache,
+      current: `Slide ${Math.max(1, (Number(slideIndex) || 0) + 1)}`,
+      ...nextContent,
+      serviceItem: queueItemStageLabel(livePptxItem) || "",
+    },
+  });
+  if (typeof refreshStageNotesForLiveItem === "function") {
+    void refreshStageNotesForLiveItem({ forceSend: true }).catch(() => {});
+  } else {
+    void sendCachedStageContent().catch(() => {});
+  }
   return true;
 }
 

@@ -168,6 +168,7 @@ import {
   queueItemSupportsCueStartTime,
   queueSlipstreamTransitionInProgress,
   refreshPreviewControlsForCurrentMedia,
+  refreshStageNotesForLiveItem,
   removeFilenameFromTitlebar,
   renderQueue,
   resetAudienceOutputHold,
@@ -364,6 +365,7 @@ function clearPreviewCue() {
   updatePreviewCueUI();
   renderQueue();
   refreshPreviewControlsForCurrentMedia();
+  void refreshStageNotesForLiveItem().catch(() => {});
 }
 
 function clearCueAfterTake(index) {
@@ -383,6 +385,7 @@ function clearCueAfterTake(index) {
   updatePreviewCueUI();
   renderQueue();
   refreshPreviewControlsForCurrentMedia();
+  void refreshStageNotesForLiveItem().catch(() => {});
 }
 
 function stopPreviewAudioCue() {
@@ -781,6 +784,7 @@ async function loadQueueItemIntoPreviewCue(index) {
   // Paint the Cued badge immediately — the overlay/metadata load below is
   // async and callers may flip playback flags before it finishes.
   renderQueue();
+  void refreshStageNotesForLiveItem().catch(() => {});
   syncMediaLoopState({ notify: false });
   setSharedRendererState({ pendingCueVolume: Number.isFinite(item.cueVolume) ? item.cueVolume : 1 });
   syncGtkSliderToCueState();
@@ -1682,7 +1686,10 @@ async function playCurrentQueueItem(opts) {
     return audienceStarted || lowerThirdStarted;
   }
 
-  void syncStageContentFromQueueItem(item).catch(() => {});
+  void syncStageContentFromQueueItem(
+    item,
+    audioOnlyFile || isQueueItemAudio(item) ? { mediaKind: "audio" } : {},
+  ).catch(() => {});
 
   if (
     !audioOnlyFile &&

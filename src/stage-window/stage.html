@@ -2,20 +2,34 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' file: data: blob: https: http:; media-src 'self' file: ems-media: https: http:; connect-src 'self' file: ems-media: https: http:; worker-src 'self' blob:">
   <meta name="color-scheme" content="dark">
   <link rel="stylesheet" href="../main.css">
   <title>EMS Stage Output</title>
 </head>
 <body>
-  <main id="stageRoot" class="stage" data-profile="current-next">
+  <main id="stageRoot" class="stage" data-profile="current-next" data-audience-preview="off">
     <section class="stage__content" aria-label="Current and next content">
-      <article class="stage-card stage-card--current">
-        <span class="stage-card__label">Current</span>
+      <article id="stageCurrentCard" class="stage-card stage-card--current">
+        <span id="stageCurrentLabel" class="stage-card__label">Current</span>
+        <video id="stageAudiencePreview" class="stage-card__audience-video" preload="auto" muted playsinline crossorigin="anonymous" hidden></video>
+        <div id="stageCurrentMedia" class="stage-card__media" hidden>
+          <img id="stageCurrentImage" class="stage-card__media-image" alt="Current image" hidden>
+          <div id="stageCurrentPptx" class="stage-card__pptx-viewport" hidden></div>
+          <div id="stageCurrentNative" class="stage-native-viewport" hidden aria-label="Current slide"></div>
+        </div>
+        <div id="stageCurrentAudio" class="stage-card__media stage-card__media--audio" hidden aria-label="Audio playing">
+          <span class="stage-card__music-note" aria-hidden="true">♪</span>
+        </div>
         <div id="stageCurrent" class="stage-card__text">Waiting for live content</div>
       </article>
-      <article id="stageNextCard" class="stage-card stage-card--next">
+      <article id="stageNextCard" class="stage-card stage-card--next" data-next-media="none">
         <span class="stage-card__label">Next</span>
+        <div id="stageNextMedia" class="stage-card__media stage-card__media--next" hidden>
+          <img id="stageNextImage" class="stage-card__media-image" alt="" hidden>
+          <div id="stageNextPptx" class="stage-card__pptx-viewport" hidden></div>
+          <span id="stageNextAudio" class="stage-card__music-note" aria-hidden="true" hidden>♪</span>
+        </div>
         <div id="stageNext" class="stage-card__text">—</div>
       </article>
     </section>

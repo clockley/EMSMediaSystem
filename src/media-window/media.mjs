@@ -65,6 +65,8 @@ import {
 import { resolveAlertTokens } from "../shared/alert-tokens.min.mjs";
 import { tickerDurationSeconds, tickerPhaseDelaySeconds } from "../shared/alert-motion.min.mjs";
 import { createSerializedAsyncQueue } from "../shared/async-operation-ownership.min.mjs";
+import { LocalVideoRelay } from "../shared/local-video-relay.min.mjs";
+import { renderSongSectionHTML } from "../shared/native-slide-renderer.min.mjs";
 let hlsInstance = null;
 let dashPlayer = null;
 let previewRtcPeer = null;
@@ -108,6 +110,8 @@ let audiencePlaybackId =
 const slipstreamActivationQueue = createSerializedAsyncQueue();
 let slipstreamActivationGeneration = 0;
 let pptxIpcHandlersInstalled = false;
+let pptxMediaGeneration = 0;
+let pptxMediaLoad = null;
 let textIpcHandlersInstalled = false;
 let ipcHandlersInstalled = false;
 const PRESENTATION_START_BUFFER_SECONDS = 12;
@@ -306,6 +310,7 @@ function setProjectionVideoSource(url) {
     // media element. Don't call removeAttribute("src") + load() first — that
     // briefly puts the element in NETWORK_EMPTY and races the new src assignment.
     video.src = projectionVideoUrl(url);
+    publishStageLocalMedia("video", video.src);
     return;
   }
   video.removeAttribute("src");
@@ -314,6 +319,18 @@ function setProjectionVideoSource(url) {
 
 /** Source last handed to {@link setProjectionVideoSource} (before URL mapping). */
 let projectionVideoSource = "";
+// The stage double-loads visual media, just like the control preview. Never
+// publish audio URLs or renderer-owned blob URLs to another window.
+function publishStageLocalMedia(kind, url = "", slideIndex = 0, presentation = null) {
+  if (isLowerThirdOutput) return;
+  ipcRenderer.send("stage-local-media", {
+    kind, url, slideIndex,
+    playbackId: audiencePlaybackId,
+    audienceSessionId,
+    sourceGeneration: videoSourceGeneration,
+    ...(presentation ? { presentation } : {}),
+  });
+}
 /** Whether the operator last asked the projection clip to play (vs. pause). */
 let projectionPlaybackRequested = false;
 /** Source generation created by the last decode recovery; it gets no second try. */
@@ -1043,14 +1060,44 @@ function teardownTextPresentation() {
   }
 }
 
+function ownsPptxMediaLoad(load) {
+  return Boolean(load) &&
+    pptxMediaLoad === load &&
+    load.generation === pptxMediaGeneration &&
+    load.activationGeneration === slipstreamActivationGeneration &&
+    load.sourceGeneration === videoSourceGeneration &&
+    load.file === mediaFile &&
+    load.playbackId === audiencePlaybackId &&
+    isPptx &&
+    document.getElementById("pptxCanvas") === load.canvas &&
+    load.host.parentNode === load.canvas &&
+    window._pptxMediaViewer === (load.ready ? load.viewer : null);
+}
+
+function disposePptxMediaLoad(load) {
+  if (!load) return;
+  // Detach before destroy: even a renderer that finishes after cancellation
+  // can now only paint into its own obsolete host, never the replacement.
+  load.host.remove();
+  load.abortController.abort();
+  try {
+    load.viewer?.destroy();
+  } catch {}
+}
+
 function teardownPptxViewer() {
+  pptxMediaGeneration += 1;
+  const load = pptxMediaLoad;
+  pptxMediaLoad = null;
+  const viewer = window._pptxMediaViewer;
+  window._pptxMediaViewer = null;
   const pptxCanvas = document.getElementById("pptxCanvas");
   if (pptxCanvas) pptxCanvas.style.display = "none";
-  if (window._pptxMediaViewer) {
+  disposePptxMediaLoad(load);
+  if (viewer && viewer !== load?.viewer) {
     try {
-      window._pptxMediaViewer.destroy();
+      viewer.destroy();
     } catch {}
-    window._pptxMediaViewer = null;
   }
 }
 
@@ -1072,41 +1119,71 @@ function activateTextTarget(data) {
   if (data.textPayload) {
     applyTextMessage(data.textPayload);
   } else {
+    publishStageLocalMedia("text");
     scheduleStableTextPresentationRefit();
   }
 }
 
 async function activatePptxTarget(data) {
+  return loadPptxInMediaWindow(data.pptxStartSlide || 0, data.transition);
+}
+
+async function loadPptxInMediaWindow(index = 0, transition = null) {
+  teardownPptxViewer();
+  if (!isPptx) return false;
   installPptxIpcHandlers();
   ensurePptxProcessEnv();
-  // teardownPptxViewer only runs when switching away from PPTX; for a
-  // PPTX -> PPTX swap we still need a fresh viewer for the new deck.
-  if (window._pptxMediaViewer) {
-    try {
-      window._pptxMediaViewer.destroy();
-    } catch {}
-    window._pptxMediaViewer = null;
-  }
   const pptxCanvas = document.getElementById("pptxCanvas");
-  pptxCanvas.style.display = "flex";
-  pptxCanvas.innerHTML = "";
-  const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import("../../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js");
-  const arrayBuffer = await ipcRenderer.invoke(
-    "read-file-as-arraybuffer",
-    mediaFile
-  );
-  window._pptxMediaViewer = await PptxViewer.open(arrayBuffer, pptxCanvas, {
-    zipLimits: RECOMMENDED_ZIP_LIMITS,
-    // pptx-renderer's contain mode currently fits width only. Render at the
-    // natural slide size and apply a width-and-height contain transform below.
-    fitMode: "none",
-    renderMode: "slide",
-    pdfjs: getPptxPdfjsConfig(),
-    // Single-slide mode is already cheap; list renders use windowed mounting.
-    listOptions: getPptxListRenderOptions(),
+  if (!pptxCanvas) return false;
+  const host = document.createElement("div");
+  Object.assign(host.style, {
+    width: "100%", height: "100%", display: "flex",
+    alignItems: "center", justifyContent: "center", overflow: "hidden",
   });
-  await applyPptxContainPolicyMedia();
-  await showPptxSlideInMediaWindow(data.pptxStartSlide || 0, data.transition);
+  pptxCanvas.replaceChildren(host);
+  pptxCanvas.style.display = "flex";
+  const load = {
+    generation: pptxMediaGeneration,
+    activationGeneration: slipstreamActivationGeneration,
+    sourceGeneration: videoSourceGeneration,
+    file: mediaFile,
+    playbackId: audiencePlaybackId,
+    canvas: pptxCanvas, host, viewer: null, ready: false,
+    abortController: new AbortController(),
+    queue: createSerializedAsyncQueue(),
+    slideRevision: 0, slideIndex: index, transition,
+  };
+  pptxMediaLoad = load;
+  try {
+    const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import("../../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js");
+    if (!ownsPptxMediaLoad(load)) return false;
+    const arrayBuffer = await ipcRenderer.invoke("read-file-as-arraybuffer", load.file);
+    if (!ownsPptxMediaLoad(load)) return false;
+    const viewer = new PptxViewer(host, {
+      zipLimits: RECOMMENDED_ZIP_LIMITS,
+      // The renderer fits width only; the app contains both dimensions below.
+      fitMode: "none",
+      pdfjs: getPptxPdfjsConfig(),
+    });
+    load.viewer = viewer;
+    await viewer.open(arrayBuffer, {
+      renderMode: "slide",
+      listOptions: getPptxListRenderOptions(),
+      signal: load.abortController.signal,
+    });
+    if (!ownsPptxMediaLoad(load)) return false;
+    window._pptxMediaViewer = viewer;
+    load.ready = true;
+    // Navigation received during import/read/open supersedes the start slide.
+    await showPptxSlideInMediaWindow(load.slideIndex, load.transition);
+    return ownsPptxMediaLoad(load);
+  } catch (error) {
+    if (!ownsPptxMediaLoad(load)) return false;
+    teardownPptxViewer();
+    throw error;
+  } finally {
+    if (!ownsPptxMediaLoad(load)) disposePptxMediaLoad(load);
+  }
 }
 
 /**
@@ -1148,6 +1225,7 @@ async function activateImageTarget() {
     if (img?.src !== activatedSrc) return;
     throw new Error(`Projection image could not be loaded: ${mediaFile}`, { cause: err });
   }
+  if (img?.src === activatedSrc) publishStageLocalMedia("image", activatedSrc);
 }
 
 async function activateVideoTarget(data) {
@@ -1189,7 +1267,7 @@ async function activateVideoTarget(data) {
  * Attach a live stream (HLS / DASH / progressive, including resolved YouTube
  * URLs) to the shared <video> element during the initial window load. Any
  * previously attached stream player and its status listeners are destroyed
- * first. Live streams are not slipstreamed; the queue uses a close/reopen cycle
+ * first. Live streams are not slipstreamed; the queue close/reopens the window
  * for them.
  */
 function isDirectHlsStream(url) {
@@ -1311,6 +1389,9 @@ async function startLiveStreamPlayback(url) {
  */
 function applySlipstream(data) {
   const activationGeneration = ++slipstreamActivationGeneration;
+  // Invalidate pending PPTX work when requested, not after the activation queue
+  // eventually reaches the replacement (which may be a non-PPTX source).
+  if (pptxMediaLoad) teardownPptxViewer();
   return slipstreamActivationQueue.run(() =>
     applySlipstreamActivation(data, activationGeneration),
   );
@@ -1333,6 +1414,7 @@ async function applySlipstreamActivation(data, activationGeneration) {
   // touching the surface or making the newer request wait on unnecessary I/O.
   if (!ownsActivation()) return { playbackId: nextPlaybackId };
   audiencePlaybackId = nextPlaybackId;
+  publishStageLocalMedia("text");
   hideStreamStatus();
   if (data?.clearOutputHold === true) {
     applyOutputHold({ mode: OUTPUT_HOLD_NONE, transitionDurationMs: 0 });
@@ -1824,6 +1906,176 @@ async function handlePreviewRtcSignal(_event, message = {}) {
   }
 }
 
+function createStageAudiencePeerHost({
+  acquireStream = () =>
+    navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }),
+  sendSignal = (message) => ipcRenderer.send("stage-audience-peer", message),
+  Relay = LocalVideoRelay,
+} = {}) {
+  let activeSession = null;
+  let stream = null;
+  let acquirePromise = null;
+  let generation = 0;
+  let activeSourceKey = "";
+
+  const stopOwnedStream = (targetStream) => {
+    if (!targetStream) return;
+    targetStream.getTracks?.().forEach((track) => {
+      try {
+        track.stop();
+      } catch {}
+    });
+  };
+
+  const close = ({ notify = false } = {}) => {
+    generation += 1;
+    acquirePromise = null;
+    activeSourceKey = "";
+    const previousSession = activeSession;
+    activeSession = null;
+    previousSession?.relay?.close(notify);
+    const currentStream = stream;
+    stream = null;
+    stopOwnedStream(currentStream);
+  };
+
+  const ensureStream = async (sourceKey) => {
+    const existingTrack = stream?.getVideoTracks?.()[0] || null;
+    if (
+      stream &&
+      existingTrack &&
+      existingTrack.readyState === "live" &&
+      activeSourceKey === sourceKey
+    ) {
+      return stream;
+    }
+    if (acquirePromise && activeSourceKey === sourceKey) {
+      return acquirePromise;
+    }
+    const currentGeneration = ++generation;
+    activeSourceKey = sourceKey;
+    const previousStream = stream;
+    stream = null;
+    stopOwnedStream(previousStream);
+    const pending = (async () => {
+      try {
+        const captured = await acquireStream();
+        if (generation !== currentGeneration) {
+          stopOwnedStream(captured);
+          return null;
+        }
+        captured?.getAudioTracks?.().forEach((track) => {
+          try {
+            track.enabled = false;
+            track.stop();
+          } catch {}
+        });
+        const videoTrack = captured?.getVideoTracks?.()[0] || null;
+        if (!videoTrack || videoTrack.readyState === "ended") {
+          stopOwnedStream(captured);
+          return null;
+        }
+        try {
+          await videoTrack.applyConstraints?.({
+            width: { ideal: 1280, max: 1280 },
+            height: { ideal: 720, max: 720 },
+            frameRate: { ideal: 30, max: 30 },
+          });
+        } catch {}
+        if (
+          generation !== currentGeneration ||
+          videoTrack.readyState === "ended"
+        ) {
+          stopOwnedStream(captured);
+          return null;
+        }
+        stream = captured;
+        videoTrack.addEventListener?.(
+          "ended",
+          () => {
+            if (stream === captured) {
+              close({ notify: true });
+            }
+          },
+          { once: true },
+        );
+        return captured;
+      } catch {
+        if (generation === currentGeneration) {
+          close({ notify: true });
+        }
+        return null;
+      } finally {
+        if (acquirePromise === pending) {
+          acquirePromise = null;
+        }
+      }
+    })();
+    acquirePromise = pending;
+    return pending;
+  };
+
+  const handleSignal = async (message = {}) => {
+    if (!message || typeof message !== "object") return false;
+    const peerId = typeof message.peerId === "string" ? message.peerId : "";
+    const sourceKey =
+      typeof message.sourceKey === "string" ? message.sourceKey : "";
+    if (message.type === "request") {
+      if (!peerId || !sourceKey) return false;
+      const previousSession = activeSession;
+      activeSession = { peerId, sourceKey, relay: null };
+      previousSession?.relay?.close(false);
+      const capturedStream = await ensureStream(sourceKey);
+      if (
+        !capturedStream ||
+        activeSession?.peerId !== peerId ||
+        activeSession?.sourceKey !== sourceKey
+      ) {
+        return false;
+      }
+      const relay = new Relay({
+        sendSignal(signal) {
+          sendSignal({ ...signal, peerId, sourceKey });
+        },
+        onClose() {
+          if (activeSession?.peerId === peerId) {
+            activeSession = null;
+            const currentStream = stream;
+            stream = null;
+            activeSourceKey = "";
+            stopOwnedStream(currentStream);
+          }
+        },
+      });
+      activeSession.relay = relay;
+      await relay.start(capturedStream);
+      return true;
+    }
+    if (message.type === "close") {
+      if (!activeSession || (peerId && activeSession.peerId !== peerId)) {
+        return false;
+      }
+      close({ notify: false });
+      return true;
+    }
+    if (!activeSession || (peerId && activeSession.peerId !== peerId)) {
+      return false;
+    }
+    await activeSession.relay?.receive(message);
+    return true;
+  };
+
+  return { handleSignal, close };
+}
+
+const stageAudiencePeerHost = createStageAudiencePeerHost();
+ipcRenderer.on("stage-audience-peer", (_event, message) => {
+  void stageAudiencePeerHost.handleSignal(message);
+});
+window.addEventListener("pagehide", () => {
+  stageAudiencePeerHost.close({ notify: false });
+});
+
 let outputHoldHandlersInstalled = false;
 function installOutputHoldHandlers() {
   if (outputHoldHandlersInstalled) return;
@@ -1982,6 +2234,7 @@ ipcRenderer.on("audience-output-command", (_event, command) => {
 
 ipcRenderer.on("audience-enter-alert-only", () => {
   document.body.classList.add("is-transparent-output");
+  stageAudiencePeerHost.close({ notify: false });
   teardownAudienceContent();
 });
 
@@ -2082,26 +2335,48 @@ function getPptxSlidesInMediaWindow(pptxCanvas) {
 }
 
 async function showPptxSlideInMediaWindow(index, transition = null) {
-  const pptxCanvas = document.getElementById("pptxCanvas");
-  if (!pptxCanvas) return;
-  pptxCurrentSlide = index;
-  try {
-    await window._pptxMediaViewer?.renderSlide(index);
-  } catch {}
-  const slides = Array.from(pptxCanvas.children).filter((el) => el && el.nodeType === 1);
-  slides.forEach((slideEl) => {
-    slideEl.style.display = "flex";
-    const svgs = slideEl.querySelectorAll("svg");
-    svgs.forEach((svg) => {
-      svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-      svg.style.width = "100%";
-      svg.style.height = "100%";
-      svg.style.display = "block";
-    });
+  const load = pptxMediaLoad;
+  if (!ownsPptxMediaLoad(load) || !Number.isInteger(index) || index < 0) return false;
+  if (load.ready && load.viewer.slideCount > 0) {
+    index = Math.min(index, load.viewer.slideCount - 1);
+  }
+  load.slideIndex = index;
+  load.transition = transition;
+  const revision = ++load.slideRevision;
+  if (!load.ready) return false;
+  const viewer = load.viewer;
+  const pptxCanvas = load.host;
+  const ownsSlide = () => ownsPptxMediaLoad(load) && load.slideRevision === revision;
+  // Fit/zoom can also render. Keep the entire transaction on the viewer's
+  // queue: a post-render token check alone cannot stop old work painting last.
+  return load.queue.run(async () => {
+    if (!ownsSlide()) return false;
+    try {
+      await viewer.renderSlide(index);
+      if (!ownsSlide()) return false;
+      const slides = Array.from(pptxCanvas.children).filter((el) => el && el.nodeType === 1);
+      slides.forEach((slideEl) => {
+        slideEl.style.display = "flex";
+        const svgs = slideEl.querySelectorAll("svg");
+        svgs.forEach((svg) => {
+          svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+          svg.style.width = "100%";
+          svg.style.height = "100%";
+          svg.style.display = "block";
+        });
+      });
+      if (!await applyPptxContainPolicyMedia(load, ownsSlide)) return false;
+      if (!ownsSlide()) return false;
+      pptxCurrentSlide = index;
+      schedulePptxTextInkGuard(pptxCanvas, ownsSlide);
+      applySlideTransition(load.canvas, transition);
+      publishStageLocalMedia("pptx", load.file, index);
+      return true;
+    } catch (error) {
+      if (!ownsSlide()) return false;
+      throw error;
+    }
   });
-  await applyPptxContainPolicyMedia();
-  schedulePptxTextInkGuard(pptxCanvas);
-  applySlideTransition(pptxCanvas, transition);
 }
 
 function applyPptxTextInkGuard(pptxCanvas) {
@@ -2142,17 +2417,20 @@ function applyPptxTextInkGuard(pptxCanvas) {
   return adjusted;
 }
 
-function schedulePptxTextInkGuard(pptxCanvas) {
-  applyPptxTextInkGuard(pptxCanvas);
+function schedulePptxTextInkGuard(pptxCanvas, owns = () => true) {
+  const apply = () => {
+    if (owns()) applyPptxTextInkGuard(pptxCanvas);
+  };
+  apply();
 
   // The renderer performs a second text measurement after layout and again
   // when web fonts finish loading. Reapply after both points so that its
   // deferred overflow update cannot restore the clipping bug.
   requestAnimationFrame(() => {
-    requestAnimationFrame(() => applyPptxTextInkGuard(pptxCanvas));
+    if (owns()) requestAnimationFrame(apply);
   });
   document.fonts?.ready
-    ?.then(() => applyPptxTextInkGuard(pptxCanvas))
+    ?.then(apply)
     .catch(() => {});
 }
 
@@ -2175,6 +2453,9 @@ function fitPptxSlidesToMediaCanvas(pptxCanvas, viewer) {
     wrapper.style.margin = "0";
     slide.style.width = `${viewer.slideWidth}px`;
     slide.style.height = `${viewer.slideHeight}px`;
+    // Keep intrinsic geometry before transforming into the smaller wrapper.
+    // Flex shrinking first would apply the horizontal scale twice.
+    slide.style.flex = "0 0 auto";
     slide.style.maxWidth = "none";
     slide.style.maxHeight = "none";
     slide.style.transform = `scale(${layout.scale})`;
@@ -2184,14 +2465,15 @@ function fitPptxSlidesToMediaCanvas(pptxCanvas, viewer) {
   return fitted;
 }
 
-async function applyPptxContainPolicyMedia() {
-  const viewer = window._pptxMediaViewer;
-  if (!viewer) return;
-  try {
-    await viewer.setFitMode("none");
-    await viewer.setZoom(100);
-    fitPptxSlidesToMediaCanvas(document.getElementById("pptxCanvas"), viewer);
-  } catch {}
+async function applyPptxContainPolicyMedia(load, owns) {
+  if (!owns()) return false;
+  const viewer = load.viewer;
+  await viewer.setFitMode("none");
+  if (!owns()) return false;
+  await viewer.setZoom(100);
+  if (!owns()) return false;
+  fitPptxSlidesToMediaCanvas(load.host, viewer);
+  return true;
 }
 
 function installPptxIpcHandlers() {
@@ -2204,8 +2486,15 @@ function installPptxIpcHandlers() {
       (!data?.playbackId || data.playbackId === audiencePlaybackId) &&
       (!data?.filePath || data.filePath === mediaFile)
     ) {
-      void showPptxSlideInMediaWindow(data.slideIndex, data.transition);
+      void showPptxSlideInMediaWindow(data.slideIndex, data.transition).catch(() => {});
     }
+  });
+  // Install for both startup and slipstream-created viewers. Resize uses the
+  // latest requested slide, not a previously committed slide still rendering.
+  window.addEventListener("resize", () => {
+    const load = pptxMediaLoad;
+    if (!ownsPptxMediaLoad(load) || !load.ready) return;
+    void showPptxSlideInMediaWindow(load.slideIndex).catch(() => {});
   });
 }
 
@@ -2228,6 +2517,15 @@ function sendRemainingTime(video) {
       const playbackTime = video.currentTime;
       const timestamp = Date.now() + (currentTime - performance.now());
       sendTimeRemainingTick(duration, playbackTime, timestamp, mediaFile);
+      // The control preview receives these clock samples over its existing
+      // port. The stage has its own silent local player and PID follower.
+      if (!isText && !isImg && !isPptx && !isLowerThirdOutput) {
+        ipcRenderer.send("stage-local-playback", {
+          currentTime: playbackTime, playing: true, syncPhase: playbackSyncPhase,
+          playbackId: audiencePlaybackId, audienceSessionId,
+          sourceGeneration: videoSourceGeneration,
+        });
+      }
       lastTime = currentTime;
     }
     requestAnimationFrame(send);
@@ -3394,6 +3692,12 @@ function applyTextMessage(message) {
       : DEFAULT_TEXT_PRESENTATION;
 
   const lowerThirdOutput = isLowerThirdOutput || safeMessage.outputRole === "lower-third";
+  if (!lowerThirdOutput) {
+    publishStageLocalMedia("native", "", 0, {
+      ...safeMessage,
+      outputSize: { width: window.innerWidth, height: window.innerHeight },
+    });
+  }
   applyLowerThirdChromaPolicy(textContent, lowerThirdOutput, safeMessage);
   const explicitLowerThirdClear = lowerThirdOutput && (
     message == null || message?.clearLowerThird === true
@@ -3682,6 +3986,8 @@ function installTextHandlers() {
 }
 
 async function loadMedia() {
+  if (!isPptx || logoHoldOnly) teardownPptxViewer();
+  publishStageLocalMedia("text");
   // Reuse the module-level stream handles so slipstream transitions can later
   // tear these players down when switching to a different media type.
   teardownStreamingPlayers();
@@ -3723,43 +4029,12 @@ async function loadMedia() {
 
   if (isPptx) {
     installICPHandlers();
-    installPptxIpcHandlers();
-    if (!globalThis.process) {
-      globalThis.process = { env: {} };
-    } else if (!globalThis.process.env) {
-      globalThis.process.env = {};
-    }
     setProjectionVideoVisible(false);
     try {
       video.pause();
     } catch {}
     setProjectionVideoSource("");
-    if (pptxCanvas) pptxCanvas.style.display = "flex";
-    const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import("../../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js");
-    const arrayBuffer = await ipcRenderer.invoke(
-      "read-file-as-arraybuffer",
-      mediaFile
-    );
-    window._pptxMediaViewer = await PptxViewer.open(arrayBuffer, pptxCanvas, {
-      zipLimits: RECOMMENDED_ZIP_LIMITS,
-      // Keep renderer fitting disabled; applyPptxContainPolicyMedia accounts
-      // for both dimensions and remains correct on ultrawide outputs.
-      fitMode: "none",
-      renderMode: "slide",
-      pdfjs: getPptxPdfjsConfig(),
-      // Single-slide mode is already cheap; list renders use windowed mounting.
-      listOptions: getPptxListRenderOptions(),
-    });
-    await applyPptxContainPolicyMedia();
-    await showPptxSlideInMediaWindow(pptxStartSlide);
-    if (!window._pptxResizeBound) {
-      window._pptxResizeBound = true;
-      window.addEventListener("resize", () => {
-        void applyPptxContainPolicyMedia();
-        void showPptxSlideInMediaWindow(pptxCurrentSlide);
-      });
-    }
-    return;
+    return loadPptxInMediaWindow(pptxStartSlide);
   }
 
   installICPHandlers();
@@ -3842,9 +4117,15 @@ async function bootstrapMediaWindow() {
     return;
   }
   if (disableContentTransitions) document.body.classList.add("disable-content-transitions");
-  await loadMedia();
+  const playbackId = audiencePlaybackId;
+  const activationGeneration = slipstreamActivationGeneration;
+  const loaded = await loadMedia();
+  // A cancelled startup PPTX load must not acknowledge whichever source took
+  // its place while import/read/open/render was pending.
+  if (loaded === false || playbackId !== audiencePlaybackId ||
+      activationGeneration !== slipstreamActivationGeneration) return;
   ipcRenderer.send("audience-output-ready", {
-    playbackId: audiencePlaybackId,
+    playbackId,
     audienceSessionId,
   });
 }
@@ -3858,70 +4139,3 @@ bootstrapMediaWindow().catch((error) => {
   });
 });
 
-function renderSongSectionHTML(blocks) {
-  if (Array.isArray(blocks) && blocks.length > 0) {
-    return blocks
-      .map(block => {
-        if (block.type === "lyricLine" && block.primary?.segments) {
-          const hasText = block.primary.segments.some((segment) => String(segment?.text || "").length > 0);
-          if (!hasText) {
-            return `<div class="song-block song-block--spacer">&nbsp;</div>`;
-          }
-          const html = block.primary.segments
-            .map((segment) => renderSongSegmentHTML(segment))
-            .join("");
-          return `<div class="song-block">${html || "&nbsp;"}</div>`;
-        }
-        return `<div class="song-block song-block--spacer">&nbsp;</div>`;
-      })
-      .join("");
-  }
-  return "";
-}
-
-function renderSongSegmentHTML(segment) {
-  const text = segment?.text || "";
-  const style = songSegmentStyleAttribute(segment?.style);
-  return `<span${style ? ` style="${escapeHtml(style)}"` : ""}>${escapeHtml(text)}</span>`;
-}
-
-function songSegmentStyleAttribute(style) {
-  if (!style || typeof style !== "object") return "";
-  const declarations = [];
-  const color = typeof style.color === "string" ? style.color.trim() : "";
-  const fontFamily = typeof style.fontFamily === "string" ? style.fontFamily.trim() : "";
-  const backgroundColor = typeof style.backgroundColor === "string" ? style.backgroundColor.trim() : "";
-  const fontWeight = typeof style.fontWeight === "string" || Number.isFinite(Number(style.fontWeight))
-    ? String(style.fontWeight).trim()
-    : "";
-  const fontStyle = typeof style.fontStyle === "string" ? style.fontStyle.trim() : "";
-  const textDecoration = typeof style.textDecoration === "string" ? style.textDecoration.trim() : "";
-  if (/^(#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|[a-z]+)$/i.test(color)) {
-    declarations.push(`color: ${color}`);
-  }
-  if (/^(#[0-9a-f]{3,8}|rgba?\([^)]+\)|hsla?\([^)]+\)|[a-z]+)$/i.test(backgroundColor)) {
-    declarations.push(`background-color: ${backgroundColor}`);
-  }
-  if (fontFamily && !/[;{}<>]/.test(fontFamily)) {
-    declarations.push(`font-family: ${fontFamily}`);
-  }
-  if (/^(normal|bold|bolder|lighter|[1-9]00)$/i.test(fontWeight)) {
-    declarations.push(`font-weight: ${fontWeight}`);
-  }
-  if (/^(normal|italic|oblique)$/i.test(fontStyle)) {
-    declarations.push(`font-style: ${fontStyle}`);
-  }
-  if (/^(none|underline|line-through|overline)(\s+(underline|line-through|overline))*$/i.test(textDecoration)) {
-    declarations.push(`text-decoration: ${textDecoration}`);
-  }
-  return declarations.join("; ");
-}
-
-function escapeHtml(str) {
-  return String(str || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}

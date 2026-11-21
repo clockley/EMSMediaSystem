@@ -36,6 +36,7 @@ import {
   currentBibleScheduleOutputSize,
   currentLiveQueueItem,
   currentMode,
+  currentPreviewCue,
   currentResolvedSongPresentation,
   currentSongActiveSection,
   currentSongPresentationItem,
@@ -56,6 +57,7 @@ import {
   isQueueItemSong,
   isQueueItemVideo,
   isQueuePlaying,
+  isScheduleItemCurrentlyPlayable,
   isSongsWorkspaceVisible,
   lastAudienceBibleTextMessage,
   lastAudienceSongTextMessage,
@@ -78,6 +80,7 @@ import {
   renderSongLowerThirdControls,
   renderSongSectionPreview,
   renderSongSlideNavigator,
+  resolveQueueItemMediaPath,
   resolveThemeForTarget,
   resolvedAudienceBackgroundFields,
   resolvedBibleEntryForItem,
@@ -120,6 +123,23 @@ const stageLayerRevisions = new Map();
 const liveThemeApplyGate = createLatestRequestGate();
 let stageWidgetsOwnerItem = null;
 let stageContentUpdateRevision = 0;
+let stageContentUpdatePending = null;
+let stageNotesRefreshRevision = 0;
+
+function beginStageContentUpdate() {
+  const previous = stageContentUpdatePending;
+  const update = { revision: ++stageContentUpdateRevision };
+  update.done = new Promise((resolve) => { update.complete = resolve; });
+  stageContentUpdatePending = update;
+  // Let refreshes waiting on superseded thumbnail work follow its new owner.
+  previous?.complete();
+  return update;
+}
+
+function finishStageContentUpdate(update) {
+  if (stageContentUpdatePending === update) stageContentUpdatePending = null;
+  update.complete();
+}
 
 let currentAlertsSnapshot = { alert: null, queue: [], nurseryAlerts: [] };
 
@@ -298,12 +318,19 @@ async function clearStageWidgetsIfLiveItemChanged(item, nextServiceItem) {
 }
 
 async function resetStageContentForProjectChange(profile = "current-next") {
-  stageContentUpdateRevision += 1;
+  const updateRevision = ++stageContentUpdateRevision;
+  stageContentUpdatePending?.complete();
+  stageContentUpdatePending = null;
   stageWidgetsOwnerItem = null;
   const empty = {
     current: "Waiting for live content",
+    currentMedia: null,
     next: "",
+    nextSlide: "",
     nextIsItem: false,
+    nextMedia: null,
+    pptxSlideIndex: null,
+    currentMediaSourcePath: "",
     serviceItem: "",
     sectionLabel: "",
     notes: "",
@@ -313,13 +340,212 @@ async function resetStageContentForProjectChange(profile = "current-next") {
   };
   setSharedRendererState({ stageContentCache: empty, lastStageCountdownSecond: -1 });
   const status = await invoke("get-output-status").catch(() => null);
+  if (updateRevision !== stageContentUpdateRevision) return false;
   if (status?.sessionId) setSharedRendererState({ stageSessionIdCache: status.sessionId });
   await sendStageLayer("widgets", {}, "layer.clear").catch((error) =>
     console.error("Could not clear stage widgets for project change:", error),
   );
+  if (updateRevision !== stageContentUpdateRevision) return false;
   await sendStageLayer("content", empty).catch((error) =>
     console.error("Could not reset stage content for project change:", error),
   );
+}
+
+const stageResolvedMediaPaths = new WeakMap();
+
+async function resolveStageMediaPathForItem(item, preferredPath = "") {
+  if (typeof preferredPath === "string" && preferredPath) return preferredPath;
+  if (!item || typeof item !== "object") return "";
+  const liveSource = item.liveSource;
+  const cached = stageResolvedMediaPaths.get(item);
+  const cacheRevision = `${item.path || ""}\u0000${liveSource?.strategy || ""}\u0000${liveSource?.snapshotId || ""}`;
+  if (cached && cached.revision === cacheRevision && cached.path) {
+    return cached.path;
+  }
+  let resolved = typeof item.path === "string" ? item.path : "";
+  if (
+    liveSource?.strategy !== "snapshot" ||
+    typeof resolveQueueItemMediaPath !== "function"
+  ) {
+    return resolved;
+  }
+  try {
+    const candidate = await resolveQueueItemMediaPath(item);
+    if (typeof candidate === "string" && candidate) {
+      resolved = candidate;
+      stageResolvedMediaPaths.set(item, { revision: cacheRevision, path: resolved });
+    }
+  } catch {}
+  return resolved;
+}
+
+function stageNextContentForItem(item = currentLiveQueueItem(), options = {}) {
+  const itemIndex = item ? mediaQueue.indexOf(item) : -1;
+  const rawCue = typeof currentPreviewCue === "function" ? currentPreviewCue() : null;
+  const cueItem =
+    rawCue &&
+    Number.isInteger(rawCue.index) &&
+    rawCue.index >= 0 &&
+    rawCue.index < mediaQueue.length &&
+    mediaQueue[rawCue.index] === rawCue.item &&
+    rawCue.item &&
+    rawCue.item !== item &&
+    (typeof isScheduleItemCurrentlyPlayable !== "function" ||
+      isScheduleItemCurrentlyPlayable(rawCue.item))
+      ? rawCue.item
+      : null;
+  const nextSlide = typeof options.nextSlide === "string" ? options.nextSlide : "";
+  const fallbackItemText =
+    typeof options.nextItemText === "string"
+      ? options.nextItemText
+      : itemIndex >= 0
+        ? nextPlayableQueueItemStageText(itemIndex)
+        : "";
+  const cueText = cueItem ? queueItemStageLabel(cueItem) || "" : "";
+  const next = cueItem ? cueText : nextSlide ? nextSlide : fallbackItemText || "";
+  const nextIsItem = cueItem
+    ? Boolean(cueText)
+    : nextSlide
+      ? false
+      : Boolean(next);
+  const nextPptxSlideIndex =
+    !cueItem &&
+    Number.isInteger(options.nextPptxSlideIndex) &&
+    options.nextPptxSlideIndex >= 0
+      ? options.nextPptxSlideIndex
+      : null;
+  const itemKind =
+    options.mediaKind ||
+    (typeof isQueueItemAudio === "function" && isQueueItemAudio(item)
+      ? "audio"
+      : typeof isQueueItemPptx === "function" && isQueueItemPptx(item)
+        ? "pptx"
+        : typeof isQueueItemImage === "function" && isQueueItemImage(item)
+          ? "image"
+          : typeof isQueueItemVideo === "function" && isQueueItemVideo(item)
+            ? "video"
+            : "text");
+  const currentMedia = item
+    ? {
+        kind: itemKind,
+        name: queueItemStageLabel(item) || "",
+      }
+    : {
+        kind: options.mediaKind || "text",
+        name: "",
+      };
+  return {
+    next,
+    nextSlide,
+    nextIsItem,
+    pptxSlideIndex: nextPptxSlideIndex,
+    currentMediaSourcePath: options.currentMediaSourcePath || "",
+    currentMedia,
+    nextMedia: stageContentCache.nextMedia || null,
+  };
+}
+
+function stageMediaRevisionForItem(item) {
+  const baseline = item?.baseline;
+  const liveSource = item?.liveSource;
+  return [
+    liveSource?.snapshotId || "",
+    baseline?.hash || baseline?.fileHash || "",
+    Number.isFinite(baseline?.mtimeMs) ? baseline.mtimeMs : "",
+    Number.isFinite(baseline?.size) ? baseline.size : "",
+  ]
+    .filter(Boolean)
+    .join(":");
+}
+
+async function resolveStageNextMedia(item, nextContent = {}) {
+  if (
+    !nextContent.nextIsItem &&
+    isQueueItemPptx(item) &&
+    Number.isInteger(nextContent.pptxSlideIndex) &&
+    nextContent.pptxSlideIndex >= 0
+  ) {
+    const filePath = await resolveStageMediaPathForItem(
+      item,
+      nextContent.currentMediaSourcePath,
+    );
+    if (!filePath) return null;
+    return {
+      kind: "pptx",
+      name: queueItemStageLabel(item) || "",
+      sourcePath: filePath,
+      slideIndex: nextContent.pptxSlideIndex,
+      revision: stageMediaRevisionForItem(item),
+    };
+  }
+  if (!nextContent.nextIsItem) return null;
+  const rawCue = typeof currentPreviewCue === "function" ? currentPreviewCue() : null;
+  const cueItem =
+    rawCue &&
+    Number.isInteger(rawCue.index) &&
+    rawCue.index >= 0 &&
+    rawCue.index < mediaQueue.length &&
+    mediaQueue[rawCue.index] === rawCue.item &&
+    rawCue.item &&
+    rawCue.item !== item &&
+    (typeof isScheduleItemCurrentlyPlayable !== "function" ||
+      isScheduleItemCurrentlyPlayable(rawCue.item))
+      ? rawCue.item
+      : null;
+  const itemIndex = item ? mediaQueue.indexOf(item) : -1;
+  const nextItem =
+    cueItem ||
+    (itemIndex >= 0
+      ? mediaQueue
+          .slice(itemIndex + 1)
+          .find((candidate) =>
+            typeof isScheduleItemCurrentlyPlayable === "function"
+              ? isScheduleItemCurrentlyPlayable(candidate)
+              : Boolean(candidate),
+          ) || null
+      : null);
+  if (!nextItem) return null;
+  const kind = isQueueItemAudio(nextItem)
+    ? "audio"
+    : isQueueItemPptx(nextItem)
+      ? "pptx"
+      : isQueueItemImage(nextItem)
+        ? "image"
+        : isQueueItemVideo(nextItem)
+          ? "video"
+          : "text";
+  const name = queueItemStageLabel(nextItem) || "";
+  const revision = stageMediaRevisionForItem(nextItem);
+  if (kind === "pptx") {
+    const filePath = await resolveStageMediaPathForItem(nextItem);
+    return {
+      kind,
+      name,
+      sourcePath: filePath,
+      slideIndex:
+        Number.isInteger(nextItem.pptxSlideIndex) && nextItem.pptxSlideIndex >= 0
+          ? nextItem.pptxSlideIndex
+          : 0,
+      revision,
+    };
+  }
+  if (kind === "image" || kind === "video") {
+    const filePath = await resolveStageMediaPathForItem(nextItem);
+    const thumb = filePath
+      ? await invoke("stage-item-thumbnail", { kind, path: filePath, revision }).catch(
+          () => null,
+        )
+      : null;
+    return {
+      kind,
+      name,
+      revision,
+      ...(typeof thumb?.thumbnailUrl === "string" && thumb.thumbnailUrl
+        ? { thumbnailUrl: thumb.thumbnailUrl }
+        : {}),
+    };
+  }
+  return { kind, name };
 }
 
 /**
@@ -336,66 +562,158 @@ async function syncStageContentFromAudienceMessage(
   message = {},
   item = currentLiveQueueItem(),
 ) {
-  const updateRevision = ++stageContentUpdateRevision;
-  const presentation = livePresentationForStage(type, message, item);
-  const itemIndex = mediaQueue.indexOf(item);
-  const payload = stageContentFromPresentation(
-    { ...message, resolvedPresentation: presentation || message?.resolvedPresentation },
-    {
-      type,
-      nextItemText: nextPlayableQueueItemStageText(itemIndex),
-      itemNotes: liveScheduleItemStageNotes(item),
-      slides: presentation?.slides,
-    },
-  );
-  await clearStageWidgetsIfLiveItemChanged(item, payload.serviceItem);
-  if (updateRevision !== stageContentUpdateRevision) return false;
-  setSharedRendererState({ stageContentCache: {
-    ...stageContentCache,
-    ...payload,
-  } });
-  return sendCachedStageContent();
+  const update = beginStageContentUpdate();
+  const updateRevision = update.revision;
+  try {
+    const presentation = livePresentationForStage(type, message, item);
+    const itemIndex = item ? mediaQueue.indexOf(item) : -1;
+    const payload = stageContentFromPresentation(
+      { ...message, resolvedPresentation: presentation || message?.resolvedPresentation },
+      {
+        type,
+        nextItemText: itemIndex >= 0 ? nextPlayableQueueItemStageText(itemIndex) : "",
+        itemNotes: liveScheduleItemStageNotes(item),
+        slides: presentation?.slides,
+      },
+    );
+    const nextSlide = payload.nextIsItem ? "" : payload.next || "";
+    const nextContent = stageNextContentForItem(item, {
+      nextSlide,
+      nextItemText: itemIndex >= 0 ? nextPlayableQueueItemStageText(itemIndex) : "",
+      mediaKind: "text",
+    });
+    const nextMedia =
+      typeof resolveStageNextMedia === "function"
+        ? await resolveStageNextMedia(item, nextContent)
+        : null;
+    if (updateRevision !== stageContentUpdateRevision) return false;
+    await clearStageWidgetsIfLiveItemChanged(item, payload.serviceItem);
+    if (updateRevision !== stageContentUpdateRevision) return false;
+    setSharedRendererState({
+      stageContentCache: {
+        ...stageContentCache,
+        ...payload,
+        ...nextContent,
+        nextMedia,
+      },
+    });
+    return sendCachedStageContent();
+  } finally {
+    finishStageContentUpdate(update);
+  }
 }
 
-async function syncStageContentFromQueueItem(item = currentLiveQueueItem()) {
+async function syncStageContentFromQueueItem(
+  item = currentLiveQueueItem(),
+  options = {},
+) {
   if (!item) return false;
-  const updateRevision = ++stageContentUpdateRevision;
-  const nextText = nextPlayableQueueItemStageText(mediaQueue.indexOf(item));
-  const serviceItem = queueItemStageLabel(item);
-  await clearStageWidgetsIfLiveItemChanged(item, serviceItem);
-  if (updateRevision !== stageContentUpdateRevision) return false;
-  // This generic path is also used when a text cue is lower-third-only and no
-  // audience payload exists to build richer stage content. Explicitly reset
-  // slide notes so content from the previous cue cannot linger.
-  setSharedRendererState({ stageContentCache: {
-    ...stageContentCache,
-    current: queueItemStageLabel(item) || "Live content",
-    next: nextText,
-    nextIsItem: Boolean(nextText),
-    serviceItem,
-    slideNotes: "",
-    notes: liveScheduleItemStageNotes(item),
-  } });
-  return sendCachedStageContent();
+  const update = beginStageContentUpdate();
+  const updateRevision = update.revision;
+  try {
+    const serviceItem = queueItemStageLabel(item);
+    const nextContent = stageNextContentForItem(item, {
+      nextSlide: "",
+      nextPptxSlideIndex: null,
+      currentMediaSourcePath: options.currentMediaSourcePath || "",
+      mediaKind: options.mediaKind,
+    });
+    const nextMedia =
+      typeof resolveStageNextMedia === "function"
+        ? await resolveStageNextMedia(item, nextContent)
+        : null;
+    if (updateRevision !== stageContentUpdateRevision) return false;
+    await clearStageWidgetsIfLiveItemChanged(item, serviceItem);
+    if (updateRevision !== stageContentUpdateRevision) return false;
+    // This generic path is also used when a text cue is lower-third-only and no
+    // audience payload exists to build richer stage content. Explicitly reset
+    // slide notes so content from the previous cue cannot linger.
+    setSharedRendererState({
+      stageContentCache: {
+        ...stageContentCache,
+        current: queueItemStageLabel(item) || "Live content",
+        ...nextContent,
+        nextMedia,
+        serviceItem,
+        slideNotes: "",
+        notes: liveScheduleItemStageNotes(item),
+      },
+    });
+    return sendCachedStageContent();
+  } finally {
+    finishStageContentUpdate(update);
+  }
 }
 
 /**
  * Re-merge stage notes after a schedule note edit, without re-resolving
  * slides. Only sends when the stage text actually changes.
  */
-async function refreshStageNotesForLiveItem() {
-  const item = currentLiveQueueItem();
-  if (!item) return false;
+async function refreshStageNotesForLiveItem(options = {}) {
+  const refreshRevision = ++stageNotesRefreshRevision;
+  // Notes/Next edits must not cancel an authoritative take while its thumbnail
+  // is loading, or merge the outgoing cue's metadata into the incoming cue.
+  while (stageContentUpdatePending) {
+    await stageContentUpdatePending.done;
+    if (refreshRevision !== stageNotesRefreshRevision) return false;
+  }
+  const hasRevision =
+    typeof stageContentUpdateRevision === "number" && stageContentUpdateRevision > 0;
+  const item = hasRevision ? stageWidgetsOwnerItem : currentLiveQueueItem();
+  if (!item && !stageContentCache.current) return false;
+  const updateRevision = stageContentUpdateRevision;
   const notes = mergeStageNotes(
     liveScheduleItemStageNotes(item),
     stageContentCache.slideNotes || "",
   );
-  const nextIsItem = stageContentCache.nextIsItem === true || !(stageContentCache.next || "");
-  const next = nextIsItem
-    ? nextPlayableQueueItemStageText(mediaQueue.indexOf(item))
-    : stageContentCache.next;
-  if (notes === (stageContentCache.notes || "") && next === (stageContentCache.next || "")) return false;
-  setSharedRendererState({ stageContentCache: { ...stageContentCache, notes, next, nextIsItem: nextIsItem && Boolean(next) } });
+  const nextContent =
+    typeof stageNextContentForItem === "function"
+      ? stageNextContentForItem(item, {
+          nextSlide: stageContentCache.nextSlide || "",
+          nextPptxSlideIndex: stageContentCache.pptxSlideIndex,
+          currentMediaSourcePath: stageContentCache.currentMediaSourcePath || "",
+          mediaKind: stageContentCache.currentMedia?.kind,
+        })
+      : (() => {
+          const nextIsItem =
+            stageContentCache.nextIsItem === true || !(stageContentCache.next || "");
+          const next = nextIsItem
+            ? nextPlayableQueueItemStageText(mediaQueue.indexOf(item))
+            : stageContentCache.next;
+          return {
+            next,
+            nextIsItem: nextIsItem && Boolean(next),
+          };
+        })();
+  const nextMedia =
+    typeof resolveStageNextMedia === "function"
+      ? await resolveStageNextMedia(item, nextContent)
+      : stageContentCache.nextMedia || null;
+  if (
+    refreshRevision !== stageNotesRefreshRevision ||
+    updateRevision !== stageContentUpdateRevision
+  ) {
+    return false;
+  }
+  const prevMediaJson = JSON.stringify(stageContentCache.nextMedia || null);
+  const nextMediaJson = JSON.stringify(nextMedia || null);
+  if (
+    !options.forceSend &&
+    notes === (stageContentCache.notes || "") &&
+    nextContent.next === (stageContentCache.next || "") &&
+    nextContent.nextIsItem === Boolean(stageContentCache.nextIsItem) &&
+    prevMediaJson === nextMediaJson
+  ) {
+    return false;
+  }
+  setSharedRendererState({
+    stageContentCache: {
+      ...stageContentCache,
+      ...nextContent,
+      nextMedia,
+      notes,
+    },
+  });
   return sendCachedStageContent();
 }
 
@@ -405,22 +723,46 @@ function nextStageRevision(layer) {
   return next;
 }
 
-async function sendStageLayer(layer, payload = {}, type = "layer.set") {
+async function sendStageLayer(
+  layer,
+  payload = {},
+  type = "layer.set",
+  allowSessionRefresh = true,
+  reservedRevision = nextStageRevision(layer),
+) {
   if (!stageSessionIdCache) {
     const status = await invoke("get-output-status").catch(() => null);
+    if (stageLayerRevisions.get(layer) !== reservedRevision) {
+      return { delivered: false, reason: "superseded" };
+    }
     setSharedRendererState({ stageSessionIdCache: status?.sessionId || "" });
   }
   if (!stageSessionIdCache) return { delivered: false, reason: "stage-closed" };
   const command = createOutputCommand({
     commandId: globalThis.crypto?.randomUUID?.() || `stage-${Date.now()}-${Math.random()}`,
     sessionId: stageSessionIdCache,
-    revision: nextStageRevision(layer),
+    revision: reservedRevision,
     targetRole: "stage",
     type,
     layer,
     payload,
   });
-  return invoke("stage-output-command", command);
+  const result = await invoke("stage-output-command", command).catch((error) => {
+    console.error(`Could not deliver stage ${layer} command:`, error);
+    return { delivered: false, reason: "error" };
+  });
+  if (stageLayerRevisions.get(layer) !== reservedRevision) {
+    return { delivered: false, reason: "superseded" };
+  }
+  if (result?.reason === "session-mismatch" && allowSessionRefresh) {
+    // The stage window was recreated while this command was in flight (for
+    // example the operator enabled the stage output mid-presentation). Adopt
+    // the new session and resend once with the original revision so an older
+    // payload cannot overtake a newer update to the same layer.
+    setSharedRendererState({ stageSessionIdCache: result.sessionId || "" });
+    return sendStageLayer(layer, payload, type, false, reservedRevision);
+  }
+  return result;
 }
 
 function updateStageStatusUi(status) {
@@ -745,15 +1087,24 @@ async function ensureStageOutput() {
     showGnomeToast("Choose a stage output display");
     return false;
   }
-  const created = await invoke("create-stage-window", display);
-  if (!created) return false;
-  setSharedRendererState({ stageSessionIdCache: created.sessionId || stageSessionIdCache });
-  await sendStageLayer("content", {
-    ...stageContentCache,
-    profile: document.getElementById("stageProfileSelect")?.value || "current-next",
-  });
-  updateStageStatusUi(await invoke("get-output-status"));
-  return true;
+  // Operators enable the stage output while a presentation is live; any
+  // failure here must stay contained to the stage feature.
+  try {
+    const created = await invoke("create-stage-window", display);
+    if (!created) return false;
+    setSharedRendererState({ stageSessionIdCache: created.sessionId || stageSessionIdCache });
+    await sendStageLayer("content", {
+      ...stageContentCache,
+      profile: document.getElementById("stageProfileSelect")?.value || "current-next",
+    });
+    updateStageStatusUi(await invoke("get-output-status"));
+    return true;
+  } catch (error) {
+    console.error("Could not start the stage output:", error);
+    showGnomeToast("Stage output could not be started");
+    updateStageStatusUi(await invoke("get-output-status").catch(() => null));
+    return false;
+  }
 }
 
 async function showPrivateStageMessage() {
@@ -1196,6 +1547,7 @@ export {
   showAudienceAlert,
   showPrivateStageMessage,
   stageLayerRevisions,
+  stageNextContentForItem,
   syncLowerThirdFeatureAvailability,
   syncStageContentFromAudienceMessage,
   syncStageContentFromQueueItem,

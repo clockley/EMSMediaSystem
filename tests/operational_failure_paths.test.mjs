@@ -286,6 +286,8 @@ test("stage content identifies a next cue and gives current content priority", (
     { type: "song", nextItemText: "Welcome video" },
   );
   assert.equal(nextCue.nextIsItem, true);
+  assert.equal(nextCue.current, "Last slide");
+  assert.equal(nextCue.next, "Welcome video");
   const nextSlide = stageContentFromPresentation({
     resolvedPresentation: {
       navigation: { activeSlideId: "one", nextSlideId: "two" },
@@ -293,13 +295,19 @@ test("stage content identifies a next cue and gives current content priority", (
     },
   }, { type: "song", nextItemText: "Welcome video" });
   assert.equal(nextSlide.nextIsItem, false);
+  assert.equal(nextSlide.current, "One");
+  assert.equal(nextSlide.next, "Two");
 
   const rendered = new Map();
-  const code = functionSlice(stageSource, "function render()", "function updateClock()");
+  // Isolate render from the local-media/PPTX helpers declared after it.
+  const code = functionSlice(stageSource, "function render()", "function clearCurrentPptx()");
+  const currentMediaCalls = [];
+  const nextMediaCalls = [];
   const context = {
+    localMedia: null,
     state: {
       layers: {
-        content: { serviceItem: "Current song", notes: "Current notes" },
+        content: { ...nextSlide, serviceItem: "Current song", notes: "Current notes" },
         widgets: { serviceItem: "Previous video", notes: "Previous notes", countdown: "1:23" },
       },
     },
@@ -308,8 +316,14 @@ test("stage content identifies a next cue and gives current content priority", (
     },
     setText: (id, value) => rendered.set(id, value),
     renderOverlay: () => {},
+    renderCurrentMedia: (media) => { currentMediaCalls.push(media); return false; },
+    renderNextMedia: (content) => nextMediaCalls.push(content),
   };
   vm.runInNewContext(`${code}\nrender()`, context);
+  assert.deepEqual(currentMediaCalls, [null]);
+  assert.deepEqual(nextMediaCalls, [context.state.layers.content]);
+  assert.equal(rendered.get("stageCurrent"), "One");
+  assert.equal(rendered.get("stageNext"), "Two");
   assert.equal(rendered.get("stageServiceItem"), "Current song");
   assert.equal(rendered.get("stageNotes"), "Current notes");
   assert.equal(rendered.get("stageCountdown"), "1:23");
@@ -325,6 +339,7 @@ test("opening a project clears stage content and countdown before changing proje
   const code = functionSlice(liveSource, "async function resetStageContentForProjectChange(", "/**\n * Opted-in schedule notes");
   const context = {
     stageContentUpdateRevision: 0,
+    stageContentUpdatePending: null,
     stageWidgetsOwnerItem: { id: "old" },
     setSharedRendererState: (patch) => applied.push(patch),
     invoke: async () => ({ sessionId: "stage-session" }),
@@ -344,6 +359,9 @@ test("opening a project clears stage content and countdown before changing proje
 test("a schedule edit refreshes stage Next when it names another cue", async () => {
   const item = { id: "live" };
   const context = {
+    stageContentUpdateRevision: 0,
+    stageContentUpdatePending: null,
+    stageNotesRefreshRevision: 0,
     stageContentCache: { next: "Old cue", nextIsItem: true, notes: "", slideNotes: "" },
     currentLiveQueueItem: () => item,
     liveScheduleItemStageNotes: () => "",

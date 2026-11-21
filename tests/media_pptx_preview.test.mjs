@@ -132,6 +132,7 @@ test("audience PowerPoint output applies app-owned contain fitting", async () =>
   assert.match(fit, /getPptxContainLayout\(/);
   assert.match(fit, /pptxCanvas\?\.clientWidth/);
   assert.match(fit, /pptxCanvas\?\.clientHeight/);
+  assert.match(fit, /slide\.style\.flex = "0 0 auto"/);
   assert.match(fit, /slide\.style\.transform = `scale\(\$\{layout\.scale\}\)`/);
   assert.match(policy, /viewer\.setFitMode\("none"\)/);
   assert.match(policy, /fitPptxSlidesToMediaCanvas/);
@@ -163,5 +164,8 @@ test("audience PowerPoint output protects Windows glyph ink from clipping", asyn
   assert.match(guard, /textBox\.style\.overflowClipMargin = "8px"/);
   assert.match(guard, /emsPptxTextInkGuard/);
   assert.match(schedule, /document\.fonts\?\.ready/);
-  assert.match(show, /schedulePptxTextInkGuard\(pptxCanvas\)/);
+  assert.match(schedule, /if \(owns\(\)\) applyPptxTextInkGuard\(pptxCanvas\)/);
+  assert.match(schedule, /if \(owns\(\)\) requestAnimationFrame\(apply\)/);
+  assert.match(show, /const ownsSlide = \(\) => ownsPptxMediaLoad\(load\) && load\.slideRevision === revision/);
+  assert.match(show, /schedulePptxTextInkGuard\(pptxCanvas, ownsSlide\)/);
 });

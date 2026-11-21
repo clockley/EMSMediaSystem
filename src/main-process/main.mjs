@@ -23,6 +23,8 @@ import {
   dialog,
   ipcMain,
   MessageChannelMain,
+  nativeImage,
+  nativeTheme,
   screen,
   powerSaveBlocker,
   protocol,
@@ -106,6 +108,11 @@ import {
   snapshotIdFromStagedFilename,
 } from "./staging-index.min.mjs";
 import {
+  sanitizeStageContentPayload,
+  stageDeckKey,
+} from "./stage-item-media.min.mjs";
+import { sanitizeStageLocalMedia } from "./stage-local-media.min.mjs";
+import {
   createEmsMediaAccessToken,
   createEmsMediaPathRegistry,
   createEmsMediaProtocolHandler,
@@ -113,6 +120,19 @@ import {
   registerEmsMediaSchemePrivileges,
 } from "./media-protocol.min.mjs";
 import { isEmsMediaUrl } from "../shared/ems-media-url.min.mjs";
+import { configureConfidenceCaptureRuntime } from "./confidence-capture-runtime.min.mjs";
+import { installSystemAppearance } from "./system-appearance.min.mjs";
+const nativeConfidenceCaptureEnabled = configureConfidenceCaptureRuntime({
+  platform: process.platform,
+  electronVersion: process.versions.electron,
+  commandLine: app.commandLine,
+});
+const nativeStageConfidenceCaptureEnabled = configureConfidenceCaptureRuntime({
+  platform: process.platform,
+  electronVersion: process.versions.electron,
+  commandLine: app.commandLine,
+  target: "stage",
+});
 const derivedSrcDir = path.dirname(import.meta.dirname);
 const derivedRoot = path.dirname(derivedSrcDir);
 let sessionID = 0;
@@ -350,8 +370,21 @@ let audienceSessionId = randomUUID();
 const audienceLayerCommands = new Map();
 let audienceHealth = "inactive";
 let stageWindowCreatePromise = null;
+let stagePreviewFrameRequest = null;
 let stageSessionId = randomUUID();
 const stageLayerCommands = new Map();
+let stageNextPptxKey = "";
+let stageNextPptxPath = "";
+let stageLocalMedia = null;
+let stageLocalMediaRevision = 0;
+let stageCurrentPptxPath = "";
+let stageLocalPlayback = null;
+const stagePptxBytesCache = new Map();
+const STAGE_IMAGE_THUMBNAIL_CACHE_LIMIT = 200;
+let stageAudienceRelaySession = null;
+let stageAudiencePeerSession = null;
+let stageAudienceSourceSignature = "";
+let presentationPreviewFrameRequests = { media: null, "lower-third": null };
 let stageHealth = "inactive";
 let audienceContentKind = "none";
 let lowerThirdContentKind = "none";
@@ -535,6 +568,22 @@ function lateInit() {
   win.show();
 }
 
+let stageStartupRestoreAttempted = false;
+
+function restoreStageOutputAtStartup() {
+  // Reopen the operator's saved stage routing once per launch, after the
+  // control window is ready to receive output-status updates. A saved
+  // selection whose display is not currently connected is left saved but
+  // not opened; the operator must reselect it explicitly.
+  if (stageStartupRestoreAttempted) return;
+  stageStartupRestoreAttempted = true;
+  const savedStageDisplay = settings.getSync(STAGE_DISPLAY_KEY) || "";
+  if (!savedStageDisplay || !resolveDisplaySelection(savedStageDisplay)) return;
+  void handleCreateStageWindow(null, savedStageDisplay).catch((error) => {
+    console.error("Failed to restore stage output at startup:", error);
+  });
+}
+
 function handleMaximizeChange(isMaximized) {
   saveWindowBounds();
   win.setBackgroundColor("#00000000");
@@ -579,6 +628,7 @@ function createWindow() {
   }
 
   win.webContents.on("did-finish-load", lateInit);
+  win.webContents.on("did-finish-load", restoreStageOutputAtStartup);
   win.webContents.on("did-finish-load", installTimeRemainingMessagePort);
   win.webContents.on("did-finish-load", () => {
     if (pendingProjectOpenPath) {
@@ -745,6 +795,432 @@ function isStageWindowCapturable() {
   return Boolean(stageWindow && !stageWindow.isDestroyed() && !stageWindow.webContents.isDestroyed());
 }
 
+function currentStageAudienceSource() {
+  const available = Boolean(
+    mediaWindow &&
+      !mediaWindow.isDestroyed() &&
+      !mediaWindow.webContents.isDestroyed() &&
+      !mediaWindow.webContents.isCrashed() &&
+      !mediaWindow.webContents.isLoadingMainFrame() &&
+      (typeof audienceWindowOverlayOnly === "undefined" || !audienceWindowOverlayOnly),
+  );
+  const windowId = available && Number.isFinite(mediaWindow?.id) ? mediaWindow.id : 0;
+  const sessionId = available ? String(audienceSessionId || "") : "";
+  return {
+    available,
+    windowId,
+    sessionId,
+    sourceKey: available && windowId && sessionId ? `${windowId}:${sessionId}` : "",
+    kind: available ? String(audienceContentKind || "none") : "none",
+  };
+}
+
+function closeStageAudienceRelay(peerId = stageAudienceRelaySession?.peerId || "") {
+  const activePeerId =
+    typeof peerId === "string" && peerId
+      ? peerId
+      : stageAudienceRelaySession?.peerId || "";
+  stageAudienceRelaySession = null;
+  if (!activePeerId) return;
+  const closeMessage = { type: "close", peerId: activePeerId };
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send("stage-audience-relay", closeMessage);
+  }
+  if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.webContents.isDestroyed()) {
+    stageWindow.webContents.send("stage-audience-relay", closeMessage);
+  }
+}
+
+function handleStageAudienceRelay(event, message = {}) {
+  if (!message || typeof message !== "object") return false;
+  const peerId = typeof message.peerId === "string" ? message.peerId.slice(0, 120) : "";
+  if (!peerId) return false;
+  const sender = event?.sender;
+  const stageReady = Boolean(
+    stageWindow &&
+      !stageWindow.isDestroyed() &&
+      !stageWindow.webContents.isDestroyed(),
+  );
+  const controlReady = Boolean(
+    win && !win.isDestroyed() && !win.webContents.isDestroyed(),
+  );
+  const fromStage = stageReady && sender === stageWindow.webContents;
+  const fromControl = controlReady && sender === win.webContents;
+  if (!fromStage && !fromControl) return false;
+
+  const source = currentStageAudienceSource();
+  if (message.type === "request") {
+    if (!fromStage || !controlReady) return false;
+    if (!source.available || !source.sourceKey || message.sourceKey !== source.sourceKey) {
+      return false;
+    }
+    stageAudienceRelaySession = { peerId, sourceKey: source.sourceKey };
+    win.webContents.send("stage-audience-relay", {
+      type: "request",
+      peerId,
+      sourceKey: source.sourceKey,
+    });
+    return true;
+  }
+
+  if (
+    !stageAudienceRelaySession ||
+    stageAudienceRelaySession.peerId !== peerId ||
+    stageAudienceRelaySession.sourceKey !== source.sourceKey
+  ) {
+    return false;
+  }
+
+  if (message.type === "close") {
+    closeStageAudienceRelay(peerId);
+    return true;
+  }
+
+  if (message.type === "description") {
+    const description = message.description;
+    const expectedType = fromControl ? "offer" : "answer";
+    if (
+      !description ||
+      description.type !== expectedType ||
+      typeof description.sdp !== "string" ||
+      !description.sdp ||
+      description.sdp.length > 131072
+    ) {
+      return false;
+    }
+    const target = fromControl ? stageWindow : win;
+    if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return false;
+    target.webContents.send("stage-audience-relay", {
+      type: "description",
+      peerId,
+      sourceKey: stageAudienceRelaySession.sourceKey,
+      description: { type: description.type, sdp: description.sdp },
+    });
+    return true;
+  }
+
+  if (message.type === "candidate") {
+    const candidate = message.candidate;
+    if (
+      candidate !== null &&
+      (!candidate ||
+        typeof candidate !== "object" ||
+        typeof candidate.candidate !== "string" ||
+        candidate.candidate.length > 4096)
+    ) {
+      return false;
+    }
+    const target = fromControl ? stageWindow : win;
+    if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return false;
+    target.webContents.send("stage-audience-relay", {
+      type: "candidate",
+      peerId,
+      sourceKey: stageAudienceRelaySession.sourceKey,
+      candidate: candidate
+        ? {
+            candidate: candidate.candidate,
+            sdpMid: typeof candidate.sdpMid === "string" ? candidate.sdpMid.slice(0, 64) : null,
+            sdpMLineIndex: Number.isInteger(candidate.sdpMLineIndex)
+              ? candidate.sdpMLineIndex
+              : null,
+            usernameFragment:
+              typeof candidate.usernameFragment === "string"
+                ? candidate.usernameFragment.slice(0, 128)
+                : null,
+          }
+        : null,
+    });
+    return true;
+  }
+
+  return false;
+}
+
+function closeStageAudiencePeer(peerId = stageAudiencePeerSession?.peerId || "") {
+  const activePeerId =
+    typeof peerId === "string" && peerId
+      ? peerId
+      : stageAudiencePeerSession?.peerId || "";
+  stageAudiencePeerSession = null;
+  if (!activePeerId) return;
+  const closeMessage = { type: "close", peerId: activePeerId };
+  if (mediaWindow && !mediaWindow.isDestroyed() && !mediaWindow.webContents.isDestroyed()) {
+    mediaWindow.webContents.send("stage-audience-peer", closeMessage);
+  }
+  if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.webContents.isDestroyed()) {
+    stageWindow.webContents.send("stage-audience-peer", closeMessage);
+  }
+}
+
+function handleStageAudiencePeer(event, message = {}) {
+  if (!message || typeof message !== "object") return false;
+  const peerId = typeof message.peerId === "string" ? message.peerId.slice(0, 120) : "";
+  if (!peerId) return false;
+  const sender = event?.sender;
+  const stageReady = Boolean(
+    stageWindow &&
+      !stageWindow.isDestroyed() &&
+      !stageWindow.webContents.isDestroyed(),
+  );
+  const audienceReady = Boolean(
+    mediaWindow &&
+      !mediaWindow.isDestroyed() &&
+      !mediaWindow.webContents.isDestroyed(),
+  );
+  const fromStage = stageReady && sender === stageWindow.webContents;
+  const fromAudience = audienceReady && sender === mediaWindow.webContents;
+  if (!fromStage && !fromAudience) return false;
+
+  const source = currentStageAudienceSource();
+  if (message.type === "request") {
+    if (!fromStage || !audienceReady) return false;
+    if (!source.available || !source.sourceKey || message.sourceKey !== source.sourceKey) {
+      return false;
+    }
+    stageAudiencePeerSession = { peerId, sourceKey: source.sourceKey };
+    mediaWindow.webContents.send("stage-audience-peer", {
+      type: "request",
+      peerId,
+      sourceKey: source.sourceKey,
+    });
+    return true;
+  }
+
+  if (
+    !stageAudiencePeerSession ||
+    stageAudiencePeerSession.peerId !== peerId ||
+    stageAudiencePeerSession.sourceKey !== source.sourceKey
+  ) {
+    return false;
+  }
+
+  if (message.type === "close") {
+    closeStageAudiencePeer(peerId);
+    return true;
+  }
+
+  if (message.type === "description") {
+    const description = message.description;
+    const expectedType = fromAudience ? "offer" : "answer";
+    if (
+      !description ||
+      description.type !== expectedType ||
+      typeof description.sdp !== "string" ||
+      !description.sdp ||
+      description.sdp.length > 131072
+    ) {
+      return false;
+    }
+    const target = fromAudience ? stageWindow : mediaWindow;
+    if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return false;
+    target.webContents.send("stage-audience-peer", {
+      type: "description",
+      peerId,
+      sourceKey: stageAudiencePeerSession.sourceKey,
+      description: { type: description.type, sdp: description.sdp },
+    });
+    return true;
+  }
+
+  if (message.type === "candidate") {
+    const candidate = message.candidate;
+    if (
+      candidate !== null &&
+      (!candidate ||
+        typeof candidate !== "object" ||
+        typeof candidate.candidate !== "string" ||
+        candidate.candidate.length > 4096)
+    ) {
+      return false;
+    }
+    const target = fromAudience ? stageWindow : mediaWindow;
+    if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return false;
+    target.webContents.send("stage-audience-peer", {
+      type: "candidate",
+      peerId,
+      sourceKey: stageAudiencePeerSession.sourceKey,
+      candidate: candidate
+        ? {
+            candidate: candidate.candidate,
+            sdpMid: typeof candidate.sdpMid === "string" ? candidate.sdpMid.slice(0, 64) : null,
+            sdpMLineIndex: Number.isInteger(candidate.sdpMLineIndex)
+              ? candidate.sdpMLineIndex
+              : null,
+            usernameFragment:
+              typeof candidate.usernameFragment === "string"
+                ? candidate.usernameFragment.slice(0, 128)
+                : null,
+          }
+        : null,
+    });
+    return true;
+  }
+
+  return false;
+}
+
+function handleAudienceSelfDisplayMediaRequest(request, callback) {
+  if (
+    !nativeConfidenceCaptureEnabled ||
+    !request?.videoRequested ||
+    request.audioRequested ||
+    !mediaWindow ||
+    mediaWindow.isDestroyed() ||
+    mediaWindow.webContents.isDestroyed() ||
+    request.frame !== mediaWindow.webContents.mainFrame
+  ) {
+    callback(null);
+    return;
+  }
+
+  let video = null;
+  try {
+    const id = mediaWindow.getMediaSourceId();
+    if (typeof id === "string" && /^window:[1-9]\d*:\d+$/.test(id)) {
+      video = { id, name: mediaWindow.getTitle() || "EMS Media System" };
+    }
+  } catch {
+    // Refuse capture if the native window source is unavailable.
+  }
+  callback(video ? { video } : null);
+}
+
+function handlePresentationPreviewSource(event, target = "media") {
+  assertControlSender(event);
+  if (target !== "media" && target !== "lower-third") {
+    return { mode: "unavailable" };
+  }
+  const targetWindow = target === "lower-third" ? lowerThirdWindow : mediaWindow;
+  const capturable =
+    target === "lower-third" ? isLowerThirdWindowCapturable() : isMediaWindowCapturable();
+  if (
+    !capturable ||
+    !targetWindow ||
+    targetWindow.isDestroyed() ||
+    targetWindow.webContents.isDestroyed() ||
+    targetWindow.webContents.isCrashed()
+  ) {
+    return { mode: "unavailable" };
+  }
+  const sessionId =
+    target === "lower-third"
+      ? `lower-third-${targetWindow.id}`
+      : `${targetWindow.id}:${audienceSessionId}`;
+  return {
+    mode: nativeConfidenceCaptureEnabled ? "native" : "snapshot",
+    sessionId,
+  };
+}
+
+async function handlePresentationPreviewFrame(event, input = {}) {
+  assertControlSender(event);
+  const target =
+    input?.target === "lower-third"
+      ? "lower-third"
+      : input?.target === "media"
+        ? "media"
+        : "";
+  if (!target) return null;
+  const targetWindow = target === "lower-third" ? lowerThirdWindow : mediaWindow;
+  const expectedSessionId =
+    targetWindow && !targetWindow.isDestroyed()
+      ? target === "lower-third"
+        ? `lower-third-${targetWindow.id}`
+        : `${targetWindow.id}:${audienceSessionId}`
+      : "";
+  const isCurrent = () =>
+    Boolean(
+      targetWindow &&
+        (target === "lower-third" ? lowerThirdWindow : mediaWindow) === targetWindow &&
+        expectedSessionId &&
+        input?.sessionId === expectedSessionId &&
+        !targetWindow.isDestroyed() &&
+        !targetWindow.webContents.isDestroyed() &&
+        !targetWindow.webContents.isCrashed() &&
+        !targetWindow.webContents.isLoadingMainFrame(),
+    );
+  if (!isCurrent() || presentationPreviewFrameRequests[target]) return null;
+  const request = (async () => {
+    try {
+      const image = await targetWindow.webContents.capturePage(undefined, {
+        stayHidden: true,
+        stayAwake: true,
+      });
+      if (!isCurrent() || image.isEmpty()) return null;
+      const size = image.getSize();
+      if (!(size.width > 0 && size.height > 0)) return null;
+      const scale = Math.min(1, 640 / size.width, 360 / size.height);
+      const width = Math.max(1, Math.round(size.width * scale));
+      const height = Math.max(1, Math.round(size.height * scale));
+      const thumbnail = image.resize({ width, height, quality: "good" });
+      return { sessionId: expectedSessionId, width, height, bytes: thumbnail.toJPEG(65) };
+    } catch {
+      return null;
+    }
+  })();
+  presentationPreviewFrameRequests[target] = request;
+  try {
+    return await request;
+  } finally {
+    if (presentationPreviewFrameRequests[target] === request) {
+      presentationPreviewFrameRequests[target] = null;
+    }
+  }
+}
+
+function publishStageAudienceSource(force = false) {
+  const source = currentStageAudienceSource();
+  if (stageLocalMedia && (!source.available || stageLocalMedia.audienceSessionId !== audienceSessionId)) {
+    stageLocalMedia = null;
+    stageLocalPlayback = null;
+    stageCurrentPptxPath = "";
+    stageLocalMediaRevision += 1;
+    sendStageLocalMedia();
+  }
+  if (
+    stageAudienceRelaySession &&
+    (!source.available || stageAudienceRelaySession.sourceKey !== source.sourceKey)
+  ) {
+    closeStageAudienceRelay();
+  }
+  if (
+    typeof stageAudiencePeerSession !== "undefined" &&
+    stageAudiencePeerSession &&
+    (!source.available || stageAudiencePeerSession.sourceKey !== source.sourceKey) &&
+    typeof closeStageAudiencePeer === "function"
+  ) {
+    closeStageAudiencePeer();
+  }
+  const signature = `${source.available ? 1 : 0}:${source.sourceKey}:${source.kind}`;
+  if (!force && signature === stageAudienceSourceSignature) return source;
+  stageAudienceSourceSignature = signature;
+  if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.webContents.isDestroyed()) {
+    stageWindow.webContents.send("stage-audience-source", source);
+  }
+  return source;
+}
+
+function currentStageLocalMedia() {
+  return { revision: stageLocalMediaRevision, media: stageLocalMedia, playback: stageLocalPlayback };
+}
+
+function sendStageLocalMedia() {
+  if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.webContents.isDestroyed()) {
+    stageWindow.webContents.send("stage-local-media", currentStageLocalMedia());
+  }
+}
+
+function handleStageLocalMedia(event, descriptor) {
+  if (!mediaWindow || mediaWindow.isDestroyed() || event.sender !== mediaWindow.webContents ||
+      descriptor?.audienceSessionId !== audienceSessionId) return;
+  const { media, pptxPath } = sanitizeStageLocalMedia(descriptor, resolveStageMediaLocalPath);
+  stageLocalMedia = media;
+  stageCurrentPptxPath = pptxPath;
+  stageLocalPlayback = null;
+  stageLocalMediaRevision += 1;
+  sendStageLocalMedia();
+}
+
 let displayMediaCaptureTarget = "media";
 
 function handleMediaWindowCaptureAvailable(_event, target = "media") {
@@ -757,22 +1233,113 @@ function handleMediaWindowDisplayMediaRequest(request, callback) {
   const targetWindow = displayMediaCaptureTarget === "lower-third"
     ? lowerThirdWindow
     : displayMediaCaptureTarget === "stage"
-      ? stageWindow
+      ? null
       : mediaWindow;
   displayMediaCaptureTarget = "media";
-  if (!request.videoRequested || !targetWindow || targetWindow.isDestroyed() || targetWindow.webContents.isDestroyed()) {
-    callback({});
+  if (!nativeConfidenceCaptureEnabled || !request.videoRequested || !targetWindow || targetWindow.isDestroyed() || targetWindow.webContents.isDestroyed()) {
+    callback(null);
     return;
   }
 
-  // Video-only frame capture keeps the schedule preview in-app; audio stays
-  // routed through the normal presentation controls.
-  callback({ video: targetWindow.webContents.mainFrame });
+  // Native WINDOW capture avoids the WebFrameMain/tab pipeline implicated in
+  // Electron 40 SIGILL, also reproduced with audience-only confidence capture.
+  // Stage uses session-bound stage-preview-source instead of this target slot.
+  let video = null;
+  try {
+    const id = targetWindow.getMediaSourceId();
+    if (typeof id === "string" && /^window:[1-9]\d*:\d+$/.test(id)) {
+      video = { id, name: targetWindow.getTitle() };
+    }
+  } catch {
+    // A lost/unsupported window source must never capture a different window.
+  }
+  callback(video ? { video } : null);
 }
 
 function handleSetDisplayMediaCaptureTarget(_event, target) {
   displayMediaCaptureTarget = target === "lower-third" || target === "stage" ? target : "media";
-  return true;
+  return target !== "stage";
+}
+
+async function handleStagePreviewSource(event, input = {}) {
+  assertControlSender(event);
+  const target = stageWindow;
+  const sessionId = stageSessionId;
+  if (!nativeStageConfidenceCaptureEnabled) return null;
+  try {
+    const isCurrent = () => Boolean(target && target === stageWindow && sessionId === stageSessionId &&
+      input?.sessionId === sessionId && sessionId && stageHealth === "ok" &&
+      !target.isDestroyed() && !target.webContents.isDestroyed() && !target.webContents.isCrashed());
+    if (!isCurrent()) return null;
+    if (target.webContents.isLoadingMainFrame()) {
+      // stage-output-ready can arrive while the document is still loading.
+      // Wait for the real completion event rather than permanently selecting
+      // snapshots for a healthy stage that is only milliseconds from ready.
+      const contents = target.webContents;
+      await new Promise((resolve) => {
+        const finish = () => {
+          clearTimeout(timer);
+          contents.removeListener("did-stop-loading", finish);
+          contents.removeListener("destroyed", finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, 2000);
+        contents.once("did-stop-loading", finish);
+        contents.once("destroyed", finish);
+        if (!isCurrent() || !contents.isLoadingMainFrame()) finish();
+      });
+    }
+    if (!isCurrent() || target.webContents.isLoadingMainFrame()) return null;
+    // Unlike WebFrameMain this selects the native window-capture backend.
+    // Never enumerate desktop sources or fall back to a screen/portal source.
+    const sourceId = target.getMediaSourceId();
+    if (typeof sourceId !== "string" || !/^window:[1-9]\d*:\d+$/.test(sourceId) || !isCurrent()) return null;
+    return { sessionId, sourceId };
+  } catch {
+    // An unsupported backend or closing window uses the snapshot fallback.
+    return null;
+  }
+}
+
+async function handleStagePreviewFrame(event, input = {}) {
+  assertControlSender(event);
+  const target = stageWindow;
+  const sessionId = stageSessionId;
+  const isCurrent = () => Boolean(
+    target && stageWindow === target && stageSessionId === sessionId &&
+    input?.sessionId === sessionId && stageHealth === "ok" &&
+    !target.isDestroyed() && !target.webContents.isDestroyed() &&
+    !target.webContents.isCrashed() && !target.webContents.isLoadingMainFrame(),
+  );
+  // Bound native work across all callers and replacement windows. A preview
+  // retries later instead of building a queue of expensive full-window frames.
+  if (!isCurrent() || stagePreviewFrameRequest) return null;
+  const request = (async () => {
+    try {
+      const image = await target.webContents.capturePage(undefined, {
+        stayHidden: true,
+        stayAwake: true,
+      });
+      if (!isCurrent() || image.isEmpty()) return null;
+      const size = image.getSize();
+      if (!(size.width > 0 && size.height > 0)) return null;
+      const scale = Math.min(1, 640 / size.width, 360 / size.height);
+      const width = Math.max(1, Math.round(size.width * scale));
+      const height = Math.max(1, Math.round(size.height * scale));
+      const thumbnail = image.resize({ width, height, quality: "good" });
+      return { sessionId, width, height, bytes: thumbnail.toJPEG(65) };
+    } catch {
+      // Window closure/reload can abort capturePage; never propagate a preview
+      // failure into presentation playback or stage window creation.
+      return null;
+    }
+  })();
+  stagePreviewFrameRequest = request;
+  try {
+    return await request;
+  } finally {
+    if (stagePreviewFrameRequest === request) stagePreviewFrameRequest = null;
+  }
 }
 
 async function handleCloseMediaWindowNow() {
@@ -1061,6 +1628,10 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
       ...fullscreenWindowBoundsForDisplay(targetSelection.display),
       webPreferences: {
         ...incomingPrefs,
+        // Electron 45's sandbox preload reader rejects otherwise valid paths
+        // containing `..`. Own this path in main rather than accepting a
+        // renderer-built control-window/../media-window path over IPC.
+        preload: path.join(derivedSrcDir, "media-window", "media_preload.min.js"),
         session: mediaPresentationSession,
         additionalArguments: [
           ...(Array.isArray(incomingPrefs.additionalArguments) ? incomingPrefs.additionalArguments : []),
@@ -1181,6 +1752,7 @@ async function handleCreateLowerThirdWindow(event, windowOptions, displayIndex) 
       ...fullscreenWindowBoundsForDisplay(targetSelection.display),
       webPreferences: {
         ...incomingPrefs,
+        preload: path.join(derivedSrcDir, "media-window", "media_preload.min.js"),
         session: mediaPresentationSession,
       },
     });
@@ -1269,6 +1841,7 @@ function currentOutputStatus() {
 
 function publishOutputStatus() {
   syncOutputWindowPowerBlocker();
+  publishStageAudienceSource();
   if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
     win.webContents.send("output-status", currentOutputStatus());
   }
@@ -1293,7 +1866,39 @@ function outputWindowForRole(role) {
   return role === "stage" ? stageWindow : mediaWindow;
 }
 
+function resolveStageMediaLocalPath(rawPath) {
+  try {
+    const localPath = localFileSystemPathFromMediaPath(rawPath);
+    return typeof localPath === "string" && path.isAbsolute(localPath) ? localPath : "";
+  } catch {
+    return "";
+  }
+}
+
+function sanitizeAndStoreStageContentPayload(payload) {
+  // Stage content arrives from live playback paths; a malformed payload must
+  // degrade to an empty stage card instead of rejecting window creation or
+  // the output command that carried it.
+  try {
+    const sanitized = sanitizeStageContentPayload(payload, resolveStageMediaLocalPath);
+    stageNextPptxPath = sanitized.pptxPath;
+    stageNextPptxKey = sanitized.deckKey;
+    return sanitized.payload;
+  } catch (error) {
+    console.error("Could not sanitize stage content payload:", error);
+    stageNextPptxPath = "";
+    stageNextPptxKey = "";
+    return {};
+  }
+}
+
 function sendOutputLayer(role, layer, payload = null) {
+  const normalizedPayload =
+    role === "stage" && layer === "content"
+      ? payload === null
+        ? ((stageNextPptxKey = ""), (stageNextPptxPath = ""), {})
+        : sanitizeAndStoreStageContentPayload(payload)
+      : payload || {};
   const command = createOutputCommand({
     commandId: randomUUID(),
     sessionId: outputSessionForRole(role),
@@ -1301,7 +1906,7 @@ function sendOutputLayer(role, layer, payload = null) {
     targetRole: role,
     type: payload === null ? "layer.clear" : "layer.set",
     layer,
-    payload: payload || {},
+    payload: normalizedPayload,
   });
   const commands = outputCommandsForRole(role);
   if (payload === null) commands.delete(layer);
@@ -1501,12 +2106,26 @@ async function handleCreateStageWindow(_event, displayIndex) {
   }
   if (stageWindowCreatePromise) return stageWindowCreatePromise;
   const restorableStageLayers = [...stageLayerCommands.entries()]
-    .filter(([layer]) => layer === "content" || layer === "widgets")
-    .map(([layer, command]) => [layer, command.payload]);
+    .filter(([layer]) => layer === "content" || layer === "widgets");
   stageSessionId = randomUUID();
   stageLayerCommands.clear();
   for (const key of outputLayerRevisions.keys()) {
     if (key.startsWith("stage:")) outputLayerRevisions.delete(key);
+  }
+  // Seed the new session before loading can accept newer control commands.
+  // Saved payloads are already sanitized; sanitizing again would discard the
+  // Next PPTX deck key and its private path allow-list.
+  for (const [layer, command] of restorableStageLayers) {
+    try {
+      stageLayerCommands.set(layer, createOutputCommand({
+        ...command,
+        commandId: randomUUID(),
+        sessionId: stageSessionId,
+        revision: nextOutputLayerRevision("stage", layer),
+      }));
+    } catch (error) {
+      console.error(`Could not restore stage ${layer} layer:`, error);
+    }
   }
   stageWindowCreatePromise = (async () => {
     const created = new BrowserWindow({
@@ -1533,6 +2152,10 @@ async function handleCreateStageWindow(_event, displayIndex) {
         stageHealth = "inactive";
         stageLayerCommands.delete("privateMessage");
         stageLayerCommands.delete("alert");
+        closeStageAudienceRelay();
+        if (typeof closeStageAudiencePeer === "function") {
+          closeStageAudiencePeer();
+        }
         publishOutputStatus();
       }
     };
@@ -1550,10 +2173,11 @@ async function handleCreateStageWindow(_event, displayIndex) {
       releaseStageWindow();
       throw error;
     }
-    for (const [layer, payload] of restorableStageLayers) {
-      sendOutputLayer("stage", layer, payload);
+    try {
+      if (alertState.live?.routes?.stage) sendOutputLayer("stage", "alert", alertState.live);
+    } catch (error) {
+      console.error("Could not restore stage alert layer:", error);
     }
-    if (alertState.live?.routes?.stage) sendOutputLayer("stage", "alert", alertState.live);
     publishOutputStatus();
     return { id: created.id, sessionId: stageSessionId };
   })();
@@ -1570,24 +2194,120 @@ function handleStageOutputCommand(event, command) {
   }
   validateOutputCommand(command, "stage");
   if (command.sessionId !== stageSessionId) {
-    throw new TypeError("Stage command session does not match the active output");
+    // Live playback keeps syncing stage content while a new stage window is
+    // still being created (fresh session id). A stale session is an expected
+    // transient, not an error: report it so the sender can refresh its cached
+    // session instead of surfacing an unhandled rejection mid-presentation.
+    return { delivered: false, reason: "session-mismatch", sessionId: stageSessionId };
   }
-  const prior = stageLayerCommands.get(command.layer);
-  if (prior && command.revision <= prior.revision) {
+  const revisionKey = `stage:${command.layer}`;
+  const priorRevision = outputLayerRevisions.get(revisionKey);
+  if (priorRevision !== undefined && command.revision <= priorRevision) {
     return { delivered: false, reason: "stale-revision" };
   }
-  if (command.type === "layer.clear") stageLayerCommands.delete(command.layer);
-  else stageLayerCommands.set(command.layer, command);
+  const storedCommand =
+    command.layer === "content" && command.type !== "layer.clear"
+      ? {
+          ...command,
+          payload: sanitizeAndStoreStageContentPayload(command.payload),
+        }
+      : command;
+  if (command.layer === "content" && command.type === "layer.clear") {
+    stageNextPptxKey = "";
+    stageNextPptxPath = "";
+  }
+  // Retain the watermark even when a clear removes the replayable payload,
+  // and let subsequent main-originated commands continue from this revision.
+  outputLayerRevisions.set(revisionKey, Number(command.revision));
+  if (storedCommand.type === "layer.clear") stageLayerCommands.delete(storedCommand.layer);
+  else stageLayerCommands.set(storedCommand.layer, storedCommand);
   if (!stageWindow || stageWindow.isDestroyed()) {
-    if (command.layer === "privateMessage" || command.layer === "alert") {
-      stageLayerCommands.delete(command.layer);
+    if (storedCommand.layer === "privateMessage" || storedCommand.layer === "alert") {
+      stageLayerCommands.delete(storedCommand.layer);
     }
     publishOutputStatus();
     return { delivered: false, reason: "stage-closed" };
   }
-  stageWindow.webContents.send("stage-output-command", command);
+  stageWindow.webContents.send("stage-output-command", storedCommand);
   publishOutputStatus();
   return { delivered: true };
+}
+
+async function handleStageNextPptx(event, deckKey) {
+  if (!stageWindow || event.sender !== stageWindow.webContents) {
+    throw new TypeError("Stage PowerPoint requests are accepted only from the stage window");
+  }
+  const pptxPath = deckKey && deckKey === stageLocalMedia?.deckKey
+    ? stageCurrentPptxPath
+    : deckKey === stageNextPptxKey ? stageNextPptxPath : "";
+  if (!deckKey || !pptxPath) return null;
+  const cached = stagePptxBytesCache.get(deckKey);
+  if (cached) return cached;
+  try {
+    const buf = await readFile(pptxPath);
+    const arrayBuffer = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    stagePptxBytesCache.clear();
+    stagePptxBytesCache.set(deckKey, arrayBuffer);
+    return arrayBuffer;
+  } catch (error) {
+    console.warn("Could not read stage PowerPoint preview:", error);
+    return null;
+  }
+}
+
+async function pruneStageThumbnailCache(outputDir, keepPath) {
+  const names = await readdir(outputDir).catch(() => []);
+  if (names.length <= STAGE_IMAGE_THUMBNAIL_CACHE_LIMIT) return;
+  const entries = (
+    await Promise.all(
+      names.map(async (name) => {
+        const filePath = path.join(outputDir, name);
+        const info = await stat(filePath).catch(() => null);
+        return info?.isFile() ? { filePath, mtimeMs: info.mtimeMs } : null;
+      }),
+    )
+  )
+    .filter(Boolean)
+    .sort((left, right) => left.mtimeMs - right.mtimeMs);
+  const removeCount = Math.max(0, entries.length - STAGE_IMAGE_THUMBNAIL_CACHE_LIMIT);
+  for (let index = 0; index < removeCount; index += 1) {
+    const entry = entries[index];
+    if (entry.filePath === keepPath) continue;
+    await rm(entry.filePath, { force: true }).catch(() => {});
+  }
+}
+
+async function handleStageItemThumbnail(event, request = {}) {
+  assertControlSender(event);
+  if (request?.kind !== "video" && request?.kind !== "image") return null;
+  const localPath = resolveStageMediaLocalPath(request?.path);
+  if (!localPath) return null;
+  if (request.kind === "video") {
+    const poster = await generateVideoPoster(localPath, videoPosterOptions);
+    return poster?.ok && typeof poster.thumbnailUrl === "string"
+      ? { thumbnailUrl: poster.thumbnailUrl }
+      : null;
+  }
+  try {
+    const outputDir = path.join(app.getPath("temp"), "ems-stage-thumbnails");
+    await mkdir(outputDir, { recursive: true });
+    const cacheKey = stageDeckKey(localPath, request?.revision || "");
+    const output = path.join(outputDir, `${cacheKey}.jpg`);
+    const existing = await stat(output).catch(() => null);
+    if (!existing?.isFile()) {
+      const source = nativeImage.createFromPath(localPath);
+      if (source.isEmpty()) return null;
+      const size = source.getSize();
+      const resized =
+        size.width > 640 ? source.resize({ width: 640, quality: "good" }) : source;
+      await writeFile(output, resized.toJPEG(86));
+      await pruneStageThumbnailCache(outputDir, output);
+    }
+    return { thumbnailUrl: pathToFileURL(output).href };
+  } catch (error) {
+    console.warn("Could not create stage image thumbnail:", error);
+    return null;
+  }
 }
 
 function handleSetStageDisplayIndex(_event, selection) {
@@ -1747,6 +2467,20 @@ function handlePlaybackStateChange(event, playbackState) {
   }
   if (win) {
     win.webContents.send("update-playback-state", playbackState);
+  }
+  handleStageLocalPlayback(event, playbackState);
+}
+
+function handleStageLocalPlayback(event, playbackState) {
+  if (!mediaWindow || mediaWindow.isDestroyed() || event.sender !== mediaWindow.webContents ||
+      playbackState?.audienceSessionId !== audienceSessionId) return;
+  if (stageLocalMedia?.kind === "video" &&
+      playbackState.playbackId === stageLocalMedia.playbackId &&
+      playbackState.sourceGeneration === stageLocalMedia.sourceGeneration) {
+    stageLocalPlayback = playbackState;
+    if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.webContents.isDestroyed()) {
+      stageWindow.webContents.send("stage-local-playback", playbackState);
+    }
   }
 }
 
@@ -5900,6 +6634,12 @@ function setIPC() {
   ipcMain.on("remoteplaypause", handleRemotePlayPause);
   ipcMain.on("localMediaState", localMediaStateUpdate);
   ipcMain.on("playback-state-change", handlePlaybackStateChange);
+  ipcMain.on("stage-local-media", handleStageLocalMedia);
+  ipcMain.on("stage-local-playback", handleStageLocalPlayback);
+  ipcMain.handle("stage-local-media", (event) => {
+    if (!stageWindow || event.sender !== stageWindow.webContents) return null;
+    return currentStageLocalMedia();
+  });
   ipcMain.handle("get-media-current-time", handleGetMediaCurrentTime);
   ipcMain.handle("get-media-playback-state", handleGetMediaPlaybackState);
   ipcMain.handle("get-media-window-bounds", handleGetMediaWindowBounds);
@@ -5909,6 +6649,26 @@ function setIPC() {
     "media-window-capture-available",
     handleMediaWindowCaptureAvailable,
   );
+  ipcMain.handle("stage-audience-source", (event) => {
+    const sender = event?.sender;
+    const fromStage = Boolean(
+      stageWindow && !stageWindow.isDestroyed() && sender === stageWindow.webContents,
+    );
+    const fromControl = Boolean(
+      win && !win.isDestroyed() && sender === win.webContents,
+    );
+    if (!fromStage && !fromControl) {
+      return { available: false, windowId: 0, sessionId: "", sourceKey: "", kind: "none" };
+    }
+    return currentStageAudienceSource();
+  });
+  ipcMain.on("stage-audience-relay", handleStageAudienceRelay);
+  ipcMain.on("stage-audience-peer", handleStageAudiencePeer);
+  ipcMain.handle(
+    "presentation-preview-source",
+    handlePresentationPreviewSource,
+  );
+  ipcMain.handle("presentation-preview-frame", handlePresentationPreviewFrame);
   ipcMain.handle("set-display-media-capture-target", handleSetDisplayMediaCaptureTarget);
   ipcMain.on("close-media-window", handleCloseMediaWindow);
   ipcMain.handle("close-media-window-now", handleCloseMediaWindowNow);
@@ -6061,7 +6821,11 @@ function setIPC() {
   ipcMain.handle("discard-media-window-now", handleDiscardMediaWindowNow);
   ipcMain.handle("create-lower-third-window", handleCreateLowerThirdWindow);
   ipcMain.handle("create-stage-window", handleCreateStageWindow);
+  ipcMain.handle("stage-preview-source", handleStagePreviewSource);
+  ipcMain.handle("stage-preview-frame", handleStagePreviewFrame);
   ipcMain.handle("stage-output-command", handleStageOutputCommand);
+  ipcMain.handle("stage-next-pptx", handleStageNextPptx);
+  ipcMain.handle("stage-item-thumbnail", handleStageItemThumbnail);
   ipcMain.handle("get-output-status", () => currentOutputStatus());
   ipcMain.handle("alerts:show", handleShowAlert);
   ipcMain.handle("alerts:clear", handleClearAlert);
@@ -6096,6 +6860,7 @@ function setIPC() {
     setAudienceWindowTransparent(audienceContentKind === "none");
     if (backgroundState.current) applyBackgroundState();
     routeLiveAlert();
+    publishStageAudienceSource(true);
     if (audienceHoldPayload) sendOutputLayer("audience", "hold", audienceHoldPayload);
     publishOutputStatus();
   });
@@ -6123,12 +6888,22 @@ function setIPC() {
     for (const command of stageLayerCommands.values()) {
       stageWindow.webContents.send("stage-output-command", command);
     }
+    sendStageLocalMedia();
+    publishStageAudienceSource(true);
     publishOutputStatus();
   });
   ipcMain.on("stage-output-ack", (event, acknowledgement) => {
     if (!stageWindow || event.sender !== stageWindow.webContents) return;
-    stageHealth = acknowledgement?.applied === false ? "degraded" : "ok";
-    publishOutputStatus();
+    // Readiness replays and live cues can legitimately reach the renderer
+    // twice or after a newer revision. Rejecting that obsolete command is not
+    // a render failure: toggling health here tears down a healthy confidence
+    // capture and immediately starts another one when the next ACK arrives.
+    const obsolete = acknowledgement?.applied === false &&
+      (acknowledgement.error === "stale-revision" || acknowledgement.error === "session-mismatch");
+    if (!obsolete) {
+      stageHealth = acknowledgement?.applied === false ? "degraded" : "ok";
+      publishOutputStatus();
+    }
     if (win && !win.isDestroyed()) win.webContents.send("stage-output-ack", acknowledgement);
   });
   ipcMain.handle("close-lower-third-window-now", handleCloseLowerThirdWindowNow);
@@ -6421,6 +7196,8 @@ app.on("activate", () => {
 
 app.whenReady().then(async () => {
   if (!gotSingleInstanceLock) return;
+  const disposeSystemAppearance = await installSystemAppearance({ nativeTheme });
+  app.once("will-quit", disposeSystemAppearance);
   await purgeEmbeddedAutosaveProjectState().catch((err) => {
     console.error("failed to purge embedded autosave project state:", err);
   });
@@ -6576,6 +7353,10 @@ app.whenReady().then(async () => {
   );
   session.defaultSession.setDisplayMediaRequestHandler(
     handleMediaWindowDisplayMediaRequest,
+    { useSystemPicker: false },
+  );
+  mediaPresentationSession.setDisplayMediaRequestHandler(
+    handleAudienceSelfDisplayMediaRequest,
     { useSystemPicker: false },
   );
   measurePerformance("Creating window", createWindow);

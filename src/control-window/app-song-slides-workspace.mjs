@@ -3596,7 +3596,6 @@ async function sendSongLowerThirdForLiveItem() {
         "__isText",
         "__lowerThirdOutput",
       ],
-      preload: `${__dirname}/../media-window/media_preload.min.js`,
       devTools: true,
     },
   };

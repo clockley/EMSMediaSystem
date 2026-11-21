@@ -126,7 +126,6 @@ async function performStartLogoHoldOnlyPresentation() {
       webgl: false,
       skipTaskbar: true,
       additionalArguments: ["__logoHoldOnly=true", birth],
-      preload: `${__dirname}/../media-window/media_preload.min.js`,
       devTools: true,
     },
   };

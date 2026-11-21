@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import vm from "node:vm";
 
 test("Media uses automatic pagination instead of a visible Load More control", async () => {
   const source = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");
@@ -20,12 +21,54 @@ test("Media cards use Adwaita hover and dropped-item highlighting", async () => 
 
 test("Presentation cards lazily render their first PPTX slide", async () => {
   const source = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");
+  const helper = await readFile(new URL("../src/shared/app-pptx-thumbnail.mjs", import.meta.url), "utf8");
   const start = source.indexOf("async function renderPresentationCardThumbnail(");
   const end = source.indexOf("\nfunction observeMediaThumbnail(", start);
   const renderer = source.slice(start, end);
-  assert.match(renderer, /PptxViewer\.open/);
-  assert.match(renderer, /renderThumbnailToContainer\(0,/);
+  assert.match(renderer, /renderPptxFirstSlideThumbnail\(\{/);
+  assert.match(helper, /PptxViewer\.open/);
+  assert.match(helper, /renderThumbnailToContainer\(requestedSlide,/);
 });
+
+for (const outcome of ["retained", "disconnected", "commit-error"]) {
+  test(`presentation thumbnails dispose returned handles unless retained (${outcome})`, async () => {
+    const source = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");
+    const code = source.match(/^async function renderPresentationCardThumbnail\([\s\S]*?^}/m)?.[0];
+    assert.ok(code);
+    let disposed = 0, removed = 0;
+    const thumbnail = {
+      isConnected: true, clientWidth: 240,
+      insertBefore() {},
+      querySelector() { return null; },
+    };
+    const handle = {
+      element: { classList: { add() { if (outcome === "commit-error") throw new Error("detached commit"); } } },
+      dispose() { disposed++; },
+    };
+    const context = vm.createContext({
+      ensurePptxProcessEnv() {},
+      importRenderer: async () => ({}),
+      bridge: { invoke: async () => new ArrayBuffer(8) },
+      document: { createElement: () => ({ remove() { removed++; } }) },
+      async renderPptxFirstSlideThumbnail({ isCurrent }) {
+        assert.equal(isCurrent(), true);
+        if (outcome === "disconnected") queueMicrotask(() => { thumbnail.isConnected = false; });
+        return handle;
+      },
+    });
+    vm.runInContext(code.replace(/import\("[^"\n]+"\)/, "importRenderer()"), context);
+    const result = context.renderPresentationCardThumbnail({ thumbnail, item: { localPath: "/deck.pptx" } });
+    if (outcome === "commit-error") await assert.rejects(result, /detached commit/);
+    else await result;
+    assert.equal(disposed, outcome === "retained" ? 0 : 1);
+    assert.equal(removed, outcome === "retained" ? 0 : 1);
+    if (outcome === "retained") {
+      assert.equal(thumbnail._mediaLibraryPreviewCleanup, handle.dispose);
+      thumbnail._mediaLibraryPreviewCleanup();
+      assert.equal(disposed, 1);
+    }
+  });
+}
 
 test("external file drops reveal matching items under Added Files", async () => {
   const source = await readFile(new URL("../src/control-window/app-media-library-workspace.mjs", import.meta.url), "utf8");

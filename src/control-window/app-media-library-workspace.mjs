@@ -12,6 +12,10 @@ import {
   getPptxRenderedSlideElement,
   waitForNextFrame,
 } from "../shared/app-pptx-utils.mjs";
+import {
+  ensurePptxProcessEnv,
+  renderPptxFirstSlideThumbnail,
+} from "../shared/app-pptx-thumbnail.mjs";
 
 const LIBRARY_PREVIEW_PLAY_ICON = `<path d="M8 5v14l11-7z"/>`;
 const LIBRARY_PREVIEW_PAUSE_ICON = `<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>`;
@@ -132,52 +136,35 @@ function pumpPosterQueue() {
 
 async function renderPresentationCardThumbnail({ thumbnail, item }) {
   if (!thumbnail?.isConnected) return;
-  if (!globalThis.process) globalThis.process = { env: {} };
-  else globalThis.process.env ||= {};
-  const [{ PptxViewer, RECOMMENDED_ZIP_LIMITS }, arrayBuffer] = await Promise.all([
+  ensurePptxProcessEnv();
+  const [renderer, arrayBuffer] = await Promise.all([
     import("../../node_modules/@aiden0z/pptx-renderer/dist/aiden0z-pptx-renderer.browser.es.js"),
     bridge.invoke("read-file-as-arraybuffer", item.localPath),
   ]);
   if (!thumbnail.isConnected) return;
-  const host = document.createElement("div");
-  host.className = "media-library__presentation-renderer-host";
-  host.setAttribute("aria-hidden", "true");
-  document.body.appendChild(host);
-  let viewer = null;
-  let handle = null;
+  const viewport = document.createElement("span");
+  viewport.className = "media-library__pptx-card-viewport";
+  thumbnail.insertBefore(viewport, thumbnail.querySelector(".media-library__kind-badge"));
   let retained = false;
-  let viewport = null;
+  let rendered = null;
   try {
-    viewer = await PptxViewer.open(arrayBuffer, host, {
-      zipLimits: RECOMMENDED_ZIP_LIMITS,
-      fitMode: "contain",
-      renderMode: "slide",
-      pdfjs: getPptxPdfjsConfig(),
-    });
-    if (!thumbnail.isConnected) return;
-    viewport = document.createElement("span");
-    viewport.className = "media-library__pptx-card-viewport";
-    thumbnail.insertBefore(viewport, thumbnail.querySelector(".media-library__kind-badge"));
-    handle = viewer.renderThumbnailToContainer(0, viewport, {
+    rendered = await renderPptxFirstSlideThumbnail({
+      renderer,
+      arrayBuffer,
+      viewport,
       width: Math.max(180, Math.round(thumbnail.clientWidth || 240)),
+      hostClassName: "media-library__presentation-renderer-host",
+      isCurrent: () => Boolean(thumbnail.isConnected),
     });
-    await handle?.ready;
-    if (!thumbnail.isConnected) return;
+    if (!rendered || !thumbnail.isConnected) return;
     thumbnail.querySelector("svg")?.remove();
-    handle?.element?.classList?.add("media-library__pptx-card-slide");
-    enforcePptxCoverFit(handle?.element);
-    thumbnail._mediaLibraryPreviewCleanup = () => {
-      try { handle?.dispose?.(); } catch {}
-      try { viewer?.destroy?.(); } catch {}
-      host.remove();
-    };
+    rendered.element?.classList?.add("media-library__pptx-card-slide");
+    thumbnail._mediaLibraryPreviewCleanup = rendered.dispose;
     retained = true;
   } finally {
     if (!retained) {
-      try { handle?.dispose?.(); } catch {}
-      try { viewer?.destroy?.(); } catch {}
-      host.remove();
-      viewport?.remove();
+      rendered?.dispose();
+      viewport.remove();
     }
   }
 }

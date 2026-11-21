@@ -190,7 +190,7 @@ test("stage markup and styles provide thumbnail and audio panels", () => {
 
 test("stage renderer only accepts file thumbnails and lazily renders PPTX", () => {
   assert.match(renderer, /parsed\.protocol === "file:"/);
-  assert.match(renderer, /import\("\.\.\/\.\.\/node_modules\/@aiden0z\/pptx-renderer/);
+  assert.match(renderer, /import\("\.\.\/\.\.\/\.\.\/node_modules\/@aiden0z\/pptx-renderer/);
   assert.match(renderer, /api\.getNextPptx\(media\.deckKey\)/);
   assert.match(renderer, /renderPptxSlideThumbnail\(\{/);
   assert.match(renderer, /slideIndex,/);
@@ -209,7 +209,8 @@ test("control and main wire schedule thumbnails through guarded IPC", () => {
   assert.match(main, /STAGE_IMAGE_THUMBNAIL_CACHE_LIMIT = 200/);
   assert.match(main, /rm\(entry\.filePath, \{ force: true \}\)/);
   assert.match(main, /event\.sender !== stageWindow\.webContents/);
-  assert.match(main, /deckKey !== stageNextPptxKey/);
+  assert.match(main, /deckKey === stageLocalMedia\?\.deckKey/);
+  assert.match(main, /deckKey === stageNextPptxKey/);
   assert.match(main, /STAGE_IMAGE_THUMBNAIL_CACHE_LIMIT/);
   assert.match(main, /await pruneStageThumbnailCache\(outputDir, output\)/);
 });

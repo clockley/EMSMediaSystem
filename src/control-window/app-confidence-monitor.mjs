@@ -1,3 +1,5 @@
+const presentationPreviewSnapshots = new WeakMap();
+
 function getOrCreatePreviewStash() {
   let stash = document.getElementById(PREVIEW_STASH_ID);
   if (stash) return stash;
@@ -389,18 +391,10 @@ function syncConfidenceCaptureQualityForPopout() {
   if (streamRendererPreviewStream) {
     syncRendererCaptureQuality(streamRendererPreviewStream);
   }
-  const lowerThirdStream = lowerThirdRendererPreviewStream;
-  if (lowerThirdStream) {
-    const [track] = lowerThirdStream.getVideoTracks();
-    track
-      ?.applyConstraints?.(rendererCaptureVideoConstraints(activeRendererCaptureQualityMode()))
-      .catch(() => {});
+  if (typeof syncLowerThirdRendererPreviewCaptureQuality === "function") {
+    syncLowerThirdRendererPreviewCaptureQuality();
   }
-  const stageStream = stageRendererPreviewStream;
-  if (stageStream) {
-    const [track] = stageStream.getVideoTracks();
-    track?.applyConstraints?.(rendererCaptureVideoConstraints(activeRendererCaptureQualityMode())).catch(() => {});
-  }
+  syncStageRendererPreviewCaptureQuality();
 }
 
 async function closeConfidenceMonitorPopout() {
@@ -551,6 +545,9 @@ const RENDERER_CAPTURE_QUALITY_CONFIDENCE = "confidence";
 const RENDERER_CAPTURE_QUALITY_CONFIDENCE_PIP = "confidence-pip";
 
 function activeRendererCaptureQualityMode() {
+  if (stageAudienceRelay) {
+    return RENDERER_CAPTURE_QUALITY_STREAMS;
+  }
   if (currentMode === MEDIAPLAYER) {
     return confidenceMonitorPopoutActive
       ? RENDERER_CAPTURE_QUALITY_CONFIDENCE_PIP
@@ -576,6 +573,8 @@ function rendererCaptureVideoConstraints(mode = activeRendererCaptureQualityMode
   }
 
   return {
+    width: { ideal: 1920, max: 1920 },
+    height: { ideal: 1080, max: 1080 },
     frameRate: { ideal: 30, max: 30 },
   };
 }
@@ -583,13 +582,81 @@ function rendererCaptureVideoConstraints(mode = activeRendererCaptureQualityMode
 function rendererCaptureRequestOptions() {
   // Ask Electron for the media-window frame first; downscale the track after
   // capture starts so display-capture constraint validation cannot reject setup.
+  let controller = null;
+  if (typeof CaptureController === "function") {
+    try {
+      controller = new CaptureController();
+      controller.setFocusBehavior?.("no-focus-change");
+    } catch {
+      controller = null;
+    }
+  }
   return {
     video: true,
     audio: false,
+    ...(controller ? { controller } : {}),
   };
 }
 
-function captureElectronPresentationWindow(target) {
+function createPresentationPreviewSnapshotStream(target, sessionId) {
+  let stream;
+  let disposed = false;
+  const snapshot = createStagePreviewSnapshot({
+    document,
+    sessionId,
+    getFrame: () => invoke("presentation-preview-frame", { target, sessionId }),
+    isCurrent: () => !disposed &&
+      (!stream || stream.getVideoTracks().some((track) => track.readyState === "live")),
+    onStream(value) { stream = value; },
+    onError(error) {
+      console.error("Failed to refresh presentation snapshot preview:", error);
+    },
+  });
+  stream = snapshot.stream;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    snapshot.dispose();
+  };
+  // Retain the weak entry after disposal so quality updates can never treat
+  // this canvas track as a native capture. Track.stop() emits no ended event.
+  presentationPreviewSnapshots.set(stream, dispose);
+  stream.getVideoTracks().forEach((track) => {
+    track.addEventListener("ended", dispose, { once: true });
+  });
+  return stream;
+}
+
+function stopRendererCaptureStream(stream) {
+  if (!stream) return;
+  try {
+    if (typeof presentationPreviewSnapshots !== "undefined") {
+      presentationPreviewSnapshots.get(stream)?.();
+    }
+  } catch {}
+  for (const track of stream.getTracks()) {
+    if (track.readyState !== "ended") {
+      try { track.stop(); } catch {}
+    }
+  }
+}
+
+async function captureElectronPresentationWindow(target) {
+  if (target !== "media" && target !== "lower-third") {
+    throw new Error("Unsupported presentation preview target");
+  }
+  // Main owns the runtime/window safety decision. In particular, snapshots
+  // must never enumerate sources, request permissions or enter native capture.
+  const source = await invoke("presentation-preview-source", target);
+  if (source?.mode === "snapshot" && typeof source.sessionId === "string" && source.sessionId) {
+    return createPresentationPreviewSnapshotStream(target, source.sessionId);
+  }
+  if (
+    (source !== true && source?.mode !== "native") ||
+    typeof navigator.mediaDevices?.getDisplayMedia !== "function"
+  ) {
+    throw new Error("Presentation preview capture is unavailable");
+  }
   const request = displayMediaCaptureRequestChain.then(async () => {
     await invoke("set-display-media-capture-target", target);
     return navigator.mediaDevices.getDisplayMedia(rendererCaptureRequestOptions());
@@ -603,6 +670,7 @@ function syncRendererCaptureQuality(stream, mode = activeRendererCaptureQualityM
     streamRendererPreviewQualityMode = null;
     return;
   }
+  if (typeof presentationPreviewSnapshots !== "undefined" && presentationPreviewSnapshots.has(stream)) return;
   if (streamRendererPreviewQualityMode === mode) return;
   streamRendererPreviewQualityMode = mode;
   const [track] = stream.getVideoTracks();
@@ -610,6 +678,16 @@ function syncRendererCaptureQuality(stream, mode = activeRendererCaptureQualityM
   track.applyConstraints(rendererCaptureVideoConstraints(mode)).catch((error) => {
     console.error("Failed to update media renderer preview quality:", error);
   });
+}
+
+function syncLowerThirdRendererPreviewCaptureQuality(stream = lowerThirdRendererPreviewStream) {
+  if (!stream || (typeof presentationPreviewSnapshots !== "undefined" && presentationPreviewSnapshots.has(stream))) return;
+  const [track] = stream.getVideoTracks();
+  try {
+    Promise.resolve(track?.applyConstraints?.(
+      rendererCaptureVideoConstraints(activeRendererCaptureQualityMode()),
+    )).catch(() => {});
+  } catch {}
 }
 
 function mediaRendererCaptureAllowedForCurrentMode() {
@@ -716,81 +794,179 @@ function syncRendererCaptureSinks(stream = streamRendererPreviewStream) {
   setConfidenceMonitorActive(activeEls.has(getConfidenceMonitorElement()));
 }
 
-function stopStreamRendererPreviewCapture() {
+function sharedAudienceCaptureActive() {
+  if (stageAudienceRelay?.sourceKey) return true;
+  if (
+    !mediaRendererCaptureAllowedForCurrentMode() ||
+    !audienceOutputAvailableForConfidence()
+  ) {
+    return false;
+  }
+  return activeMediaRendererCaptureElements().length > 0;
+}
+
+function stopStreamRendererPreviewCapture(options = {}) {
+  const force = options?.force === true;
+  if (
+    !force &&
+    stageAudienceRelay?.sourceKey &&
+    (!streamRendererPreviewSourceKey ||
+      streamRendererPreviewSourceKey === stageAudienceRelay.sourceKey)
+  ) {
+    syncRendererCaptureSinks(streamRendererPreviewStream);
+    return;
+  }
+  audienceCaptureGeneration += 1;
   const stream = streamRendererPreviewStream;
   streamRendererPreviewStream = null;
   streamRendererPreviewStartPromise = null;
   streamRendererPreviewQualityMode = null;
-  if (stream) {
-    stream.getTracks().forEach((track) => track.stop());
+  streamRendererPreviewSourceKey = "";
+  if (typeof stopRendererCaptureStream === "function") {
+    stopRendererCaptureStream(stream);
+  } else if (stream) {
+    stream.getTracks().forEach((track) => {
+      try { track.stop(); } catch {}
+    });
   }
   syncRendererCaptureSinks(null);
 }
 
 async function startStreamRendererPreviewCapture() {
-  if (!mediaRendererCaptureAllowedForCurrentMode()) {
-    stopStreamRendererPreviewCapture();
-    return;
-  }
-
-  const previewEls = activeMediaRendererCaptureElements();
-  if (!previewEls.length || !navigator.mediaDevices?.getDisplayMedia) {
-    syncRendererCaptureSinks(null);
-    return;
-  }
-
-  const available = await invoke("media-window-capture-available").catch(() => false);
-  if (!mediaRendererCaptureAllowedForCurrentMode()) {
-    stopStreamRendererPreviewCapture();
-    return;
-  }
-  if (!available) {
-    stopStreamRendererPreviewCapture();
-    return;
+  if (!sharedAudienceCaptureActive()) {
+    stopStreamRendererPreviewCapture({ force: true });
+    return null;
   }
 
   if (
     streamRendererPreviewStream &&
     streamRendererPreviewStream.getVideoTracks().some((track) => track.readyState === "live")
   ) {
-    syncRendererCaptureSinks(streamRendererPreviewStream);
-    return;
+    if (
+      stageAudienceRelay?.sourceKey &&
+      streamRendererPreviewSourceKey &&
+      streamRendererPreviewSourceKey !== stageAudienceRelay.sourceKey
+    ) {
+      stopStreamRendererPreviewCapture({ force: true });
+    } else {
+      if (stageAudienceRelay?.sourceKey && !streamRendererPreviewSourceKey) {
+        streamRendererPreviewSourceKey = stageAudienceRelay.sourceKey;
+      }
+      syncRendererCaptureQuality(streamRendererPreviewStream);
+      syncRendererCaptureSinks(streamRendererPreviewStream);
+      return streamRendererPreviewStream;
+    }
   }
 
   if (streamRendererPreviewStartPromise) {
-    await streamRendererPreviewStartPromise;
-    return;
+    return streamRendererPreviewStartPromise;
   }
 
-  streamRendererPreviewStartPromise = (async () => {
+  const generation = audienceCaptureGeneration;
+  let capturedStream = null;
+  // A stopped start may settle after a replacement has taken ownership.
+  const isCurrent = () =>
+    generation === audienceCaptureGeneration &&
+    streamRendererPreviewStartPromise === startPromise;
+  const startPromise = (async () => {
+    const sourceInfo = await invoke("stage-audience-source").catch(() => null);
+    const hasStructuredSource = Boolean(
+      sourceInfo && typeof sourceInfo === "object" && "available" in sourceInfo,
+    );
+    const available = hasStructuredSource
+      ? Boolean(sourceInfo.available && sourceInfo.sourceKey)
+      : Boolean(await invoke("media-window-capture-available").catch(() => false));
+    if (!isCurrent()) return null;
+    if (!sharedAudienceCaptureActive() || !available) {
+      stopStreamRendererPreviewCapture({ force: true });
+      return null;
+    }
+
+    const capturedSourceKey =
+      stageAudienceRelay?.sourceKey ||
+      (hasStructuredSource ? String(sourceInfo.sourceKey || "") : "");
     const qualityMode = activeRendererCaptureQualityMode();
     const stream = await captureElectronPresentationWindow("media");
+    capturedStream = stream;
+    const releaseStream = (targetStream) => {
+      if (capturedStream === targetStream) {
+        capturedStream = null;
+      }
+      if (typeof stopRendererCaptureStream === "function") {
+        stopRendererCaptureStream(targetStream);
+      } else if (targetStream) {
+        targetStream.getTracks().forEach((track) => {
+          try { track.stop(); } catch {}
+        });
+      }
+    };
+    if (!isCurrent() || !sharedAudienceCaptureActive()) {
+      releaseStream(stream);
+      return null;
+    }
+
+    const latestSource = await invoke("stage-audience-source").catch(() => null);
+    if (!isCurrent() || !sharedAudienceCaptureActive()) {
+      releaseStream(stream);
+      return null;
+    }
+    const latestStructured = Boolean(
+      latestSource && typeof latestSource === "object" && "available" in latestSource,
+    );
+    const desiredSourceKey =
+      stageAudienceRelay?.sourceKey ||
+      (latestStructured ? String(latestSource.sourceKey || "") : capturedSourceKey);
     if (
-      !mediaRendererCaptureAllowedForCurrentMode() ||
-      !audienceOutputAvailableForConfidence()
+      (latestStructured && !latestSource.available) ||
+      (desiredSourceKey && capturedSourceKey && desiredSourceKey !== capturedSourceKey)
     ) {
-      stream.getTracks().forEach((track) => track.stop());
-      return;
+      releaseStream(stream);
+      if (sharedAudienceCaptureActive() && desiredSourceKey && desiredSourceKey !== capturedSourceKey) {
+        streamRendererPreviewStartPromise = null;
+        return startStreamRendererPreviewCapture();
+      }
+      return null;
     }
 
     disableCapturedAudioTracks(stream);
     streamRendererPreviewStream = stream;
-    syncRendererCaptureQuality(stream, qualityMode);
+    streamRendererPreviewSourceKey = desiredSourceKey || capturedSourceKey;
+    syncRendererCaptureQuality(stream, activeRendererCaptureQualityMode() || qualityMode);
     stream.getVideoTracks().forEach((track) => {
-      track.addEventListener("ended", stopStreamRendererPreviewCapture, {
-        once: true,
-      });
+      track.addEventListener(
+        "ended",
+        () => {
+          if (streamRendererPreviewStream === stream) {
+            stopStreamRendererPreviewCapture({ force: true });
+          }
+        },
+        { once: true },
+      );
     });
     syncRendererCaptureSinks(stream);
+    return stream;
   })();
+  streamRendererPreviewStartPromise = startPromise;
 
   try {
-    await streamRendererPreviewStartPromise;
+    return await startPromise;
   } catch (error) {
     console.error("Failed to capture media renderer preview:", error);
-    stopStreamRendererPreviewCapture();
+    if (isCurrent()) stopStreamRendererPreviewCapture({ force: true });
+    return null;
   } finally {
-    streamRendererPreviewStartPromise = null;
+    if (capturedStream && streamRendererPreviewStream !== capturedStream) {
+      if (typeof stopRendererCaptureStream === "function") {
+        stopRendererCaptureStream(capturedStream);
+      } else {
+        capturedStream.getTracks().forEach((track) => {
+          if (track.readyState !== "ended") track.stop();
+        });
+      }
+    }
+    if (streamRendererPreviewStartPromise === startPromise) {
+      streamRendererPreviewStartPromise = null;
+    }
   }
 }
 
@@ -798,7 +974,7 @@ function stopLowerThirdRendererPreviewCapture() {
   const stream = lowerThirdRendererPreviewStream;
   lowerThirdRendererPreviewStream = null;
   lowerThirdRendererPreviewStartPromise = null;
-  if (stream) stream.getTracks().forEach((track) => track.stop());
+  stopRendererCaptureStream(stream);
   hideRendererCaptureElement(getLowerThirdConfidenceMonitorElement());
 }
 
@@ -807,39 +983,50 @@ async function startLowerThirdRendererPreviewCapture() {
     stopLowerThirdRendererPreviewCapture();
     return;
   }
-  const available = await invoke("media-window-capture-available", "lower-third").catch(() => false);
-  if (!available || !bibleLowerThirdOutputActive) {
-    stopLowerThirdRendererPreviewCapture();
-    return;
-  }
-  if (lowerThirdRendererPreviewStream?.getVideoTracks().some((track) => track.readyState === "live")) {
-    prepareRendererCaptureElement(getLowerThirdConfidenceMonitorElement(), lowerThirdRendererPreviewStream);
-    return;
-  }
   if (lowerThirdRendererPreviewStartPromise) return lowerThirdRendererPreviewStartPromise;
-  lowerThirdRendererPreviewStartPromise = (async () => {
+  let capturedStream = null;
+  const isCurrent = () => lowerThirdRendererPreviewStartPromise === startPromise &&
+    bibleLowerThirdOutputActive && currentMode === MEDIAPLAYER;
+  const startPromise = (async () => {
+    const available = await invoke("media-window-capture-available", "lower-third").catch(() => false);
+    if (!isCurrent()) return;
+    if (!available) {
+      stopLowerThirdRendererPreviewCapture();
+      return;
+    }
+    if (lowerThirdRendererPreviewStream?.getVideoTracks().some((track) => track.readyState === "live")) {
+      prepareRendererCaptureElement(getLowerThirdConfidenceMonitorElement(), lowerThirdRendererPreviewStream);
+      return;
+    }
     const stream = await captureElectronPresentationWindow("lower-third");
-    if (!bibleLowerThirdOutputActive || currentMode !== MEDIAPLAYER) {
-      stream.getTracks().forEach((track) => track.stop());
+    capturedStream = stream;
+    if (!isCurrent()) {
+      stopRendererCaptureStream(stream);
       return;
     }
     disableCapturedAudioTracks(stream);
     lowerThirdRendererPreviewStream = stream;
+    syncLowerThirdRendererPreviewCaptureQuality(stream);
     const [track] = stream.getVideoTracks();
-    track
-      ?.applyConstraints?.(rendererCaptureVideoConstraints(activeRendererCaptureQualityMode()))
-      .catch(() => {});
-    track?.addEventListener("ended", stopLowerThirdRendererPreviewCapture, { once: true });
+    track?.addEventListener("ended", () => {
+      if (lowerThirdRendererPreviewStream === stream) stopLowerThirdRendererPreviewCapture();
+    }, { once: true });
     prepareRendererCaptureElement(getLowerThirdConfidenceMonitorElement(), stream);
     syncConfidenceMonitorCarousel();
   })();
+  lowerThirdRendererPreviewStartPromise = startPromise;
   try {
-    await lowerThirdRendererPreviewStartPromise;
+    await startPromise;
   } catch (error) {
     console.error("Failed to capture lower-third renderer preview:", error);
-    stopLowerThirdRendererPreviewCapture();
+    if (lowerThirdRendererPreviewStartPromise === startPromise) stopLowerThirdRendererPreviewCapture();
   } finally {
-    lowerThirdRendererPreviewStartPromise = null;
+    if (capturedStream && lowerThirdRendererPreviewStream !== capturedStream) {
+      stopRendererCaptureStream(capturedStream);
+    }
+    if (lowerThirdRendererPreviewStartPromise === startPromise) {
+      lowerThirdRendererPreviewStartPromise = null;
+    }
   }
 }
 
@@ -851,53 +1038,128 @@ function syncLowerThirdRendererPreviewCapture() {
   void startLowerThirdRendererPreviewCapture();
 }
 
-function stopStageRendererPreviewCapture() {
-  const stream = stageRendererPreviewStream;
-  stageRendererPreviewStream = null;
-  stageRendererPreviewStartPromise = null;
-  if (stream) stream.getTracks().forEach((track) => track.stop());
-  hideRendererCaptureElement(getStageConfidenceMonitorElement());
+function stopStageRendererPreviewCapture(connection = stageRendererPreviewConnection) {
+  if (!connection || connection.disposed) return;
+  connection.disposed = true;
+  try { connection.preview?.dispose(); } catch {}
+  connection.disposeNative?.();
+  if (connection.stream && connection.video.srcObject === connection.stream) {
+    hideRendererCaptureElement(connection.video);
+  }
+  if (stageRendererPreviewConnection !== connection) return;
+  stageRendererPreviewConnection = null;
   syncConfidenceMonitorCarousel();
 }
 
-async function syncStageRendererPreviewCapture() {
-  if (latestOutputStatus?.stage?.window !== "open" || currentMode !== MEDIAPLAYER) {
-    stopStageRendererPreviewCapture();
-    return;
-  }
-  if (!getStageConfidenceMonitorElement() || !navigator.mediaDevices?.getDisplayMedia) return;
-  const available = await invoke("media-window-capture-available", "stage").catch(() => false);
-  if (!available) {
-    stopStageRendererPreviewCapture();
-    return;
-  }
-  if (stageRendererPreviewStream?.getVideoTracks().some((track) => track.readyState === "live")) {
-    prepareRendererCaptureElement(getStageConfidenceMonitorElement(), stageRendererPreviewStream);
-    syncConfidenceMonitorCarousel();
-    return;
-  }
-  if (stageRendererPreviewStartPromise) return stageRendererPreviewStartPromise;
-  stageRendererPreviewStartPromise = (async () => {
-    const stream = await captureElectronPresentationWindow("stage");
-    if (latestOutputStatus?.stage?.window !== "open") {
-      stream.getTracks().forEach((track) => track.stop());
-      return;
-    }
-    disableCapturedAudioTracks(stream);
-    stageRendererPreviewStream = stream;
-    const [track] = stream.getVideoTracks();
-    track?.applyConstraints?.(rendererCaptureVideoConstraints(activeRendererCaptureQualityMode())).catch(() => {});
-    track?.addEventListener("ended", stopStageRendererPreviewCapture, { once: true });
-    prepareRendererCaptureElement(getStageConfidenceMonitorElement(), stream);
-    syncConfidenceMonitorCarousel();
-  })();
+function syncStageRendererPreviewCaptureQuality(connection = stageRendererPreviewConnection) {
+  // Canvas snapshots keep their fixed <=640x360 / 10fps budget. Native stage
+  // quality belongs to this connection, never the audience's quality cache.
+  if (!connection || connection.disposed || !connection.disposeNative || !connection.stream) return;
+  const mode = activeRendererCaptureQualityMode();
+  if (connection.qualityMode === mode) return;
+  connection.qualityMode = mode;
+  const [track] = connection.stream.getVideoTracks();
   try {
-    await stageRendererPreviewStartPromise;
-  } catch (error) {
-    console.error("Failed to capture stage renderer preview:", error);
+    Promise.resolve(track?.applyConstraints?.(rendererCaptureVideoConstraints(mode))).catch(() => {});
+  } catch {}
+}
+
+async function syncStageRendererPreviewCapture() {
+  const sessionId = latestOutputStatus?.sessionId;
+  const video = getStageConfidenceMonitorElement();
+  if (!sessionId || !video || latestOutputStatus?.stage?.window !== "open" ||
+      latestOutputStatus?.stage?.health !== "ok" || currentMode !== MEDIAPLAYER) {
     stopStageRendererPreviewCapture();
+    return;
+  }
+  if (stageRendererPreviewConnection?.sessionId === sessionId &&
+      stageRendererPreviewConnection.video === video &&
+      (stageRendererPreviewConnection.pending ||
+       stageRendererPreviewConnection.stream?.getVideoTracks().some((track) => track.readyState === "live"))) {
+    return;
+  }
+  stopStageRendererPreviewCapture();
+  const connection = { sessionId, video, stream: null, preview: null,
+    pending: true, disposed: false, disposeNative: null, qualityMode: null };
+  stageRendererPreviewConnection = connection;
+  const isCurrent = () => !connection.disposed && stageRendererPreviewConnection === connection &&
+    latestOutputStatus?.sessionId === sessionId && latestOutputStatus?.stage?.window === "open" &&
+    latestOutputStatus?.stage?.health === "ok" &&
+    currentMode === MEDIAPLAYER && getStageConfidenceMonitorElement() === video;
+  const attach = (stream) => {
+    connection.stream = stream;
+    stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+      if (connection.stream === stream) stopStageRendererPreviewCapture(connection);
+    }, { once: true });
+    prepareRendererCaptureElement(video, stream);
+    syncConfidenceMonitorCarousel();
+  };
+  try {
+    // Use the main-owned, fixed native WINDOW source, rather than the
+    // WebFrameMain/tab getDisplayMedia path implicated in the stage crash.
+    let source = null;
+    try { source = await invoke("stage-preview-source", { sessionId }); } catch {}
+    if (!isCurrent()) return;
+    if (source?.sessionId === sessionId && typeof source.sourceId === "string" &&
+        /^window:[1-9]\d*:\d+$/.test(source.sourceId) &&
+        typeof navigator.mediaDevices?.getUserMedia === "function") {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { mandatory: { chromeMediaSource: "desktop", chromeMediaSourceId: source.sourceId,
+            maxWidth: 640, maxHeight: 360, maxFrameRate: 30 } },
+        });
+        let disposed = false;
+        connection.disposeNative = () => {
+          if (disposed) return;
+          disposed = true;
+          for (const track of stream.getTracks()) {
+            // prepareRendererCaptureElement already stops any unexpected audio.
+            if (track.readyState !== "ended") {
+              try { track.stop(); } catch {}
+            }
+          }
+        };
+        // Even a connection disposed while getUserMedia was pending owns this
+        // late stream and must release it, without touching a replacement sink.
+        if (!isCurrent()) { connection.disposeNative(); return; }
+        if (!stream.getVideoTracks().some((track) => track.readyState === "live")) {
+          throw new Error("Stage window capture has no live video track");
+        }
+        attach(stream);
+        syncStageRendererPreviewCaptureQuality(connection);
+        return;
+      } catch {
+        connection.disposeNative?.();
+        if (connection.stream && video.srcObject === connection.stream) hideRendererCaptureElement(video);
+        connection.stream = null;
+        connection.disposeNative = null;
+        if (!isCurrent()) return;
+      }
+    }
+    // A failed/unavailable native acquisition selects snapshots for this
+    // connection; status updates reuse it instead of retrying native capture.
+    connection.preview = createStagePreviewSnapshot({
+      document,
+      sessionId,
+      getFrame: () => invoke("stage-preview-frame", { sessionId }),
+      isCurrent,
+      onStream(stream) {
+        if (isCurrent()) attach(stream);
+      },
+      onError(error) {
+        if (isCurrent()) console.error("Failed to refresh stage snapshot preview:", error);
+      },
+    });
+    if (!isCurrent()) connection.preview.dispose();
+  } catch (error) {
+    if (stageRendererPreviewConnection === connection) {
+      console.error("Failed to start stage snapshot preview:", error);
+      stopStageRendererPreviewCapture(connection);
+    }
   } finally {
-    stageRendererPreviewStartPromise = null;
+    connection.pending = false;
+    if (!isCurrent()) stopStageRendererPreviewCapture(connection);
   }
 }
 
@@ -907,10 +1169,7 @@ function syncStreamRendererPreviewCapture() {
     syncNetworkPreviewMirrorCapture();
     return;
   }
-  if (
-    !mediaRendererCaptureAllowedForCurrentMode() ||
-    !audienceOutputAvailableForConfidence()
-  ) {
+  if (!sharedAudienceCaptureActive()) {
     stopStreamRendererPreviewCapture();
     return;
   }
@@ -918,9 +1177,74 @@ function syncStreamRendererPreviewCapture() {
   void startStreamRendererPreviewCapture();
 }
 
+function installStageAudienceRelay() {
+  if (installStageAudienceRelay.initialized) return;
+  on("stage-audience-relay", (_event, message = {}) => {
+    if (!message || typeof message !== "object") return;
+    const peerId = typeof message.peerId === "string" ? message.peerId : "";
+    const sourceKey = typeof message.sourceKey === "string" ? message.sourceKey : "";
+    if (message.type === "request") {
+      if (!peerId || !sourceKey) return;
+      const previous = stageAudienceRelay;
+      stageAudienceRelay = { peerId, sourceKey, relay: null };
+      if (previous?.relay) {
+        previous.relay.close();
+      }
+      if (
+        streamRendererPreviewStream &&
+        streamRendererPreviewSourceKey &&
+        streamRendererPreviewSourceKey !== sourceKey
+      ) {
+        stopStreamRendererPreviewCapture({ force: true });
+      }
+      streamRendererPreviewQualityMode = null;
+      void (async () => {
+        const stream = await startStreamRendererPreviewCapture();
+        if (
+          !stream ||
+          stageAudienceRelay?.peerId !== peerId ||
+          stageAudienceRelay?.sourceKey !== sourceKey ||
+          (streamRendererPreviewSourceKey && streamRendererPreviewSourceKey !== sourceKey)
+        ) {
+          return;
+        }
+        syncRendererCaptureQuality(stream, activeRendererCaptureQualityMode());
+        const relay = new LocalVideoRelay({
+          sendSignal(signal) {
+            send("stage-audience-relay", { ...signal, peerId, sourceKey });
+          },
+          onClose() {
+            if (stageAudienceRelay?.peerId === peerId) {
+              stageAudienceRelay = null;
+              streamRendererPreviewQualityMode = null;
+              syncStreamRendererPreviewCapture();
+            }
+          },
+        });
+        stageAudienceRelay.relay = relay;
+        await relay.start(stream);
+      })();
+      return;
+    }
+    if (message.type === "close") {
+      if (!stageAudienceRelay || (peerId && stageAudienceRelay.peerId !== peerId)) return;
+      const active = stageAudienceRelay;
+      stageAudienceRelay = null;
+      streamRendererPreviewQualityMode = null;
+      active.relay?.close();
+      syncStreamRendererPreviewCapture();
+      return;
+    }
+    if (!stageAudienceRelay || (peerId && stageAudienceRelay.peerId !== peerId)) return;
+    stageAudienceRelay.relay?.receive(message);
+  });
+  installStageAudienceRelay.initialized = true;
+}
+
 function installDisplayChangeHandler() {
   if (installDisplayChangeHandler.initialized) return;
 
+  installStageAudienceRelay();
   on("display-changed", async () => {
     await populateDisplaySelect({ force: true });
   });
@@ -948,6 +1272,8 @@ export {
 };
 /* Confidence-monitor, preview mounting, and renderer-capture lifecycle. */
 
+import { LocalVideoRelay } from "../shared/local-video-relay.mjs";
+import { createStagePreviewSnapshot } from "../shared/stage-preview-snapshot.mjs";
 import {
   MEDIAPLAYER,
   PREVIEW_STASH_ID,
@@ -975,6 +1301,7 @@ import {
   networkPreviewUsesRendererCapture,
   on,
   populateDisplaySelect,
+  send,
   syncNetworkPreviewMirrorCapture,
   video,
 } from "./app-renderer.mjs";
@@ -982,8 +1309,10 @@ import {
 let streamRendererPreviewStream = null;
 let streamRendererPreviewStartPromise = null;
 let streamRendererPreviewQualityMode = null;
+let streamRendererPreviewSourceKey = "";
+let audienceCaptureGeneration = 0;
+let stageAudienceRelay = null;
 let lowerThirdRendererPreviewStream = null;
 let lowerThirdRendererPreviewStartPromise = null;
-let stageRendererPreviewStream = null;
-let stageRendererPreviewStartPromise = null;
+let stageRendererPreviewConnection = null;
 let displayMediaCaptureRequestChain = Promise.resolve();

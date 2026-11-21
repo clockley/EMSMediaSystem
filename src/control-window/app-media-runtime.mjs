@@ -196,6 +196,7 @@ import {
   syncMediaLoopState,
   syncNetworkPreviewMirrorCapture,
   syncQueuePreviewMediaElements,
+  syncStageContentFromQueueItem,
   syncStreamRendererPreviewCapture,
   syncTrackedPreviewStartTime,
   targetTime,
@@ -2119,6 +2120,11 @@ async function playAudioOnlyLocally(startOverride = null) {
   setSharedRendererState({ isPlaying: true });
   setSharedRendererState({ isActiveMediaWindowCache: false });
   setSharedRendererState({ liveAudioQueueIndex: currentQueueIndex });
+  if (queueItem && typeof syncStageContentFromQueueItem === "function") {
+    void syncStageContentFromQueueItem(queueItem, { mediaKind: "audio" }).catch(
+      () => {},
+    );
+  }
   syncMediaLoopState({ notify: false });
   send("localMediaState", 0, "play");
   if (source) {
@@ -2370,7 +2376,6 @@ async function createMediaWindow(options) {
         playbackTraceEnabled ? "__debug-playback" : "",
         "__media-birth=" + birth,
       ],
-      preload: `${__dirname}/../media-window/media_preload.min.js`,
       devTools: false,
     },
   };

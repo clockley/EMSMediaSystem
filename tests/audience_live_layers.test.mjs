@@ -243,10 +243,19 @@ test("operator shell omits the audience, lower-third, and stage output-status st
   assert.doesNotMatch(html, /data-output-role=/);
 });
 
-test("audience window preload is loaded from the media-window folder", async () => {
-  const app = await readRendererSources();
-  assert.match(app, /\$\{__dirname\}\/\.\.\/media-window\/media_preload\.min\.js/);
-  assert.doesNotMatch(app, /\$\{__dirname\}\/media_preload\.min\.js/);
+test("main owns normalized audience and lower-third preload paths", async () => {
+  const [app, main] = await Promise.all([
+    readRendererSources(),
+    readFile(new URL("../src/main-process/main.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.doesNotMatch(app, /preload:.*media_preload/);
+  for (const [start, end] of [
+    ["async function handleCreateMediaWindow(", "async function handleCreateLowerThirdWindow("],
+    ["async function handleCreateLowerThirdWindow(", "function currentOutputStatus("],
+  ]) {
+    const handler = main.slice(main.indexOf(start), main.indexOf(end));
+    assert.match(handler, /\.\.\.incomingPrefs,[\s\S]*preload: path\.join\(derivedSrcDir, "media-window", "media_preload\.min\.js"\)/);
+  }
 });
 
 test("confidence monitor pins and captures the output carrying an active alert", async () => {
