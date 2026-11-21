@@ -333,6 +333,32 @@ for (const phase of ["status", "widgets"]) {
   });
 }
 
+test("cue-clearing and queue-mutating operations trigger a stage Next refresh", async () => {
+  const [playback, schedule] = await Promise.all([
+    "app-presentation-playback.mjs", "app-schedule-controller.mjs",
+  ].map((name) => readFile(new URL(`../src/control-window/${name}`, import.meta.url), "utf8")));
+  const productionBody = (source, name) => {
+    const match = source.match(new RegExp(`^(?:async )?function ${name}\\([\\s\\S]*?^}`, "m"));
+    assert.ok(match, `Missing production function ${name}`);
+    return match[0];
+  };
+  // Clicking the live row clears an explicit (possibly non-consecutive) cue
+  // via restorePreviewToLiveOutput; stage Next must be recomputed.
+  assert.match(
+    productionBody(playback, "loadQueueItemIntoPreviewCue"),
+    /await restorePreviewToLiveOutput\(index\);[\s\S]*?refreshStageNotesForLiveItem\(\)[\s\S]*?return;/,
+  );
+  // Removing or reordering items changes the sequential next (and can drop
+  // the cue); both mutations must refresh stage Next.
+  for (const name of ["removeFromQueue", "reorderQueueEntriesAtInsertIndex"]) {
+    assert.match(
+      productionBody(schedule, name),
+      /refreshStageNotesForLiveItem\(\)/,
+      `${name} refreshes stage Next`,
+    );
+  }
+});
+
 function stageLayerHarness(sessionId = "old-session") {
   const state = {
     stageSessionIdCache: sessionId,

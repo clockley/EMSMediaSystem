@@ -866,6 +866,9 @@ import {
   waitForMetadata,
 } from "./app-media-runtime.mjs";
 import {
+  installBackgroundAudioControls,
+} from "./app-background-audio.mjs";
+import {
   SONG_SIDEBAR_MAX_WIDTH,
   SONG_SIDEBAR_MIN_WIDTH,
   clampSongSidebarWidth,
@@ -3737,6 +3740,7 @@ async function bootstrapRenderer() {
   await loadActiveThemeFromSettings();
   installIPCHandler();
   installEvents();
+  installBackgroundAudioControls();
   return invoke("get-setting", "operating-mode").then(loadOpMode);
 }
 

@@ -774,6 +774,9 @@ async function loadQueueItemIntoPreviewCue(index) {
   selectNavigationForQueueItem(item);
   if (queueIndexIsCurrentLivePresentation(index)) {
     await restorePreviewToLiveOutput(index);
+    // Restoring the live mirror cleared any explicit cue; recompute Stage
+    // Next so a non-consecutive cue doesn't linger on the stage display.
+    void refreshStageNotesForLiveItem().catch(() => {});
     return;
   }
 

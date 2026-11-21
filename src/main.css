@@ -9619,11 +9619,8 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     --adw-card-bg: var(--card-bg-color);
     --adw-accent: var(--accent-bg-color);
     --adw-text: var(--window-fg-color);
-    --adw-radius-sm: var(--adw-radius-sm);
-    --adw-radius-lg: var(--adw-radius-lg);
-    --spacing-s: var(--spacing-s);
-    --spacing-l: var(--spacing-l);
-    --spacing-xl: var(--spacing-xl);
+    /* --adw-radius-sm/lg and --spacing-* are already defined on :root above;
+       re-aliasing them here would create invalid self-referential cycles. */
 }
 
 
@@ -9978,4 +9975,320 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     left: 3%;
     max-width: 94%;
     font-size: clamp(8px, 1.35cqw, 13px);
+}
+
+/* ===================================================
+   BACKGROUND AUDIO (SOUNDTRACK) POPOVER — GNOME HIG
+   =================================================== */
+
+.bg-audio-host {
+    position: relative;
+    display: flex;
+    align-items: center;
+    -webkit-app-region: no-drag;
+}
+
+/* Small "playing" indicator dot on the headerbar button. */
+.bg-audio-live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-bg-color);
+    flex-shrink: 0;
+    animation: bg-audio-pulse 2.4s ease-in-out infinite;
+}
+
+.bg-audio-live-dot[hidden] {
+    display: none;
+}
+
+@keyframes bg-audio-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .bg-audio-live-dot {
+        animation: none;
+    }
+}
+
+.bg-audio-popover {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: var(--spacing-s);
+    width: 320px;
+    z-index: 1000;
+    background: var(--popover-bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--popover-border-color);
+    border-radius: var(--adw-radius-lg);
+    box-shadow: 0 6px 20px rgb(0 0 6 / 22%), 0 1px 3px rgb(0 0 6 / 12%);
+    padding: var(--spacing-l);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-m);
+}
+
+.bg-audio-popover[hidden] {
+    display: none;
+}
+
+.bg-audio-popover__header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xxs);
+}
+
+.bg-audio-popover__title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.bg-audio-popover__subtitle {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-color-secondary);
+}
+
+/* --- Empty state (GNOME status-page style, compact) --- */
+
+.bg-audio-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-s);
+    padding: var(--spacing-m) 0 var(--spacing-xs);
+    text-align: center;
+}
+
+.bg-audio-empty[hidden] {
+    display: none;
+}
+
+.bg-audio-empty__icon {
+    width: 44px;
+    height: 44px;
+    color: var(--text-color-secondary);
+    opacity: 0.8;
+}
+
+.bg-audio-empty__hint {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-color-secondary);
+}
+
+/* Suggested action button (Adwaita .suggested-action pill). */
+.bg-audio-suggested {
+    margin-top: var(--spacing-xs);
+    padding: 8px 18px;
+    border: none;
+    border-radius: 999px;
+    background: var(--accent-bg-color);
+    color: #ffffff;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 150ms ease-out;
+}
+
+.bg-audio-suggested:hover {
+    background: var(--accent-bg-color-hover);
+}
+
+.bg-audio-suggested:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
+/* --- Loaded state --- */
+
+.bg-audio-loaded {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-m);
+}
+
+.bg-audio-loaded[hidden] {
+    display: none;
+}
+
+.bg-audio-track {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-m);
+    min-width: 0;
+}
+
+/* Circular play/pause button (GNOME media control). */
+.bg-audio-play {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 50%;
+    background: var(--accent-bg-color);
+    color: #ffffff;
+    cursor: pointer;
+    transition: background-color 150ms ease-out, transform 150ms ease-out;
+}
+
+.bg-audio-play:hover {
+    background: var(--accent-bg-color-hover);
+}
+
+.bg-audio-play:active {
+    transform: scale(0.94);
+}
+
+.bg-audio-play:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
+.bg-audio-play__icon {
+    width: 16px;
+    height: 16px;
+}
+
+.bg-audio-play[data-playing="true"] .bg-audio-play__icon--play,
+.bg-audio-play[data-playing="false"] .bg-audio-play__icon--pause {
+    display: none;
+}
+
+.bg-audio-track__meta {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xxs);
+    min-width: 0;
+}
+
+.bg-audio-track__name {
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bg-audio-track__time {
+    font-size: 12px;
+    color: var(--text-color-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.bg-audio-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-m);
+}
+
+.bg-audio-row--loop {
+    justify-content: space-between;
+}
+
+.bg-audio-row__label {
+    font-size: 14px;
+}
+
+.bg-audio-volume-icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    color: var(--text-color-secondary);
+}
+
+.bg-audio-volume-value {
+    min-width: 40px;
+    text-align: right;
+    font-size: 12px;
+    color: var(--text-color-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Horizontal Adwaita scale with accent fill up to the thumb. */
+.bg-audio-volume-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    min-width: 0;
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(
+        to right,
+        var(--accent-bg-color) var(--bg-audio-volume-fill, 40%),
+        color-mix(in srgb, currentColor 22%, transparent) var(--bg-audio-volume-fill, 40%)
+    );
+    cursor: pointer;
+}
+
+.bg-audio-volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 25%), 0 0 0 1px rgb(0 0 0 / 8%);
+    transition: transform 120ms ease-out;
+}
+
+.bg-audio-volume-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.12);
+}
+
+.bg-audio-volume-slider:focus-visible {
+    outline: none;
+}
+
+.bg-audio-volume-slider:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-bg-color) 50%, transparent),
+        0 1px 2px rgb(0 0 0 / 25%);
+}
+
+.bg-audio-popover__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-s);
+    padding-top: var(--spacing-xs);
+    border-top: 1px solid var(--popover-separator-color);
+}
+
+/* Flat (borderless) Adwaita buttons. */
+.bg-audio-flat {
+    padding: 6px 12px;
+    border: none;
+    border-radius: var(--adw-radius-sm);
+    background: transparent;
+    color: var(--text-color);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 150ms ease-out;
+}
+
+.bg-audio-flat:hover {
+    background: var(--row-hover-bg-color);
+}
+
+.bg-audio-flat:focus-visible {
+    outline: 2px solid var(--accent-bg-color);
+    outline-offset: 2px;
+}
+
+.bg-audio-flat--destructive {
+    color: var(--destructive-bg-color);
+}
+
+.bg-audio-flat--destructive:hover {
+    background: color-mix(in srgb, var(--destructive-bg-color) 12%, transparent);
 }

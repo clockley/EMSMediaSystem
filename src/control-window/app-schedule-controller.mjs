@@ -1547,6 +1547,9 @@ function reorderQueueEntriesAtInsertIndex(fromIndex, rawInsertIndex, options = {
   }, 400);
   invalidateQueueUndoToastAfterMutation();
   renderQueue();
+  // Reordering can change which item follows the live item (and where the
+  // cue sits); recompute Stage Next from the new queue order.
+  void refreshStageNotesForLiveItem().catch(() => {});
   if (movedLiveAudio) {
     hidePptxPreviewIfNeeded();
     restoreCountdownForLiveMedia();
@@ -1847,6 +1850,9 @@ function removeFromQueue(index) {
     resetPreviewSurfaceToEmptyState();
   }
   renderQueue();
+  // Removing the cued item (or a neighbour of the live item) changes what
+  // "Next" means on stage; the refresh dedupes, so it's a no-op otherwise.
+  void refreshStageNotesForLiveItem().catch(() => {});
   if (
     removedCurrentItem &&
     currentMode === MEDIAPLAYER &&

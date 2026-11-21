@@ -4196,6 +4196,26 @@ async function handleShowMediaFilesDialog(event) {
   return { canceled: false, filePaths: result.filePaths };
 }
 
+async function handleShowBackgroundAudioDialog(event) {
+  const mainWindow = BrowserWindow.fromWebContents(event.sender);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { canceled: true, filePath: "" };
+  }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose Background Audio",
+    defaultPath: await getInitialMediaFolder(),
+    properties: ["openFile"],
+    filters: [
+      { name: "Audio", extensions: ["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus"] },
+    ],
+  });
+  if (result.canceled || !result.filePaths?.length) {
+    return { canceled: true, filePath: "" };
+  }
+  await rememberMediaFolder(result.filePaths[0]);
+  return { canceled: false, filePath: result.filePaths[0] };
+}
+
 async function handleShowMediaSourceDialog(event) {
   const mainWindow = BrowserWindow.fromWebContents(event.sender);
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -6559,6 +6579,7 @@ function setIPC() {
   ipcMain.handle("set-setting", setSetting);
   ipcMain.handle("get-all-displays", handleGetAllDisplays);
   ipcMain.handle("show-media-files-dialog", handleShowMediaFilesDialog);
+  ipcMain.handle("show-background-audio-dialog", handleShowBackgroundAudioDialog);
   ipcMain.handle("media-library:snapshot", () => mediaLibrary.ready());
   ipcMain.handle("media-library:changes", (_event, revision) => mediaLibrary.changesSince(revision));
   ipcMain.handle("media-library:query", (_event, options) => mediaLibrary.query(options));
