@@ -55,6 +55,8 @@ import {
   storedFileHashFromRecord,
 } from "../shared/media-file-hash.min.mjs";
 import { BibleRpcClient } from "./bible_rpc_client.min.mjs";
+import { projectionReportCsv } from "../shared/ccli-report.min.mjs";
+import writeFileAtomic from "write-file-atomic";
 import { SongsRpcClient } from "./songs_rpc_client.min.mjs";
 import { AtemService } from "./atem_service.min.mjs";
 import { SlidesStore } from "./slides_store.min.mjs";
@@ -183,6 +185,31 @@ const songsRpcClient = new SongsRpcClient({
   app,
   devRoot: derivedRoot,
 });
+// Keep failed writes available for retry when the operator opens the report.
+const unsavedProjections = new Map();
+let projectionWrites = Promise.resolve();
+
+function persistProjection(projection) {
+  unsavedProjections.set(projection.id, projection);
+  projectionWrites = projectionWrites.then(async () => {
+    if (!unsavedProjections.has(projection.id)) return;
+    try {
+      await songsRpcClient.call("usage.record", projection);
+      unsavedProjections.delete(projection.id);
+    } catch (error) {
+      console.error("Could not record song projection:", error);
+      if (win && !win.isDestroyed()) win.webContents.send("song-projection-error");
+    }
+  });
+}
+
+async function flushProjectionWrites() {
+  await projectionWrites;
+  for (const projection of [...unsavedProjections.values()]) persistProjection(projection);
+  await projectionWrites;
+  if (unsavedProjections.size) throw new Error("Song activity could not be saved. Reopen the report to retry.");
+}
+
 // Internal capability for action plugins. Intentionally not exposed through renderer IPC.
 const atemService = new AtemService({
   app,
@@ -6677,6 +6704,31 @@ function setIPC() {
   ipcMain.handle("bible-rpc", handleBibleRPC);
   ipcMain.handle("request-installed-easyworship-bibles", requestInstalledEasyWorshipBibles);
   ipcMain.handle("songs-rpc", handleSongsRPC);
+  ipcMain.on("song-projected", (event, { audienceSessionId: sessionId, projection } = {}) => {
+    if (event.sender !== mediaWindow?.webContents || sessionId !== audienceSessionId ||
+        audienceHoldMode !== "none" || !projection?.id || !projection.songId) return;
+    persistProjection(projection);
+  });
+  ipcMain.handle("song-projections:list", async (event, range) => {
+    assertControlSender(event);
+    await flushProjectionWrites();
+    return songsRpcClient.call("usage.list", range);
+  });
+  ipcMain.handle("song-projections:review", (event, review) => {
+    assertControlSender(event);
+    return songsRpcClient.call("usage.review", review);
+  });
+  ipcMain.handle("song-projections:export", async (event, { rows, from, to }) => {
+    assertControlSender(event);
+    const csv = projectionReportCsv(rows, from, to);
+    const result = await dialog.showSaveDialog(win, {
+      title: "Export CCLI projection report",
+      defaultPath: `CCLI-projections-${from}-to-${to}.csv`,
+      filters: [{ name: "CSV spreadsheet", extensions: ["csv"] }],
+    });
+    if (!result.canceled && result.filePath) await writeFileAtomic(result.filePath, csv, "utf8");
+    return !result.canceled && Boolean(result.filePath);
+  });
   ipcMain.handle("slides:list", (_e, opts) => slidesStore.list(opts || {}));
   ipcMain.handle("slides:get", (_e, id) => slidesStore.get(id));
   ipcMain.handle("slides:save", (_e, deck) => slidesStore.save(deck));
@@ -7231,6 +7283,7 @@ app.on("before-quit", (event) => {
   mediaWatcher.closeAll();
   mediaLibrary.close();
   const cleanupTasks = [cleanupMediaStagingDir(), settings.flush()];
+  if (unsavedProjections.size) cleanupTasks.push(flushProjectionWrites());
   if (activeProjectSnapshot) {
     const snapshotToClean = activeProjectSnapshot;
     activeProjectSnapshot = null;

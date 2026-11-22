@@ -1513,7 +1513,8 @@ button:focus-visible,
     top: 0px;
     left: 0;
     right: 0;
-    z-index: 1000;
+    /* Header menus open over the Stage and Settings backdrops. */
+    z-index: 1001;
     border-top-left-radius: 12px;
     border-top-right-radius: 12px;
     font-weight: 400;
@@ -2077,6 +2078,7 @@ select option,
 }
 
 .gtk-dropdown {
+    -webkit-app-region: no-drag;
     position: absolute;
     top: 100%;
     right: 0;
@@ -2130,6 +2132,14 @@ select option,
 
 /* Common styles (both modes) */
 .gtk-dropdown .menu-item {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: start;
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 0;
     padding: 8px 16px;
     cursor: default;
     transition: all 0.2s ease;
@@ -10316,3 +10326,24 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
 .bg-audio-flat--destructive:hover {
     background: color-mix(in srgb, var(--destructive-bg-color) 12%, transparent);
 }
+
+.ccli-report { width: min(800px, calc(100vw - 40px)); }
+.ccli-period { display: flex; flex-wrap: wrap; gap: 16px; }
+.ccli-report input:not([type="checkbox"]) {
+    padding: 5px 8px;
+    background: var(--window-bg-color);
+    color: inherit;
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+}
+.ccli-activity { max-height: 48vh; overflow: auto; }
+.ccli-activity table { width: 100%; border-collapse: collapse; }
+.ccli-activity :is(th, td) {
+    text-align: start;
+    padding: 7px;
+    border-bottom: 1px solid var(--border-color);
+    overflow-wrap: anywhere;
+}
+.ccli-activity th { position: sticky; top: 0; background: var(--window-bg-color); }
+.ccli-activity td input[type="text"] { width: 14ch; }
+.ccli-activity small { display: block; }

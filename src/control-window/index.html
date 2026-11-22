@@ -146,16 +146,17 @@
         </svg>
       </button>
       <ul id="gtkDropdownMenu" class="gtk-dropdown hidden">
-        <li id="menuThemeManager" class="menu-item">Themes…</li>
-        <li id="menuPreferences" class="menu-item">Preferences</li>
+        <li><button id="menuCcliReport" class="menu-item" type="button">CCLI Projection Report</button></li>
+        <li><button id="menuThemeManager" class="menu-item" type="button">Themes</button></li>
+        <li><button id="menuPreferences" class="menu-item" type="button">Preferences</button></li>
         <li class="menu-separator" role="separator"></li>
-        <li id="menuOpenProject" class="menu-item">Open…</li>
-        <li id="menuSaveProject" class="menu-item">Save Project</li>
-        <li id="menuSaveProjectAs" class="menu-item">Save Project As…</li>
-        <li id="menuExportProject" class="menu-item">Export Portable Project…</li>
-        <li id="menuRelinkMissingFiles" class="menu-item">Relink Missing Files…</li>
-        <li class="menu-item" onclick="invoke('open-help-window')">Help</li>
-        <li id="aboutButton" class="menu-item" onclick="invoke('open-about-window')">About EMS</li>
+        <li><button id="menuOpenProject" class="menu-item" type="button">Open…</button></li>
+        <li><button id="menuSaveProject" class="menu-item" type="button">Save Project</button></li>
+        <li><button id="menuSaveProjectAs" class="menu-item" type="button">Save Project As…</button></li>
+        <li><button id="menuExportProject" class="menu-item" type="button">Export Portable Project…</button></li>
+        <li><button id="menuRelinkMissingFiles" class="menu-item" type="button">Relink Missing Files…</button></li>
+        <li><button class="menu-item" onclick="invoke('open-help-window')" type="button">Help</button></li>
+        <li><button id="aboutButton" class="menu-item" onclick="invoke('open-about-window')" type="button">About EMS</button></li>
       </ul>
       <div class="window-controls">
         <button class="window-control minimize" tabindex="-1" aria-label="Minimize">
@@ -330,6 +331,26 @@
         </div>
       </section>
     </div>
+    <dialog id="ccliReport" class="audience-output-dialog ccli-report" aria-labelledby="ccliReportTitle">
+      <div class="audience-output-dialog__content">
+        <header>
+          <h2 id="ccliReportTitle">CCLI projection report</h2>
+          <p>Review songs shown on this computer’s audience output. Uncheck rehearsals or other uses you want to exclude. Changes are saved on this computer.</p>
+        </header>
+        <div class="ccli-period">
+          <label>From <input id="ccliFrom" type="date" required></label>
+          <label>Through <input id="ccliTo" type="date" required></label>
+        </div>
+        <div class="ccli-activity">
+          <table><thead><tr><th>Include</th><th>Projected</th><th>Song</th><th>CCLI song number</th></tr></thead><tbody id="ccliRows"></tbody></table>
+        </div>
+        <p id="ccliStatus" role="status"></p>
+        <div class="audience-output-dialog__actions">
+          <button id="ccliClose" type="button">Close</button>
+          <button id="ccliExport" class="suggested-action" type="button" disabled>Export summary CSV…</button>
+        </div>
+      </div>
+    </dialog>
     <dialog id="audienceOutputDialog" class="audience-output-dialog" aria-labelledby="audienceOutputDialogTitle" aria-describedby="audienceOutputDialogDescription">
       <div class="audience-output-dialog__content">
         <header>

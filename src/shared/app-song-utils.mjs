@@ -946,6 +946,17 @@ export function resolvedSongPresentation(item) {
     resolvedPresentation: resolved,
     resolvedUnit: activeUnit,
   });
+  // Ordinary slide decks also use the song renderer.
+  if (item.type !== "deck" && item.source?.kind !== "deck" && !item.source?.deckId &&
+      !item.path?.startsWith("deck://") && song.metadata?.extra?.documentType !== "deck") {
+    const metadata = songCopyrightMetadata(song, render);
+    message.projectionSong = {
+      songId: song.id || item.source?.songId || item.path,
+      title: song.title || item.name || "Untitled Song",
+      authors: metadata.authors.join(", "),
+      ccliNumber: metadata.ccliNumber,
+    };
+  }
   return {
     song,
     section,

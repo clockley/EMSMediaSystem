@@ -121,6 +121,23 @@ func handleRequest(store *songstore.SongStore, req JSONRPCRequest) {
 	var err error
 
 	switch req.Method {
+	case "usage.record":
+		var p songstore.Projection
+		if err = json.Unmarshal(req.Params, &p); err == nil {
+			err = store.RecordProjection(p)
+			result = true
+		}
+	case "usage.list":
+		var p struct{ From, To string }
+		if err = json.Unmarshal(req.Params, &p); err == nil {
+			result, err = store.Projections(p.From, p.To)
+		}
+	case "usage.review":
+		var p songstore.ProjectionReview
+		if err = json.Unmarshal(req.Params, &p); err == nil {
+			err = store.ReviewProjection(p)
+			result = true
+		}
 	case "songs.ready":
 		result = true
 	case "songs.search":

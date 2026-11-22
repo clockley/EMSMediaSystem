@@ -11,6 +11,7 @@ the Free Software Foundation, either version 3 of the License, or
  * Operator chrome: custom transport controls, volume, IPC, shortcuts, and operating-mode UI.
  */
 
+import { installCcliReport } from "./app-ccli-report.mjs";
 import {
   LIVE_COMMANDS,
   MEDIAPLAYER,
@@ -1624,6 +1625,7 @@ function installIPCHandler() {
     void refreshThemedQueueItemPreview(index, mediaQueue[index]).catch(console.error);
     showGnomeToast(`${mediaQueue[index].name || "Scheduled item"} now uses the project theme`);
   });
+  on("song-projection-error", () => showGnomeToast("Song activity could not be saved. Open the CCLI projection report to retry."));
   on("songs-database-cleared", () => {
     void handleSongsDatabaseCleared().catch(console.error);
   });
@@ -2415,6 +2417,7 @@ async function loadOpMode(mode) {
         }
       });
 
+      installCcliReport(invoke);
       const menuItems = dropdownMenu.querySelectorAll(".menu-item");
       menuItems.forEach((item) => {
         item.addEventListener("click", () => {

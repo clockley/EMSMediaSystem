@@ -66,6 +66,7 @@ import { resolveAlertTokens } from "../shared/alert-tokens.min.mjs";
 import { tickerDurationSeconds, tickerPhaseDelaySeconds } from "../shared/alert-motion.min.mjs";
 import { createSerializedAsyncQueue } from "../shared/async-operation-ownership.min.mjs";
 import { LocalVideoRelay } from "../shared/local-video-relay.min.mjs";
+import { createProjectionTracker } from "../shared/song-projection.min.mjs";
 import { renderSongSectionHTML } from "../shared/native-slide-renderer.min.mjs";
 let hlsInstance = null;
 let dashPlayer = null;
@@ -1044,7 +1045,21 @@ function teardownImageElement() {
   img.removeAttribute("src");
 }
 
+const projectionTracker = createProjectionTracker((projection) => {
+  ipcRenderer.send("song-projected", { audienceSessionId, projection });
+});
+
+function observeProjectedSong(message, replay = false) {
+  if (isLowerThirdOutput) return;
+  const visible = outputHoldState.mode === OUTPUT_HOLD_NONE &&
+    !audienceCompositorState.layers.clearText?.active &&
+    Boolean(document.getElementById("textContent")?.textContent.trim());
+  projectionTracker.update(message?.projectionSong, { visible, replay, playbackId: audiencePlaybackId });
+}
+
 function teardownTextPresentation() {
+  projectionTracker.update(null);
+  textPresentationState.lastMessage = null;
   textPresentationState.signature = "";
   textPresentationState.contentSignature = "";
   const textCanvas = document.getElementById("textCanvas");
@@ -1118,6 +1133,7 @@ function activateTextTarget(data) {
   if (textCanvas) textCanvas.style.display = "flex";
   if (data.textPayload) {
     applyTextMessage(data.textPayload);
+    observeProjectedSong(data.textPayload);
   } else {
     publishStageLocalMedia("text");
     scheduleStableTextPresentationRefit();
@@ -1417,7 +1433,7 @@ async function applySlipstreamActivation(data, activationGeneration) {
   publishStageLocalMedia("text");
   hideStreamStatus();
   if (data?.clearOutputHold === true) {
-    applyOutputHold({ mode: OUTPUT_HOLD_NONE, transitionDurationMs: 0 });
+    applyOutputHold({ mode: OUTPUT_HOLD_NONE, transitionDurationMs: 0 }, false);
   }
   const target = resolveSlipstreamTargetType(data);
   mediaFile = data.mediaFile ?? mediaFile;
@@ -1538,7 +1554,7 @@ function hideOutputHoldLogoElements(logoImage, logoVideo) {
   }
 }
 
-function applyOutputHold(payload = {}) {
+function applyOutputHold(payload = {}, observeRelease = true) {
   const overlay = document.getElementById("outputHoldOverlay");
   const logoImage = document.getElementById("outputHoldLogoImage");
   const logoVideo = document.getElementById("outputHoldLogoVideo");
@@ -1607,6 +1623,7 @@ function applyOutputHold(payload = {}) {
     overlay.classList.remove("is-output-hold-visible");
     overlay.setAttribute("aria-hidden", "true");
     overlay.dataset.mode = OUTPUT_HOLD_NONE;
+    if (observeRelease) observeProjectedSong(textPresentationState.lastMessage, true);
     if (outputHoldHideTimer) window.clearTimeout(outputHoldHideTimer);
     outputHoldHideTimer = window.setTimeout(() => {
       overlay.hidden = true;
@@ -2218,6 +2235,7 @@ function renderAudienceLayer(layer) {
     // objects removed. Hiding the whole canvas would also hide the background
     // image/video and non-text slide graphics that must remain visible.
     if (textCanvas) textCanvas.style.visibility = "";
+    observeProjectedSong(textPresentationState.lastMessage, true);
   }
 }
 

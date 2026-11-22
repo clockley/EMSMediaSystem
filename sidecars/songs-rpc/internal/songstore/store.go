@@ -172,6 +172,18 @@ func (s *SongStore) createSchema() error {
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS song_projections (
+		id TEXT PRIMARY KEY,
+		projected_at TEXT NOT NULL,
+		song_id TEXT NOT NULL,
+		title TEXT NOT NULL,
+		authors TEXT NOT NULL,
+		ccli_number TEXT NOT NULL,
+		reviewed_number TEXT,
+		included INTEGER NOT NULL DEFAULT 1
+	);
+	CREATE INDEX IF NOT EXISTS song_projections_time ON song_projections(projected_at);
+
 	CREATE VIRTUAL TABLE IF NOT EXISTS song_fts USING fts5(
 		song_id UNINDEXED,
 		title,
