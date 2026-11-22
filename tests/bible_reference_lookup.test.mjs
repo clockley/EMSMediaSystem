@@ -416,3 +416,65 @@ test("the Bible information panel shows available plugin notices and clears them
   assert.equal(panel.textContent, "EMS attribution");
   assert.equal(panel.hidden, false);
 });
+
+test("Recent Scriptures hides unavailable EasyWorship references and restores them after opt-in", () => {
+  const history = [{ version: "DARBY", reference: "Genesis 1:1" }];
+  const versions = new Map([["KJV", {}]]);
+  const panel = new Element();
+  const count = new Element();
+  const list = new Element();
+  list.replaceChildren = () => { list.children = []; };
+  const context = vm.createContext({
+    bibleRecentScriptures: history,
+    bibleVersionMetadataByKey: versions,
+    document: {
+      getElementById: (id) => ({ bibleRecentSection: panel, bibleRecentCount: count, bibleRecentList: list })[id],
+      createElement: () => Object.assign(new Element(), { append(...children) { this.children.push(...children); } }),
+    },
+  });
+  vm.runInContext(section("function renderRecentScriptures()", "function rememberRecentScripture("), context);
+  context.renderRecentScriptures();
+  assert.equal(panel.hidden, true);
+  assert.equal(count.textContent, "0");
+  versions.set("DARBY", {});
+  context.renderRecentScriptures();
+  assert.equal(panel.hidden, false);
+  assert.equal(list.children[0].attributes["aria-label"], "Open Genesis 1:1 in DARBY");
+  assert.equal(count.textContent, "1");
+});
+
+test("a temporary Bible service failure preserves the project's translation", async () => {
+  const { context } = harness({
+    waitForReady: async () => { throw new Error("sidecar restarting"); },
+  });
+  const item = { bible: { version: "RSV", reference: "Genesis 1:1" } };
+  Object.assign(context, {
+    mediaQueue: [item],
+    isQueueItemBible: () => true,
+    projectBibleReferenceEntryForQueueItem: item => item.bible,
+    console: { error() {} },
+  });
+  vm.runInContext(section("async function fallbackUnavailableBibleTranslationsOnLoad", "function hideScheduleBibleContextMenu"), context);
+  assert.equal(await context.fallbackUnavailableBibleTranslationsOnLoad(), false);
+  assert.deepEqual(item, { bible: { version: "RSV", reference: "Genesis 1:1" } });
+});
+
+test("a failed verse lookup from an earlier translation leaves the current preview alone", async () => {
+  const { context, input } = harness();
+  const started = deferred();
+  const lookup = deferred();
+  Object.assign(context.state, { version: "RSV", reference: "Genesis 1:1", text: "Current preview" });
+  input.value = context.state.reference;
+  Object.assign(context, {
+    syncBibleStateFromControls: async () => true,
+    lookupBibleReference: () => { started.resolve(); return lookup.promise; },
+    setBiblePreviewText: () => assert.fail("obsolete lookup changed preview"),
+  });
+  vm.runInContext(section("async function refreshBibleLookupPreview", "async function currentBibleQueueEntry"), context);
+  const request = context.refreshBibleLookupPreview({ showMissing: true });
+  await started.promise;
+  context.state.version = "NVI";
+  lookup.resolve(null);
+  assert.equal(await request, false);
+  assert.equal(context.state.text, "Current preview");
+});

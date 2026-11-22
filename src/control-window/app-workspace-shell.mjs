@@ -103,7 +103,6 @@ import {
   markSongEditorChanged,
   navigateSongSection,
   navigationState,
-  normalizeBibleVersionMetadata,
   normalizeScriptureReference,
   normalizedCueMatchText,
   on,
@@ -2075,16 +2074,6 @@ function installBibleMediaControls() {
     .waitForReady()
     .then(async () => {
       const versions = await loadBibleVersionMetadataFromSidecar();
-      versionSelect.innerHTML = "";
-      (versions.length ? versions : ["KJV"]).forEach((version) => {
-        const metadata = normalizeBibleVersionMetadata(version);
-        const value = metadata.abbreviation;
-        const option = document.createElement("option");
-        option.value = value;
-        option.textContent = value;
-        option.title = metadata.version || value;
-        versionSelect.appendChild(option);
-      });
       if (referenceSuggestions) {
         hideBibleReferenceSuggestions();
       }

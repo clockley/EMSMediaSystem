@@ -145,6 +145,7 @@ async function importSongFiles(paths, options = {}) {
 const bibleAPI = {
   waitForReady: () => initialize(),
   getVersions: () => callBible("bible.getVersions"),
+  hasEasyWorshipInstallation: () => callBible("bible.hasEasyWorshipInstallation"),
   getText: (version, book, verse) => callBible("bible.getText", [version, book, verse]),
   getBookInfo: (version, name) => callBible("bible.getBookInfo", [version, name]),
   getChapterInfo: (version, name, chapterNumber) =>

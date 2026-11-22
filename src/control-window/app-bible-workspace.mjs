@@ -2400,16 +2400,17 @@ function renderRecentScriptures() {
   const list = document.getElementById("bibleRecentList");
   const count = document.getElementById("bibleRecentCount");
   if (!section || !list) return;
-  section.hidden = bibleRecentScriptures.length === 0;
+  const available = bibleRecentScriptures.filter((item) => bibleVersionMetadataByKey.has(item.version));
+  section.hidden = available.length === 0;
   if (count) {
-    count.textContent = String(bibleRecentScriptures.length);
+    count.textContent = String(available.length);
     count.setAttribute(
       "aria-label",
-      `${bibleRecentScriptures.length} recent Scripture${bibleRecentScriptures.length === 1 ? "" : "s"}`,
+      `${available.length} recent Scripture${available.length === 1 ? "" : "s"}`,
     );
   }
   list.replaceChildren();
-  bibleRecentScriptures.forEach((item) => {
+  available.forEach((item) => {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "bible-recent-row";
@@ -2742,6 +2743,7 @@ async function syncBibleStateFromControls() {
 
 async function setBiblePreviewText(reference, text, opts = {}) {
   if (!(await syncBibleStateFromControls())) return false;
+  if (opts.expectedVersion && bibleDesignerState.version !== opts.expectedVersion) return false;
   if (
     opts.selectionRequest &&
     !bibleVerseSelectionRequestMatchesCurrent(opts.selectionRequest)
@@ -3329,12 +3331,19 @@ async function refreshBibleLookupPreview(opts = {}) {
   const requestedVersion = bibleDesignerState.version;
   const requestedReferenceInput = document.getElementById("bibleReferenceInput")?.value || "";
   const result = await lookupBibleReference(requestedReference, requestedVersion);
-  if (!result) return false;
   if (
     bibleDesignerState.reference !== requestedReference ||
     bibleDesignerState.version !== requestedVersion ||
     (document.getElementById("bibleReferenceInput")?.value || "") !== requestedReferenceInput
   ) {
+    return false;
+  }
+  if (!result) {
+    if (opts.showMissing && await setBiblePreviewText(requestedReference, "Text not found", {
+      expectedVersion: requestedVersion,
+    })) {
+      showGnomeToast("Text not found");
+    }
     return false;
   }
   Object.assign(bibleDesignerState, result, {
@@ -5324,6 +5333,19 @@ async function loadBibleVersionMetadataFromSidecar() {
     .map(normalizeBibleVersionMetadata)
     .sort((left, right) => left.abbreviation.localeCompare(right.abbreviation));
   setBibleVersionMetadata(versions);
+  renderRecentScriptures();
+  const select = document.getElementById("bibleVersionSelect");
+  if (select) {
+    const selected = select.value;
+    const options = (versions.length ? versions : [normalizeBibleVersionMetadata("KJV")])
+      .map((metadata) => {
+        const option = new Option(metadata.abbreviation, metadata.abbreviation);
+        option.title = metadata.version;
+        return option;
+      });
+    select.replaceChildren(...options);
+    if (options.some((option) => option.value === selected)) select.value = selected;
+  }
   return versions;
 }
 
@@ -6002,9 +6024,10 @@ async function renderBibleVerseList() {
 }
 
 async function refreshBibleBrowser() {
-  await syncBibleStateFromControls();
-  await renderBibleVerseList();
+  if (!(await syncBibleStateFromControls())) return false;
   syncBibleSelectorsFromState();
+  await renderBibleVerseList();
+  return true;
 }
 
 async function jumpBibleReferenceToBrowser({ previewChapter = false } = {}) {
@@ -6066,28 +6089,17 @@ async function jumpBibleReferenceToBrowser({ previewChapter = false } = {}) {
   if (referenceInput) referenceInput.value = nextReference.reference;
   bibleVerseSelection.verses.clear();
   bibleVerseSelection.anchor = 0;
-  await refreshBibleBrowser();
+  if (!(await refreshBibleBrowser()) ||
+      bibleDesignerState.reference !== nextReference.reference ||
+      bibleDesignerState.version !== nextVersion ||
+      (referenceInput && referenceInput.value !== nextReference.reference) ||
+      (versionSelect && versionSelect.value !== nextVersion)) return false;
   if (bibleDesignerState.verse > 0 || previewChapter) {
-    let lookupResult = null;
-    try {
-      lookupResult = await lookupBibleReference(
-        bibleDesignerState.reference,
-        bibleDesignerState.version,
-      );
-    } catch {}
-    if (!lookupResult) {
-      await setBiblePreviewText(bibleDesignerState.reference, "Text not found", {
-        verse: bibleDesignerState.verse,
-        verseEnd: bibleDesignerState.verseEnd,
-      });
-      showGnomeToast("Text not found");
-      return false;
-    }
     const row = document.querySelector(
       `.bible-verse-row[data-verse="${bibleDesignerState.verse}"]`,
     );
     centerBibleVerseRowInList(row);
-    return refreshBibleLookupPreview();
+    return refreshBibleLookupPreview({ showMissing: true });
   }
   return true;
 }
@@ -6096,6 +6108,9 @@ async function openBibleWorkspaceFromButton() {
   if (!bibleUiEnabled) return;
   showBibleWorkspace();
   await bibleAPI.waitForReady();
+  await invoke("request-installed-easyworship-bibles").catch((error) => {
+    console.error("Failed to load installed EasyWorship Bibles:", error);
+  });
   const versions = await loadBibleVersionMetadataFromSidecar().catch(() => []);
 
   const previewIndex =
@@ -6135,32 +6150,46 @@ async function openBibleWorkspaceFromButton() {
   await jumpBibleReferenceToBrowser();
 }
 
-async function fallbackUnavailableBibleTranslationsOnLoad() {
+async function fallbackUnavailableBibleTranslationsOnLoad({ interactive = false } = {}) {
   const bibleItems = mediaQueue.filter((item) => isQueueItemBible(item));
   if (bibleItems.length === 0) return false;
 
-  let availableVersions = new Set();
-  let versionLookupFailed = false;
+  const readVersions = async () => new Set(
+    (await loadBibleVersionMetadataFromSidecar()).map((version) =>
+      normalizedProjectBibleVersion(version.abbreviation)),
+  );
+  let availableVersions;
   try {
     await bibleAPI.waitForReady();
-    const versions = await loadBibleVersionMetadataFromSidecar();
-    availableVersions = new Set(
-      versions.map((version) => normalizedProjectBibleVersion(version.abbreviation)),
-    );
+    availableVersions = await readVersions();
+    if (!availableVersions.size) return false;
+    const missingVersion = bibleItems.some((item) => {
+      const entry = projectBibleReferenceEntryForQueueItem(item);
+      return entry.reference && !availableVersions.has(normalizedProjectBibleVersion(entry.version));
+    });
+    if (missingVersion) {
+      const approved = await invoke("get-setting", "useInstalledEasyWorshipBibles") === true;
+      if (approved || await bibleAPI.hasEasyWorshipInstallation()) {
+        if (!approved && !interactive) return false;
+        // Join an in-flight opt-in even if its preference has already been saved.
+        await invoke("request-installed-easyworship-bibles");
+        if (await invoke("get-setting", "useInstalledEasyWorshipBibles") !== true) return false;
+        availableVersions = await readVersions();
+      }
+    }
   } catch (err) {
-    versionLookupFailed = true;
     console.error("Failed to check installed Bible translations:", err);
+    return false;
   }
 
   const unavailableVersions = new Set();
   let changed = false;
   bibleItems.forEach((item) => {
+    if (!mediaQueue.includes(item)) return;
     const entry = projectBibleReferenceEntryForQueueItem(item);
     if (!entry.reference) return;
     const version = normalizedProjectBibleVersion(entry.version);
-    const hasInstalledVersion =
-      !versionLookupFailed && availableVersions.size > 0 && availableVersions.has(version);
-    if (hasInstalledVersion) {
+    if (availableVersions.has(version)) {
       item.path = bibleQueuePath(entry.reference, version);
       item.name = projectBibleQueueName(entry);
       item.type = "bible";
@@ -6169,6 +6198,7 @@ async function fallbackUnavailableBibleTranslationsOnLoad() {
       return;
     }
 
+    if (!availableVersions.has("KJV")) return;
     unavailableVersions.add(version);
     const fallbackEntry = projectBibleReferenceOnlyEntry({
       ...entry,
@@ -6182,7 +6212,7 @@ async function fallbackUnavailableBibleTranslationsOnLoad() {
     changed = true;
   });
 
-  const shouldWarn = versionLookupFailed || unavailableVersions.size > 0;
+  const shouldWarn = unavailableVersions.size > 0;
   if (changed) {
     renderQueue();
     updatePreviewCueUI();

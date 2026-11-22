@@ -45,14 +45,17 @@ export function platformBinaryName(platform = process.platform, arch = process.a
 }
 
 export class BibleRpcClient {
-  constructor({ app, devRoot }) {
+  constructor({ app, devRoot, includeInstalledEasyWorship = () => false }) {
     this.app = app;
     this.devRoot = devRoot;
-    this.child = null;
-    this.buffer = "";
+    this.includeInstalledEasyWorship = includeInstalledEasyWorship;
+    this.session = null;
+    this.closed = false;
     this.nextId = 1;
-    this.pending = new Map();
-    this.startPromise = null;
+  }
+
+  get child() {
+    return this.session?.child ?? null;
   }
 
   resourcesRoot() {
@@ -77,22 +80,14 @@ export class BibleRpcClient {
   }
 
   async call(method, params = []) {
-    await this.ensureStarted();
-    return this.request(method, params);
+    if (this.closed) throw new Error("Bible sidecar closed");
+    const child = this.child;
+    const session = child && !child.killed && child.exitCode === null &&
+      child.signalCode == null && child.stdin.writable ? this.session : this.start();
+    return this.request(session, method, params);
   }
 
-  async ensureStarted() {
-    if (this.child && !this.child.killed && this.child.exitCode === null) return;
-    if (this.startPromise) return this.startPromise;
-    this.startPromise = this.start();
-    try {
-      await this.startPromise;
-    } finally {
-      this.startPromise = null;
-    }
-  }
-
-  async start() {
+  start() {
     const binaryPath = this.binaryPath();
     const bundleDirectory = this.bundleDirectory();
     if (!existsSync(binaryPath)) {
@@ -111,47 +106,51 @@ export class BibleRpcClient {
       path.join(userBibleDirectory, "cache"),
       "--ewb-dir",
       path.join(userBibleDirectory, "easyworship"),
+      ...(this.includeInstalledEasyWorship() ? ["--include-installed-ewb"] : []),
     ], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
-    this.child = child;
-    this.buffer = "";
+    const session = { child, buffer: "", pending: new Map() };
+    this.session = session;
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      if (this.child === child) this.handleStdout(chunk);
+      this.handleStdout(session, chunk);
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
       const message = String(chunk || "").trim();
       if (message) console.error(`[bible-rpc] ${message}`);
     });
-    child.on("error", (err) => {
-      if (this.child !== child) return;
-      this.child = null;
-      this.rejectAll(err);
-    });
-    child.on("exit", (code, signal) => {
-      if (this.child !== child) return;
+    const fail = (err) => {
+      this.rejectSession(session, err);
+      if (child.exitCode === null && child.signalCode == null && !child.killed) child.kill();
+    };
+    child.stdin.on("error", fail);
+    child.stdout.on("error", fail);
+    child.stderr.on("error", fail);
+    child.on("error", (err) => this.rejectSession(session, err));
+    // Node can deliver the last stdout data after the process exit event.
+    child.once("close", (code, signal) => {
       const detail = signal ? `signal ${signal}` : `code ${code}`;
-      this.rejectAll(new Error(`Bible sidecar exited with ${detail}`));
-      this.child = null;
+      this.rejectSession(session, new Error(`Bible sidecar exited with ${detail}`));
     });
+    return session;
   }
 
-  handleStdout(chunk) {
-    this.buffer += chunk;
-    let newlineIndex = this.buffer.indexOf("\n");
+  handleStdout(session, chunk) {
+    session.buffer += chunk;
+    let newlineIndex = session.buffer.indexOf("\n");
     while (newlineIndex >= 0) {
-      const line = this.buffer.slice(0, newlineIndex).trim();
-      this.buffer = this.buffer.slice(newlineIndex + 1);
-      if (line) this.handleMessage(line);
-      newlineIndex = this.buffer.indexOf("\n");
+      const line = session.buffer.slice(0, newlineIndex).trim();
+      session.buffer = session.buffer.slice(newlineIndex + 1);
+      if (line) this.handleMessage(session, line);
+      newlineIndex = session.buffer.indexOf("\n");
     }
   }
 
-  handleMessage(line) {
+  handleMessage(session, line) {
     let message;
     try {
       message = JSON.parse(line);
@@ -160,10 +159,10 @@ export class BibleRpcClient {
       return;
     }
 
-    const pending = this.pending.get(message.id);
+    const pending = session.pending.get(message?.id);
     if (!pending) return;
     clearTimeout(pending.timer);
-    this.pending.delete(message.id);
+    session.pending.delete(message.id);
     if (message.error) {
       pending.reject(new Error(message.error.message || "Bible RPC error"));
     } else {
@@ -171,7 +170,7 @@ export class BibleRpcClient {
     }
   }
 
-  request(method, params) {
+  request(session, method, params) {
     const id = this.nextId;
     this.nextId += 1;
     const payload = JSON.stringify({
@@ -183,32 +182,42 @@ export class BibleRpcClient {
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
+        session.pending.delete(id);
         reject(new Error(`Bible RPC timed out: ${method}`));
       }, RPC_TIMEOUT_MS);
-      this.pending.set(id, { resolve, reject, timer });
-      this.child.stdin.write(`${payload}\n`, "utf8", (err) => {
+      session.pending.set(id, { resolve, reject, timer });
+      const onWrite = (err) => {
         if (!err) return;
         clearTimeout(timer);
-        this.pending.delete(id);
+        session.pending.delete(id);
         reject(err);
-      });
+      };
+      try {
+        session.child.stdin.write(`${payload}\n`, "utf8", onWrite);
+      } catch (err) {
+        onWrite(err);
+      }
     });
   }
 
-  rejectAll(err) {
-    for (const [id, pending] of this.pending) {
+  rejectSession(session, err) {
+    if (this.session === session) this.session = null;
+    for (const [id, pending] of session.pending) {
       clearTimeout(pending.timer);
       pending.reject(err);
-      this.pending.delete(id);
+      session.pending.delete(id);
     }
   }
 
   stop() {
-    this.rejectAll(new Error("Bible sidecar stopped"));
-    if (this.child && !this.child.killed) {
-      this.child.kill();
-    }
-    this.child = null;
+    const session = this.session;
+    if (!session) return;
+    this.rejectSession(session, new Error("Bible sidecar stopped"));
+    if (!session.child.killed) session.child.kill();
+  }
+
+  close() {
+    this.closed = true;
+    this.stop();
   }
 }

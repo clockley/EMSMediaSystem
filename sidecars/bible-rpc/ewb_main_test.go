@@ -89,6 +89,8 @@ func swapEWBGlobals(t *testing.T) {
 	oldDB := db
 	oldEWBBookNames := ewbBookNames
 	oldEWBBookAliases := ewbBookAliases
+	oldAddedEWBAliases := addedEWBAliases
+	addedEWBAliases = nil
 	oldEWBBookAliasKeys := ewbBookAliasKeys
 	oldVersions := cachedVersions
 	oldBooks := cachedBooks
@@ -107,6 +109,7 @@ func swapEWBGlobals(t *testing.T) {
 		ewbBookNames = oldEWBBookNames
 		ewbBookAliases = oldEWBBookAliases
 		ewbBookAliasKeys = oldEWBBookAliasKeys
+		addedEWBAliases = oldAddedEWBAliases
 		cachedVersions = oldVersions
 		cachedBooks = oldBooks
 		cachedBookDetails = oldBookDetails
@@ -243,7 +246,16 @@ func TestLoadEWBBiblesServesInPlaceThroughBibleAPI(t *testing.T) {
 		}
 	}
 
-	loadEWBBibles(ewbSearchDirectories(directory, "linux")...)
+	locations := ewbLocations{explicit: []string{directory}}
+	if !locations.available() {
+		t.Fatal("did not detect explicit plugins on a machine without EasyWorship")
+	}
+	locations.installed = installedEWBDirectories("linux")
+	if !locations.available() || len(cachedVersions) != 1 {
+		t.Fatalf("detection should leave only native EMS versions available: %v", cachedVersions)
+	}
+	locations.load()
+	locations.load()
 	if len(cachedVersions) != 3 {
 		t.Fatalf("versions = %v", cachedVersions)
 	}
@@ -407,21 +419,21 @@ func TestLoadEWBBiblesMissingDirectoryIsHarmless(t *testing.T) {
 
 func TestEWBSearchDirectories(t *testing.T) {
 	root := t.TempDir()
-	custom := filepath.Join(root, "church library")
-	ems := filepath.Join(root, "ems", "easyworship")
 	programData := filepath.Join(root, "shared data")
 	t.Setenv("ProgramData", programData)
-	t.Setenv("EMS_BIBLE_EWB_DIR", custom)
-	dirs := ewbSearchDirectories(ems, "windows")
-	wantFirst := []string{ems, custom, filepath.Join(programData, "Softouch", "EasyWorship.v8", "Plugins", "Bibles")}
+	dirs := installedEWBDirectories("windows")
+	wantFirst := []string{filepath.Join(programData, "Softouch", "EasyWorship.v8", "Plugins", "Bibles")}
 	if len(dirs) < len(wantFirst) || !slices.Equal(dirs[:len(wantFirst)], wantFirst) {
 		t.Fatalf("search directories = %v, want first %v", dirs, wantFirst)
 	}
 
+	if hasEasyWorshipInstallation(dirs) {
+		t.Fatal("detected an installation on an empty machine")
+	}
 	t.Setenv("WINEPREFIX", "")
 	t.Setenv("HOME", root)
 	t.Setenv("USERPROFILE", root)
-	dirs = ewbSearchDirectories(ems, "linux")
+	dirs = installedEWBDirectories("linux")
 	wantWine := filepath.Join(root, ".wine", "drive_c", "ProgramData", "Softouch", "EasyWorship.v7", "Plugins", "Bibles")
 	if !slices.Contains(dirs, wantWine) {
 		t.Fatalf("search directories %v missing default Wine location %s", dirs, wantWine)

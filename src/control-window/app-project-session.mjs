@@ -1107,7 +1107,7 @@ async function openProjectByPathSerialized(filePath) {
       );
     }
   }
-  const bibleTranslationWarningShown = await fallbackUnavailableBibleTranslationsOnLoad();
+  const bibleTranslationWarningShown = await fallbackUnavailableBibleTranslationsOnLoad({ interactive: true });
   await refreshMissingFlagsAndWarn();
   scheduleAutosaveProjectState();
   if (!bibleTranslationWarningShown) {

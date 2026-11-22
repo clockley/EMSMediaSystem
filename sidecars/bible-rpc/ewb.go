@@ -53,6 +53,7 @@ var ewbBookNames map[string]map[int]string
 // cachedAliasKeys.
 var ewbBookAliases map[string]map[string]int
 var ewbBookAliasKeys map[string][]string
+var addedEWBAliases []string
 
 // registerEWBBookNames records the translation's own book names so display
 // strings and reference parsing can use them for this version, even when a
@@ -157,8 +158,8 @@ func resolveBookID(version string, bookName string) (int, bool) {
 
 // EasyWorship keeps its Bible plugins in machine-wide application data.
 // On Linux the same Windows layout lives under the active Wine prefix.
-func ewbSearchDirectories(emsDirectory, platform string) []string {
-	directories := []string{emsDirectory, os.Getenv("EMS_BIBLE_EWB_DIR")}
+func installedEWBDirectories(platform string) []string {
+	var directories []string
 	var programData string
 	switch platform {
 	case "windows":
@@ -188,6 +189,43 @@ func ewbSearchDirectories(emsDirectory, platform string) []string {
 		}
 	}
 	return directories
+}
+
+// Detect the installation's data directory without opening a Bible.
+func hasEasyWorshipInstallation(directories []string) bool {
+	for _, directory := range directories {
+		installation := filepath.Dir(filepath.Dir(directory))
+		if info, err := os.Stat(installation); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+type ewbLocations struct {
+	explicit, installed []string
+}
+
+var pluginLocations ewbLocations
+
+func (locations ewbLocations) available() bool {
+	if hasEasyWorshipInstallation(locations.installed) {
+		return true
+	}
+	for _, directory := range locations.explicit {
+		if directory != "" {
+			files, _ := ewbFilePaths(directory)
+			if len(files) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (locations ewbLocations) load() {
+	directories := append([]string{}, locations.explicit...)
+	loadEWBBibles(append(directories, locations.installed...)...)
 }
 
 func ewbFilePaths(directory string) ([]string, error) {
@@ -244,6 +282,11 @@ func ewbVersionFor(key string, tableName string, bible *ewb.Bible) Version {
 // registerEWBBookAliases adds localized book names found in .ewb files as
 // reference aliases, but only when they are new and unambiguous.
 func registerEWBBookAliases(bibles []*ewb.Bible) {
+	for _, alias := range addedEWBAliases {
+		delete(cachedAliases, alias)
+	}
+	hadAliases := len(addedEWBAliases) != 0
+	addedEWBAliases = nil
 	candidates := map[string]map[string]bool{}
 	for _, bible := range bibles {
 		for _, book := range bible.Books {
@@ -254,7 +297,6 @@ func registerEWBBookAliases(bibles []*ewb.Bible) {
 			addAliasCandidate(candidates, book.Name, canonical.Name)
 		}
 	}
-	added := false
 	for alias, matches := range candidates {
 		if len(matches) != 1 {
 			continue
@@ -264,10 +306,10 @@ func registerEWBBookAliases(bibles []*ewb.Bible) {
 		}
 		for bookName := range matches {
 			cachedAliases[alias] = bookName
-			added = true
+			addedEWBAliases = append(addedEWBAliases, alias)
 		}
 	}
-	if !added {
+	if !hadAliases && len(addedEWBAliases) == 0 {
 		return
 	}
 	keys := make([]string, 0, len(cachedAliases))
@@ -311,6 +353,17 @@ func openEWBBatch(paths []string) []*ewb.Source {
 func loadEWBBibles(directories ...string) {
 	var paths []string
 	seen := map[string]bool{}
+	seenVersionDirectory := map[string]string{}
+	var loaded []*ewb.Bible
+	for _, version := range cachedVersions {
+		if source := version.ewbSource; source != nil {
+			directory := filepath.Dir(source.Path)
+			seen[directory] = true
+			seenVersionDirectory[ewbVersionKey(&source.Bible, source.Path)] = directory
+			loaded = append(loaded, &source.Bible)
+		}
+	}
+	previousCount := len(loaded)
 	for _, directory := range directories {
 		if strings.TrimSpace(directory) == "" {
 			continue
@@ -331,8 +384,6 @@ func loadEWBBibles(directories ...string) {
 		return
 	}
 
-	seenVersionDirectory := map[string]string{}
-	var loaded []*ewb.Bible
 	for len(paths) > 0 {
 		count := min(len(paths), ewb.DecodeConcurrency())
 		batch := openEWBBatch(paths[:count])
@@ -364,7 +415,8 @@ func loadEWBBibles(directories ...string) {
 			log.Printf("loaded EasyWorship Bible %s as %s (%d books, direct file access)", filepath.Base(path), key, len(source.Books))
 		}
 	}
-	if len(loaded) > 0 {
+	if len(loaded) > previousCount {
+		clear(cachedBookMetadataByVersion)
 		registerEWBBookAliases(loaded)
 	}
 }

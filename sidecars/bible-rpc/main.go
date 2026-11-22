@@ -2168,6 +2168,11 @@ func handleRPC(method string, params []stdjson.RawMessage) (interface{}, *rpcErr
 	switch method {
 	case "bible.ready":
 		return map[string]bool{"ready": true}, nil
+	case "bible.hasEasyWorshipInstallation":
+		return pluginLocations.available(), nil
+	case "bible.loadInstalledEasyWorship":
+		pluginLocations.load()
+		return true, nil
 	case "bible.getVersions":
 		return getVersionsData(), nil
 	case "bible.getText":
@@ -2332,6 +2337,7 @@ func main() {
 	userPackagesDir := flag.String("user-packages-dir", os.Getenv("EMS_BIBLE_USER_PACKAGES_DIR"), "Path to downloaded Bible SQLite packages")
 	cacheDir := flag.String("cache-dir", os.Getenv("EMS_BIBLE_CACHE_DIR"), "Path for generated Bible indexes")
 	ewbDir := flag.String("ewb-dir", "", "Additional directory of EasyWorship .ewb Bible files to read in place")
+	includeInstalled := flag.Bool("include-installed-ewb", false, "Enable EasyWorship Bibles from all configured locations")
 	prepareOnly := flag.Bool("prepare-only", false, "Build or validate the Bible cache, then exit")
 	flag.Parse()
 	log.SetOutput(os.Stderr)
@@ -2355,7 +2361,13 @@ func main() {
 	}
 	defer db.Close()
 
-	loadEWBBibles(ewbSearchDirectories(*ewbDir, runtime.GOOS)...)
+	pluginLocations = ewbLocations{
+		explicit:  []string{*ewbDir, os.Getenv("EMS_BIBLE_EWB_DIR")},
+		installed: installedEWBDirectories(runtime.GOOS),
+	}
+	if *includeInstalled {
+		pluginLocations.load()
+	}
 	defer closeEWBSources()
 
 	if err := serveJSONRPC(os.Stdin, os.Stdout); err != nil {

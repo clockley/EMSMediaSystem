@@ -164,6 +164,7 @@ const OUTPUT_HOLD_LOGO_FIT_KEY = "outputHoldLogoFit";
 const OUTPUT_HOLD_LOGO_BACKGROUND_KEY = "outputHoldLogoBackground";
 const MEDIA_WINDOW_BACKGROUND_COLOR = "#000000";
 const LOWER_THIRD_CHROMA_KEY_COLOR_KEY = "lowerThirdChromaKeyColor";
+const USE_INSTALLED_EASYWORSHIP_KEY = "useInstalledEasyWorshipBibles";
 const BIBLE_UI_ENABLED_KEY = "bibleUiEnabled";
 const LOWER_THIRD_UI_ENABLED_KEY = "lowerThirdUiEnabled";
 const STAGE_DISPLAY_KEY = "lastStageDisplayIndex";
@@ -174,6 +175,7 @@ let quitCleanupStarted = false;
 const TIME_REMAINING_PORT_CHANNEL = "timeRemaining-port";
 const pendingProjectOpens = [];
 const bibleRpcClient = new BibleRpcClient({
+  includeInstalledEasyWorship: () => readSettings()[USE_INSTALLED_EASYWORSHIP_KEY] === true,
   app,
   devRoot: derivedRoot,
 });
@@ -6473,8 +6475,44 @@ async function handleShowPreflightSummaryDialog(event, opts = {}) {
   });
 }
 
+let easyWorshipPrompt = null;
+let easyWorshipPromptDismissed = false;
+let easyWorshipLoadPending = false;
+
+async function requestInstalledEasyWorshipBibles(event) {
+  if (!win || win.isDestroyed() || event.sender !== win.webContents) {
+    throw new Error("EasyWorship discovery requires the control window");
+  }
+  if (easyWorshipPrompt) return easyWorshipPrompt;
+  const approved = readSettings()[USE_INSTALLED_EASYWORSHIP_KEY] === true;
+  if (easyWorshipPromptDismissed || (approved && !easyWorshipLoadPending)) return;
+  easyWorshipPrompt = (async () => {
+    if (!approved) {
+      if (!await bibleRpcClient.call("bible.hasEasyWorshipInstallation")) return;
+      const choice = await handleShowRendererMessageBox(event, {
+        type: "question",
+        title: "EasyWorship Bibles",
+        message: "Use EasyWorship Bibles?",
+        detail: "EMS can read EasyWorship Bibles from this computer, including its configured Bible folders. Enable this option if you have permission to use those translations in EMS.",
+        buttons: ["Not Now", "Use Bibles"],
+        defaultId: 1,
+        cancelId: 0,
+      });
+      if (choice.response !== 1) {
+        easyWorshipPromptDismissed = true;
+        return;
+      }
+      easyWorshipLoadPending = true;
+      await writeSettings({ [USE_INSTALLED_EASYWORSHIP_KEY]: true });
+    }
+    await bibleRpcClient.call("bible.loadInstalledEasyWorship");
+    easyWorshipLoadPending = false;
+  })().finally(() => { easyWorshipPrompt = null; });
+  return easyWorshipPrompt;
+}
+
 async function handleBibleRPC(_event, method, params = []) {
-  if (typeof method !== "string" || !method.startsWith("bible.")) {
+  if (typeof method !== "string" || !method.startsWith("bible.") || method === "bible.loadInstalledEasyWorship") {
     throw new Error("Invalid Bible RPC method");
   }
   if (!Array.isArray(params)) {
@@ -6637,6 +6675,7 @@ function setIPC() {
   ipcMain.handle("generate-video-poster", handleGenerateVideoPoster);
   ipcMain.handle("show-preflight-summary-dialog", handleShowPreflightSummaryDialog);
   ipcMain.handle("bible-rpc", handleBibleRPC);
+  ipcMain.handle("request-installed-easyworship-bibles", requestInstalledEasyWorshipBibles);
   ipcMain.handle("songs-rpc", handleSongsRPC);
   ipcMain.handle("slides:list", (_e, opts) => slidesStore.list(opts || {}));
   ipcMain.handle("slides:get", (_e, id) => slidesStore.get(id));
@@ -7187,7 +7226,7 @@ app.on("before-quit", (event) => {
   if (quitCleanupStarted) return;
   quitCleanupStarted = true;
   event.preventDefault();
-  bibleRpcClient.stop();
+  bibleRpcClient.close();
   atemService.stop();
   mediaWatcher.closeAll();
   mediaLibrary.close();
