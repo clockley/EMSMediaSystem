@@ -221,17 +221,14 @@ func ewbVersionKey(bible *ewb.Bible, path string) string {
 }
 
 func ewbVersionFor(key string, tableName string, bible *ewb.Bible) Version {
-	sourceName := filepath.Base(bible.Path)
 	abbreviation := ewbVersionKey(bible, bible.Path)
 	version := Version{
 		Abbreviation: abbreviation,
 		Version:      abbreviation + " (EasyWorship)",
 		TableName:    tableName,
 		Source:       ewbVersionSource,
-		CopyrightInfo: fmt.Sprintf(
-			"Read in place from the EasyWorship Bible file %q. The text remains the property of its copyright holder; use requires a valid license for this translation.",
-			sourceName,
-		),
+		Copyright:    bible.Copyright,
+		License:      bible.License,
 	}
 	if bible.Name != "" {
 		version.Version = bible.Name

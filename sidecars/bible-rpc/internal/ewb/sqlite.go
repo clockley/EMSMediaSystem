@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/attilabuti/striprtf"
 	_ "modernc.org/sqlite"
 )
 
@@ -66,6 +68,27 @@ func openSQLiteSource(path string) (*Source, error) {
 	return source, nil
 }
 
+// SQLite plugins may store publisher notices as either plain text or RTF.
+func publisherNotice(value string) string {
+	value = strings.Trim(value, " \r\n\t\x00\ufeff")
+	if !strings.HasPrefix(value, `{\rtf`) {
+		return value
+	}
+	// Preserve unusually large notices verbatim instead of expanding RTF tokens.
+	if len(value) > 64<<10 {
+		return value
+	}
+	reader, err := striprtf.ExtractText(strings.NewReader(value))
+	if err != nil {
+		return value
+	}
+	text, err := io.ReadAll(reader)
+	if err != nil {
+		return value
+	}
+	return strings.TrimSpace(string(text))
+}
+
 func sqliteCatalog(db *sql.DB) (*Source, error) {
 
 	// Only query stored tables. A view or virtual table with a familiar
@@ -81,8 +104,12 @@ func sqliteCatalog(db *sql.DB) (*Source, error) {
 	}
 	var format, translation int
 	bible := &Bible{}
-	err = db.QueryRow(`SELECT format_version, id, name, abbrev_name, lang_code FROM header LIMIT 1`).
-		Scan(&format, &translation, &bible.Name, &bible.Abbreviation, &bible.Language)
+	var copyright, license sql.NullString
+	// In the subquery, header columns come first. The trailing NULLs supply
+	// defaults for older headers that omit either optional notice column.
+	err = db.QueryRow(`SELECT format_version, id, name, abbrev_name, lang_code, copyright, license
+		FROM (SELECT header.*, NULL AS copyright, NULL AS license FROM header) LIMIT 1`).
+		Scan(&format, &translation, &bible.Name, &bible.Abbreviation, &bible.Language, &copyright, &license)
 	if err != nil {
 		return nil, fmt.Errorf("EasyWorship header: %w", err)
 	}
@@ -92,6 +119,9 @@ func sqliteCatalog(db *sql.DB) (*Source, error) {
 	if translation < 0 || translation > 127 {
 		return nil, fmt.Errorf("invalid EasyWorship translation ID %d", translation)
 	}
+
+	bible.Copyright = publisherNotice(copyright.String)
+	bible.License = publisherNotice(license.String)
 
 	rows, err := db.Query(`SELECT rowid, name FROM books ORDER BY rowid`)
 	if err != nil {

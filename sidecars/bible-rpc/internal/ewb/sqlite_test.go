@@ -58,6 +58,22 @@ func TestSQLiteBible(t *testing.T) {
 	if _, err := db.Exec("INSERT INTO streams(rowid,stream) VALUES (10,?)", stream); err != nil {
 		t.Fatal(err)
 	}
+	// A v1 header without notice columns remains readable.
+	sourceWithoutNotices, err := sqliteCatalog(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceWithoutNotices.Copyright != "" || sourceWithoutNotices.License != "" {
+		t.Fatal("unexpected publisher notices in minimal header")
+	}
+	if _, err := db.Exec(`ALTER TABLE header ADD COLUMN copyright TEXT;
+		ALTER TABLE header ADD COLUMN license TEXT;`); err != nil {
+		t.Fatal(err)
+	}
+	const richNotice = `{\rtf1\ansi\ansicpg1252{\fonttbl{\f0 Courier;}}\f0 \'a9 Press\par A second line}`
+	if _, err := db.Exec(`UPDATE header SET copyright=?, license=?`, richNotice, "Terms in plain text."); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +107,7 @@ func TestSQLiteBible(t *testing.T) {
 	fromFile.Path = ""
 	want := &Bible{
 		Name: "Test Bible", Abbreviation: "TST", Language: "ES",
+		Copyright: "© Press\nA second line", License: "Terms in plain text.",
 		Books: []Book{{ID: 10, Name: "Samuel", Chapters: []Chapter{
 			{Number: 2, Verses: []Verse{{Number: 9, Text: "Crió."}}},
 			{Number: 24, Verses: []Verse{

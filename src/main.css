@@ -6564,6 +6564,15 @@ body.is-song-sidebar-resizing .song-sidebar-resize-handle::before {
     -webkit-box-orient: vertical;
 }
 
+.bible-version-attribution.bible-publisher-notices {
+    display: block;
+    max-height: 10rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
+}
+
 .bible-version-attribution[hidden] {
     display: none;
 }

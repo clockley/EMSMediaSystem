@@ -5453,10 +5453,18 @@ function bibleAttributionForResult(result) {
 function syncBibleVersionAttributionDisplay() {
   const attributionEl = document.getElementById("bibleVersionAttribution");
   if (!attributionEl) return;
-  const attribution = bibleAttributionForVersion(bibleDesignerState.version);
-  const text = bibleAttributionText(attribution, bibleDesignerState.version);
+  const metadata = bibleVersionMetadata(bibleDesignerState.version);
+  const { attribution } = metadata;
+  const isPlugin = metadata.source === "ewb";
+  const text = isPlugin
+    ? [
+        metadata.copyright && `Copyright\n${metadata.copyright}`,
+        metadata.license && `License\n${metadata.license}`,
+      ].filter(Boolean).join("\n\n")
+    : bibleAttributionText(attribution, bibleDesignerState.version);
+  attributionEl.classList.toggle("bible-publisher-notices", isPlugin);
   attributionEl.textContent = text;
-  attributionEl.title = text;
+  attributionEl.title = isPlugin ? "" : text;
   attributionEl.hidden = !text;
   bibleDesignerState.attribution = attribution;
 }

@@ -39,6 +39,7 @@ import (
 )
 
 type Version struct {
+	License       string `json:"license,omitempty"`
 	ewbSource     *ewb.Source
 	Abbreviation  string           `json:"abbreviation"`
 	Version       string           `json:"version"`

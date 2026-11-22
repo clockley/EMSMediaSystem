@@ -395,3 +395,24 @@ test("reopening a recent passage uses the installed translation and ignores stal
   assert.equal(await context.openRecentScripture({ ...item, version: "Missing" }), false);
   assert.equal(remembered.length, 1);
 });
+
+test("the Bible information panel shows available plugin notices and clears them when switching versions", () => {
+  const { context } = harness();
+  const panel = { classList: { toggle() {} } };
+  context.document.getElementById = () => panel;
+  const plugin = { source: "ewb", copyright: "© Publisher", license: "Line one\nLine two" };
+  context.bibleVersionMetadata = () => plugin;
+  vm.runInContext(section("function bibleAttributionText(", "function syncBibleSelectorsFromState("), context);
+  context.syncBibleVersionAttributionDisplay();
+  assert.equal(panel.textContent, "Copyright\n© Publisher\n\nLicense\nLine one\nLine two");
+  delete plugin.license;
+  context.syncBibleVersionAttributionDisplay();
+  assert.equal(panel.textContent, "Copyright\n© Publisher");
+  delete plugin.copyright;
+  context.syncBibleVersionAttributionDisplay();
+  assert.equal(panel.hidden, true);
+  context.bibleVersionMetadata = () => ({ attribution: { text: "EMS attribution" } });
+  context.syncBibleVersionAttributionDisplay();
+  assert.equal(panel.textContent, "EMS attribution");
+  assert.equal(panel.hidden, false);
+});

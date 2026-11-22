@@ -103,9 +103,11 @@ type Book struct {
 }
 
 type Bible struct {
-	Path     string
-	Name     string
-	Language string
+	Copyright string
+	License   string
+	Path      string
+	Name      string
+	Language  string
 	// Abbreviation comes from the SQLite header or the legacy entitlement stream.
 	Abbreviation string
 	// Entitlement is the raw entitlement string, for example "ezFreeDARBY".

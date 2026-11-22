@@ -3,8 +3,9 @@ module emsmediasystem/bible-rpc
 go 1.22.5
 
 require (
+	github.com/attilabuti/striprtf v1.0.0
 	github.com/go-compressions/lzfse v0.1.0
-	golang.org/x/text v0.16.0
+	golang.org/x/text v0.17.0
 	modernc.org/sqlite v1.34.5
 )
 
