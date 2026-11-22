@@ -137,7 +137,7 @@ endif
 WINDOWS_VIDEO_POSTER_RID = win-x64
 
 # Go source that produces the sidecar binary (edition independent).
-BIBLE_RPC_GO_SOURCES = $(BIBLE_RPC_ROOT)/main.go $(BIBLE_RPC_ROOT)/sources.go $(BIBLE_RPC_ROOT)/installed.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
+BIBLE_RPC_GO_SOURCES = $(wildcard $(BIBLE_RPC_ROOT)/*.go) $(wildcard $(BIBLE_RPC_ROOT)/internal/*/*.go) $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
 MEDIA_WATCHER_GO_SOURCES = $(MEDIA_WATCHER_ROOT)/main.go $(MEDIA_WATCHER_ROOT)/go.mod $(MEDIA_WATCHER_ROOT)/go.sum
 MEDIA_LIBRARY_RPC_GO_SOURCES = $(wildcard $(MEDIA_LIBRARY_RPC_ROOT)/*.go) $(MEDIA_LIBRARY_RPC_ROOT)/go.mod $(MEDIA_LIBRARY_RPC_ROOT)/go.sum
 SONGS_RPC_GO_SOURCES = $(wildcard $(SONGS_RPC_ROOT)/*.go) $(wildcard $(SONGS_RPC_ROOT)/internal/songstore/*.go) $(wildcard $(SONGS_RPC_ROOT)/internal/songimport/*.go) $(SONGS_RPC_ROOT)/go.mod $(SONGS_RPC_ROOT)/go.sum

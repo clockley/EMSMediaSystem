@@ -41,6 +41,12 @@ export function parseScriptureReference(input) {
   return { book, chapter, verse, verseEnd, verseSelector };
 }
 
+export function scriptureDisplayReference(reference, version, attribution) {
+  const abbreviation = attribution?.abbreviation;
+  const label = abbreviation && version === `${abbreviation}-EW` ? abbreviation : version;
+  return [reference, label].filter(Boolean).join(" ").trim();
+}
+
 export function normalizeScriptureReference(input) {
   return String(input || "")
     .trim()

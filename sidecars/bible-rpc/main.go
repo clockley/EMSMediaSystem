@@ -26,17 +26,20 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
 
 	"emsmediasystem/bible-rpc/internal/biblestore"
+	"emsmediasystem/bible-rpc/internal/ewb"
 
 	_ "modernc.org/sqlite"
 )
 
 type Version struct {
+	ewbSource     *ewb.Source
 	Abbreviation  string           `json:"abbreviation"`
 	Version       string           `json:"version"`
 	TableName     string           `json:"tableName"`
@@ -46,6 +49,7 @@ type Version struct {
 	Publisher     string           `json:"publisher,omitempty"`
 	Copyright     string           `json:"copyright,omitempty"`
 	CopyrightInfo string           `json:"copyrightInfo,omitempty"`
+	Source        string           `json:"source,omitempty"`
 	Attribution   BibleAttribution `json:"attribution"`
 }
 
@@ -87,20 +91,21 @@ type PassageVerse struct {
 }
 
 type ReferenceResponse struct {
-	Version          string `json:"version"`
-	Input            string `json:"input,omitempty"`
-	Reference        string `json:"reference"`
-	Book             string `json:"book"`
-	BookAbbreviation string `json:"bookAbbreviation,omitempty"`
-	BookID           int    `json:"bookId"`
-	Chapter          int    `json:"chapter"`
-	Verse            int    `json:"verse,omitempty"`
-	VerseEnd         int    `json:"verseEnd,omitempty"`
-	VerseSelector    string `json:"verseSelector,omitempty"`
-	ChapterCount     int    `json:"chapterCount,omitempty"`
-	VerseCount       int    `json:"verseCount,omitempty"`
-	SelectedVerses   []int  `json:"selectedVerses,omitempty"`
-	Error            string `json:"error,omitempty"`
+	chapterVerses    []PassageVerse // Already decoded while validating the reference.
+	Version          string         `json:"version"`
+	Input            string         `json:"input,omitempty"`
+	Reference        string         `json:"reference"`
+	Book             string         `json:"book"`
+	BookAbbreviation string         `json:"bookAbbreviation,omitempty"`
+	BookID           int            `json:"bookId"`
+	Chapter          int            `json:"chapter"`
+	Verse            int            `json:"verse,omitempty"`
+	VerseEnd         int            `json:"verseEnd,omitempty"`
+	VerseSelector    string         `json:"verseSelector,omitempty"`
+	ChapterCount     int            `json:"chapterCount,omitempty"`
+	VerseCount       int            `json:"verseCount,omitempty"`
+	SelectedVerses   []int          `json:"selectedVerses,omitempty"`
+	Error            string         `json:"error,omitempty"`
 }
 
 type PassageResponse struct {
@@ -980,8 +985,11 @@ func contiguousVerseEnd(selected []int) int {
 	return selected[len(selected)-1]
 }
 
-func bookChapterCount(db *sql.DB, tableName string, bookID int) (int, error) {
-	tableName, err := safeTableName(tableName)
+func bookChapterCount(db *sql.DB, version Version, bookID int) (int, error) {
+	if version.ewbSource != nil {
+		return len(version.ewbSource.VerseCounts[bookID]), nil
+	}
+	tableName, err := safeTableName(version.TableName)
 	if err != nil {
 		return 0, err
 	}
@@ -997,8 +1005,15 @@ func bookChapterCount(db *sql.DB, tableName string, bookID int) (int, error) {
 	return count, nil
 }
 
-func chapterVerseCount(db *sql.DB, tableName string, bookID int, chapter int) (int, error) {
-	tableName, err := safeTableName(tableName)
+func chapterVerseCount(db *sql.DB, version Version, bookID int, chapter int) (int, error) {
+	if version.ewbSource != nil {
+		counts := version.ewbSource.VerseCounts[bookID]
+		if chapter < 1 || chapter > len(counts) {
+			return 0, nil
+		}
+		return counts[chapter-1], nil
+	}
+	tableName, err := safeTableName(version.TableName)
 	if err != nil {
 		return 0, err
 	}
@@ -1023,12 +1038,8 @@ func resolveReferenceData(db *sql.DB, version string, rawReference string) (Refe
 	if err != nil {
 		return ReferenceResponse{}, err
 	}
-	tableName, err := safeTableName(versionInfo.TableName)
-	if err != nil {
-		return ReferenceResponse{}, err
-	}
 
-	book, ok := matchBookReference(rawReference)
+	book, ok := matchBookReferenceForVersion(versionInfo.Abbreviation, rawReference)
 	if !ok {
 		return ReferenceResponse{}, fmt.Errorf("book not found")
 	}
@@ -1038,7 +1049,7 @@ func resolveReferenceData(db *sql.DB, version string, rawReference string) (Refe
 		return ReferenceResponse{}, err
 	}
 
-	chapterCount, err := bookChapterCount(db, tableName, book.ID)
+	chapterCount, err := bookChapterCount(db, versionInfo, book.ID)
 	if err != nil {
 		return ReferenceResponse{}, err
 	}
@@ -1049,14 +1060,14 @@ func resolveReferenceData(db *sql.DB, version string, rawReference string) (Refe
 		return ReferenceResponse{}, fmt.Errorf("chapter out of range")
 	}
 
-	verseCount, err := chapterVerseCount(db, tableName, book.ID, chapter)
+	verseCount, err := chapterVerseCount(db, versionInfo, book.ID, chapter)
 	if err != nil {
 		return ReferenceResponse{}, err
 	}
 	if verseCount == 0 {
 		return ReferenceResponse{}, fmt.Errorf("chapter not found")
 	}
-	chapterVerses, err := fetchChapterVerses(db, tableName, book.ID, chapter)
+	chapterVerses, err := fetchChapterVerses(db, versionInfo, book.ID, chapter)
 	if err != nil {
 		return ReferenceResponse{}, err
 	}
@@ -1086,7 +1097,8 @@ func resolveReferenceData(db *sql.DB, version string, rawReference string) (Refe
 		return ReferenceResponse{}, fmt.Errorf("verse not found")
 	}
 	normalizedSelector := verseSelectorFromSelectedVerses(selected)
-	reference := fmt.Sprintf("%s %d", book.Name, chapter)
+	displayName := nativeBookName(versionInfo.Abbreviation, book.ID, book.Name)
+	reference := fmt.Sprintf("%s %d", displayName, chapter)
 	if normalizedSelector != "" {
 		reference = fmt.Sprintf("%s:%s", reference, normalizedSelector)
 	}
@@ -1097,10 +1109,11 @@ func resolveReferenceData(db *sql.DB, version string, rawReference string) (Refe
 	}
 
 	return ReferenceResponse{
+		chapterVerses:    chapterVerses,
 		Version:          versionInfo.Abbreviation,
 		Input:            rawReference,
 		Reference:        reference,
-		Book:             book.Name,
+		Book:             displayName,
 		BookAbbreviation: book.Abbreviation,
 		BookID:           book.ID,
 		Chapter:          chapter,
@@ -1113,8 +1126,24 @@ func resolveReferenceData(db *sql.DB, version string, rawReference string) (Refe
 	}, nil
 }
 
-func fetchChapterVerses(db *sql.DB, tableName string, bookID int, chapter int) ([]PassageVerse, error) {
-	tableName, err := safeTableName(tableName)
+func fetchChapterVerses(db *sql.DB, version Version, bookID int, chapter int) ([]PassageVerse, error) {
+	if version.ewbSource != nil {
+		chapters, err := version.ewbSource.ReadBook(bookID)
+		if err != nil {
+			return nil, err
+		}
+		for _, ch := range chapters {
+			if ch.Number == chapter {
+				rows := make([]PassageVerse, 0, len(ch.Verses))
+				for _, v := range ch.Verses {
+					rows = append(rows, PassageVerse{Verse: v.Number, Text: biblestore.CleanBibleVerseTextAtLocation(bookID, chapter, v.Number, v.Text)})
+				}
+				return rows, nil
+			}
+		}
+		return nil, sql.ErrNoRows
+	}
+	tableName, err := safeTableName(version.TableName)
 	if err != nil {
 		return nil, err
 	}
@@ -1144,7 +1173,7 @@ func fetchChapterVerses(db *sql.DB, tableName string, bookID int, chapter int) (
 }
 
 func fetchVerseTextByLocation(db *sql.DB, tableName string, bookID int, chapter int, verse int) (string, error) {
-	verses, err := fetchChapterVerses(db, tableName, bookID, chapter)
+	verses, err := fetchChapterVerses(db, Version{TableName: tableName}, bookID, chapter)
 	if err != nil {
 		return "", err
 	}
@@ -1197,15 +1226,7 @@ func getPassageResult(version, reference string) PassageResponse {
 		}
 	}
 
-	chapterVerses, err := fetchChapterVerses(db, versionInfo.TableName, resolved.BookID, resolved.Chapter)
-	if err != nil {
-		return PassageResponse{
-			Version:     versionInfo.Abbreviation,
-			Attribution: versionInfo.Attribution,
-			Reference:   resolved.Reference,
-			Error:       err.Error(),
-		}
-	}
+	chapterVerses := resolved.chapterVerses
 
 	selectedVerseSet := make(map[int]bool)
 	for _, verse := range resolved.SelectedVerses {
@@ -1239,17 +1260,13 @@ func getPassageResult(version, reference string) PassageResponse {
 	}
 }
 
-func getBookMetadataResult(version string) BookMetadataResponse {
-	versionInfo, err := versionInfoFor(version)
-	if err != nil {
-		return BookMetadataResponse{Version: defaultVersion(version), Error: err.Error()}
-	}
-	if cached, ok := cachedBookMetadataByVersion[versionInfo.Abbreviation]; ok {
-		return cached
+func versionVerseCounts(versionInfo Version) (map[int][]int, error) {
+	if versionInfo.ewbSource != nil {
+		return versionInfo.ewbSource.VerseCounts, nil
 	}
 	tableName, err := safeTableName(versionInfo.TableName)
 	if err != nil {
-		return BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()}
+		return nil, err
 	}
 
 	rows, err := db.Query(
@@ -1257,7 +1274,7 @@ func getBookMetadataResult(version string) BookMetadataResponse {
 		tableName,
 	)
 	if err != nil {
-		return BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()}
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -1265,7 +1282,7 @@ func getBookMetadataResult(version string) BookMetadataResponse {
 	for rows.Next() {
 		var bookID, chapter, verseCount int
 		if err := rows.Scan(&bookID, &chapter, &verseCount); err != nil {
-			return BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()}
+			return nil, err
 		}
 		counts := verseCountsByBook[bookID]
 		for len(counts) < chapter {
@@ -1275,6 +1292,22 @@ func getBookMetadataResult(version string) BookMetadataResponse {
 		verseCountsByBook[bookID] = counts
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return verseCountsByBook, nil
+}
+
+func getBookMetadataResult(version string) BookMetadataResponse {
+	versionInfo, err := versionInfoFor(version)
+	if err != nil {
+		return BookMetadataResponse{Version: defaultVersion(version), Error: err.Error()}
+	}
+	if cached, ok := cachedBookMetadataByVersion[versionInfo.Abbreviation]; ok {
+		return cached
+	}
+	verseCountsByBook, err := versionVerseCounts(versionInfo)
+	if err != nil {
 		return BookMetadataResponse{Version: versionInfo.Abbreviation, Error: err.Error()}
 	}
 
@@ -1292,6 +1325,22 @@ func getBookMetadataResult(version string) BookMetadataResponse {
 		book.VerseCounts = verseCountsByBook[book.ID]
 		book.Chapters = len(book.VerseCounts)
 		book.Aliases = aliasesByBook[book.Name]
+		if native := nativeBookName(versionInfo.Abbreviation, book.ID, ""); native != "" && native != book.Name {
+			// Show the translation's own book name while keeping the
+			// canonical English name accepted as input.
+			canonicalAlias := normalizeBibleAlias(book.Name)
+			hasCanonical := false
+			for _, alias := range book.Aliases {
+				if alias == canonicalAlias {
+					hasCanonical = true
+					break
+				}
+			}
+			if !hasCanonical {
+				book.Aliases = append(append([]string{}, book.Aliases...), canonicalAlias)
+			}
+			book.Name = native
+		}
 		sort.Strings(book.Aliases)
 		books = append(books, book)
 	}
@@ -1315,15 +1364,16 @@ func suggestionExists(suggestions []ReferenceSuggestion, reference string, sugge
 }
 
 func addBookSuggestion(suggestions []ReferenceSuggestion, version string, book BookMetadata) []ReferenceSuggestion {
-	if suggestionExists(suggestions, book.Name, "book") {
+	name := nativeBookName(version, book.ID, book.Name)
+	if suggestionExists(suggestions, name, "book") {
 		return suggestions
 	}
 	return append(suggestions, ReferenceSuggestion{
 		Type:      "book",
-		Label:     book.Name,
-		Reference: book.Name,
+		Label:     name,
+		Reference: name,
 		Version:   version,
-		Book:      book.Name,
+		Book:      name,
 		BookID:    book.ID,
 	})
 }
@@ -1363,18 +1413,26 @@ func bookMatchesPrefixQuery(book BookMetadata, query string) bool {
 	if normalizedQuery == "" {
 		return false
 	}
-	normalizedName := normalizeBibleAlias(book.Name)
-	if strings.HasPrefix(normalizedName, normalizedQuery) ||
-		strings.HasPrefix(compactAlias(book.Name), compactQuery) {
-		return true
+	// Match both the displayed (possibly localized) name and the canonical
+	// English name so typed English keeps working for localized versions.
+	names := []string{book.Name}
+	if canonical, ok := cachedBookDetails[book.ID]; ok && canonical.Name != book.Name {
+		names = append(names, canonical.Name)
 	}
-	for alias, bookName := range cachedAliases {
-		if bookName != book.Name {
-			continue
-		}
-		if strings.HasPrefix(alias, normalizedQuery) ||
-			strings.HasPrefix(strings.ReplaceAll(alias, " ", ""), compactQuery) {
+	for _, name := range names {
+		normalizedName := normalizeBibleAlias(name)
+		if strings.HasPrefix(normalizedName, normalizedQuery) ||
+			strings.HasPrefix(compactAlias(name), compactQuery) {
 			return true
+		}
+		for alias, bookName := range cachedAliases {
+			if bookName != name {
+				continue
+			}
+			if strings.HasPrefix(alias, normalizedQuery) ||
+				strings.HasPrefix(strings.ReplaceAll(alias, " ", ""), compactQuery) {
+				return true
+			}
 		}
 	}
 	return false
@@ -1528,6 +1586,9 @@ func fuzzyBookCandidates(input string, books []BookMetadata) []fuzzyBookCandidat
 		tail := strings.Join(tokens[split:], " ")
 		for _, book := range books {
 			score := bestAliasDistanceForBook(bookQuery, book.Name)
+			if canonical, ok := cachedBookDetails[book.ID]; ok && canonical.Name != book.Name {
+				score = minInt(score, bestAliasDistanceForBook(bookQuery, canonical.Name))
+			}
 			if score > threshold {
 				continue
 			}
@@ -1599,6 +1660,9 @@ func suggestReferencesResult(version string, input string) SuggestReferencesResp
 	availableBookNames := make(map[string]bool, len(availableBooks))
 	for _, book := range availableBooks {
 		availableBookNames[book.Name] = true
+		if canonical, ok := cachedBookDetails[book.ID]; ok {
+			availableBookNames[canonical.Name] = true
+		}
 	}
 
 	suggestions := []ReferenceSuggestion{}
@@ -1664,7 +1728,7 @@ func suggestReferencesResult(version string, input string) SuggestReferencesResp
 }
 
 func getTextResult(version, bookName, chapterVerse string) TextResponse {
-	bookID, ok := cachedBooks[bookName]
+	bookID, ok := resolveBookID(version, bookName)
 	if !ok {
 		return TextResponse{Error: "Book not found"}
 	}
@@ -1683,16 +1747,12 @@ func getChapterInfoResult(versionKey, bookName string, chapterNumber int) (int, 
 		return 0, err
 	}
 
-	bookID, ok := cachedBooks[bookName]
+	bookID, ok := resolveBookID(versionInfo.Abbreviation, bookName)
 	if !ok {
 		return 0, fmt.Errorf("book not found")
 	}
 
-	tableName, err := safeTableName(versionInfo.TableName)
-	if err != nil {
-		return 0, err
-	}
-	verseCount, err := chapterVerseCount(db, tableName, bookID, chapterNumber)
+	verseCount, err := chapterVerseCount(db, versionInfo, bookID, chapterNumber)
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch verse count: %w", err)
 	}
@@ -1706,16 +1766,12 @@ func getBookInfoResult(versionKey, bookName string) (int, error) {
 		return 0, err
 	}
 
-	bookID, ok := cachedBooks[bookName]
+	bookID, ok := resolveBookID(versionInfo.Abbreviation, bookName)
 	if !ok {
 		return 0, fmt.Errorf("book not found")
 	}
 
-	tableName, err := safeTableName(versionInfo.TableName)
-	if err != nil {
-		return 0, err
-	}
-	chapterCount, err := bookChapterCount(db, tableName, bookID)
+	chapterCount, err := bookChapterCount(db, versionInfo, bookID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to fetch chapter count: %w", err)
 	}
@@ -1727,11 +1783,6 @@ func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterV
 	versionInfo, ok := cachedVersions[version]
 	if !ok {
 		return TextResponse{}, fmt.Errorf("version not found: %s", version)
-	}
-
-	tableName, err := safeTableName(versionInfo.TableName)
-	if err != nil {
-		return TextResponse{}, err
 	}
 
 	colonIndex := strings.Index(chapterVerse, ":")
@@ -1747,7 +1798,7 @@ func fetchText(db *sql.DB, version string, bookName string, bookID int, chapterV
 	if err != nil {
 		return TextResponse{}, fmt.Errorf("invalid chapter")
 	}
-	chapterVerses, err := fetchChapterVerses(db, tableName, bookID, chapterNumber)
+	chapterVerses, err := fetchChapterVerses(db, versionInfo, bookID, chapterNumber)
 	if err != nil {
 		return TextResponse{}, fmt.Errorf("database query error: %v", err)
 	}
@@ -1878,29 +1929,15 @@ func isAllVersionSearch(version string) bool {
 	return version == "" || version == "*" || version == "ALL"
 }
 
-func searchTextResult(version, input string, options SearchOptions) SearchTextResponse {
-	mode := normalizedSearchMode(options.Mode, input)
-	query, err := ftsSearchQuery(input, mode)
-	if err != nil {
-		return SearchTextResponse{Version: defaultVersion(version), Query: input, Mode: mode, Error: err.Error()}
-	}
-
+func searchTextOnDatabase(handle *sql.DB, query string, versionFilterArg string, limit int) ([]SearchResult, error) {
 	versionFilter := ""
 	args := []interface{}{query}
-	responseVersion := "ALL"
-	if !isAllVersionSearch(version) {
-		versionInfo, err := versionInfoFor(version)
-		if err != nil {
-			return SearchTextResponse{Version: defaultVersion(version), Query: input, Mode: mode, Error: err.Error()}
-		}
-		responseVersion = versionInfo.Abbreviation
+	if versionFilterArg != "" {
 		versionFilter = " AND l.version = ?"
-		args = append(args, versionInfo.Abbreviation)
+		args = append(args, versionFilterArg)
 	}
-
-	limit := normalizedSearchLimit(options.Limit)
 	args = append(args, limit)
-	rows, err := db.Query(
+	rows, err := handle.Query(
 		fmt.Sprintf(`
 			SELECT
 				l.version,
@@ -1924,11 +1961,12 @@ func searchTextResult(version, input string, options SearchOptions) SearchTextRe
 		args...,
 	)
 	if err != nil {
-		return SearchTextResponse{Version: responseVersion, Query: input, Mode: mode, Error: err.Error()}
+		return nil, err
 	}
 	defer rows.Close()
 
 	results := []SearchResult{}
+	tableNames := []string{}
 	for rows.Next() {
 		var result SearchResult
 		var tableName string
@@ -1940,7 +1978,7 @@ func searchTextResult(version, input string, options SearchOptions) SearchTextRe
 			&result.Verse,
 			&result.Rank,
 		); err != nil {
-			return SearchTextResponse{Version: responseVersion, Query: input, Mode: mode, Error: err.Error()}
+			return nil, err
 		}
 		if versionInfo, ok := cachedVersions[result.Version]; ok {
 			result.Attribution = versionInfo.Attribution
@@ -1948,20 +1986,84 @@ func searchTextResult(version, input string, options SearchOptions) SearchTextRe
 
 		book, ok := cachedBookDetails[result.BookID]
 		if ok {
-			result.Book = book.Name
-			result.Reference = fmt.Sprintf("%s %d:%d", book.Name, result.Chapter, result.Verse)
+			displayName := nativeBookName(result.Version, result.BookID, book.Name)
+			result.Book = displayName
+			result.Reference = fmt.Sprintf("%s %d:%d", displayName, result.Chapter, result.Verse)
 		} else {
 			result.Book = fmt.Sprintf("Book %d", result.BookID)
 			result.Reference = fmt.Sprintf("%s %d:%d", result.Book, result.Chapter, result.Verse)
 		}
 
-		result.Text, err = fetchVerseTextByLocation(db, tableName, result.BookID, result.Chapter, result.Verse)
-		if err != nil {
-			return SearchTextResponse{Version: responseVersion, Query: input, Mode: mode, Error: err.Error()}
-		}
 		results = append(results, result)
+		tableNames = append(tableNames, tableName)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Release the query connection before fetching the matching verse text.
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range results {
+		text, err := fetchVerseTextByLocation(handle, tableNames[i], results[i].BookID, results[i].Chapter, results[i].Verse)
+		if err != nil {
+			return nil, err
+		}
+		results[i].Text = text
+	}
+	return results, nil
+}
+
+func searchTextResult(version, input string, options SearchOptions) SearchTextResponse {
+	mode := normalizedSearchMode(options.Mode, input)
+	query, err := ftsSearchQuery(input, mode)
+	if err != nil {
+		return SearchTextResponse{Version: defaultVersion(version), Query: input, Mode: mode, Error: err.Error()}
+	}
+
+	limit := normalizedSearchLimit(options.Limit)
+	responseVersion := "ALL"
+	var results []SearchResult
+	if isAllVersionSearch(version) {
+		results, err = searchTextOnDatabase(db, query, "", limit)
+		if err == nil {
+			keys := []string{}
+			for key, version := range cachedVersions {
+				if version.ewbSource != nil {
+					keys = append(keys, key)
+				}
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				var pluginResults []SearchResult
+				pluginResults, err = searchEWB(cachedVersions[key], input, mode, limit)
+				if err != nil {
+					break
+				}
+				results = append(results, pluginResults...)
+			}
+			if err == nil {
+				sort.SliceStable(results, func(i, j int) bool {
+					return results[i].Rank < results[j].Rank
+				})
+				if len(results) > limit {
+					results = results[:limit]
+				}
+			}
+		}
+	} else {
+		versionInfo, versionErr := versionInfoFor(version)
+		if versionErr != nil {
+			return SearchTextResponse{Version: defaultVersion(version), Query: input, Mode: mode, Error: versionErr.Error()}
+		}
+		responseVersion = versionInfo.Abbreviation
+		if versionInfo.ewbSource != nil {
+			results, err = searchEWB(versionInfo, input, mode, limit)
+		} else {
+			results, err = searchTextOnDatabase(db, query, versionInfo.Abbreviation, limit)
+		}
+	}
+	if err != nil {
 		return SearchTextResponse{Version: responseVersion, Query: input, Mode: mode, Error: err.Error()}
 	}
 
@@ -2228,6 +2330,7 @@ func main() {
 	userSourcesDir := flag.String("user-sources-dir", os.Getenv("EMS_BIBLE_USER_SOURCES_DIR"), "Path to user-installed Bible JSON sources")
 	userPackagesDir := flag.String("user-packages-dir", os.Getenv("EMS_BIBLE_USER_PACKAGES_DIR"), "Path to downloaded Bible SQLite packages")
 	cacheDir := flag.String("cache-dir", os.Getenv("EMS_BIBLE_CACHE_DIR"), "Path for generated Bible indexes")
+	ewbDir := flag.String("ewb-dir", "", "Additional directory of EasyWorship .ewb Bible files to read in place")
 	prepareOnly := flag.Bool("prepare-only", false, "Build or validate the Bible cache, then exit")
 	flag.Parse()
 	log.SetOutput(os.Stderr)
@@ -2250,6 +2353,9 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
+
+	loadEWBBibles(ewbSearchDirectories(*ewbDir, runtime.GOOS)...)
+	defer closeEWBSources()
 
 	if err := serveJSONRPC(os.Stdin, os.Stdout); err != nil {
 		log.Fatal(err)

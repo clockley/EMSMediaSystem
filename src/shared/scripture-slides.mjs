@@ -1,3 +1,4 @@
+import { scriptureDisplayReference } from "./app-bible-reference-utils.mjs";
 import {
   createResolvedPresentation,
   resolvedLayoutKey,
@@ -10,7 +11,7 @@ import {
   waitForTextFonts,
 } from "./text-measure.mjs";
 
-export const SCRIPTURE_SLIDE_RESOLVER_VERSION = 2;
+export const SCRIPTURE_SLIDE_RESOLVER_VERSION = 3;
 
 function cleanText(value) {
   return String(value || "").replace(/[ \t]+/g, " ").trim();
@@ -395,7 +396,7 @@ export function resolveScriptureSlides(entry = {}, options = {}) {
     chunkIndex,
     bodyText: chunk.bodyText,
     fullBodyText: cleanText(entry.text),
-    referenceText: `${chunkReference(entry, chunk.verseNumbers)} ${entry.version || ""}`.trim(),
+    referenceText: scriptureDisplayReference(chunkReference(entry, chunk.verseNumbers), entry.version, entry.attribution),
     attributionText: scriptureAttributionText(entry.attribution),
     verseNumbers: chunk.verseNumbers,
     intraVerse: chunk.intraVerse === true,

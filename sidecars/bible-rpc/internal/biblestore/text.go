@@ -1,8 +1,11 @@
 package biblestore
 
 import (
+	"bytes"
+	"compress/zlib"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -317,10 +320,51 @@ func CompressChapterVerses(verses []ChapterVerse) ([]byte, error) {
 	return compressed, nil
 }
 
-func DecompressChapterVerses(data []byte) ([]ChapterVerse, error) {
-	payload, err := lzfse.Decompress(data)
+// CompressChapterVersesFast encodes verses as zlib-compressed JSON. The pure
+// Go LZFSE encoder favors storage size. DecompressChapterVerses tells the two formats
+// apart by their leading magic bytes, so both may coexist in one database.
+func CompressChapterVersesFast(verses []ChapterVerse) ([]byte, error) {
+	payload, err := json.Marshal(verses)
 	if err != nil {
-		return nil, fmt.Errorf("lzfse decompress chapter: %w", err)
+		return nil, fmt.Errorf("marshal chapter text: %w", err)
+	}
+	var buf bytes.Buffer
+	writer, err := zlib.NewWriterLevel(&buf, zlib.BestSpeed)
+	if err != nil {
+		return nil, fmt.Errorf("zlib compress chapter: %w", err)
+	}
+	if _, err := writer.Write(payload); err != nil {
+		return nil, fmt.Errorf("zlib compress chapter: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("zlib compress chapter: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func DecompressChapterVerses(data []byte) ([]ChapterVerse, error) {
+	var payload []byte
+	if len(data) >= 3 && data[0] == 'b' && data[1] == 'v' && data[2] == 'x' {
+		// LZFSE blocks always begin with a "bvx?" magic; a zlib stream
+		// never does (its first byte is the CMF field, typically 0x78).
+		decoded, err := lzfse.Decompress(data)
+		if err != nil {
+			return nil, fmt.Errorf("lzfse decompress chapter: %w", err)
+		}
+		payload = decoded
+	} else {
+		reader, err := zlib.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("zlib decompress chapter: %w", err)
+		}
+		decoded, err := io.ReadAll(reader)
+		if closeErr := reader.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return nil, fmt.Errorf("zlib decompress chapter: %w", err)
+		}
+		payload = decoded
 	}
 	var verses []ChapterVerse
 	if err := json.Unmarshal(payload, &verses); err != nil {

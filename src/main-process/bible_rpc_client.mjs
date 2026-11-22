@@ -109,6 +109,8 @@ export class BibleRpcClient {
       path.join(userBibleDirectory, "packages"),
       "--cache-dir",
       path.join(userBibleDirectory, "cache"),
+      "--ewb-dir",
+      path.join(userBibleDirectory, "easyworship"),
     ], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,

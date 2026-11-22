@@ -14,7 +14,7 @@ the Free Software Foundation, either version 3 of the License, or
  */
 
 import { adjacentBibleVerseEntry } from "../shared/bible-verse-navigation.mjs";
-import { bibleTextVerseRows } from "../shared/app-bible-reference-utils.mjs";
+import { bibleTextVerseRows, scriptureDisplayReference } from "../shared/app-bible-reference-utils.mjs";
 import { requestAudienceOutputDevice } from "../shared/audience-output-device.mjs";
 import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
 import { createAsyncActionCoalescer } from "../shared/async-operation-ownership.mjs";
@@ -388,12 +388,16 @@ const BIBLE_VERSE_DRAG_MIME = "application/x-ems-bible-verses";
 function normalizeBibleLookupToken(value) {
   return String(value || "")
     .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 }
 
 function bibleAliasWords(value) {
   return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
@@ -1258,13 +1262,14 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     ? backgroundUrl
     : "";
   const fullBodyText = cleanBibleVerseTextForDisplay(entry.text);
-  const attribution = entry.attribution || bibleAttributionForVersion(entry.version || "KJV");
+  const attribution = biblePresentationAttribution(entry);
+  const referenceText = scriptureDisplayReference(entry.reference, entry.version, attribution);
   const referencePresentation = scriptureReferencePresentationForBackground(
     style.backgroundColor,
     { forceLight: isLowerThird || Boolean(style.backgroundPath) },
   );
   const message = {
-    text: `${entry.text || ""}\n\n${entry.reference || ""} ${entry.version || ""}`.trim(),
+    text: `${entry.text || ""}\n\n${referenceText}`.trim(),
     reference: entry.reference || "",
     version: entry.version || "KJV",
     book: entry.book || "",
@@ -1279,7 +1284,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
     backgroundVideo,
     backgroundVideoSync: backgroundVideo ? currentBibleBackgroundVideoSync() : null,
     chromaKeyColor: style.lowerThirdChromaKeyColor,
-    referenceText: `${entry.reference || ""} ${entry.version || ""}`.trim(),
+    referenceText,
     attribution,
     attributionText: "",
     referenceColor: referencePresentation.color,
@@ -1311,7 +1316,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
       maxLines: 2,
     };
     const resolved = renderScriptureForTarget(
-      { ...entry, text: fullBodyText, ...style },
+      { ...entry, attribution, text: fullBodyText, ...style },
       {
         outputRole: "lowerThird",
         includeVerseNumbers: false,
@@ -1371,6 +1376,7 @@ function buildBibleTextMessage(entry = bibleDesignerState, opts = {}) {
   const resolved = renderScriptureForTarget(
     {
       ...entry,
+      attribution,
       text: fullBodyText,
       fontFamily: style.fontFamily,
       fontSize: style.fontSize,
@@ -4256,7 +4262,7 @@ function hydrateBibleEntryStyle(entry = {}) {
   return {
     ...defaults,
     ...entry,
-    attribution: entry?.attribution || bibleAttributionForVersion(entry?.version || "KJV"),
+    attribution: biblePresentationAttribution(entry),
     fontFamily:
       typeof entry?.fontFamily === "string" && entry.fontFamily.trim()
         ? entry.fontFamily
@@ -5379,6 +5385,21 @@ function bibleVersionMetadata(version = bibleDesignerState.version) {
 
 function bibleAttributionForVersion(version = bibleDesignerState.version) {
   return bibleVersionMetadata(version).attribution || null;
+}
+
+function biblePresentationAttribution(entry) {
+  const current = bibleAttributionForVersion(entry.version || "KJV");
+  const saved = entry.attribution;
+  // Older queue entries stored the registry key in their attribution.
+  if (saved?.abbreviation === entry.version && current?.abbreviation &&
+      entry.version === `${current.abbreviation}-EW`) {
+    return {
+      ...saved,
+      abbreviation: current.abbreviation,
+      shortText: saved.shortText === entry.version ? current.shortText : saved.shortText,
+    };
+  }
+  return saved || current;
 }
 
 async function readStoredBibleVersion() {

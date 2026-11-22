@@ -4,6 +4,7 @@ go 1.22.5
 
 require (
 	github.com/go-compressions/lzfse v0.1.0
+	golang.org/x/text v0.16.0
 	modernc.org/sqlite v1.34.5
 )
 

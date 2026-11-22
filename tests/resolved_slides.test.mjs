@@ -414,6 +414,21 @@ test("lower-third Scripture units use at most two lines and normalize attributio
   assert.doesNotMatch(presentation.slides[0].bodyText, /^1[.)]?\s+/u);
 });
 
+test("Scripture projects the published abbreviation when EasyWorship shares a version key", () => {
+  for (const outputRole of ["audience", "lowerThird"]) {
+    for (const abbreviation of ["KJV", "CUSTOM-EW"]) {
+      const entry = {
+        version: abbreviation === "KJV" ? "KJV-EW" : abbreviation,
+        attribution: { abbreviation, shortText: abbreviation },
+        book: "John", chapter: 3, verse: 16, text: "Example verse.",
+      };
+      const { slides } = resolveScriptureSlides(entry, { outputRole, measure: capacityMeasure(500) });
+      assert.equal(slides[0].referenceText, `John 3:16 ${abbreviation}`);
+      assert.equal(slides[0].attributionText, abbreviation);
+    }
+  }
+});
+
 test("audience and lower-third Scripture omit a leading verse number without auto-split", () => {
   const entry = {
     version: "NKJV",

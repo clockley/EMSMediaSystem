@@ -216,7 +216,7 @@ INSERT INTO bible_chapter_text (table_name, b, c, verse_count, t) VALUES
 		t.Fatalf("create optimized chapter table: %v", err)
 	}
 
-	chapters, err := bookChapterCount(db, "t_test", 1)
+	chapters, err := bookChapterCount(db, Version{TableName: "t_test"}, 1)
 	if err != nil {
 		t.Fatalf("bookChapterCount() error = %v", err)
 	}
@@ -224,7 +224,7 @@ INSERT INTO bible_chapter_text (table_name, b, c, verse_count, t) VALUES
 		t.Fatalf("bookChapterCount() = %d, want 2", chapters)
 	}
 
-	verses, err := chapterVerseCount(db, "t_test", 1, 2)
+	verses, err := chapterVerseCount(db, Version{TableName: "t_test"}, 1, 2)
 	if err != nil {
 		t.Fatalf("chapterVerseCount() error = %v", err)
 	}
@@ -265,7 +265,7 @@ INSERT INTO bible_chapter_text (table_name, b, c, verse_count, t) VALUES
 		t.Fatalf("create optimized chapter table: %v", err)
 	}
 
-	verses, err := fetchChapterVerses(db, "t_test", 1, 1)
+	verses, err := fetchChapterVerses(db, Version{TableName: "t_test"}, 1, 1)
 	if err != nil {
 		t.Fatalf("fetchChapterVerses() error = %v", err)
 	}

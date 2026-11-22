@@ -1,6 +1,32 @@
 package biblestore
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
+
+func TestChapterVersesRoundTripBothCompressionFormats(t *testing.T) {
+	verses := []ChapterVerse{
+		{Verse: 1, Text: "In the beginning God created the heavens and the earth."},
+		{Verse: 2, Text: "And the earth was waste and void; “darkness” was upon the face of the deep."},
+	}
+	for name, compress := range map[string]func([]ChapterVerse) ([]byte, error){
+		"lzfse": CompressChapterVerses,
+		"zlib":  CompressChapterVersesFast,
+	} {
+		data, err := compress(verses)
+		if err != nil {
+			t.Fatalf("%s compress error = %v", name, err)
+		}
+		got, err := DecompressChapterVerses(data)
+		if err != nil {
+			t.Fatalf("%s decompress error = %v", name, err)
+		}
+		if !reflect.DeepEqual(got, verses) {
+			t.Fatalf("%s round trip = %#v, want %#v", name, got, verses)
+		}
+	}
+}
 
 func TestCleanBibleVerseTextRemovesBraceAnnotations(t *testing.T) {
 	input := `In the beginning God{After "God," the Hebrew has the two letters "Aleph Tav" as a grammatical marker.} created the heavens and the earth.`
