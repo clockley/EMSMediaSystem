@@ -2832,11 +2832,6 @@ async function setBiblePreviewText(reference, text, opts = {}) {
   return Boolean(bibleDesignerState.text);
 }
 
-// Double-clicking a verse (or verses) updates the preview as before. When
-// another presentation is already live, it also behaves like a "show now"
-// request: scripture-to-scripture swaps go live in place without interrupting
-// the operator, while interrupting any other kind of live content first asks for
-// confirmation using the same prompt the media queue uses.
 async function presentBibleSelectionFromDoubleClick(verseNumber, fallbackText) {
   const selectedVerses = selectedBibleVerseNumbers();
   const selectionRequest = {
@@ -2872,8 +2867,10 @@ async function presentBibleSelectionFromDoubleClick(verseNumber, fallbackText) {
     isActiveMediaWindow() ||
     isLocalAppWindowPresentationActive() ||
     Boolean(isPlaying);
-  // Nothing else is on screen: leave the verse as a preview (existing behavior).
-  if (!presentationActive) return;
+  if (!presentationActive) {
+    await showBibleTextNow();
+    return;
+  }
   // The live output already mirrors this selection (show-now mode, or editing the
   // live queue scripture in place); setBiblePreviewText() handled the update.
   if (biblePreviewMirrorsLiveOutput()) return;
