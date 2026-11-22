@@ -340,3 +340,58 @@ test("show-all metadata responses also respect dismissal", async () => {
   assert.equal(suggestions.hidden, true);
   assert.equal(suggestions.children.length, 0);
 });
+test("Recent Scriptures migrates saved text and keeps only the reference and translation on every write", () => {
+  const { context } = harness();
+  const key = "ems.bibleRecentScriptures";
+  const storage = new Map([[key, JSON.stringify([
+    { reference: "John 3:16, 18", version: "KJV-EW", text: "Old text", selectedVerses: [16, 18] },
+    { reference: "john 3:16,18", version: "KJV-EW", text: "Duplicate" },
+    { reference: "John 3:16,18", version: "KJV", attribution: { text: "Old attribution" } },
+  ])]]);
+  context.window = { localStorage: {
+    getItem: (name) => storage.get(name),
+    setItem: (name, value) => storage.set(name, value),
+  } };
+  vm.runInContext(`
+    ${section("const BIBLE_RECENT_STORAGE_KEY", "const LAST_BIBLE_VERSION_SETTING_KEY")}
+    ${section("function loadRecentScriptures()", "function renderRecentScriptures()")}
+    ${section("function rememberRecentScripture(", "async function openRecentScripture(")}
+    function renderRecentScriptures() {}
+  `, context);
+  const reference = "John 3:16,18";
+  assert.deepEqual(JSON.parse(storage.get(key)), [
+    { reference, version: "KJV-EW" }, { reference, version: "KJV" },
+  ]);
+  context.rememberRecentScripture({ reference, version: "KJV", text: "Fresh text" });
+  assert.deepEqual(JSON.parse(storage.get(key)), [
+    { reference, version: "KJV" }, { reference, version: "KJV-EW" },
+  ]);
+});
+
+test("reopening a recent passage uses the installed translation and ignores stale text", async () => {
+  const { context, input, versionSelect } = harness();
+  const item = { reference: "John 3:16,18", version: "NIV", text: "Old text" };
+  context.setBibleDesignerVersion = (version) => {
+    context.state.version = version;
+    versionSelect.value = version;
+  };
+  context.jumpBibleReferenceToBrowser = async ({ previewChapter }) => {
+    assert.equal(previewChapter, true);
+    assert.equal(versionSelect.value, item.version);
+    assert.equal(input.value, item.reference);
+    context.state.text = "Fresh text";
+    return true;
+  };
+  context.setBibleVerseSelectionFromEntry = () => {};
+  context.syncBibleVerseListSelection = () => {};
+  const remembered = [];
+  context.rememberRecentScripture = (entry) => remembered.push(entry);
+  context.showGnomeToast = () => {};
+  vm.runInContext(section("async function openRecentScripture(", "function clearRecentScriptures()"), context);
+  assert.equal(await context.openRecentScripture(item), true);
+  assert.equal(context.state.text, "Fresh text");
+  context.jumpBibleReferenceToBrowser = async () => false;
+  assert.equal(await context.openRecentScripture(item), false);
+  assert.equal(await context.openRecentScripture({ ...item, version: "Missing" }), false);
+  assert.equal(remembered.length, 1);
+});

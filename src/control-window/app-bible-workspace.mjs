@@ -2361,26 +2361,14 @@ function setBibleStyleEditorVisible(visible) {
 
 function loadRecentScriptures() {
   try {
-    const parsed = JSON.parse(
-      window.localStorage?.getItem(BIBLE_RECENT_STORAGE_KEY) || "[]",
-    );
-    if (!Array.isArray(parsed)) return [];
+    const stored = window.localStorage?.getItem(BIBLE_RECENT_STORAGE_KEY);
+    if (stored == null) return [];
+    const parsed = JSON.parse(stored);
     const seen = new Set();
-    return parsed
+    const entries = (Array.isArray(parsed) ? parsed : [])
       .map((item) => ({
         reference: normalizeScriptureReference(item?.reference || ""),
         version: bibleVersionValue(item?.version || "KJV"),
-        text: typeof item?.text === "string" ? item.text : "",
-        book: typeof item?.book === "string" ? item.book : "",
-        bookAbbreviation:
-          typeof item?.bookAbbreviation === "string" ? item.bookAbbreviation : "",
-        chapter: Number.isFinite(item?.chapter) ? item.chapter : 0,
-        verse: Number.isFinite(item?.verse) ? item.verse : 0,
-        verseEnd: Number.isFinite(item?.verseEnd) ? item.verseEnd : 0,
-        selectedVerses: Array.isArray(item?.selectedVerses)
-          ? item.selectedVerses.filter((verse) => Number.isFinite(verse) && verse > 0)
-          : [],
-        attribution: item?.attribution || null,
       }))
       .filter((item) => {
         const key = `${item.version}\u0000${item.reference.toLowerCase()}`;
@@ -2389,16 +2377,20 @@ function loadRecentScriptures() {
         return true;
       })
       .slice(0, BIBLE_RECENT_LIMIT);
-  } catch {
+    // Strip passage snapshots from older installations on the first read.
+    if (stored !== JSON.stringify(entries)) persistRecentScriptures(entries);
+    return entries;
+  } catch (error) {
+    if (error instanceof SyntaxError) persistRecentScriptures([]);
     return [];
   }
 }
 
-function persistRecentScriptures() {
+function persistRecentScriptures(entries = bibleRecentScriptures) {
   try {
     window.localStorage?.setItem(
       BIBLE_RECENT_STORAGE_KEY,
-      JSON.stringify(bibleRecentScriptures),
+      JSON.stringify(entries, ["reference", "version"]),
     );
   } catch {}
 }
@@ -2450,28 +2442,8 @@ function rememberRecentScripture(entry) {
   );
   if (!reference) return;
   const key = `${version}\u0000${reference.toLowerCase()}`;
-  const stateMatchesEntry =
-    bibleVersionValue(bibleDesignerState.version) === version &&
-    normalizeScriptureReference(bibleDesignerState.reference).toLowerCase() ===
-      reference.toLowerCase();
-  const source = stateMatchesEntry ? { ...bibleDesignerState, ...entry } : entry || {};
-  const snapshot = {
-    reference,
-    version,
-    text: typeof source.text === "string" ? source.text : "",
-    book: typeof source.book === "string" ? source.book : "",
-    bookAbbreviation:
-      typeof source.bookAbbreviation === "string" ? source.bookAbbreviation : "",
-    chapter: Number.isFinite(source.chapter) ? source.chapter : 0,
-    verse: Number.isFinite(source.verse) ? source.verse : 0,
-    verseEnd: Number.isFinite(source.verseEnd) ? source.verseEnd : 0,
-    selectedVerses: Array.isArray(source.selectedVerses)
-      ? source.selectedVerses.filter((verse) => Number.isFinite(verse) && verse > 0)
-      : [],
-    attribution: source.attribution || bibleAttributionForVersion(version),
-  };
   bibleRecentScriptures = [
-    snapshot,
+    { reference, version },
     ...bibleRecentScriptures.filter(
       (item) => `${item.version}\u0000${item.reference.toLowerCase()}` !== key,
     ),
@@ -2492,7 +2464,7 @@ async function openRecentScripture(item) {
   setBibleDesignerVersion(item.version, { syncControls: true });
   const referenceInput = document.getElementById("bibleReferenceInput");
   if (referenceInput) referenceInput.value = item.reference;
-  const opened = await jumpBibleReferenceToBrowser();
+  const opened = await jumpBibleReferenceToBrowser({ previewChapter: true });
   if (
     !opened ||
     bibleDesignerState.version !== item.version ||
@@ -2501,30 +2473,10 @@ async function openRecentScripture(item) {
   ) {
     return false;
   }
-  if (opened && typeof item.text === "string" && item.text) {
-    Object.assign(bibleDesignerState, {
-      version: item.version,
-      attribution: item.attribution || bibleAttributionForVersion(item.version),
-      reference: item.reference,
-      text: item.text,
-      book: item.book || bibleDesignerState.book,
-      bookAbbreviation: item.bookAbbreviation || bibleDesignerState.bookAbbreviation,
-      chapter: item.chapter || bibleDesignerState.chapter,
-      verse: item.verse || bibleDesignerState.verse,
-      verseEnd: item.verseEnd || 0,
-      selectedVerses: Array.isArray(item.selectedVerses) ? [...item.selectedVerses] : [],
-      verseRows: [],
-      currentSlideId: null,
-      lowerThirdSegmentIndex: 0,
-      currentLowerThirdSlideId: null,
-    });
-    setBibleVerseSelectionFromEntry(bibleDesignerState);
-    syncBibleSelectorsFromState();
-    applyBiblePreview(bibleDesignerState, { show: false });
-    syncBibleVerseListSelection();
-  }
-  if (opened) rememberRecentScripture({ ...item, ...bibleDesignerState });
-  return opened;
+  setBibleVerseSelectionFromEntry(bibleDesignerState);
+  syncBibleVerseListSelection();
+  rememberRecentScripture(item);
+  return true;
 }
 
 function clearRecentScriptures() {
@@ -6047,7 +5999,7 @@ async function refreshBibleBrowser() {
   syncBibleSelectorsFromState();
 }
 
-async function jumpBibleReferenceToBrowser() {
+async function jumpBibleReferenceToBrowser({ previewChapter = false } = {}) {
   const versionSelect = document.getElementById("bibleVersionSelect");
   const referenceInput = document.getElementById("bibleReferenceInput");
   hideBibleReferenceSuggestions();
@@ -6107,7 +6059,7 @@ async function jumpBibleReferenceToBrowser() {
   bibleVerseSelection.verses.clear();
   bibleVerseSelection.anchor = 0;
   await refreshBibleBrowser();
-  if (bibleDesignerState.verse > 0) {
+  if (bibleDesignerState.verse > 0 || previewChapter) {
     let lookupResult = null;
     try {
       lookupResult = await lookupBibleReference(
@@ -6127,7 +6079,7 @@ async function jumpBibleReferenceToBrowser() {
       `.bible-verse-row[data-verse="${bibleDesignerState.verse}"]`,
     );
     centerBibleVerseRowInList(row);
-    await refreshBibleLookupPreview();
+    return refreshBibleLookupPreview();
   }
   return true;
 }
