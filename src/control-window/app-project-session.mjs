@@ -134,11 +134,6 @@ const projectOpenQueue = createSerializedAsyncQueue();
 // older snapshot can finish after a newer note edit and overwrite it.
 const autosaveWriteQueue = createSerializedAsyncQueue();
 
-function resetCurrentProjectIdentity() {
-  currentProjectGuid = generateProjectGuid();
-  currentProjectCreated = new Date().toISOString();
-}
-
 function projectGuidFromState(state) {
   return (
     normalizeProjectGuid(state?.projectGuid) ||
@@ -472,7 +467,7 @@ function buildProjectStateSnapshot(opts = {}) {
       : currentProjectCreated;
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
-    projectPath: currentProjectPath || "",
+    projectPath: opts.projectPath ?? (currentProjectPath || ""),
     projectGuid,
     projectCreated,
     project: {
@@ -1122,43 +1117,30 @@ async function openProjectByPathSerialized(filePath) {
 }
 
 async function saveProjectAsDialog() {
-  const previousProjectPath = currentProjectPath;
-  const previousNeedsSaveAs = currentProjectNeedsSaveAs;
-  const previousProjectStorageMode = currentProjectStorageMode;
-  const previousProjectGuid = currentProjectGuid;
-  const previousProjectCreated = currentProjectCreated;
   try {
     const defaultPath = currentProjectNeedsSaveAs ? "Untitled.emproj" : currentProjectPath || "Untitled.emproj";
     const res = await invoke("show-save-project-dialog", { defaultPath });
     if (!res || res.canceled || !res.filePath) return false;
-    if (previousProjectPath) {
-      resetCurrentProjectIdentity();
-    }
-    currentProjectPath = res.filePath;
-    currentProjectStorageMode = previousNeedsSaveAs ? previousProjectStorageMode : "working";
     await syncCurrentPptxSlideForProjectSnapshot();
-    const data = JSON.stringify(buildProjectStateSnapshot(), null, 2);
+    const snapshot = buildProjectStateSnapshot({
+      projectPath: res.filePath,
+      ...(currentProjectPath ? { projectGuid: generateProjectGuid(), projectCreated: new Date().toISOString() } : {}),
+    });
     const result = await invoke("write-project-file", {
-      filePath: currentProjectPath,
-      data,
-      mode: currentProjectStorageMode,
+      filePath: res.filePath,
+      data: JSON.stringify(snapshot, null, 2),
+      mode: snapshot.projectStorageMode,
       activateProject: true,
     });
-    currentProjectGuid = normalizeProjectGuid(result?.projectGuid) || currentProjectGuid;
+    currentProjectPath = res.filePath;
+    currentProjectGuid = normalizeProjectGuid(result?.projectGuid) || snapshot.projectGuid;
+    currentProjectCreated = result?.projectCreated || snapshot.projectCreated;
     currentProjectNeedsSaveAs = false;
-    if (typeof result?.projectCreated === "string" && result.projectCreated.length > 0) {
-      currentProjectCreated = result.projectCreated;
-    }
     scheduleAutosaveProjectState();
     refreshBaselinesAfterSave();
     showGnomeToast("Project saved");
     return true;
   } catch (err) {
-    currentProjectPath = previousProjectPath;
-    currentProjectNeedsSaveAs = previousNeedsSaveAs;
-    currentProjectStorageMode = previousProjectStorageMode;
-    currentProjectGuid = previousProjectGuid;
-    currentProjectCreated = previousProjectCreated;
     console.error("Failed to save project as:", err);
     showGnomeToast("Failed to save project");
     return false;
@@ -1260,7 +1242,6 @@ export {
   queueItemPreflightCheckPayload,
   refreshBaselinesAfterSave,
   relinkMissingFilesDialog,
-  resetCurrentProjectIdentity,
   restoreAutosavedProjectState,
   restoredQueueMediaType,
   saveCurrentProjectInStorageMode,

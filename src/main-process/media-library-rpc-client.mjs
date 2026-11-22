@@ -72,6 +72,7 @@ export class MediaLibraryRpcClient {
       this.child = child;
       this.buffer = "";
       let stderr = "";
+      child.stdout.setEncoding("utf8");
       child.stdout.on("data", (data) => {
         if (this.child === child) this.handleData(data);
       });
@@ -86,7 +87,7 @@ export class MediaLibraryRpcClient {
   }
 
   handleData(data) {
-    this.buffer += data.toString();
+    this.buffer += data;
     const lines = this.buffer.split("\n");
     this.buffer = lines.pop();
     for (const line of lines) {

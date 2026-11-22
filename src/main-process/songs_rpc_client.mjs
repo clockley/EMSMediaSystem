@@ -118,6 +118,7 @@ export class SongsRpcClient {
       const child = this.child;
       this.buffer = "";
       let recentStderr = "";
+      child.stdout.setEncoding("utf8");
       child.stdout.on("data", (data) => {
         if (this.child === child) this.handleData(data);
       });
@@ -156,7 +157,7 @@ export class SongsRpcClient {
   }
 
   handleData(data) {
-    this.buffer += data.toString();
+    this.buffer += data;
     const lines = this.buffer.split("\n");
     this.buffer = lines.pop();
 

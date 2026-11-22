@@ -1728,14 +1728,7 @@ function installIPCHandler() {
     send("close-media-window", 0);
   });
   on("window-maximized", handleWindowMax);
-  on("open-project-path", async (_event, filePath) => {
-    try {
-      await openProjectByPath(filePath);
-    } catch (err) {
-      console.error("Failed to open project from launcher:", err);
-      showGnomeToast(["EMS_AUTOSAVE_FAILED", "EMS_PROJECT_SWITCH_BLOCKED"].includes(err?.code) ? err.message : "Failed to open project");
-    }
-  });
+
 }
 
 function updateDynUI() {
@@ -2316,6 +2309,37 @@ function installAdaptiveHeaderTitleSpacing() {
   scheduleUpdate();
 }
 
+let projectLauncherReady;
+
+function initializeProjectLauncher() {
+  if (projectLauncherReady) return projectLauncherReady;
+  // Restore the outgoing recovery session before a launch request can replace it.
+  // Main keeps each request until the renderer acknowledges handling it.
+  let tail = restoreAutosavedProjectState();
+  let completedId = null;
+  const drain = async () => {
+    for (;;) {
+      const request = await invoke("next-project-open", completedId);
+      completedId = null;
+      if (!request) return;
+      try {
+        await openProjectByPath(request.filePath);
+      } catch (err) {
+        console.error("Failed to open project from launcher:", err);
+        showGnomeToast(["EMS_AUTOSAVE_FAILED", "EMS_PROJECT_SWITCH_BLOCKED"].includes(err?.code) ? err.message : "Failed to open project");
+      }
+      completedId = request.id;
+    }
+  };
+  const schedule = () => {
+    tail = tail.then(drain).catch(error => console.error("Failed to receive project launch request:", error));
+    return tail;
+  };
+  on("project-open-pending", schedule);
+  projectLauncherReady = schedule();
+  return projectLauncherReady;
+}
+
 async function loadOpMode(mode) {
   const execute = async () => {
     try {
@@ -2482,7 +2506,7 @@ async function loadOpMode(mode) {
       if (mediaRadio) mediaRadio.checked = true;
       setSBFormMediaPlayer();
       installPreviewEventHandlers();
-      await restoreAutosavedProjectState();
+      await initializeProjectLauncher();
 
       // Drag and drop: the renderer is the OS-level drop target (Electron does
       // not surface drop events to the main process). The renderer only

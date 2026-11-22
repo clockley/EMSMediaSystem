@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "crypto";
-import { createReadStream, createWriteStream } from "fs";
+import { constants, createReadStream, createWriteStream } from "fs";
 import {
   copyFile,
   mkdir,
@@ -18,6 +18,8 @@ import {
   hashMediaFile,
   storedFileHashFromRecord,
 } from "../shared/media-file-hash.mjs";
+import { fileIdentityMatches } from "./mp4-sync-fix.mjs";
+import { normalizeSnapshotId, stagedMediaPathForSnapshot } from "./staging-index.mjs";
 import { normalizeToSongAST } from "../shared/app-song-utils.mjs";
 import { DEFAULT_SCHEDULE_GROUP_NAME } from "../shared/schedule-item-availability.mjs";
 import { scheduleNoteFields } from "../shared/schedule-item-notes.mjs";
@@ -1779,23 +1781,18 @@ async function readEmprojSnapshotInto(projectPath, extractRoot) {
 async function addZipFromBuffersAndFiles(targetZipPath, buffers, files, comment = "") {
   await mkdir(path.dirname(targetZipPath), { recursive: true });
   const zipFile = new yazl.ZipFile();
-  const out = createWriteStream(targetZipPath);
-  const done = new Promise((resolve, reject) => {
-    out.on("close", resolve);
-    out.on("error", reject);
-    zipFile.outputStream.on("error", reject);
-  });
-  zipFile.outputStream.pipe(out);
-  for (const item of buffers) {
-    zipFile.addBuffer(item.buffer, item.path, { compress: item.compress !== false });
-  }
-  for (const item of files) {
-    zipFile.addFile(item.realPath, item.path, { compress: item.compress !== false });
-  }
-  if (comment) {
-    zipFile.end({ comment });
-  } else {
-    zipFile.end();
+  const done = pipeline(zipFile.outputStream, createWriteStream(targetZipPath));
+  zipFile.on("error", error => zipFile.outputStream.destroy(error));
+  try {
+    for (const item of buffers) {
+      zipFile.addBuffer(item.buffer, item.path, { compress: item.compress !== false });
+    }
+    for (const item of files) {
+      zipFile.addFile(item.realPath, item.path, { compress: item.compress !== false });
+    }
+    zipFile.end(comment ? { comment } : undefined);
+  } catch (error) {
+    zipFile.outputStream.destroy(error);
   }
   await done;
 }
@@ -1803,8 +1800,9 @@ async function addZipFromBuffersAndFiles(targetZipPath, buffers, files, comment 
 async function saveEmprojSnapshotUnlocked(
   projectPath,
   snapshot,
-  appInfo = {},
-  opts = {},
+  appInfo,
+  opts,
+  captureDir,
 ) {
   const packMedia = opts?.packMedia === true;
   const applicationInfo = normalizeApplicationInfo(appInfo);
@@ -1854,128 +1852,111 @@ async function saveEmprojSnapshotUnlocked(
     return `${folder}/${bundledName}`;
   }
 
-  function ensureFileEntry(realPath, archivePath) {
-    if (!fileEntries.some((entry) => entry.path === archivePath)) {
-      fileEntries.push({ realPath, path: archivePath, compress: false });
+  async function regularFileStat(filePath) {
+    try {
+      const info = await stat(filePath);
+      return info.isFile() ? info : null;
+    } catch (error) {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+      throw error;
     }
   }
 
-  async function registerAssetForPath(filePath, fallback = {}) {
-    if (typeof filePath !== "string" || filePath.length === 0) return null;
-    const forcePack = fallback.forcePack === true;
-    const isFileUrl = /^file:\/\//i.test(filePath);
-    const normalizedPath = isFileUrl ? fileUrlToPath(filePath) : filePath;
-    const isExternalUrl = /^(https?|m3u8|mpd):/i.test(filePath);
-    if (isExternalUrl) return null;
-
-    let assetSize = Number.isFinite(fallback.sizeBytes) ? fallback.sizeBytes : undefined;
-    let assetFingerprint = assetFingerprintFields(fallback);
-    let assetModifiedTime =
-      typeof fallback.modifiedTime === "string" ? fallback.modifiedTime : undefined;
-    let assetMissing = fallback.missing === true;
-
-    try {
-      const info = await stat(normalizedPath);
-      if (!info.isFile()) return null;
-      const previousSize = assetSize;
-      const previousModifiedTime = assetModifiedTime;
-      assetSize = info.size;
-      assetModifiedTime = statModifiedTime(info);
-      assetMissing = false;
-      const kind = classifyKindFromPath(normalizedPath);
-      const existing = fileIndex.get(normalizedPath);
-      if (existing) {
-        if (forcePack && !isPackedArchiveMediaPath(existing.assetRecord?.path)) {
-          const bundledPath = bundledArchivePathForFile(
-            normalizedPath,
-            kind,
-            existing.assetIndex,
-            existing.assetRecord?.originalName || fallback.originalName,
-          );
-          ensureFileEntry(normalizedPath, bundledPath);
-          existing.bundledPath = bundledPath;
-          if (existing.assetRecord) {
-            existing.assetRecord.path = bundledPath;
-            Object.assign(
-              existing.assetRecord,
-              packedIntegrityFields(await sha256File(normalizedPath)),
-            );
-          }
-        }
-        return {
-          assetId: existing.assetId,
-          bundledPath: existing.bundledPath,
-          normalizedPath,
-          kind,
-          assetFingerprint,
-          assetSize,
-          assetModifiedTime,
-          assetMissing,
-        };
+  async function registerAssetForPath(filePath, fallback = {}, { cue = false } = {}) {
+    if (!filePath || typeof filePath !== "string" || /^(https?|m3u8|mpd):/i.test(filePath)) return null;
+    const normalizedPath = /^file:\/\//i.test(filePath) ? fileUrlToPath(filePath) : filePath;
+    const bundle = packMedia || fallback.forcePack === true;
+    const live = fallback.liveSource;
+    let pin = "";
+    if (bundle && live?.mode === "linked" && live.strategy === "snapshot" && live.stagingTier === "full") {
+      const requested = live.snapshotId || live.pinnedFileHash;
+      if (requested) {
+        pin = normalizeSnapshotId(requested);
+        if (!pin) throw new Error(`Invalid media pin for ${filePath}`);
       }
-      const ext = path.extname(normalizedPath).toLowerCase();
-      const assetIndex = fileIndex.size + 1;
-      const assetId = makeId("asset", assetIndex);
-      let bundledPath = normalizedPath;
-      if (packMedia || forcePack) {
-        bundledPath = bundledArchivePathForFile(
-          normalizedPath,
-          kind,
-          assetIndex,
-          fallback.originalName,
-        );
-        ensureFileEntry(normalizedPath, bundledPath);
-      }
-      if (
-        packMedia ||
-        forcePack ||
-        !storedFileHashFromRecord(assetFingerprint) ||
-        previousSize !== assetSize ||
-        previousModifiedTime !== assetModifiedTime
-      ) {
-        try {
-          assetFingerprint = baselineFileHashFields(await hashMediaFile(normalizedPath));
-        } catch {
-          assetFingerprint = {};
-        }
-      }
-      const assetIntegrity =
-        packMedia || forcePack
-          ? packedIntegrityFields(await sha256File(normalizedPath))
-          : {};
-      const assetRecord = {
-        id: assetId,
-        kind,
-        path: packMedia || forcePack ? bundledPath : normalizedPath,
-        originalPath: fallback.originalPath || normalizedPath,
-        originalName: fallback.originalName || basenameAny(normalizedPath),
-        mimeType: kind === "presentation"
-          ? (ext === ".pptx"
-              ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-              : "application/pdf")
-          : undefined,
-        ...assetFingerprint,
-        ...assetIntegrity,
-        sizeBytes: assetSize,
-        modifiedTime: assetModifiedTime,
-        missingBehavior: "showPlaceholder",
-        compatibilityWarnings: [],
-      };
-      fileIndex.set(normalizedPath, { bundledPath, assetId, assetIndex, assetRecord });
-      assets.push(assetRecord);
-      return {
-        assetId,
-        bundledPath,
-        normalizedPath,
-        kind,
-        assetFingerprint,
-        assetSize,
-        assetModifiedTime,
-        assetMissing,
-      };
-    } catch {
-      return null;
     }
+    // Cues can pin different versions. A working cue can also link to a file
+    // that a theme embeds, so its storage mode is part of the asset identity.
+    const key = JSON.stringify([normalizedPath, pin, bundle]);
+    const existing = fileIndex.get(key);
+    if (existing) return existing;
+
+    const ext = path.extname(normalizedPath).toLowerCase();
+    let source = normalizedPath;
+    let info;
+    if (pin && opts?.stagingDir) {
+      const staged = stagedMediaPathForSnapshot(opts.stagingDir, normalizedPath, pin);
+      info = await regularFileStat(staged);
+      if (info) source = staged;
+    }
+    info ??= await regularFileStat(source);
+    if (!info && pin) throw new Error(`Pinned media is unavailable: ${filePath}`);
+    if (!info && bundle && fallback.missing !== true) {
+      throw new Error(`Cannot bundle missing media: ${filePath}`);
+    }
+    if (!info && !cue) return null;
+    const kind = classifyKindFromPath(normalizedPath);
+    const index = fileIndex.size + 1;
+    const assetId = makeId("asset", index);
+    const modifiedTime = info ? statModifiedTime(info) : fallback.modifiedTime;
+    const record = {
+      id: assetId,
+      kind,
+      path: normalizedPath,
+      originalPath: fallback.originalPath || normalizedPath,
+      originalName: fallback.originalName || basenameAny(normalizedPath),
+      mimeType: kind === "presentation"
+        ? (ext === ".pptx" ? "application/vnd.openxmlformats-officedocument.presentationml.presentation" : "application/pdf")
+        : undefined,
+      sizeBytes: info?.size ?? fallback.sizeBytes,
+      modifiedTime,
+      missingBehavior: "showPlaceholder",
+      compatibilityWarnings: info ? [] : ["missing"],
+    };
+    if (!bundle || !info) {
+      let fingerprint = assetFingerprintFields(fallback);
+      if (info && (!storedFileHashFromRecord(fingerprint) ||
+          fallback.sizeBytes !== info.size || fallback.modifiedTime !== modifiedTime)) {
+        try {
+          fingerprint = baselineFileHashFields(await hashMediaFile(source));
+        } catch {
+          fingerprint = {};
+        }
+      }
+      Object.assign(record, fingerprint);
+    }
+    const entry = { assetId, bundledPath: normalizedPath, missing: !info, bundled: false };
+    assets.push(record);
+    fileIndex.set(key, entry);
+    if (bundle && info) {
+      const captured = path.join(captureDir, assetId);
+      // copyFile can fall back to an ordinary copy on non-CoW filesystems.
+      // Retry a racing rewrite once before publishing any of its bytes.
+      for (let attempt = 0; ; attempt++) {
+        await copyFile(source, captured, constants.COPYFILE_FICLONE);
+        const after = await stat(source);
+        if (fileIdentityMatches(after, info)) break;
+        if (attempt > 0) throw new Error(`Media changed while saving: ${filePath}`);
+        info = after;
+      }
+      record.modifiedTime = statModifiedTime(info);
+      let fingerprint;
+      try {
+        fingerprint = await hashMediaFile(captured);
+      } catch (error) {
+        if (pin) throw new Error(`Cannot verify pinned media: ${filePath}`, { cause: error });
+      }
+      if (pin && fingerprint !== pin) throw new Error(`Pinned media does not match: ${filePath}`);
+      const archivePath = bundledArchivePathForFile(normalizedPath, kind, index, record.originalName);
+      entry.bundled = true;
+      entry.bundledPath = archivePath;
+      record.path = archivePath;
+      record.sizeBytes = (await stat(captured)).size;
+      if (fingerprint) Object.assign(record, baselineFileHashFields(fingerprint));
+      Object.assign(record, packedIntegrityFields(await sha256File(captured)));
+      fileEntries.push({ realPath: captured, path: archivePath, compress: false });
+    }
+    return entry;
   }
 
   async function themeForProjectArchive(theme) {
@@ -2269,120 +2250,10 @@ async function saveEmprojSnapshotUnlocked(
     const isFileUrl = /^file:\/\//i.test(sourcePath);
     const normalizedPath = isFileUrl ? fileUrlToPath(sourcePath) : sourcePath;
     const isExternalUrl = /^(https?|m3u8|mpd):/i.test(sourcePath);
-    let sourceKind = "external";
-    let bundledPath = normalizedPath;
-    let assetId = "";
-    let assetSize = Number.isFinite(item.sizeBytes) ? item.sizeBytes : undefined;
-    let assetFingerprint = assetFingerprintFields(item);
-    let assetModifiedTime =
-      typeof item.modifiedTime === "string" ? item.modifiedTime : undefined;
-    let assetMissing = item.missing === true;
-    let assetRegistered = false;
-    if (!isExternalUrl) {
-      try {
-        const info = await stat(normalizedPath);
-        if (info.isFile()) {
-          const previousSize = assetSize;
-          const previousModifiedTime = assetModifiedTime;
-          assetSize = info.size;
-          assetModifiedTime = statModifiedTime(info);
-          assetMissing = false;
-          if (packMedia) sourceKind = "bundled";
-          const kind = classifyKindFromPath(normalizedPath);
-          const existing = fileIndex.get(normalizedPath);
-          if (existing) {
-            bundledPath = existing.bundledPath;
-            assetId = existing.assetId;
-            assetRegistered = true;
-          } else {
-            const ext = path.extname(normalizedPath).toLowerCase();
-            const assetIndex = fileIndex.size + 1;
-            assetId = makeId("asset", assetIndex);
-            if (packMedia) {
-              bundledPath = bundledArchivePathForFile(
-                normalizedPath,
-                kind,
-                assetIndex,
-                item.originalName,
-              );
-              ensureFileEntry(normalizedPath, bundledPath);
-            }
-            if (
-              packMedia ||
-              !storedFileHashFromRecord(assetFingerprint) ||
-              previousSize !== assetSize ||
-              previousModifiedTime !== assetModifiedTime
-            ) {
-              try {
-                assetFingerprint = baselineFileHashFields(
-                  await hashMediaFile(normalizedPath),
-                );
-              } catch {
-                assetFingerprint = {};
-              }
-            }
-            const assetIntegrity = packMedia
-              ? packedIntegrityFields(await sha256File(normalizedPath))
-              : {};
-            const assetRecord = {
-              id: assetId,
-              kind,
-              path: packMedia ? bundledPath : normalizedPath,
-              originalPath: item.originalPath || normalizedPath,
-              originalName: item.originalName || basenameAny(normalizedPath),
-              mimeType: kind === "presentation"
-                ? (ext === ".pptx"
-                    ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    : "application/pdf")
-                : undefined,
-              ...assetFingerprint,
-              ...assetIntegrity,
-              sizeBytes: assetSize,
-              modifiedTime: assetModifiedTime,
-              missingBehavior: "showPlaceholder",
-              compatibilityWarnings: [],
-            };
-            fileIndex.set(normalizedPath, { bundledPath, assetId, assetIndex, assetRecord });
-            assets.push(assetRecord);
-            assetRegistered = true;
-          }
-        }
-      } catch {
-        sourceKind = "missing";
-        assetMissing = true;
-      }
-      if (!assetRegistered) {
-        const kind = classifyKindFromPath(normalizedPath);
-        const ext = path.extname(normalizedPath).toLowerCase();
-        const existing = fileIndex.get(normalizedPath);
-        if (existing) {
-          assetId = existing.assetId;
-          bundledPath = existing.bundledPath;
-        } else {
-          const assetIndex = fileIndex.size + 1;
-          assetId = makeId("asset", assetIndex);
-          const assetRecord = {
-            id: assetId,
-            kind,
-            path: normalizedPath,
-            originalPath: item.originalPath || normalizedPath,
-            originalName: item.originalName || basenameAny(normalizedPath),
-            mimeType: kind === "presentation"
-              ? (ext === ".pptx"
-                  ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                  : "application/pdf")
-              : undefined,
-            ...assetFingerprintFields(item),
-            sizeBytes: assetSize,
-            modifiedTime: assetModifiedTime,
-            missingBehavior: "showPlaceholder",
-            compatibilityWarnings: assetMissing ? ["missing"] : [],
-          };
-          fileIndex.set(normalizedPath, { bundledPath, assetId, assetIndex, assetRecord });
-          assets.push(assetRecord);
-        }
-      }
-    }
+    const asset = await registerAssetForPath(sourcePath, item, { cue: true });
+    const assetId = asset?.assetId;
+    const bundledPath = asset?.bundledPath || normalizedPath;
+    const sourceKind = asset?.missing ? "missing" : asset?.bundled ? "bundled" : "external";
     itemCounter += 1;
     const kind = classifyKindFromPath(sourcePath);
     const isPresentation = kind === "presentation";
@@ -2604,7 +2475,7 @@ async function saveEmprojSnapshotUnlocked(
   const mimeBuf = Buffer.from(`${MIME_TYPE}\n`, "utf8");
 
   // Use a per-save temp path so overlapping saves do not race on the same file.
-  const tmpPath = `${projectPath}.${randomUUID()}.tmp`;
+  const tmpPath = path.join(captureDir, "project.zip");
   const bakPath = `${projectPath}.bak`;
   const zipBuffers = [
     { path: "mimetype", buffer: mimeBuf, compress: false },
@@ -2625,24 +2496,17 @@ async function saveEmprojSnapshotUnlocked(
     })),
   ];
 
-  let installed = false;
+  await addZipFromBuffersAndFiles(tmpPath, zipBuffers, fileEntries, archiveComment);
+  const backup = path.join(captureDir, "previous.zip");
+  let hasPrevious = true;
   try {
-    await addZipFromBuffersAndFiles(
-      tmpPath,
-      zipBuffers,
-      fileEntries,
-      archiveComment,
-    );
-    try {
-      await copyFile(projectPath, bakPath);
-    } catch (err) {
-      if (err?.code !== "ENOENT") throw err;
-    }
-    await rename(tmpPath, projectPath);
-    installed = true;
-  } finally {
-    if (!installed) await rm(tmpPath, { force: true }).catch(() => {});
+    await copyFile(projectPath, backup, constants.COPYFILE_FICLONE);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    hasPrevious = false;
   }
+  if (hasPrevious) await rename(backup, bakPath);
+  await rename(tmpPath, projectPath);
   return {
     ok: true,
     filePath: projectPath,
@@ -2660,7 +2524,18 @@ export function saveEmprojSnapshot(projectPath, snapshot, appInfo = {}, opts = {
   const previous = projectSaveQueues.get(queueKey) || Promise.resolve();
   const save = previous
     .catch(() => {})
-    .then(() => saveEmprojSnapshotUnlocked(projectPath, snapshot, appInfo, opts));
+    .then(async () => {
+      const parent = path.dirname(queueKey);
+      await mkdir(parent, { recursive: true });
+      const captureDir = await mkdtemp(path.join(parent, ".ems-save-"));
+      try {
+        return await saveEmprojSnapshotUnlocked(projectPath, snapshot, appInfo, opts, captureDir);
+      } finally {
+        await rm(captureDir, { recursive: true, force: true, maxRetries: 3 }).catch(error => {
+          console.error("Failed to remove project save workspace:", captureDir, error);
+        });
+      }
+    });
   projectSaveQueues.set(queueKey, save);
   return save.finally(() => {
     if (projectSaveQueues.get(queueKey) === save) {

@@ -4712,12 +4712,12 @@ async function saveCurrentDeck() {
   try {
     const summary = await slidesAPI.save(deckToSave);
     const ownsEditor = stillOwnsEditor();
+    if (summary?.id) deckToSave.id = summary.id;
     if (ownsEditor) {
-      if (summary?.id) deckToSave.id = summary.id;
       deckToSave.updatedAt = summary?.updatedAt || new Date().toISOString();
       updateScheduleDecksWithUpdatedDeck(deckToSave, {
         currentPageId: pageIdToSave,
-        previousDeckId: deckIdToSave,
+        previousDeckId: summary?.draftId || deckIdToSave,
       });
       clearSlideUndoHistory();
       setDeckDirty(false);

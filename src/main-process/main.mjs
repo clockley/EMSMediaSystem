@@ -106,6 +106,7 @@ import {
   normalizeProjectGuid,
   normalizeSnapshotId,
   snapshotIdFromStagedFilename,
+  stagedMediaPathForSnapshot,
 } from "./staging-index.min.mjs";
 import {
   sanitizeStageContentPayload,
@@ -171,7 +172,7 @@ const ACTIVE_THEME_ID_KEY = "activeThemeId";
 let allowMainWindowClose = false;
 let quitCleanupStarted = false;
 const TIME_REMAINING_PORT_CHANNEL = "timeRemaining-port";
-let pendingProjectOpenPath = null;
+const pendingProjectOpens = [];
 const bibleRpcClient = new BibleRpcClient({
   app,
   devRoot: derivedRoot,
@@ -509,10 +510,16 @@ function firstProjectPathFromArgv(argv) {
 
 function dispatchProjectOpenPath(filePath) {
   if (!isProjectFilePath(filePath)) return;
-  pendingProjectOpenPath = filePath;
+  pendingProjectOpens.push({ id: randomUUID(), filePath });
   if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-    win.webContents.send("open-project-path", filePath);
+    win.webContents.send("project-open-pending");
   }
+}
+
+function handleNextProjectOpen(event, completedId) {
+  if (event.sender !== win?.webContents) return null;
+  if (completedId && pendingProjectOpens[0]?.id === completedId) pendingProjectOpens.shift();
+  return pendingProjectOpens[0] || null;
 }
 
 function saveWindowBounds(bounds) {
@@ -630,11 +637,6 @@ function createWindow() {
   win.webContents.on("did-finish-load", lateInit);
   win.webContents.on("did-finish-load", restoreStageOutputAtStartup);
   win.webContents.on("did-finish-load", installTimeRemainingMessagePort);
-  win.webContents.on("did-finish-load", () => {
-    if (pendingProjectOpenPath) {
-      win.webContents.send("open-project-path", pendingProjectOpenPath);
-    }
-  });
   win.on("maximize", handleMaximizeChange.bind(null, true));
   win.on("unmaximize", handleMaximizeChange.bind(null, false));
   wireMainWindowCloseAutosave(win);
@@ -1578,40 +1580,33 @@ function handleGetMediaWindowBounds() {
 }
 
 async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
-  if (mediaWindowCreatePromise) {
-    await mediaWindowCreatePromise;
-    return handleCreateMediaWindow(event, windowOptions, displayIndex);
-  }
-  const requestedOverlayOnly = windowOptions?.webPreferences?.additionalArguments?.includes("__alertOverlayOnly=true") === true;
-  if (mediaWindow && !mediaWindow.isDestroyed()) {
-    if (!requestedOverlayOnly) {
-      // create-media-window is the fresh-window activation path. Reusing an
-      // existing content renderer here would acknowledge arguments it never
-      // received (cue, loop, volume and playback identity). In-place changes
-      // belong exclusively to slipstream-media-window; recover stale control
-      // state by replacing the window and honoring the complete argument set.
-      const previousWindow = mediaWindow;
-      suppressNextMediaClosedNotification = true;
-      await new Promise((resolve) => {
-        previousWindow.once("closed", resolve);
-        previousWindow.close();
-      });
-    } else {
-      const targetSelection = resolveDisplaySelection(displayIndex);
-      if (!targetSelection) return null;
-      mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
-      applyMediaWindowPresentationMode(mediaWindow);
-      installTimeRemainingMessagePort();
-      publishOutputStatus();
-      return mediaWindow.id;
-    }
-  }
-  mediaWindowCreatePromise = measurePerformance("Creating media window", async () => {
+  const create = async () => {
     const targetSelection = resolveDisplaySelection(displayIndex);
     if (!targetSelection) return null;
+    const requestedOverlayOnly = windowOptions?.webPreferences?.additionalArguments?.includes("__alertOverlayOnly=true") === true;
+    if (mediaWindow && !mediaWindow.isDestroyed()) {
+      if (!requestedOverlayOnly) {
+        // create-media-window is the fresh-window activation path. Reusing an
+        // existing content renderer here would acknowledge arguments it never
+        // received (cue, loop, volume and playback identity). In-place changes
+        // belong exclusively to slipstream-media-window; recover stale control
+        // state by replacing the window and honoring the complete argument set.
+        const previousWindow = mediaWindow;
+        suppressNextMediaClosedNotification = true;
+        await new Promise((resolve) => {
+          previousWindow.once("closed", resolve);
+          previousWindow.close();
+        });
+      } else {
+        mediaWindow.setBounds(fullscreenWindowBoundsForDisplay(targetSelection.display));
+        applyMediaWindowPresentationMode(mediaWindow);
+        installTimeRemainingMessagePort();
+        publishOutputStatus();
+        return mediaWindow.id;
+      }
+    }
 
-    const { webPreferences: incomingPrefs = {}, ...restWindowOptions } =
-      windowOptions;
+    const { webPreferences: incomingPrefs = {}, ...restWindowOptions } = windowOptions || {};
 
     audienceSessionId = randomUUID();
     audienceLayerCommands.clear();
@@ -1642,13 +1637,13 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
     };
 
     const createdMediaWindow = new BrowserWindow(finalWindowOptions);
+    const windowId = createdMediaWindow.id;
     const createdAsOverlayOnly = requestedOverlayOnly;
     let creationComplete = false;
     mediaWindow = createdMediaWindow;
     audienceWindowOverlayOnly = createdAsOverlayOnly;
     audienceHealth = "starting";
     const releaseMediaWindow = () => {
-      const closedId = createdMediaWindow.id;
       const wasActiveMediaWindow = mediaWindow === createdMediaWindow;
       if (wasActiveMediaWindow) {
         mediaWindow = null;
@@ -1656,7 +1651,7 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
         audienceContentKind = "none";
         stopMediaPlaybackPowerHint();
         if (creationComplete && !createdAsOverlayOnly && !audienceWindowOverlayOnly && !suppressNextMediaClosedNotification && win && !win.isDestroyed()) {
-          win.webContents.send("media-window-closed", closedId);
+          win.webContents.send("media-window-closed", windowId);
         }
         suppressNextMediaClosedNotification = false;
         audienceWindowOverlayOnly = false;
@@ -1704,13 +1699,17 @@ async function handleCreateMediaWindow(event, windowOptions, displayIndex) {
 
     publishOutputStatus();
 
-    return createdMediaWindow.id;
-  });
-
+    return windowId;
+  };
+  // Claim the entire replacement, including the asynchronous close, before it starts.
+  const creation = Promise.resolve(mediaWindowCreatePromise).catch(() => {}).then(
+    () => measurePerformance("Creating media window", create),
+  );
+  mediaWindowCreatePromise = creation;
   try {
-    return await mediaWindowCreatePromise;
+    return await creation;
   } finally {
-    mediaWindowCreatePromise = null;
+    if (mediaWindowCreatePromise === creation) mediaWindowCreatePromise = null;
   }
 }
 
@@ -4946,6 +4945,7 @@ async function handleWriteProjectFile(_, payload) {
   }
   const result = await saveEmprojSnapshot(filePath, snapshot, projectWriterAppInfo(), {
     packMedia: mode === "packed",
+    stagingDir: mediaStagingDir(),
   });
   const projectGuid = normalizeProjectGuid(result?.projectGuid) || projectGuidFromSnapshot(snapshot);
   if (activateProject) {
@@ -4984,6 +4984,7 @@ async function handleSaveAutosaveProjectState(_, state) {
   const packAutosaveMedia = state.projectStorageMode === "packed";
   const result = await saveEmprojSnapshot(filePath, state, projectWriterAppInfo(), {
     packMedia: packAutosaveMedia,
+    stagingDir: mediaStagingDir(),
   });
   const projectGuid =
     normalizeProjectGuid(result?.projectGuid) ||
@@ -5585,11 +5586,6 @@ async function computeMediaVersion(fsPath) {
     modifiedTime: mediaFileMtimeIso(info),
     mtimeMs: info.mtimeMs,
   };
-}
-
-function stagedMediaPathForSnapshot(stagingDir, sourcePath, snapshotId) {
-  const ext = path.extname(sourcePath || "").toLowerCase();
-  return path.join(stagingDir, `${snapshotId}${ext}`);
 }
 
 async function ensureStagedMediaFile(
@@ -6608,6 +6604,7 @@ function setIPC() {
   ipcMain.handle("show-relink-folder-dialog", handleShowRelinkFolderDialog);
   ipcMain.handle("relink-missing-media", handleRelinkMissingMedia);
   ipcMain.handle("show-relink-summary-dialog", handleShowRelinkSummaryDialog);
+  ipcMain.handle("next-project-open", handleNextProjectOpen);
   ipcMain.handle("read-project-file", (...args) =>
     enqueueActiveProjectOperation(() => handleReadProjectFile(...args)));
   ipcMain.handle("commit-project-file-open", (...args) =>
@@ -7226,8 +7223,8 @@ app.whenReady().then(async () => {
     console.error("media staging index maintenance failed:", err);
   });
   const startupProjectPath = firstProjectPathFromArgv(process.argv.slice(1));
-  if (startupProjectPath) {
-    pendingProjectOpenPath = startupProjectPath;
+  if (startupProjectPath && !pendingProjectOpens.some(request => request.filePath === startupProjectPath)) {
+    pendingProjectOpens.unshift({ id: randomUUID(), filePath: startupProjectPath });
   }
   // The main UI enables COOP + COEP (`require-corp`) for high-resolution timers /
   // SharedArrayBuffer; that policy blocks cross-origin XHR from hls.js to

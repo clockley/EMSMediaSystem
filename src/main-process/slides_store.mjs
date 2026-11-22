@@ -127,7 +127,7 @@ export class SlidesStore {
     return records;
   }
 
-  async _findDeckRecord(id) {
+  async _findDeckRecord(id, { includeDraft = false } = {}) {
     if (typeof id !== "string" || !id) return null;
     // Generated IDs map directly to filenames, but still verify the embedded ID.
     if (isGeneratedDeckId(id)) {
@@ -141,7 +141,9 @@ export class SlidesStore {
     }
     // Legacy filenames were lossy sanitizations of IDs. Scan and compare the
     // exact embedded ID so two different IDs can never resolve to one file.
-    return (await this._deckRecords()).find((record) => record.deck.id === id) || null;
+    const records = await this._deckRecords();
+    return records.find(record => record.deck.id === id) ||
+      (includeDraft && records.find(record => record.deck._draftId === id)) || null;
   }
 
   async _loadFolders() {
@@ -204,7 +206,10 @@ export class SlidesStore {
   }
 
   async get(id) {
-    return (await this._findDeckRecord(id))?.deck || null;
+    const record = await this._findDeckRecord(id);
+    if (!record) return null;
+    const { _draftId, ...deck } = record.deck;
+    return deck;
   }
 
   async _save(deck) {
@@ -214,8 +219,10 @@ export class SlidesStore {
     }
     await this._ensureDir();
     const requestedId = typeof deck.id === "string" ? deck.id : "";
-    const existing = requestedId ? await this._findDeckRecord(requestedId) : null;
+    const existing = requestedId ? await this._findDeckRecord(requestedId, { includeDraft: true }) : null;
     const out = { ...deck, id: existing?.deck.id || generatedDeckId() };
+    // Retain the first caller identity across concurrent saves, retries and restart.
+    out._draftId = existing ? existing.deck._draftId : requestedId || undefined;
     if (!out.schema) out.schema = SCHEMA_ID;
     out.pageSequence = normalizePageSequence(out.pages, out.pageSequence);
     out.updatedAt = new Date().toISOString();
@@ -238,7 +245,7 @@ export class SlidesStore {
         throw error;
       }
     }
-    return summarizeDeck(out);
+    return { ...summarizeDeck(out), draftId: out._draftId };
   }
 
   async _removeDeckFile(filePath) {

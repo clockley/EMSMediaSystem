@@ -13,6 +13,7 @@ the Free Software Foundation, either version 3 of the License, or
  * renderer entry point.
  */
 
+import { adjacentBibleVerseEntry } from "../shared/bible-verse-navigation.mjs";
 import { bibleTextVerseRows } from "../shared/app-bible-reference-utils.mjs";
 import { requestAudienceOutputDevice } from "../shared/audience-output-device.mjs";
 import { activateAudienceSlipstream } from "../shared/audience-playback-activation.mjs";
@@ -193,6 +194,10 @@ let bibleLowerThirdPreviewSourceKey = "";
 let biblePreviewRenderToken = 0;
 let bibleAudienceOutputUpdateToken = 0;
 const bibleScheduleInsertionCoalescer = createAsyncActionCoalescer();
+let bibleVerseNavigationTail = Promise.resolve();
+let bibleVerseNavigationEpoch = 0;
+let bibleVerseNavigationPending = 0;
+let bibleVerseNavigationBoundary = null;
 const bibleShowNowCoalescer = createAsyncActionCoalescer();
 
 const bibleDesignerState = {
@@ -2067,6 +2072,103 @@ function isScheduledBiblePresentationActive() {
   );
 }
 
+function cancelBibleVerseNavigation() {
+  bibleVerseNavigationEpoch++;
+  bibleVerseNavigationTail = Promise.resolve();
+  bibleVerseNavigationPending = 0;
+  bibleVerseNavigationBoundary = null;
+  updateBibleVerseNavigationControls();
+}
+
+function updateBibleVerseNavigationControls() {
+  const previous = document.getElementById("biblePreviousVerseBtn");
+  const next = document.getElementById("bibleNextVerseBtn");
+  if (previous) previous.disabled = bibleVerseNavigationBoundary === -1;
+  if (next) next.disabled = bibleVerseNavigationBoundary === 1;
+  const follow = document.getElementById("bibleVerseFollowLive")?.checked;
+  const mode = document.getElementById("bibleVerseNavigationMode");
+  if (mode) mode.textContent = follow ? "Follow Live" : "Preview only";
+  document.getElementById("bibleVerseNavigation")?.setAttribute("aria-busy", String(bibleVerseNavigationPending > 0));
+}
+
+function installBibleVerseNavigation() {
+  const bind = (id, event, callback, capture = false) =>
+    document.getElementById(id)?.addEventListener(event, callback, capture);
+  bind("biblePreviousVerseBtn", "click", () => void navigateBibleVerse(-1));
+  bind("bibleNextVerseBtn", "click", () => void navigateBibleVerse(1));
+  bind("bibleVerseFollowLive", "change", cancelBibleVerseNavigation);
+  bind("bibleReferenceInput", "input", cancelBibleVerseNavigation);
+  bind("bibleVersionSelect", "change", cancelBibleVerseNavigation);
+  for (const id of ["bibleVerseList", "bibleSearchResults", "bibleReferenceSuggestions", "bibleRecentList"]) {
+    bind(id, "click", cancelBibleVerseNavigation, true);
+  }
+  bind("bibleVerseList", "contextmenu", cancelBibleVerseNavigation, true);
+  bind("bibleVerseList", "dragstart", cancelBibleVerseNavigation, true);
+  cancelBibleVerseNavigation();
+}
+
+function navigateBibleVerse(direction) {
+  const epoch = bibleVerseNavigationEpoch;
+  bibleVerseNavigationPending++;
+  updateBibleVerseNavigationControls();
+  const step = async () => {
+    if (epoch !== bibleVerseNavigationEpoch || direction === bibleVerseNavigationBoundary) return false;
+    const reference = document.getElementById("bibleReferenceInput");
+    const version = document.getElementById("bibleVersionSelect");
+    const follow = document.getElementById("bibleVerseFollowLive");
+    const selectionKey = () => JSON.stringify([reference.value, version.value, follow.checked,
+      bibleDesignerState.version, bibleDesignerState.reference, selectedBibleVerseNumbers()]);
+    let owner = selectionKey();
+    const isCurrent = () => {
+      if (epoch !== bibleVerseNavigationEpoch) return false;
+      if (owner === selectionKey()) return true;
+      cancelBibleVerseNavigation();
+      return false;
+    };
+    cancelBibleVersePreviewSync();
+    hideBibleReferenceSuggestions();
+    let source = { ...bibleDesignerState, selectedVerses: selectedBibleVerseNumbers() };
+    if (reference.value !== source.reference || version.value !== source.version) {
+      const parsed = await normalizeBibleReferenceInput(reference.value, version.value, { allowVersionSuffix: true });
+      if (!isCurrent()) return false;
+      if (!parsed) throw new Error("Choose a valid Bible reference");
+      source = { ...source, ...parsed };
+    }
+    const next = await adjacentBibleVerseEntry(source, direction, bibleAPI, isCurrent);
+    if (!isCurrent()) return false;
+    if (!next) {
+      bibleVerseNavigationBoundary = direction;
+      showGnomeToast(direction < 0 ? "Beginning of Bible" : "End of Bible");
+      return false;
+    }
+    bibleVerseNavigationBoundary = null;
+    if (next.version !== bibleDesignerState.version) setBibleDesignerVersion(next.version);
+    Object.assign(bibleDesignerState, next, getBibleDesignerStyle());
+    setBibleVerseSelectionFromEntry(next);
+    setBibleNavigatorMode("browse", { runSearch: false });
+    syncBibleSelectorsFromState();
+    owner = selectionKey();
+    await renderBibleVerseList();
+    if (!isCurrent()) return false;
+    applyBiblePreview(bibleDesignerState, { show: false });
+    scrollBibleViewerToCurrentVerse();
+    if (follow.checked && isScripturePresentationLive()) {
+      return performShowBibleTextNow({ isCurrent, followLive: true });
+    }
+    return true;
+  };
+  bibleVerseNavigationTail = bibleVerseNavigationTail.then(step).catch(error => {
+    if (epoch === bibleVerseNavigationEpoch) showGnomeToast(error.message || "Could not navigate Bible verses");
+    return false;
+  }).finally(() => {
+    if (epoch === bibleVerseNavigationEpoch) {
+      bibleVerseNavigationPending--;
+      updateBibleVerseNavigationControls();
+    }
+  });
+  return bibleVerseNavigationTail;
+}
+
 async function nextBibleVerseEntryFromDesigner() {
   if (!(await syncBibleStateFromControls())) return null;
   const requestedReference = bibleDesignerState.reference;
@@ -3466,11 +3568,12 @@ async function sendBibleLowerThirdTextToOutput(
   entry = bibleDesignerState,
   updateToken,
   expectedRevision = null,
+  isCurrent = () => true,
 ) {
   if (!isBibleLowerThirdFeatureEnabled()) return false;
   const token = updateToken ?? nextLowerThirdOutputUpdateToken();
   await waitForBibleLowerThirdFonts(entry);
-  if (token !== lowerThirdOutputUpdateToken) return false;
+  if (!isCurrent() || token !== lowerThirdOutputUpdateToken) return false;
   if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
     return false;
   }
@@ -3634,7 +3737,7 @@ async function closeBibleLowerThirdOutput() {
   }
 }
 
-async function ensureBibleLowerThirdOutput(entry = bibleDesignerState, expectedRevision = null) {
+async function ensureBibleLowerThirdOutput(entry = bibleDesignerState, expectedRevision = null, isCurrent = () => true) {
   if (!isBibleLowerThirdFeatureEnabled()) {
     return false;
   }
@@ -3645,7 +3748,7 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState, expectedR
   const alreadyOpen = bibleLowerThirdOutputActive;
   const updateToken = nextLowerThirdOutputUpdateToken();
   await waitForBibleLowerThirdFonts(entry);
-  if (updateToken !== lowerThirdOutputUpdateToken) return false;
+  if (!isCurrent() || updateToken !== lowerThirdOutputUpdateToken) return false;
   if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
     return false;
   }
@@ -3669,7 +3772,7 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState, expectedR
   };
   try {
     const windowId = await invoke("create-lower-third-window", windowOptions, displayValue);
-    if (updateToken !== lowerThirdOutputUpdateToken) {
+    if (!isCurrent() || updateToken !== lowerThirdOutputUpdateToken) {
       if (!alreadyOpen) await discardUnclaimedLowerThirdWindow(windowId);
       return false;
     }
@@ -3682,7 +3785,7 @@ async function ensureBibleLowerThirdOutput(entry = bibleDesignerState, expectedR
       return false;
     }
     if (bibleLowerThirdOutputActive) {
-      const sent = await sendBibleLowerThirdTextToOutput(entry, updateToken, expectedRevision);
+      const sent = await sendBibleLowerThirdTextToOutput(entry, updateToken, expectedRevision, isCurrent);
       if (sent === false) {
         if (
           !alreadyOpen &&
@@ -4779,22 +4882,32 @@ function showBibleTextNow() {
   return bibleShowNowCoalescer.run("bible:show-now", performShowBibleTextNow);
 }
 
-async function performShowBibleTextNow() {
+async function performShowBibleTextNow({ isCurrent = () => true, followLive = false } = {}) {
   const entry = await currentBibleTextOnlyEntry();
+  if (!isCurrent()) return false;
   if (!entry) {
     showGnomeToast("Choose Bible text to show");
     return false;
   }
   const transientEntry = bibleEntryWithShowNowStyle(entry);
   const sourceOwner = scripturePresentationSource(transientEntry.bible).id;
-  let wantsAudience = hasAudienceOutputSelected();
-  const wantsLowerThird = hasLowerThirdOutputSelected();
+  let wantsAudience = followLive ? isBiblePresentationActive() : hasAudienceOutputSelected();
+  const wantsLowerThird = followLive
+    ? bibleLowerThirdOutputActive && activeLowerThirdContentType === "bible"
+    : hasLowerThirdOutputSelected();
   if (!wantsAudience && !wantsLowerThird) {
+    if (followLive) return false;
     wantsAudience = Boolean(await requestAudienceOutputDevice({ invoke }));
     if (!wantsAudience) return false;
   }
-  if (scripturePresentationSource(bibleDesignerState).id !== sourceOwner) {
+  if (!isCurrent() || scripturePresentationSource(bibleDesignerState).id !== sourceOwner) {
     return false;
+  }
+  if (followLive && !wantsAudience) {
+    // A Scripture lower third can accompany unrelated audience content.
+    // Updating that layer must preserve the audience queue and playback owner.
+    return sendBibleLowerThirdTextToOutput(transientEntry.bible, undefined, null,
+      () => isCurrent() && bibleLowerThirdOutputActive && activeLowerThirdContentType === "bible");
   }
   const previousQueueIndex = currentQueueIndex;
   let presentationRevision = null;
@@ -4811,15 +4924,16 @@ async function performShowBibleTextNow() {
       lowerThird: wantsLowerThird,
     });
     lowerThirdStarted = wantsLowerThird
-      ? await ensureBibleLowerThirdOutput(transientEntry.bible, presentationRevision)
+      ? await ensureBibleLowerThirdOutput(transientEntry.bible, presentationRevision, isCurrent)
       : false;
-    const shouldSlipstreamAudience = wantsAudience && isActiveMediaWindow();
+    const shouldSlipstreamAudience = wantsAudience && isCurrent() && isActiveMediaWindow();
     if (shouldSlipstreamAudience) {
       const didSlipstream = await slipstreamBiblePresentation(
         transientEntry.bible,
         presentationRevision,
         {
-          fallbackTextItem: transientEntry,
+          isCurrent: () => isCurrent() && (!followLive || isBiblePresentationActive()),
+          fallbackTextItem: followLive ? null : transientEntry,
           onAudienceStarted: () => {
             audienceStarted = true;
           },
@@ -4842,7 +4956,7 @@ async function performShowBibleTextNow() {
         return true;
       }
     }
-    if (wantsAudience && !shouldSlipstreamAudience) {
+    if (wantsAudience && !followLive && isCurrent() && !shouldSlipstreamAudience) {
       const createdAudience = await createMediaWindow({
         textItem: transientEntry,
         transientText: true,
@@ -4914,6 +5028,7 @@ async function slipstreamBiblePresentation(
 ) {
   const resolvedEntry = await bibleEntryWithLookupText(entry, { requireLookup: true });
   if (!resolvedEntry) return false;
+  if (options.isCurrent?.() === false) return false;
   if (expectedRevision !== null && !scripturePresentation.isCurrentRevision(expectedRevision)) {
     return false;
   }
@@ -4930,7 +5045,7 @@ async function slipstreamBiblePresentation(
     },
   );
   if (!activation.ok) {
-    if (activation.reason !== "rejected" || !options.fallbackTextItem) return false;
+    if (activation.reason !== "rejected" || !options.fallbackTextItem || options.isCurrent?.() === false) return false;
     // Only the request that still owned the failed renderer may replace it.
     // Superseded Scripture takes must not reclaim the window from newer output.
     return createMediaWindow({
@@ -5379,6 +5494,9 @@ function syncBibleVersionAttributionDisplay() {
 function syncBibleSelectorsFromState() {
   const versionSelect = document.getElementById("bibleVersionSelect");
   const referenceInput = document.getElementById("bibleReferenceInput");
+  if (bibleVerseNavigationBoundary !== null && (
+    versionSelect?.value !== bibleDesignerState.version || referenceInput?.value !== bibleDesignerState.reference
+  )) cancelBibleVerseNavigation();
   if (versionSelect) versionSelect.value = bibleDesignerState.version;
   if (referenceInput) referenceInput.value = bibleDesignerState.reference;
   syncBibleVersionAttributionDisplay();
@@ -6450,6 +6568,7 @@ export {
   setBibleVerseSelectionFromEntry,
   setBibleVersionMetadata,
   showBibleTextContextMenu,
+  installBibleVerseNavigation,
   showBibleTextNow,
   showCuedBibleLowerThird,
   showRecentScriptureContextMenu,

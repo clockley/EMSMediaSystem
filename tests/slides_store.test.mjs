@@ -185,3 +185,21 @@ test("deck deletion propagates filesystem errors", async () => {
     await assert.rejects(store.delete("legacy"), /directory|operation not permitted|EISDIR/i);
   });
 });
+
+test("overlapping first saves and a retry after restart address the same deck", async () => {
+  await withStore(async (store, root) => {
+    const draft = deck("provisional-id");
+    const [first, second] = await Promise.all([store.save(draft), store.save({ ...draft, title: "Second" })]);
+    assert.equal(first.id, second.id);
+    const restarted = new SlidesStore({ userDataPath: path.dirname(root) });
+    const third = await restarted.save({ ...draft, title: "Third" });
+    assert.equal(third.id, first.id);
+    assert.equal(third.draftId, draft.id);
+    assert.equal((await restarted.get(first.id)).title, "Third");
+    assert.equal((await restarted.list()).length, 1);
+    const copy = await restarted.duplicate(first.id);
+    assert.notEqual(copy.id, first.id);
+    await restarted.save({ ...draft, title: "Fourth" });
+    assert.equal((await restarted.get(copy.id)).title, "Third (Copy)");
+  });
+});

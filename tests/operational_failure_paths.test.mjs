@@ -413,3 +413,88 @@ test("a failed Media query displays a retry state and recovers after success", a
   assert.equal(elements.get("mediaLibraryQueryError").hidden, true);
   assert.equal(state.items.length, 1);
 });
+
+test("packed Save As publishes a self-contained copy before changing the session identity", async t => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { saveEmprojSnapshot, loadEmprojSnapshot, cleanupExtractedProjectMedia } = await import("../src/main-process/emproj.mjs");
+  const root = await mkdtemp(join(tmpdir(), "ems-save-as-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const original = join(root, "first.emproj");
+  const copy = join(root, "copy.emproj");
+  const clip = join(root, "clip.mp4");
+  await writeFile(clip, "media");
+  await saveEmprojSnapshot(original, { mediaQueue: [{ path: clip }] }, {}, { packMedia: true });
+  const loaded = await loadEmprojSnapshot(original);
+  t.after(() => cleanupExtractedProjectMedia(loaded));
+  await rm(clip);
+  const newGuid = "22222222-2222-4222-8222-222222222222";
+  let simulateFailure = true;
+  const state = vm.createContext({
+    currentProjectPath: original, currentProjectGuid: loaded.projectGuid,
+    currentProjectCreated: loaded.projectCreated, currentProjectNeedsSaveAs: false,
+    currentProjectStorageMode: loaded.projectStorageMode,
+    generateProjectGuid: () => newGuid, normalizeProjectGuid: value => value,
+    syncCurrentPptxSlideForProjectSnapshot() {},
+    buildProjectStateSnapshot: options => ({ ...loaded, ...options, projectStorageMode: state.currentProjectStorageMode }),
+    async invoke(channel, payload) {
+      if (channel === "show-save-project-dialog") return { filePath: copy };
+      assert.equal(channel, "write-project-file");
+      assert.equal(state.currentProjectPath, original);
+      assert.equal(state.currentProjectGuid, loaded.projectGuid);
+      if (simulateFailure) throw new Error("disk unavailable");
+      return saveEmprojSnapshot(copy, JSON.parse(payload.data), {}, { packMedia: payload.mode === "packed" });
+    },
+    scheduleAutosaveProjectState() {}, refreshBaselinesAfterSave() {}, showGnomeToast() {},
+    console: { error() {} },
+  });
+  vm.runInContext(functionSlice(projectSource, "async function saveProjectAsDialog(", "async function saveProject()"), state);
+  assert.equal(await state.saveProjectAsDialog(), false);
+  assert.equal(state.currentProjectGuid, loaded.projectGuid);
+  simulateFailure = false;
+  assert.equal(await state.saveProjectAsDialog(), true);
+  assert.equal(state.currentProjectPath, copy);
+  assert.equal(state.currentProjectGuid, newGuid);
+  await cleanupExtractedProjectMedia(loaded);
+  const restored = await loadEmprojSnapshot(copy);
+  t.after(() => cleanupExtractedProjectMedia(restored));
+  assert.equal(restored.projectStorageMode, "packed");
+  assert.equal(await readFile(restored.mediaQueue[0].path, "utf8"), "media");
+});
+
+test("launcher requests survive renderer startup and are consumed in order after recovery", async () => {
+  const operator = await readFile(new URL("../src/control-window/app-operator-chrome.mjs", import.meta.url), "utf8");
+  const notifications = new EventEmitter();
+  const sender = { isDestroyed: () => false, send: name => notifications.emit(name) };
+  let sequence = 0;
+  const main = vm.createContext({
+    win: { isDestroyed: () => false, webContents: sender }, randomUUID: () => String(++sequence),
+    pendingProjectOpens: [], isProjectFilePath: () => true,
+  });
+  vm.runInContext(functionSlice(mainSource, "function dispatchProjectOpenPath(", "function saveWindowBounds("), main);
+  main.dispatchProjectOpenPath("early.emproj");
+  assert.equal(main.handleNextProjectOpen({ sender: {} }), null);
+  const startup = Promise.withResolvers();
+  const events = [];
+  const control = vm.createContext({
+    on: notifications.on.bind(notifications), invoke: (_channel, ack) => main.handleNextProjectOpen({ sender }, ack),
+    async restoreAutosavedProjectState() { await startup.promise; events.push("recovered"); },
+    async openProjectByPath(file) { events.push(file); },
+    console,
+  });
+  vm.runInContext(functionSlice(operator, "let projectLauncherReady;", "async function loadOpMode("), control);
+  const starting = control.initializeProjectLauncher();
+  main.dispatchProjectOpenPath("during-recovery.emproj");
+  await new Promise(setImmediate);
+  assert.deepEqual(events, []);
+  startup.resolve();
+  await starting;
+  assert.deepEqual(events, ["recovered", "early.emproj", "during-recovery.emproj"]);
+  main.dispatchProjectOpenPath("after.emproj");
+  await new Promise(setImmediate);
+  assert.equal(events.at(-1), "after.emproj");
+  assert.equal(main.handleNextProjectOpen({ sender }), null);
+  await control.initializeProjectLauncher();
+  assert.equal(events.length, 4);
+});

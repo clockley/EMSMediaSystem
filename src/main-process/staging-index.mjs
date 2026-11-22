@@ -30,6 +30,11 @@ export function normalizeSnapshotId(value) {
   return isValidMediaFileHash(id) ? id : "";
 }
 
+export function stagedMediaPathForSnapshot(stagingDir, sourcePath, snapshotId) {
+  const ext = path.extname(sourcePath || "").toLowerCase();
+  return path.join(stagingDir, `${snapshotId}${ext}`);
+}
+
 export function snapshotIdFromStagedFilename(filename) {
   const base = path.basename(String(filename || ""));
   const match = STAGED_SNAPSHOT_FILENAME_RE.exec(base);

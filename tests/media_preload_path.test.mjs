@@ -52,3 +52,48 @@ for (const [platform, paths, derivedSrcDir] of [
     }
   }
 }
+test("audience replacements serialize close and creation, and recover after a failed launch", async () => {
+  const { EventEmitter } = await import("node:events");
+  let nextId = 0;
+  const windows = [];
+  class Window extends EventEmitter {
+    constructor() {
+      super();
+      assert.ok(windows.every(win => win.destroyed), "only one audience window may exist");
+      this.id = ++nextId;
+      windows.push(this);
+    }
+    isDestroyed() { return Boolean(this.destroyed); }
+    close() {
+      assert.ok(!this.closing, "a window is closed exactly once");
+      this.closing = true;
+      setImmediate(() => this.destroy());
+    }
+    destroy() { this.destroyed = true; this.emit("closed"); }
+    async loadFile() { if (this.id === 2) throw new Error("load failed"); }
+    setBounds() {}
+  }
+  const state = vm.createContext({
+    path, derivedSrcDir: "/derived/src", mediaPresentationSession: {},
+    mediaWindow: new Window(), mediaWindowCreatePromise: null, BrowserWindow: Window,
+    win: null, audienceLayerCommands: new Map(), outputLayerRevisions: new Map(),
+    audienceContentKind: "none", randomUUID: () => "session", hasActiveAlerts: () => false,
+    resolveDisplaySelection: value => value ? { display: {}, value } : null,
+    fullscreenWindowBoundsForDisplay: () => ({}), measurePerformance: (_label, action) => action(),
+    additionalArgumentValue() {}, waitForAudienceOutputBootstrap: () => ({ promise: Promise.resolve(), cancel() {} }),
+    applyMediaWindowPresentationMode() {}, installTimeRemainingMessagePort() {}, publishOutputStatus() {},
+    stopMediaPlaybackPowerHint() {}, settings: { set: async () => {} },
+  });
+  vm.runInContext(source.match(/^async function handleCreateMediaWindow\([\s\S]*?^}/m)[0], state);
+  assert.equal(await state.handleCreateMediaWindow(null, {}, ""), null);
+  assert.equal(windows[0].closing, undefined);
+  const failed = state.handleCreateMediaWindow(null, {}, "display");
+  const fresh = state.handleCreateMediaWindow(null, {}, "display");
+  const overlay = state.handleCreateMediaWindow(null, { webPreferences: { additionalArguments: ["__alertOverlayOnly=true"] } }, "display");
+  const last = state.handleCreateMediaWindow(null, {}, "display");
+  await assert.rejects(failed, /load failed/);
+  assert.equal(await fresh, 3);
+  assert.equal(await overlay, 3);
+  assert.equal(await last, 4);
+  assert.deepEqual(windows.filter(win => !win.destroyed).map(win => win.id), [4]);
+});

@@ -168,6 +168,7 @@ import {
   setSongLowerThirdCue,
   showAudienceAlert,
   showBibleTextContextMenu,
+  installBibleVerseNavigation,
   showBibleTextNow,
   showCuedBibleLowerThird,
   showCuedSongLowerThird,
@@ -846,6 +847,7 @@ function installBibleMediaControls() {
   const searchScopeSelect = document.getElementById("bibleSearchScopeSelect");
   if (!versionSelect || versionSelect.dataset.bibleBound === "1") return;
   versionSelect.dataset.bibleBound = "1";
+  installBibleVerseNavigation();
   installBibleWorkspaceEventGuards();
   installSongsWorkspaceEventGuards();
   installSlidesWorkspaceEventGuards();

@@ -3734,6 +3734,21 @@ body.is-pptx-sidebar-resizing .pptx-sidebar-resize-handle::before {
     margin-top: -2px;
 }
 
+.bible-verse-navigation,
+.bible-verse-navigation__buttons {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.bible-verse-navigation__buttons button:focus-visible {
+    outline: 2px solid var(--accent-color, currentColor);
+    outline-offset: 2px;
+}
+.bible-verse-navigation [role="status"] {
+    font-size: 0.8em;
+}
+
 .bible-verse-list-hint {
     margin: -2px 2px 0;
     color: color-mix(in srgb, var(--window-fg-color) 62%, transparent);

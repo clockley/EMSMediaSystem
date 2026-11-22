@@ -982,6 +982,14 @@ export function generateMediaFormHTML() {
             <button type="button" id="bibleShowNowBtn" class="pill-button suggested-action">Show Now</button>
             <button type="button" id="bibleInsertQueueBtn" class="pill-button secondary">Add to Schedule</button>
           </div>
+          <div id="bibleVerseNavigation" class="bible-verse-navigation" role="group" aria-label="Verse navigation">
+            <div class="bible-verse-navigation__buttons">
+              <button type="button" id="biblePreviousVerseBtn" aria-label="Previous verse" title="Previous verse">←</button>
+              <button type="button" id="bibleNextVerseBtn" aria-label="Next verse" title="Next verse">→</button>
+            </div>
+            <label><input type="checkbox" id="bibleVerseFollowLive" role="switch"> Follow Live</label>
+            <span id="bibleVerseNavigationMode" role="status">Preview only</span>
+          </div>
           <span class="bible-verse-list-hint">Click to cue · Double-click to show live · Drag to schedule</span>
           <div id="bibleVerseList" class="bible-verse-list" role="listbox" aria-label="Chapter verses">
             <div class="list-placeholder">
