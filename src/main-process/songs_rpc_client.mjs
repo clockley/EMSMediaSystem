@@ -77,8 +77,8 @@ export class SongsRpcClient {
   }
 
   async ensureStarted() {
-    if (this.child && !this.child.killed && this.child.exitCode === null) return;
     if (this.startPromise) return this.startPromise;
+    if (this.child && !this.child.killed && this.child.exitCode === null) return;
     this.startPromise = this.start();
     try {
       await this.startPromise;
@@ -104,11 +104,14 @@ export class SongsRpcClient {
 
     return new Promise((resolve, reject) => {
       let spawnPath = binaryPath;
-      let spawnArgs = ["-db", databasePath];
+      const modelPath = this.app?.isPackaged
+        ? path.join(process.resourcesPath, "models")
+        : path.resolve(this.devRoot, "..", "models");
+      let spawnArgs = ["-db", databasePath, "-models", modelPath];
       
       if (!existsSync(binaryPath) && !this.app?.isPackaged) {
           spawnPath = "go";
-          spawnArgs = ["run", ".", "-db", databasePath];
+          spawnArgs = ["run", ".", ...spawnArgs];
           const cwd = path.resolve(this.devRoot, "..", "sidecars", "songs-rpc");
           this.child = spawn(spawnPath, spawnArgs, { cwd });
       } else {

@@ -165,7 +165,14 @@ const bibleAPI = {
 const songsAPI = {
   waitForReady: () => initialize(),
   search: (query = "", options = {}) =>
-    callSongs("songs.search", [{ query, folderId: options.folderId ?? null, all: options.all === true, unfiled: options.unfiled === true }]),
+    callSongs("songs.search", [{
+      query,
+      interactive: options.interactive === true,
+      lexicalOnly: options.lexicalOnly === true,
+      folderId: options.folderId ?? null,
+      all: options.all === true,
+      unfiled: options.unfiled === true,
+    }]),
   get: (id) => callSongs("songs.get", [id]),
   save: (song, originalJSON) => callSongs("songs.save", [song, originalJSON]),
   delete: (id) => callSongs("songs.delete", [id]),

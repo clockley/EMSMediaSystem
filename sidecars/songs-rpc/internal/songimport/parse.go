@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +15,19 @@ import (
 const maxImportBytes = 512 * 1024
 
 func ParseFile(path string) (ParsedSong, string, error) {
-	bytes, err := os.ReadFile(path)
+	info, err := os.Stat(path)
+	if err != nil {
+		return ParsedSong{}, "", fmt.Errorf("could not read file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return ParsedSong{}, "", fmt.Errorf("song import requires a regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return ParsedSong{}, "", fmt.Errorf("could not read file: %w", err)
+	}
+	defer file.Close()
+	bytes, err := io.ReadAll(io.LimitReader(file, maxImportBytes+1))
 	if err != nil {
 		return ParsedSong{}, "", fmt.Errorf("could not read file: %w", err)
 	}

@@ -1708,7 +1708,7 @@ function installBibleMediaControls() {
   });
   
   document.getElementById("songsSearchInput")?.addEventListener("input", (e) => {
-    void refreshSongsBrowser(e.target.value).catch(console.error);
+    void refreshSongsBrowser(e.target.value, null, "typing").catch(console.error);
     const clearBtn = document.getElementById("songsSearchClearBtn");
     if (clearBtn) clearBtn.hidden = !e.target.value;
   });

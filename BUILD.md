@@ -5,6 +5,9 @@ This guide explains how to build the EMS Media System from source code on differ
 ## Prerequisites
 
 ### All Platforms
+
+- **Go 1.27 or newer** builds the songs sidecar with its pure-Go embedding runtime.
+- Make uses `curl` to download missing multilingual E5-small weights and tokenizer files into `models/` and verifies their SHA-256 checksums against `sidecars/songs-rpc/internal/embedding/assets.json`. Both files are Git-ignored. The installer includes them for offline search. [Model source](https://huggingface.co/Xenova/multilingual-e5-small/tree/761b726dd34fb83930e26aab4e9ac3899aa1fa78)
 - **Node.js** (v20 or higher) - [Download from nodejs.org](https://nodejs.org/)
 - **Yarn** package manager - [Install instructions](https://yarnpkg.com/getting-started/install)
 

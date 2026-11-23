@@ -2,14 +2,17 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 
+	"emsmediasystem/songs-rpc/internal/embedding"
 	"emsmediasystem/songs-rpc/internal/songimport"
 	"emsmediasystem/songs-rpc/internal/songstore"
 )
@@ -29,10 +32,12 @@ type JSONRPCResponse struct {
 }
 
 type searchParams struct {
-	Query    string  `json:"query"`
-	FolderID *string `json:"folderId"`
-	All      bool    `json:"all"`
-	Unfiled  bool    `json:"unfiled"`
+	Interactive bool    `json:"interactive"`
+	LexicalOnly bool    `json:"lexicalOnly"`
+	Query       string  `json:"query"`
+	FolderID    *string `json:"folderId"`
+	All         bool    `json:"all"`
+	Unfiled     bool    `json:"unfiled"`
 }
 
 type importFilesParams struct {
@@ -43,6 +48,7 @@ type importFilesParams struct {
 
 func main() {
 	dbPath := flag.String("db", "", "Path to SQLite database")
+	models := flag.String("models", "", "Directory containing the offline song search model and tokenizer")
 	flag.Parse()
 
 	if *dbPath == "" {
@@ -54,7 +60,53 @@ func main() {
 		log.Fatalf("Failed to initialize store: %v", err)
 	}
 	defer store.Close()
+	if *models != "" {
+		// Leave CPU time for the live presentation during a library backfill.
+		runtime.GOMAXPROCS(min(2, runtime.GOMAXPROCS(0)))
+		store.StartSemanticIndex(func(ctx context.Context) (songstore.Encoder, error) { return embedding.Load(ctx, *models) })
+	}
 
+	type searchJob struct {
+		id   any
+		ctx  context.Context
+		opts songstore.SearchOptions
+	}
+	// The stdin loop owns cancellation and the pending slot. The worker can
+	// finish its current inference while only the latest query waits for it.
+	jobs := make(chan searchJob, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for job := range jobs {
+			rows, err := store.SearchContext(job.ctx, job.opts)
+			if job.ctx.Err() != nil {
+				sendResult(job.id, []songstore.SearchResult{})
+			} else if err != nil {
+				sendError(job.id, -32000, err.Error())
+			} else {
+				sendResult(job.id, rows)
+			}
+		}
+	}()
+	var cancelSearch context.CancelFunc
+	supersede := func() {
+		if cancelSearch != nil {
+			cancelSearch()
+			cancelSearch = nil
+		}
+		select {
+		case pending := <-jobs:
+			sendResult(pending.id, []songstore.SearchResult{})
+		default:
+		}
+	}
+	defer func() {
+		close(jobs)
+		<-done
+		if cancelSearch != nil {
+			cancelSearch()
+		}
+	}()
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		line, err := reader.ReadString('\n')
@@ -77,6 +129,20 @@ func main() {
 			continue
 		}
 
+		if req.Method == "songs.search" {
+			opts := parseSearchOptions(req.Params)
+			if opts.LexicalOnly || opts.Interactive {
+				supersede()
+			}
+			if opts.Interactive && !opts.LexicalOnly && strings.TrimSpace(opts.Query) != "" {
+				// Foreground RPCs (including lexical searches) remain available
+				// while the model finishes a passage or refines the current query.
+				ctx, cancel := context.WithCancel(context.Background())
+				cancelSearch = cancel
+				jobs <- searchJob{req.ID, ctx, opts}
+				continue
+			}
+		}
 		handleRequest(store, req)
 	}
 }
@@ -88,16 +154,13 @@ func parseSearchOptions(params json.RawMessage) songstore.SearchOptions {
 	}
 
 	var objectParams searchParams
-	if err := json.Unmarshal(params, &objectParams); err == nil && (objectParams.Query != "" || objectParams.FolderID != nil || objectParams.All || objectParams.Unfiled) {
+	if err := json.Unmarshal(params, &objectParams); err == nil {
 		return parseSearchOptionsFromParams(objectParams)
 	}
 
 	var objectList []searchParams
 	if err := json.Unmarshal(params, &objectList); err == nil && len(objectList) > 0 {
-		candidate := objectList[0]
-		if candidate.Query != "" || candidate.FolderID != nil || candidate.All || candidate.Unfiled {
-			return parseSearchOptionsFromParams(candidate)
-		}
+		return parseSearchOptionsFromParams(objectList[0])
 	}
 
 	var stringParams []string
@@ -109,10 +172,12 @@ func parseSearchOptions(params json.RawMessage) songstore.SearchOptions {
 
 func parseSearchOptionsFromParams(params searchParams) songstore.SearchOptions {
 	return songstore.SearchOptions{
-		Query:    params.Query,
-		FolderID: params.FolderID,
-		All:      params.All,
-		Unfiled:  params.Unfiled,
+		Interactive: params.Interactive,
+		LexicalOnly: params.LexicalOnly,
+		Query:       params.Query,
+		FolderID:    params.FolderID,
+		All:         params.All,
+		Unfiled:     params.Unfiled,
 	}
 }
 

@@ -6563,7 +6563,11 @@ function importFilesTimeoutMs(params) {
   return Math.min(scaled, IMPORT_TIMEOUT_MAX_MS);
 }
 
-async function handleSongsRPC(_event, method, params = []) {
+async function handleSongsRPC(event, method, params = []) {
+  assertControlSender(event);
+  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) {
+    throw new TypeError("Song library commands require the main control frame");
+  }
   if (typeof method !== "string" || !method.startsWith("songs.")) {
     throw new Error("Invalid Songs RPC method");
   }

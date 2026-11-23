@@ -1,6 +1,7 @@
 package songstore
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -15,7 +16,8 @@ import (
 )
 
 type SongStore struct {
-	db *sql.DB
+	db       *sql.DB
+	semantic semanticIndex
 }
 
 type SongMetadata struct {
@@ -99,10 +101,12 @@ type SearchResult struct {
 }
 
 type SearchOptions struct {
-	Query    string
-	FolderID *string
-	All      bool
-	Unfiled  bool
+	Interactive bool
+	LexicalOnly bool
+	Query       string
+	FolderID    *string
+	All         bool
+	Unfiled     bool
 }
 
 const searchQueryResultLimit = 1000
@@ -127,16 +131,27 @@ func InitStore(dbPath string) (*SongStore, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	store := &SongStore{db: db}
+	store := &SongStore{db: db, semantic: semanticIndex{wake: make(chan struct{}, 1)}}
 	if err := store.createSchema(); err != nil {
 		db.Close()
 		return nil, err
 	}
 
+	// Serialize short database operations with the background index writer.
+	db.SetMaxOpenConns(1)
 	return store, nil
 }
 
 func (s *SongStore) Close() error {
+	idx := &s.semantic
+	idx.mu.Lock()
+	idx.closed = true
+	cancel, done := idx.cancel, idx.done
+	idx.mu.Unlock()
+	if cancel != nil {
+		cancel()
+		<-done
+	}
 	return s.db.Close()
 }
 
@@ -183,6 +198,17 @@ func (s *SongStore) createSchema() error {
 		included INTEGER NOT NULL DEFAULT 1
 	);
 	CREATE INDEX IF NOT EXISTS song_projections_time ON song_projections(projected_at);
+
+	CREATE TABLE IF NOT EXISTS song_embeddings (
+		song_id TEXT PRIMARY KEY,
+		model_key TEXT NOT NULL,
+		content_hash BLOB NOT NULL,
+		vectors BLOB NOT NULL
+	);
+	CREATE TRIGGER IF NOT EXISTS song_embeddings_delete AFTER DELETE ON songs
+	BEGIN
+		DELETE FROM song_embeddings WHERE song_id = OLD.id;
+	END;
 
 	CREATE VIRTUAL TABLE IF NOT EXISTS song_fts USING fts5(
 		song_id UNINDEXED,
@@ -886,6 +912,7 @@ func (s *SongStore) backfillSongNumbersFromJSON() error {
 		Metadata   metadata `json:"metadata"`
 	}
 
+	numbers := map[string]int{}
 	for rows.Next() {
 		var id string
 		var rawJSON string
@@ -903,7 +930,16 @@ func (s *SongStore) backfillSongNumbersFromJSON() error {
 		if number == nil || *number <= 0 {
 			continue
 		}
-		if _, err := s.db.Exec(`UPDATE songs SET song_number = ? WHERE id = ?`, *number, id); err != nil {
+		numbers[id] = *number
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for id, number := range numbers {
+		if _, err := s.db.Exec(`UPDATE songs SET song_number = ? WHERE id = ?`, number, id); err != nil {
 			return err
 		}
 	}
@@ -1509,7 +1545,11 @@ func textFromGenericBlock(block map[string]interface{}) string {
 	if !ok {
 		return ""
 	}
-	segments, ok := primary["segments"].([]interface{})
+	return localizedLyrics(primary)
+}
+
+func localizedLyrics(run map[string]interface{}) string {
+	segments, ok := run["segments"].([]interface{})
 	if !ok {
 		return ""
 	}
@@ -1656,7 +1696,11 @@ func (s *SongStore) SaveSongDocument(raw map[string]interface{}, originalImportJ
 	if err := s.saveSongDocumentTx(tx, document, originalImportJSON); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.wakeIndexer()
+	return nil
 }
 
 func (s *SongStore) saveSongDocumentTx(tx *sql.Tx, document map[string]interface{}, originalImportJSON string) error {
@@ -1713,6 +1757,9 @@ func (s *SongStore) saveSongDocumentTx(tx *sql.Tx, document map[string]interface
 	}
 
 	if _, err := tx.Exec("DELETE FROM song_fts WHERE song_id = ?", id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec("DELETE FROM song_embeddings WHERE song_id = ? AND content_hash != ?", id, passageHash(songPassages(document))); err != nil {
 		return err
 	}
 	return insertSearchDocument(tx, document)
@@ -1817,9 +1864,35 @@ func (s *SongStore) ResetDatabase() error {
 }
 
 func (s *SongStore) Search(opts SearchOptions) ([]SearchResult, error) {
+	return s.SearchContext(context.Background(), opts)
+}
+
+func (s *SongStore) SearchContext(ctx context.Context, opts SearchOptions) ([]SearchResult, error) {
 	query := strings.TrimSpace(opts.Query)
+	if len(query) > 4096 {
+		return nil, fmt.Errorf("song search query exceeds 4096 bytes")
+	}
 	if query != "" {
-		return s.searchWithQuery(query, opts)
+		key, vector := s.queryVector(ctx, query, opts)
+		if len(vector) == 0 {
+			return s.searchWithQuery(ctx, s.db, query, opts)
+		}
+		// Read both rankings from the same snapshot after inference. Edits can
+		// commit while the encoder is running.
+		tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+		lexical, err := s.searchWithQuery(ctx, tx, query, opts)
+		if err != nil {
+			return nil, err
+		}
+		hits, err := s.nearestSongs(ctx, tx, key, vector, opts)
+		if err != nil {
+			return lexical, ctx.Err()
+		}
+		return fuseResults(query, lexical, hits), nil
 	}
 
 	orderBy := ` ORDER BY CASE WHEN song_number IS NULL THEN 1 ELSE 0 END, song_number, title`
@@ -1827,10 +1900,10 @@ func (s *SongStore) Search(opts SearchOptions) ([]SearchResult, error) {
 	useUnfiledFilter := !opts.All && opts.Unfiled
 
 	if useUnfiledFilter {
-		rows, err := s.db.Query(`
+		rows, err := s.db.QueryContext(ctx, `
 			SELECT id, title, author, folder_id, song_number, meter
 			FROM songs
-			WHERE folder_id IS NULL` + orderBy,
+			WHERE folder_id IS NULL`+orderBy,
 		)
 		if err != nil {
 			return nil, err
@@ -1839,7 +1912,7 @@ func (s *SongStore) Search(opts SearchOptions) ([]SearchResult, error) {
 	}
 
 	if useFolderFilter {
-		rows, err := s.db.Query(`
+		rows, err := s.db.QueryContext(ctx, `
 			SELECT id, title, author, folder_id, song_number, meter
 			FROM songs
 			WHERE folder_id = ?`+orderBy,
@@ -1850,7 +1923,7 @@ func (s *SongStore) Search(opts SearchOptions) ([]SearchResult, error) {
 		return scanSearchResults(rows)
 	}
 
-	rows, err := s.db.Query(`SELECT id, title, author, folder_id, song_number, meter FROM songs` + orderBy)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, title, author, folder_id, song_number, meter FROM songs`+orderBy)
 	if err != nil {
 		return nil, err
 	}
@@ -1870,7 +1943,11 @@ func (s *SongStore) folderFilterSQL(opts SearchOptions) (string, []interface{}) 
 	return "", nil
 }
 
-func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchResult, error) {
+type searchReader interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func (s *SongStore) searchWithQuery(ctx context.Context, db searchReader, query string, opts SearchOptions) ([]SearchResult, error) {
 	folderSQL, folderArgs := s.folderFilterSQL(opts)
 
 	words := strings.Fields(query)
@@ -1908,7 +1985,7 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 				FROM songs s
 				WHERE s.song_number = ? ` + folderSQL + `
 				UNION ALL
-				SELECT s.id, s.title, s.author, s.folder_id, s.song_number, s.meter, bm25(song_fts, 100.0, 10.0, 1.0) as rank
+				SELECT s.id, s.title, s.author, s.folder_id, s.song_number, s.meter, bm25(song_fts, 0.0, 100.0, 10.0, 1.0) as rank
 				FROM songs s
 				JOIN song_fts ON s.id = song_fts.song_id
 				WHERE song_fts MATCH ? ` + folderSQL + `
@@ -1923,7 +2000,7 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 		args = append(args, ftsQuery)
 		args = append(args, folderArgs...)
 
-		rows, err := s.db.Query(sqlText, args...)
+		rows, err := db.QueryContext(ctx, sqlText, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -1935,11 +2012,11 @@ func (s *SongStore) searchWithQuery(query string, opts SearchOptions) ([]SearchR
 		FROM songs s
 		JOIN song_fts ON s.id = song_fts.song_id
 		WHERE song_fts MATCH ?` + folderSQL + ` 
-		ORDER BY bm25(song_fts, 100.0, 10.0, 1.0) ASC, CASE WHEN s.song_number IS NULL THEN 1 ELSE 0 END, s.song_number, s.title
+		ORDER BY bm25(song_fts, 0.0, 100.0, 10.0, 1.0) ASC, CASE WHEN s.song_number IS NULL THEN 1 ELSE 0 END, s.song_number, s.title
 	` + sqlLimitClause(searchQueryResultLimit)
 
 	args := append([]interface{}{ftsQuery}, folderArgs...)
-	rows, err := s.db.Query(sqlText, args...)
+	rows, err := db.QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1963,7 +2040,7 @@ func scanSearchResults(rows *sql.Rows) ([]SearchResult, error) {
 		res.Meter = scanNullableText(meter)
 		results = append(results, res)
 	}
-	return results, nil
+	return results, rows.Err()
 }
 
 func (s *SongStore) ListFolders() ([]Folder, error) {
@@ -2162,5 +2239,9 @@ func (s *SongStore) MoveSongToFolder(songID string, folderID *string) error {
 	if err := s.saveSongDocumentTx(tx, document, ""); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.wakeIndexer()
+	return nil
 }

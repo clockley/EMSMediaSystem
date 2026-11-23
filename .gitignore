@@ -12,3 +12,6 @@ sidecars/video-poster/windows/bin/
 sidecars/video-poster/windows/obj/
 docs/*
 
+# Offline song search assets fetched by the build from the pinned model revision.
+/models/model_int8.onnx
+/models/tokenizer.json

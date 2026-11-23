@@ -17,6 +17,7 @@ let songSlideNavigatorRenderToken = 0;
 let songPreviewRenderToken = 0;
 let songPreviewRerenderRaf = 0;
 let songLibraryClickTimer = null;
+let songLibraryInteraction = 0;
 let deckPageClickTimer = null;
 
 const songWorkspaceLoadGate = createLatestRequestGate();
@@ -8609,22 +8610,41 @@ function showSongContextMenu(event, song) {
   menu.style.top = `${Math.round(top)}px`;
 }
 
-async function refreshSongsBrowser(query = "", prefetchedResults = null) {
+async function refreshSongsBrowser(query = "", prefetchedResults = null, phase = "") {
   const trimmedQuery = String(query || "").trim();
   const searchOptions = songSearchOptionsForCurrentFolder();
+  const interaction = songLibraryInteraction;
   const request = songLibraryQueryGate.begin({ query: trimmedQuery, options: searchOptions });
   try {
-    const results = asSongArray(
-      prefetchedResults ??
-        (await songsAPI.search(trimmedQuery, searchOptions)),
-    );
+    const results = asSongArray(prefetchedResults ?? await songsAPI.search(trimmedQuery, {
+      ...searchOptions,
+      lexicalOnly: phase === "typing",
+      interactive: phase === "refine",
+    }));
     if (!songLibraryQueryGate.isCurrent(request)) return false;
+    if (phase === "refine" && interaction !== songLibraryInteraction) return false;
     const list = document.getElementById("songsList");
     if (!list) return false;
+    // Show keyword matches as the operator types. Refine only the latest query.
+    const refineAfterTyping = phase === "typing" && trimmedQuery.length >= 3 && !/^#?\s*\d+$/.test(trimmedQuery);
+    if (refineAfterTyping) {
+      setTimeout(() => {
+        if (songLibraryQueryGate.isCurrent(request) && interaction === songLibraryInteraction) {
+          void refreshSongsBrowser(trimmedQuery, null, "refine");
+        }
+      }, 180);
+    }
 
     if (!list._delegationInitialized) {
       list._delegationInitialized = true;
 
+      // Rows are reused by position. Keep a refinement from changing the
+      // identity of a row while the operator clicks, focuses or drags it.
+      const preserveResult = (event) => {
+        if (event.target.closest(".songs-list-item")) songLibraryInteraction++;
+      };
+      list.addEventListener("pointerdown", preserveResult);
+      list.addEventListener("focusin", preserveResult);
       list.addEventListener("click", async (event) => {
         const deleteBtn = event.target.closest(".songs-list-item__delete");
         if (deleteBtn) {
@@ -8746,7 +8766,9 @@ async function refreshSongsBrowser(query = "", prefetchedResults = null) {
     }
 
     if (results.length === 0) {
-      list.innerHTML = '<span class="list-placeholder-title">No songs found</span>';
+      list.innerHTML = refineAfterTyping
+        ? '<span class="list-placeholder-title">Searching…</span>'
+        : '<span class="list-placeholder-title">No songs found</span>';
       syncSongsBulkActions();
       return true;
     }

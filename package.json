@@ -105,6 +105,11 @@
     },
     "extraResources": [
       {
+        "from": "models",
+        "to": "models",
+        "filter": ["model_int8.onnx", "tokenizer.json", "LICENSE"]
+      },
+      {
         "from": "src/main.css",
         "to": ""
       },

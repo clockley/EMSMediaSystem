@@ -140,7 +140,7 @@ WINDOWS_VIDEO_POSTER_RID = win-x64
 BIBLE_RPC_GO_SOURCES = $(wildcard $(BIBLE_RPC_ROOT)/*.go) $(wildcard $(BIBLE_RPC_ROOT)/internal/*/*.go) $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
 MEDIA_WATCHER_GO_SOURCES = $(MEDIA_WATCHER_ROOT)/main.go $(MEDIA_WATCHER_ROOT)/go.mod $(MEDIA_WATCHER_ROOT)/go.sum
 MEDIA_LIBRARY_RPC_GO_SOURCES = $(wildcard $(MEDIA_LIBRARY_RPC_ROOT)/*.go) $(MEDIA_LIBRARY_RPC_ROOT)/go.mod $(MEDIA_LIBRARY_RPC_ROOT)/go.sum
-SONGS_RPC_GO_SOURCES = $(wildcard $(SONGS_RPC_ROOT)/*.go) $(wildcard $(SONGS_RPC_ROOT)/internal/songstore/*.go) $(wildcard $(SONGS_RPC_ROOT)/internal/songimport/*.go) $(SONGS_RPC_ROOT)/go.mod $(SONGS_RPC_ROOT)/go.sum
+SONGS_RPC_GO_SOURCES = $(wildcard $(SONGS_RPC_ROOT)/*.go) $(wildcard $(SONGS_RPC_ROOT)/internal/*/*.go) $(SONG_MODEL_MANIFEST) $(SONGS_RPC_ROOT)/go.mod $(SONGS_RPC_ROOT)/go.sum
 # Go source for the DB optimizer the asset builder runs via `go run`.
 BIBLE_OPTIMIZE_GO_SOURCES = $(BIBLE_RPC_ROOT)/cmd/bible-db-optimize/main.go $(BIBLE_RPC_ROOT)/internal/biblestore/text.go $(BIBLE_RPC_ROOT)/go.mod $(BIBLE_RPC_ROOT)/go.sum
 
@@ -232,8 +232,10 @@ endif
 # Maps "./src/path/file.ext" to "derived/src/path/file.ext"
 IMAGE_DEST := $(patsubst ./%,$(DERIVED_DIR)/%,$(IMAGE_SRC))
 DERIVED_RESOURCES = $(IMAGE_DEST) # Includes all copied binary/static resources
-APP_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(MEDIA_LIBRARY_RPC_BINS) $(SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT) $(GNOME_VIDEO_POSTER_OUT) $(WINDOWS_VIDEO_POSTER_OUT)
-APP_DEV_RESOURCES = $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(DEV_BIBLE_SIDECAR_BINS) $(DEV_MEDIA_WATCHER_BINS) $(DEV_MEDIA_LIBRARY_RPC_BINS) $(DEV_SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT) $(GNOME_VIDEO_POSTER_OUT) $(WINDOWS_VIDEO_POSTER_OUT)
+SONG_MODEL_MANIFEST = $(SONGS_RPC_ROOT)/internal/embedding/assets.json
+SONG_MODEL_FILES = models/model_int8.onnx models/tokenizer.json models/LICENSE
+APP_RESOURCES = $(SONG_MODEL_FILES) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(BIBLE_SIDECAR_BINS) $(MEDIA_WATCHER_BINS) $(MEDIA_LIBRARY_RPC_BINS) $(SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT) $(GNOME_VIDEO_POSTER_OUT) $(WINDOWS_VIDEO_POSTER_OUT)
+APP_DEV_RESOURCES = $(SONG_MODEL_FILES) $(CSS_MIN_MAP) js-minify $(HTML_PROD_FILES) $(DERIVED_RESOURCES) $(DEV_BIBLE_SIDECAR_BINS) $(DEV_MEDIA_WATCHER_BINS) $(DEV_MEDIA_LIBRARY_RPC_BINS) $(DEV_SONGS_SIDECAR_BINS) $(ATEM_RPC_OUT) $(GNOME_VIDEO_POSTER_OUT) $(WINDOWS_VIDEO_POSTER_OUT)
 BIBLE_RESOURCES = $(BIBLE_DB_OUT) $(BIBLE_CACHE_OUT)
 
 ifeq ($(NO_COLOR), 1)
@@ -373,6 +375,31 @@ else
 endif
 	@echo "$(COLOR_GREEN)$(TICK) Built $@$(COLOR_RESET)"
 
+# Read the same pins as the Go sidecar. These lookups run only for missing files.
+song_model_field = $(shell $(NODE) -p "const m = require('./$(SONG_MODEL_MANIFEST)'); const asset = m.files['$(@F)']; $(1)")
+song_model_url = https://huggingface.co/Xenova/multilingual-e5-small/resolve/$(call song_model_field,m.revision + '/' + asset.path)
+song_model_curl = --fail --location --silent --show-error --retry 2 --max-time 900 --max-filesize $(call song_model_field,asset.size) $(song_model_url)
+song_model_sha256 = $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
+
+# Publish only verified downloads. Separate temporary files allow concurrent builds.
+models/model_int8.onnx models/tokenizer.json:
+ifeq ($(WINDOWS), 1)
+	@powershell -NoProfile -Command "$(strip \
+		$$ErrorActionPreference = 'Stop'; \
+		$$tmp = '$@.' + [guid]::NewGuid() + '.part'; \
+		try { curl.exe $(song_model_curl) --output $$tmp; \
+			if ($$LASTEXITCODE -ne 0) { throw 'Download failed for $@' }; \
+			if ((Get-FileHash -Algorithm SHA256 $$tmp).Hash -ne '$(call song_model_field,asset.sha256)') { throw 'Invalid checksum for $@' }; \
+			Move-Item -Force $$tmp '$@' \
+		} finally { Remove-Item -ErrorAction SilentlyContinue $$tmp })"
+else
+	@set -eu; tmp=$$(mktemp "$@.XXXXXXXX"); trap 'rm -f "$$tmp"' EXIT; \
+		curl $(song_model_curl) --output "$$tmp"; \
+		printf '%s  %s\n' '$(call song_model_field,asset.sha256)' "$$tmp" | $(song_model_sha256) --check; \
+		chmod 644 "$$tmp"; \
+		mv -f "$$tmp" "$@"
+endif
+
 # --- Songs RPC Go sidecar (built directly by Make) ---
 $(SONGS_SIDECAR_BINS): $(SONGS_RPC_GO_SOURCES) | $(DERIVED_DIR)
 ifeq ($(WINDOWS), 1)
@@ -456,7 +483,7 @@ define go-test
 @echo "$(COLOR_GREEN)$(TICK) $(1) tests passed$(COLOR_RESET)"
 endef
 
-test-go-songs:
+test-go-songs: $(SONG_MODEL_FILES)
 	$(call go-test,Songs RPC,$(SONGS_RPC_ROOT))
 
 test-go-bible:
@@ -518,7 +545,7 @@ check-deps:
 	@test -f node_modules/csso/package.json || { echo "$(COLOR_RED)Error: csso module required. Run: yarn install$(COLOR_RESET)" >&2; exit 1; }
 	@command -v sqlite3 >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: sqlite3 is required$(COLOR_RESET)" >&2; exit 1; }
 	@"$(DOTNET)" --list-runtimes >/dev/null 2>&1 || test -x "$(DOTNET_STANDALONE)" || command -v curl >/dev/null 2>&1 || { echo "$(COLOR_RED)Error: .NET 8 SDK is required to cross-publish the Windows video poster$(COLOR_RESET)" >&2; exit 1; }
-	@$(NODE) -e "const {spawnSync}=require('node:child_process'); const m=String(spawnSync(process.argv[1]||'go',['version'],{encoding:'utf8'}).stdout||'').match(/go(\\d+)\\.(\\d+)/); process.exit(m&&(Number(m[1])>1||Number(m[2])>=22)?0:1);" "$(GO)" || { echo "$(COLOR_RED)Error: configured Go command '$(GO)' must be version 1.22+$(COLOR_RESET)" >&2; exit 1; }
+	@$(NODE) -e "const {spawnSync}=require('node:child_process'); const m=String(spawnSync(process.argv[1]||'go',['version'],{encoding:'utf8'}).stdout||'').match(/go(\\d+)\\.(\\d+)/); process.exit(m&&(Number(m[1])>1||Number(m[2])>=27)?0:1);" "$(GO)" || { echo "$(COLOR_RED)Error: configured Go command '$(GO)' must be version 1.27+$(COLOR_RESET)" >&2; exit 1; }
 
 # Rule: Generate CSS source map
 $(CSS_MIN_MAP): $(CSS_SRC)
