@@ -1,0 +1,15 @@
+{
+  "revision": "761b726dd34fb83930e26aab4e9ac3899aa1fa78",
+  "files": {
+    "model_int8.onnx": {
+      "path": "onnx/model_int8.onnx",
+      "size": 118054593,
+      "sha256": "4d24e2bc01a447951524466ef533e52944bf48509e6552810bcee1a2711cb02c"
+    },
+    "tokenizer.json": {
+      "path": "tokenizer.json",
+      "size": 17082730,
+      "sha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"
+    }
+  }
+}
