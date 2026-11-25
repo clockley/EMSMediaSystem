@@ -6260,8 +6260,10 @@ function ensureScheduleBibleContextMenu() {
     event.stopPropagation();
     const button = event.target.closest("[data-schedule-bible-action]");
     if (!button) return;
-    const index = menu._queueIndex;
+    const menuItem = menu._queueItem;
+    const index = menuItem ? mediaQueue.indexOf(menuItem) : menu._queueIndex;
     hideScheduleBibleContextMenu();
+    if (index < 0 || index >= mediaQueue.length) return;
     const action = button.getAttribute("data-schedule-bible-action");
     if (action === "edit") {
       void loadQueueItemIntoPreviewCue(index)
@@ -6271,7 +6273,7 @@ function ensureScheduleBibleContextMenu() {
           showGnomeToast("Failed to open Bible text editor");
         });
     } else if (action === "theme") {
-      void openThemeManagerForQueueItem(index);
+      void openThemeManagerForQueueItem(index, "audience", menuItem);
     } else if (action === "split") {
       void splitScheduledBiblePassageIntoVerses(index).catch(console.error);
     }
@@ -6316,6 +6318,7 @@ function showScheduleBibleContextMenu(event, index) {
     splitButton.style.display = canSplit ? "" : "none";
   }
   menu._queueIndex = index;
+  menu._queueItem = mediaQueue[index] || null;
   menu.hidden = false;
   menu.style.left = "0px";
   menu.style.top = "0px";

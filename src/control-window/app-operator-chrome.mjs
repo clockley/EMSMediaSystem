@@ -12,6 +12,7 @@ the Free Software Foundation, either version 3 of the License, or
  */
 
 import { installCcliReport } from "./app-ccli-report.mjs";
+import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
 import {
   LIVE_COMMANDS,
   MEDIAPLAYER,
@@ -26,6 +27,7 @@ import {
   activeMediaWindowContentType,
   activeNetworkPreviewHidesScrubber,
   activePreviewResolvedMediaFile,
+  activeQueueSlipstreamPromise,
   applyDroppedMediaPaths,
   applyLowerThirdOutputPreferences,
   applyOutputHoldPreferences,
@@ -37,6 +39,7 @@ import {
   bibleUiEnabled,
   bindTransportTimeDisplay,
   claimMediaWindowEnd,
+  releaseMediaWindowEnd,
   cleanRefs,
   clearAudienceAlert,
   clearLiveText,
@@ -191,6 +194,7 @@ import {
   repeatButton,
   resetBiblePreviewMediaWindowSize,
   resolveQueueItemPlaybackVolume,
+  resolveThemedQueueItemIndex,
   restoreAutosavedProjectState,
   restoreLivePreviewIntoPanel,
   restoreMediaFile,
@@ -1601,8 +1605,13 @@ function installIPCHandler() {
     return Promise.resolve();
   };
   on("theme-applied-to-item", (_event, payload) => {
-    const index = payload?.queueIndex;
-    if (!queueIndexInRange(index) || !payload?.theme) return;
+    const index = resolveThemedQueueItemIndex(payload);
+    if (!queueIndexInRange(index) || !payload?.theme) {
+      if (payload?.queueItemId && payload?.theme) {
+        showGnomeToast("The scheduled item is no longer available");
+      }
+      return;
+    }
     const item = mediaQueue[index];
     item.itemTheme = setItemThemeRole(item.itemTheme, {
       theme: payload.theme,
@@ -1616,8 +1625,13 @@ function installIPCHandler() {
     showGnomeToast(`Applied “${payload.theme.name}” to ${item.name || "scheduled item"}`);
   });
   on("theme-cleared-from-item", (_event, payload) => {
-    const index = payload?.queueIndex;
-    if (!queueIndexInRange(index)) return;
+    const index = resolveThemedQueueItemIndex(payload);
+    if (!queueIndexInRange(index)) {
+      if (payload?.queueItemId) {
+        showGnomeToast("The scheduled item is no longer available");
+      }
+      return;
+    }
     delete mediaQueue[index].itemTheme;
     if (mediaQueue[index].bible) delete mediaQueue[index].bible.itemTheme;
     renderQueue();
@@ -1681,53 +1695,73 @@ function installIPCHandler() {
       "consumed=" + consumedMediaWindowEndEpoch,
       "playbackId=" + (endEvent.playbackId || ""),
     );
-    if (userStopPresentationPending) {
-      setSharedRendererState({ mediaPlaybackEndedPending: false });
-      return;
-    }
-    if (
-      endedMediaFile &&
-      currentQueueIndex >= 0 &&
-      currentQueueIndex < mediaQueue.length &&
-      !mediaPathMatchesCurrentLiveMedia(endedMediaFile) &&
-      normalizeMediaPathForCompare(endedMediaFile) !==
-        normalizeMediaPathForCompare(mediaQueue[currentQueueIndex].path)
-    ) {
-      tracePlayback("media-playback-ended DROP stale (not live clip)");
-      return;
-    }
-    if (loopEnabledForLiveMedia(endedMediaFile || mediaFile)) {
-      setSharedRendererState({ mediaPlaybackEndedPending: false });
-      syncMediaLoopState();
-      tracePlayback("media-playback-ended LOOP (re-sync, no advance)");
-      return;
-    }
-    // On slower machines the projection's end IPC can race the local preview
-    // mirror and the async slipstream transition. Claim the live clip's end so
-    // exactly one transition happens per clip: a duplicate/stale end that
-    // arrives after the control side already advanced is ignored here, which is
-    // what previously let the finished clip replay or the queue skip/desync.
-    if (!claimMediaWindowEnd(endEvent)) {
-      tracePlayback("media-playback-ended DROP duplicate (epoch consumed)");
-      return;
-    }
-    setSharedRendererState({ mediaPlaybackEndedPending: true });
-    try {
-      const slipstreamed = await trySlipstreamNextQueueItem();
-      if (slipstreamed) {
-        // Keep the renderer's cache aligned with reality: this transition keeps
-        // the projection BrowserWindow alive, so the app should remain in
-        // "active media window" state.
-        setSharedRendererState({ isActiveMediaWindowCache: true });
+    for (let attempt = 0; attempt < 4; attempt++) {
+      while (queueSlipstreamTransitionInProgress && activeQueueSlipstreamPromise) {
+        try {
+          await activeQueueSlipstreamPromise;
+        } catch {
+          /* inspect post-transition state below */
+        }
+        await Promise.resolve();
+      }
+      if (
+        userStopPresentationPending ||
+        (attempt > 0 && !isActiveMediaWindow()) ||
+        audiencePlaybackCoordinator.pendingCloseItem()
+      ) {
+        setSharedRendererState({ mediaPlaybackEndedPending: false });
         return;
       }
-      if (queueSlipstreamTransitionInProgress) {
+      if (
+        endedMediaFile &&
+        currentQueueIndex >= 0 &&
+        currentQueueIndex < mediaQueue.length &&
+        !mediaPathMatchesCurrentLiveMedia(endedMediaFile) &&
+        normalizeMediaPathForCompare(endedMediaFile) !==
+          normalizeMediaPathForCompare(mediaQueue[currentQueueIndex].path)
+      ) {
+        tracePlayback("media-playback-ended DROP stale (not live clip)");
         return;
       }
-    } catch (err) {
-      console.error("Slipstream transition failed, falling back to close:", err);
+      if (loopEnabledForLiveMedia(endedMediaFile || mediaFile)) {
+        setSharedRendererState({ mediaPlaybackEndedPending: false });
+        syncMediaLoopState();
+        tracePlayback("media-playback-ended LOOP (re-sync, no advance)");
+        return;
+      }
+      // On slower machines the projection's end IPC can race the local preview
+      // mirror and the async slipstream transition. Claim the live clip's end so
+      // exactly one transition happens per clip: a duplicate/stale end that
+      // arrives after the control side already advanced is ignored here, which is
+      // what previously let the finished clip replay or the queue skip/desync.
+      const claimedEpoch = liveMediaWindowEpoch;
+      if (!claimMediaWindowEnd(endEvent)) {
+        tracePlayback("media-playback-ended DROP duplicate (epoch consumed)");
+        return;
+      }
+      setSharedRendererState({ mediaPlaybackEndedPending: true });
+      try {
+        const slipstreamed = await trySlipstreamNextQueueItem();
+        if (slipstreamed) {
+          // Keep the renderer's cache aligned with reality: this transition keeps
+          // the projection BrowserWindow alive, so the app should remain in
+          // "active media window" state.
+          setSharedRendererState({ isActiveMediaWindowCache: true });
+          return;
+        }
+        if (queueSlipstreamTransitionInProgress) {
+          releaseMediaWindowEnd(endEvent, claimedEpoch);
+          if (activeQueueSlipstreamPromise) {
+            continue;
+          }
+          return;
+        }
+      } catch (err) {
+        console.error("Slipstream transition failed, falling back to close:", err);
+      }
+      send("close-media-window", 0);
+      return;
     }
-    send("close-media-window", 0);
   });
   on("window-maximized", handleWindowMax);
 

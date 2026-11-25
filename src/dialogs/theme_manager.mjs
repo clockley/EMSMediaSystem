@@ -13,6 +13,7 @@ const initialParams = new URLSearchParams(window.location.search);
 let outputRole = initialParams.get("outputRole") === "lowerThird" ? "lowerThird" : "audience";
 let applyContext = {
   scope: initialParams.get("scope") === "item" ? "item" : "global",
+  queueItemId: (initialParams.get("queueItemId") || "").trim() || null,
   queueIndex: /^\d+$/.test(initialParams.get("queueIndex") || "") ? Number(initialParams.get("queueIndex")) : null,
 };
 
@@ -71,6 +72,9 @@ function applyOpenContext(context = {}) {
   outputRole = context?.outputRole === "lowerThird" ? "lowerThird" : "audience";
   applyContext = {
     scope: context?.scope === "item" ? "item" : "global",
+    queueItemId: typeof context?.queueItemId === "string" && context.queueItemId.trim()
+      ? context.queueItemId.trim()
+      : null,
     queueIndex: Number.isInteger(context?.queueIndex) ? context.queueIndex : null,
   };
   $("tmKind").value = contentKind;
@@ -525,6 +529,7 @@ applyOpenContext({
   contentKind: initialParams.get("contentKind"),
   outputRole,
   scope: applyContext.scope,
+  queueItemId: applyContext.queueItemId,
   queueIndex: applyContext.queueIndex,
 });
 window.themeManager.onOpenContext?.(applyOpenContext);

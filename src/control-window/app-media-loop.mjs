@@ -559,6 +559,21 @@ function markQueueItemMediaUpdate(payload) {
     if (normalizeMediaPathForCompare(liveSource.originalPath || item.path) !== originalPath) {
       return;
     }
+    if (payload.status === "unchanged") {
+      if (
+        item.pendingMediaUpdate &&
+        (payload.matchesPinned === true ||
+          pendingMediaUpdateStatus(item.pendingMediaUpdate) === "stabilizing")
+      ) {
+        delete item.pendingMediaUpdate;
+        if (payload.matchesPinned === true && item.changedSinceSave) {
+          item.changedSinceSave = false;
+        }
+        changed = true;
+      }
+      changed = applyMediaUpdateMissingFlag(item, "ready") || changed;
+      return;
+    }
     const pendingMediaUpdate = {
       mtimeMs: payload.mtimeMs,
       sizeBytes: payload.sizeBytes,

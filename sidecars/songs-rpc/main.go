@@ -11,6 +11,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 
 	"emsmediasystem/songs-rpc/internal/embedding"
 	"emsmediasystem/songs-rpc/internal/songimport"
@@ -346,11 +347,22 @@ func sendError(id interface{}, code int, message string) {
 	send(resp)
 }
 
+var stdoutMu sync.Mutex
+
 func send(resp JSONRPCResponse) {
+	writeResponse(os.Stdout, &stdoutMu, resp)
+}
+
+func writeResponse(w io.Writer, mu *sync.Mutex, resp JSONRPCResponse) {
 	b, err := json.Marshal(resp)
 	if err != nil {
 		log.Printf("Failed to marshal response: %v", err)
 		return
 	}
-	fmt.Println(string(b))
+	b = append(b, '\n')
+	mu.Lock()
+	defer mu.Unlock()
+	if _, err := w.Write(b); err != nil {
+		log.Printf("Failed to write response: %v", err)
+	}
 }

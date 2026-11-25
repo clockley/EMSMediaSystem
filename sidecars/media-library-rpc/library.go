@@ -166,9 +166,12 @@ type libraryService struct {
 	excludedRoots   []string
 	notify          func(changeRecord)
 	watcher         *fsnotify.Watcher
-	watchedBySource map[string]map[string]struct{}
+	watchedBySource map[string]map[string]string
 	ownersByDir     map[string]map[string]struct{}
 	rescanTimers    map[string]*time.Timer
+	activeScanToken map[string]uint64
+	nextScanToken   uint64
+	sourceEventSeq  map[string]uint64
 	walkDir         func(string, fs.WalkDirFunc) error
 	stop            chan struct{}
 	closed          bool
@@ -177,9 +180,11 @@ type libraryService struct {
 func newLibraryService(notify func(changeRecord)) *libraryService {
 	return &libraryService{
 		notify:          notify,
-		watchedBySource: make(map[string]map[string]struct{}),
+		watchedBySource: make(map[string]map[string]string),
 		ownersByDir:     make(map[string]map[string]struct{}),
 		rescanTimers:    make(map[string]*time.Timer),
+		activeScanToken: make(map[string]uint64),
+		sourceEventSeq:  make(map[string]uint64),
 		walkDir:         filepath.WalkDir,
 		stop:            make(chan struct{}),
 	}
@@ -628,22 +633,28 @@ func (s *libraryService) ScanSource(sourceID string) (scanned sourceView, scanEr
 			return sourceView{}, err
 		}
 		s.removeSourceWatchesLocked(sourceID)
-		s.notifyChange(change)
 		offline, _ := s.sourceLocked(sourceID)
+		s.mu.Unlock()
+		locked = false
+		s.notifyChange(change)
 		return offline.sourceView, nil
 	}
 
-	existing := map[string]string{}
-	rows, err := s.db.Query(`SELECT path_key, id FROM items WHERE source_id=?`, sourceID)
+	type existingItem struct {
+		id        string
+		localPath string
+	}
+	existing := map[string]existingItem{}
+	rows, err := s.db.Query(`SELECT path_key, id, local_path FROM items WHERE source_id=?`, sourceID)
 	if err != nil {
 		return sourceView{}, err
 	}
 	for rows.Next() {
-		var key, id string
-		if err = rows.Scan(&key, &id); err != nil {
+		var key, id, itemPath string
+		if err = rows.Scan(&key, &id, &itemPath); err != nil {
 			break
 		}
-		existing[key] = id
+		existing[key] = existingItem{id: id, localPath: itemPath}
 	}
 	if err == nil {
 		err = rows.Err()
@@ -655,70 +666,35 @@ func (s *libraryService) ScanSource(sourceID string) (scanned sourceView, scanEr
 		return sourceView{}, err
 	}
 	excludedRoots := append([]string(nil), s.excludedRoots...)
+	s.nextScanToken++
+	scanToken := s.nextScanToken
+	s.activeScanToken[sourceID] = scanToken
+	passEventSeq := s.sourceEventSeq[sourceID]
 	s.mu.Unlock()
 	locked = false
 
-	found := make([]scannedItem, 0)
-	directories := make([]string, 0)
-	scanIncomplete := false
-	scanProblem := ""
-	recordScanProblem := func(localPath string, problem error) {
-		scanIncomplete = true
-		if scanProblem == "" {
-			scanProblem = fmt.Sprintf("Incomplete scan at %s: %v", localPath, problem)
+	var (
+		found          []scannedItem
+		directories    []string
+		scanIncomplete bool
+		scanProblem    string
+		scanAborted    bool
+		stillChurning  bool
+	)
+	buildScannedItem := func(localPath string, info fs.FileInfo) (scannedItem, bool) {
+		if !info.Mode().IsRegular() {
+			return scannedItem{}, false
 		}
-	}
-	err = s.walkDir(source.RootLocator, func(localPath string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			recordScanProblem(localPath, walkErr)
-			return nil
-		}
-		if localPath != source.RootLocator {
-			if hiddenName(entry.Name()) || entry.Type()&os.ModeSymlink != 0 {
-				if entry.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			for _, excluded := range excludedRoots {
-				if pathInside(excluded, localPath) {
-					if entry.IsDir() {
-						return filepath.SkipDir
-					}
-					return nil
-				}
-			}
+		class, ok := classifyMedia(filepath.Base(localPath))
+		if !ok {
+			return scannedItem{}, false
 		}
 		relative, relativeErr := filepath.Rel(source.RootLocator, localPath)
-		if relativeErr != nil {
-			recordScanProblem(localPath, relativeErr)
-			return nil
-		}
-		if entry.IsDir() {
-			if relative != "." && len(strings.Split(filepath.ToSlash(relative), "/")) > maxScanDepth {
-				return filepath.SkipDir
-			}
-			directories = append(directories, localPath)
-			return nil
-		}
-		class, ok := classifyMedia(entry.Name())
-		if !ok {
-			return nil
-		}
-		if len(found) >= maxFilesPerSource {
-			recordScanProblem(localPath, fmt.Errorf("source exceeds the %d-file scan limit", maxFilesPerSource))
-			return filepath.SkipAll
-		}
-		info, infoErr := entry.Info()
-		if infoErr != nil {
-			recordScanProblem(localPath, infoErr)
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			return nil
+		if relativeErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+			return scannedItem{}, false
 		}
 		key := pathKey(localPath)
-		id := existing[key]
+		id := existing[key].id
 		if id == "" {
 			id = newID()
 		}
@@ -727,16 +703,165 @@ func (s *libraryService) ScanSource(sourceID string) (scanned sourceView, scanEr
 		if parentID == "." {
 			parentID = ""
 		}
-		found = append(found, scannedItem{itemView: itemView{
+		fileName := filepath.Base(localPath)
+		return scannedItem{itemView: itemView{
 			ID: id, SourceID: sourceID, ProviderItemID: providerID, ParentID: parentID,
-			Kind: class.Kind, DisplayName: displayName(entry.Name()), FileName: entry.Name(), MimeType: class.MimeType,
+			Kind: class.Kind, DisplayName: displayName(fileName), FileName: fileName, MimeType: class.MimeType,
 			Size: info.Size(), ModifiedAt: info.ModTime().UTC().Format(time.RFC3339Nano), Availability: "available",
 			LocalPath: localPath, ContentIdentity: fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixMilli()),
-		}, PathKey: key})
-		return nil
-	})
-	if err != nil {
-		recordScanProblem(source.RootLocator, err)
+		}, PathKey: key}, true
+	}
+
+	for pass := 0; pass < 2; pass++ {
+		found = make([]scannedItem, 0)
+		directories = make([]string, 0)
+		dirModTimes := make(map[string]time.Time)
+		scanIncomplete = false
+		scanProblem = ""
+		scanAborted = false
+		recordScanProblem := func(localPath string, problem error) {
+			scanIncomplete = true
+			if scanProblem == "" {
+				scanProblem = fmt.Sprintf("Incomplete scan at %s: %v", localPath, problem)
+			}
+		}
+		err = s.walkDir(source.RootLocator, func(localPath string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				recordScanProblem(localPath, walkErr)
+				return nil
+			}
+			if localPath != source.RootLocator {
+				if hiddenName(entry.Name()) || entry.Type()&os.ModeSymlink != 0 {
+					if entry.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				for _, excluded := range excludedRoots {
+					if pathInside(excluded, localPath) {
+						if entry.IsDir() {
+							return filepath.SkipDir
+						}
+						return nil
+					}
+				}
+			}
+			relative, relativeErr := filepath.Rel(source.RootLocator, localPath)
+			if relativeErr != nil {
+				recordScanProblem(localPath, relativeErr)
+				return nil
+			}
+			if entry.IsDir() {
+				if relative != "." && len(strings.Split(filepath.ToSlash(relative), "/")) > maxScanDepth {
+					return filepath.SkipDir
+				}
+				// Install the fsnotify watch before WalkDir reads this directory's
+				// entries so files created or removed during the walk are observed.
+				if !s.ensureSourceWatchDir(sourceID, scanToken, localPath) {
+					scanAborted = true
+					return filepath.SkipAll
+				}
+				if dirInfo, infoErr := entry.Info(); infoErr == nil {
+					dirModTimes[localPath] = dirInfo.ModTime()
+				}
+				directories = append(directories, localPath)
+				return nil
+			}
+			if _, ok := classifyMedia(entry.Name()); !ok {
+				return nil
+			}
+			if len(found) >= maxFilesPerSource {
+				recordScanProblem(localPath, fmt.Errorf("source exceeds the %d-file scan limit", maxFilesPerSource))
+				return filepath.SkipAll
+			}
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				if os.IsNotExist(infoErr) {
+					return nil
+				}
+				recordScanProblem(localPath, infoErr)
+				return nil
+			}
+			if item, ok := buildScannedItem(localPath, info); ok {
+				found = append(found, item)
+			}
+			return nil
+		})
+		if scanAborted {
+			break
+		}
+		if err != nil {
+			recordScanProblem(source.RootLocator, err)
+		}
+		if scanIncomplete {
+			break
+		}
+		treeChanged := false
+		if currentSeq, ok := s.currentSourceEventSeq(sourceID, scanToken); !ok {
+			scanAborted = true
+			break
+		} else if currentSeq != passEventSeq {
+			passEventSeq = currentSeq
+			treeChanged = true
+		}
+		if !treeChanged {
+			for _, dir := range directories {
+				before, hadBefore := dirModTimes[dir]
+				if !hadBefore {
+					continue
+				}
+				if after, statErr := os.Stat(dir); statErr != nil || !after.ModTime().Equal(before) {
+					treeChanged = true
+					break
+				}
+			}
+		}
+		if !treeChanged {
+			stillChurning = false
+			break
+		}
+		if pass == 0 {
+			continue
+		}
+		stillChurning = true
+	}
+
+	if !scanAborted && !scanIncomplete {
+		// Verify walked files were not unlinked after their directory was listed,
+		// and check any previously indexed path not seen in the walk before
+		// marking it missing.
+		seenKeys := make(map[string]struct{}, len(found))
+		verified := found[:0]
+		for _, item := range found {
+			info, statErr := os.Lstat(item.LocalPath)
+			if statErr != nil {
+				if os.IsNotExist(statErr) {
+					continue
+				}
+			} else if !info.Mode().IsRegular() {
+				continue
+			} else if refreshed, ok := buildScannedItem(item.LocalPath, info); ok {
+				item = refreshed
+			}
+			seenKeys[item.PathKey] = struct{}{}
+			verified = append(verified, item)
+		}
+		found = verified
+		for key, prev := range existing {
+			if _, ok := seenKeys[key]; ok || prev.localPath == "" {
+				continue
+			}
+			info, statErr := os.Lstat(prev.localPath)
+			if statErr != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				continue
+			}
+			if len(found) >= maxFilesPerSource {
+				break
+			}
+			if recovered, ok := buildScannedItem(prev.localPath, info); ok {
+				found = append(found, recovered)
+			}
+		}
 	}
 
 	s.mu.Lock()
@@ -746,6 +871,10 @@ func (s *libraryService) ScanSource(sourceID string) (scanned sourceView, scanEr
 	}
 	if _, err := s.sourceLocked(sourceID); err != nil {
 		return sourceView{}, err
+	}
+	if s.activeScanToken[sourceID] != scanToken {
+		current, err := s.sourceLocked(sourceID)
+		return current.sourceView, err
 	}
 
 	tx, err := s.db.Begin()
@@ -814,9 +943,14 @@ func (s *libraryService) ScanSource(sourceID string) (scanned sourceView, scanEr
 		return sourceView{}, err
 	}
 	s.removeThumbnailFiles(thumbnailPaths)
-	s.updateSourceWatchesLocked(sourceID, directories)
-	s.notifyChange(change)
+	s.syncSourceWatchesLocked(sourceID, directories, !scanIncomplete)
+	if stillChurning || s.sourceEventSeq[sourceID] != passEventSeq {
+		s.scheduleSourceRescanLocked(sourceID, 350*time.Millisecond)
+	}
 	updated, err := s.sourceLocked(sourceID)
+	s.mu.Unlock()
+	locked = false
+	s.notifyChange(change)
 	return updated.sourceView, err
 }
 
@@ -863,7 +997,12 @@ func (s *libraryService) RemoveSource(sourceID string) (bool, error) {
 		return false, fmt.Errorf("Added Files cannot be removed")
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
 	if err := s.ensureReadyLocked(); err != nil {
 		return false, err
 	}
@@ -947,6 +1086,8 @@ func (s *libraryService) RemoveSource(sourceID string) (bool, error) {
 	}
 	s.removeThumbnailFiles(thumbnailPaths)
 	s.removeSourceWatchesLocked(sourceID)
+	s.mu.Unlock()
+	locked = false
 	s.notifyChange(change)
 	return true, nil
 }
@@ -996,7 +1137,12 @@ func upsertItemTx(tx *sql.Tx, sourceID, localPath string, transient bool) (itemV
 
 func (s *libraryService) AddFiles(paths []string) ([]itemView, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
 	if err := s.ensureReadyLocked(); err != nil {
 		return nil, err
 	}
@@ -1104,6 +1250,8 @@ func (s *libraryService) AddFiles(paths []string) ([]itemView, error) {
 		return nil, err
 	}
 	s.removeThumbnailFiles(thumbnailPaths)
+	s.mu.Unlock()
+	locked = false
 	s.notifyChange(change)
 	return items, nil
 }
@@ -1145,7 +1293,12 @@ func (s *libraryService) AddDroppedPaths(paths []string) (droppedPathsResult, er
 
 func (s *libraryService) RemoveAddedItems(itemIDs []string) (int, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
 	if err := s.ensureReadyLocked(); err != nil {
 		return 0, err
 	}
@@ -1205,13 +1358,20 @@ func (s *libraryService) RemoveAddedItems(itemIDs []string) (int, error) {
 		return 0, err
 	}
 	s.removeThumbnailFiles(thumbnailPaths)
+	s.mu.Unlock()
+	locked = false
 	s.notifyChange(change)
 	return len(removed), nil
 }
 
 func (s *libraryService) RemoveMissingItems(itemIDs []string) (int, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
 	if err := s.ensureReadyLocked(); err != nil {
 		return 0, err
 	}
@@ -1275,6 +1435,8 @@ func (s *libraryService) RemoveMissingItems(itemIDs []string) (int, error) {
 		return 0, err
 	}
 	s.removeThumbnailFiles(thumbnailPaths)
+	s.mu.Unlock()
+	locked = false
 	s.notifyChange(change)
 	return len(removed), nil
 }
@@ -1465,7 +1627,12 @@ func (s *libraryService) ListFolders(sourceID, parentID string) ([]folderView, e
 
 func (s *libraryService) RecordActivity(input activityInput) (*activityResult, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := true
+	defer func() {
+		if locked {
+			s.mu.Unlock()
+		}
+	}()
 	if err := s.ensureReadyLocked(); err != nil {
 		return nil, err
 	}
@@ -1554,6 +1721,8 @@ func (s *libraryService) RecordActivity(input activityInput) (*activityResult, e
 		return nil, err
 	}
 	s.removeThumbnailFiles(thumbnailPaths)
+	s.mu.Unlock()
+	locked = false
 	s.notifyChange(change)
 	return &activityResult{ItemID: itemID, LastUsedAt: now}, nil
 }
@@ -1582,9 +1751,16 @@ func (s *libraryService) watchLoop(watcher *fsnotify.Watcher) {
 				return
 			}
 			s.mu.Lock()
-			owners := s.ownersByDir[pathKey(filepath.Dir(event.Name))]
-			for sourceID := range owners {
-				s.scheduleSourceRescanLocked(sourceID, 350*time.Millisecond)
+			notified := make(map[string]struct{})
+			for _, key := range []string{pathKey(event.Name), pathKey(filepath.Dir(event.Name))} {
+				for sourceID := range s.ownersByDir[key] {
+					if _, seen := notified[sourceID]; seen {
+						continue
+					}
+					notified[sourceID] = struct{}{}
+					s.sourceEventSeq[sourceID]++
+					s.scheduleSourceRescanLocked(sourceID, 350*time.Millisecond)
+				}
 			}
 			s.mu.Unlock()
 		case _, ok := <-watcher.Errors:
@@ -1611,15 +1787,53 @@ func (s *libraryService) pollLoop() {
 	}
 }
 
+func (s *libraryService) currentSourceEventSeq(sourceID string, scanToken uint64) (uint64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.db == nil || s.activeScanToken[sourceID] != scanToken {
+		return 0, false
+	}
+	return s.sourceEventSeq[sourceID], true
+}
+
+func (s *libraryService) ensureSourceWatchDir(sourceID string, scanToken uint64, directory string) bool {
+	key := pathKey(directory)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.db == nil || s.activeScanToken[sourceID] != scanToken {
+		return false
+	}
+	if s.watcher == nil {
+		return true
+	}
+	if s.watchedBySource[sourceID] == nil {
+		s.watchedBySource[sourceID] = make(map[string]string)
+	}
+	if _, already := s.watchedBySource[sourceID][key]; already {
+		return true
+	}
+	if s.ownersByDir[key] == nil {
+		if err := s.watcher.Add(directory); err != nil {
+			return true
+		}
+		s.ownersByDir[key] = make(map[string]struct{})
+	}
+	s.ownersByDir[key][sourceID] = struct{}{}
+	s.watchedBySource[sourceID][key] = directory
+	return true
+}
+
 func (s *libraryService) removeSourceWatchesLocked(sourceID string) {
-	for directory := range s.watchedBySource[sourceID] {
-		owners := s.ownersByDir[directory]
+	delete(s.activeScanToken, sourceID)
+	delete(s.sourceEventSeq, sourceID)
+	for key, directory := range s.watchedBySource[sourceID] {
+		owners := s.ownersByDir[key]
 		delete(owners, sourceID)
 		if len(owners) == 0 {
 			if s.watcher != nil {
 				_ = s.watcher.Remove(directory)
 			}
-			delete(s.ownersByDir, directory)
+			delete(s.ownersByDir, key)
 		}
 	}
 	delete(s.watchedBySource, sourceID)
@@ -1629,14 +1843,20 @@ func (s *libraryService) removeSourceWatchesLocked(sourceID string) {
 	}
 }
 
-func (s *libraryService) updateSourceWatchesLocked(sourceID string, directories []string) {
-	s.removeSourceWatchesLocked(sourceID)
+func (s *libraryService) syncSourceWatchesLocked(sourceID string, directories []string, pruneRemoved bool) {
 	if s.watcher == nil {
 		return
 	}
-	s.watchedBySource[sourceID] = make(map[string]struct{})
+	if s.watchedBySource[sourceID] == nil {
+		s.watchedBySource[sourceID] = make(map[string]string)
+	}
+	keep := make(map[string]string, len(directories))
 	for _, directory := range directories {
 		key := pathKey(directory)
+		keep[key] = directory
+		if _, already := s.watchedBySource[sourceID][key]; already {
+			continue
+		}
 		if s.ownersByDir[key] == nil {
 			if err := s.watcher.Add(directory); err != nil {
 				continue
@@ -1644,6 +1864,21 @@ func (s *libraryService) updateSourceWatchesLocked(sourceID string, directories 
 			s.ownersByDir[key] = make(map[string]struct{})
 		}
 		s.ownersByDir[key][sourceID] = struct{}{}
-		s.watchedBySource[sourceID][key] = struct{}{}
+		s.watchedBySource[sourceID][key] = directory
+	}
+	if !pruneRemoved {
+		return
+	}
+	for key, directory := range s.watchedBySource[sourceID] {
+		if _, stillPresent := keep[key]; stillPresent {
+			continue
+		}
+		owners := s.ownersByDir[key]
+		delete(owners, sourceID)
+		if len(owners) == 0 {
+			_ = s.watcher.Remove(directory)
+			delete(s.ownersByDir, key)
+		}
+		delete(s.watchedBySource[sourceID], key)
 	}
 }

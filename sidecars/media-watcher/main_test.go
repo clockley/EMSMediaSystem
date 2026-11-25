@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -241,4 +245,268 @@ func stringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+type syncedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncedBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncedBuffer) Lines() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	raw := strings.TrimSpace(s.buf.String())
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, "\n")
+}
+
+func TestReplacingWatchesPreservesPendingSaveAndReportsUpdatedQueueItems(t *testing.T) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Close()
+
+	var out syncedBuffer
+	server := newWatchServer(watcher, &out)
+	defer server.close()
+
+	dir := t.TempDir()
+	mediaPath := filepath.Join(dir, "clip.mp4")
+	if err := os.WriteFile(mediaPath, []byte("before"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	initialSig, err := statLocalFile(mediaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialHash, err := hashLocalFile(mediaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fastOpts := watchOptions{
+		DebounceMs:              40,
+		StabilityIntervalMs:     15,
+		StabilitySamples:        2,
+		MaxStabilityPolls:       10,
+		StatRetryCount:          1,
+		StatRetryInitialDelayMs: 5,
+		HashRetryCount:          1,
+		HashRetryInitialDelayMs: 5,
+		PollIntervalMs:          500,
+	}
+	size := initialSig.SizeBytes
+	mtime := initialSig.MtimeMs
+	server.setWatches([]watchItem{{
+		QueueItemID:     "item-1",
+		OriginalPath:    mediaPath,
+		PinnedFileHash:  initialHash,
+		PinnedSizeBytes: &size,
+		PinnedMtimeMs:   &mtime,
+	}}, fastOpts)
+
+	eventKey := comparablePathKey(mediaPath)
+	// Start a file save and arm the stability check before replacing watches.
+	if err := os.WriteFile(mediaPath, []byte("after-external-save"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server.scheduleTargetCheck(eventKey, "fsnotify", mediaPath, "WRITE")
+
+	// Replace the watch set while the debounce/stability check is still pending.
+	server.setWatches([]watchItem{
+		{
+			QueueItemID:     "item-1",
+			OriginalPath:    mediaPath,
+			PinnedFileHash:  initialHash,
+			PinnedSizeBytes: &size,
+			PinnedMtimeMs:   &mtime,
+		},
+		{
+			QueueItemID:     "item-2",
+			OriginalPath:    mediaPath,
+			PinnedFileHash:  initialHash,
+			PinnedSizeBytes: &size,
+			PinnedMtimeMs:   &mtime,
+		},
+	}, fastOpts)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, line := range out.Lines() {
+			var msg struct {
+				Method string       `json:"method"`
+				Params watchChanged `json:"params"`
+			}
+			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+				t.Fatal(err)
+			}
+			if msg.Method == "watch.changed" && msg.Params.Status == "ready" {
+				if !stringSlicesEqual(msg.Params.QueueItemIDs, []string{"item-1", "item-2"}) {
+					t.Fatalf("queueItemIds = %#v, want [item-1 item-2]", msg.Params.QueueItemIDs)
+				}
+				if msg.Params.FileHash == "" || msg.Params.FileHash == initialHash {
+					t.Fatalf("unexpected ready hash %q (initial %q)", msg.Params.FileHash, initialHash)
+				}
+				return
+			}
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Fatalf("watch replacement dropped the pending ready notification; lines=%v", out.Lines())
+}
+
+func TestSameSizeAndMtimeWriteAfterPollBaselineStillReportsReady(t *testing.T) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Close()
+
+	var out syncedBuffer
+	server := newWatchServer(watcher, &out)
+	defer server.close()
+
+	dir := t.TempDir()
+	mediaPath := filepath.Join(dir, "slide.bin")
+	fixedTime := time.Unix(1_700_000_000, 0)
+	if err := os.WriteFile(mediaPath, []byte("version-A"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(mediaPath, fixedTime, fixedTime); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := watchOptions{
+		DebounceMs:              10,
+		StabilityIntervalMs:     10,
+		StabilitySamples:        2,
+		MaxStabilityPolls:       10,
+		StatRetryCount:          1,
+		StatRetryInitialDelayMs: 5,
+		HashRetryCount:          1,
+		HashRetryInitialDelayMs: 5,
+		PollIntervalMs:          5000,
+	}
+	server.setWatches([]watchItem{{QueueItemID: "q1", OriginalPath: mediaPath}}, opts)
+
+	// Overwrite with identical byte length and restore the exact mtime.
+	if err := os.WriteFile(mediaPath, []byte("version-B"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(mediaPath, fixedTime, fixedTime); err != nil {
+		t.Fatal(err)
+	}
+	wantHash, err := hashLocalFile(mediaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server.mu.RLock()
+	gen := server.generation
+	server.mu.RUnlock()
+	server.runPathCheck(comparablePathKey(mediaPath), gen, "fsnotify")
+
+	for _, line := range out.Lines() {
+		var msg struct {
+			Method string       `json:"method"`
+			Params watchChanged `json:"params"`
+		}
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			t.Fatal(err)
+		}
+		if msg.Method == "watch.changed" && msg.Params.Status == "ready" {
+			if msg.Params.FileHash != wantHash {
+				t.Fatalf("hash = %q, want %q", msg.Params.FileHash, wantHash)
+			}
+			return
+		}
+	}
+	t.Fatalf("same-size same-mtime write was ignored; lines=%v", out.Lines())
+}
+
+func TestServeRPCDoesNotBlockWatchSetBehindHashFile(t *testing.T) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Close()
+
+	var out syncedBuffer
+	server := newWatchServer(watcher, &out)
+	defer server.close()
+
+	dir := t.TempDir()
+	fifoPath := filepath.Join(dir, "slow.fifo")
+	watchTargetFile := filepath.Join(dir, "clip.mp4")
+	if err := os.WriteFile(watchTargetFile, []byte("clip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	makeFifo(t, fifoPath)
+
+	inReader, inWriter := io.Pipe()
+	rpcDone := make(chan error, 1)
+	go func() {
+		rpcDone <- serveRPC(inReader, server)
+	}()
+
+	// Send a hash.file request that blocks reading from the named pipe until we write to it.
+	_, err = io.WriteString(inWriter, `{"jsonrpc":"2.0","id":1,"method":"hash.file","params":[{"filePath":`+mustJSON(t, fifoPath)+`}]}`+"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Immediately send watch.set behind the blocked hash.file call.
+	_, err = io.WriteString(inWriter, `{"jsonrpc":"2.0","id":2,"method":"watch.set","params":[{"items":[{"queueItemId":"1","originalPath":`+mustJSON(t, watchTargetFile)+`}]}]}`+"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	watchSetReplied := false
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && !watchSetReplied {
+		for _, line := range out.Lines() {
+			var resp struct {
+				ID json.RawMessage `json:"id"`
+			}
+			if json.Unmarshal([]byte(line), &resp) == nil && string(resp.ID) == "2" {
+				watchSetReplied = true
+				break
+			}
+		}
+		if !watchSetReplied {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	if !watchSetReplied {
+		t.Fatalf("watch.set was blocked behind hash.file; lines=%v", out.Lines())
+	}
+
+	// Unblock the FIFO reader and finish cleanly.
+	fifoWriter, err := os.OpenFile(fifoPath, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = fifoWriter.Write([]byte("payload"))
+	_ = fifoWriter.Close()
+	_ = inWriter.Close()
+	if err := <-rpcDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

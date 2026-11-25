@@ -189,6 +189,14 @@ class PlaybackTransitionCoordinator {
     this.#activePlaybackEndConsumed = true;
     return true;
   }
+
+  releasePlaybackEnd(payload) {
+    if (!this.matchesActivePlayback(payload)) {
+      return false;
+    }
+    this.#activePlaybackEndConsumed = false;
+    return true;
+  }
 }
 
 let playbackIdSequence = 0;

@@ -951,7 +951,10 @@ async function loadQueueItemIntoPreviewCue(index) {
 async function reopenAudienceWindowForTransition(transitionToken, startTime = 0) {
   if (!audiencePlaybackCoordinator.owns(transitionToken)) return false;
   const targetIndex = audiencePlaybackCoordinator.indexOf(transitionToken, mediaQueue);
-  if (targetIndex < 0) return false;
+  if (targetIndex < 0) {
+    audiencePlaybackCoordinator.cancel();
+    return false;
+  }
   audiencePlaybackCoordinator.setPendingClose(transitionToken, startTime);
   setSharedRendererState({ pendingQueueSwitchIndex: targetIndex });
   setSharedRendererState({ pendingQueueSwitchStartTime: startTime });
@@ -1179,6 +1182,14 @@ function claimMediaWindowEnd(payload) {
   }
   setSharedRendererState({ consumedMediaWindowEndEpoch: liveMediaWindowEpoch });
   return true;
+}
+
+function releaseMediaWindowEnd(payload, epoch = liveMediaWindowEpoch) {
+  audiencePlaybackCoordinator.releasePlaybackEnd(payload);
+  if (consumedMediaWindowEndEpoch === epoch) {
+    setSharedRendererState({ consumedMediaWindowEndEpoch: -1 });
+  }
+  setSharedRendererState({ mediaPlaybackEndedPending: false });
 }
 
 async function loadQueueItemIntoControlWindow(item, opts) {
@@ -1916,7 +1927,14 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
     return abandonStandaloneTransition();
   }
 
-  setSharedRendererState({ queueSlipstreamTransitionInProgress: true });
+  let resolveSlipstreamInFlight;
+  const slipstreamInFlightPromise = new Promise((resolve) => {
+    resolveSlipstreamInFlight = resolve;
+  });
+  setSharedRendererState({
+    queueSlipstreamTransitionInProgress: true,
+    activeQueueSlipstreamPromise: slipstreamInFlightPromise,
+  });
   let startupSyncStarted = false;
   let scriptureTakeRevision = null;
   let scriptureAudienceStarted = false;
@@ -2265,7 +2283,11 @@ async function slipstreamQueueItemAtIndex(index, opts = {}) {
       audiencePlaybackCoordinator.cancel();
     }
     endPreviewForwardingSuppression();
-    setSharedRendererState({ queueSlipstreamTransitionInProgress: false });
+    setSharedRendererState({
+      queueSlipstreamTransitionInProgress: false,
+      activeQueueSlipstreamPromise: null,
+    });
+    resolveSlipstreamInFlight();
   }
 }
 
@@ -2649,6 +2671,7 @@ export {
   advanceQueueAfterMediaWindowClosed,
   beginLiveMediaWindowEpoch,
   claimMediaWindowEnd,
+  releaseMediaWindowEnd,
   clearCueAfterTake,
   clearPreviewCue,
   clearVideoPreviewCueOverlay,

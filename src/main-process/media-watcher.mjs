@@ -278,6 +278,8 @@ export class MediaWatcher {
       typeof sendToRenderer === "function" ? sendToRenderer : () => {};
     this.itemsByPath = new Map();
     this.itemsByQueueId = new Map();
+    this.syncRevision = 0;
+    this.syncChain = Promise.resolve();
     this.sidecar = new MediaWatcherSidecarClient({
       app,
       devRoot,
@@ -290,6 +292,21 @@ export class MediaWatcher {
   }
 
   async sync(items) {
+    const revision = ++this.syncRevision;
+    const run = this.syncChain.catch(() => {}).then(() => this.performSync(items, revision));
+    this.syncChain = run.catch(() => {});
+    return run;
+  }
+
+  async performSync(items, revision) {
+    if (revision !== this.syncRevision) {
+      return {
+        watchedItems: this.watchedItemCount(),
+        watchedFiles: this.itemsByPath.size,
+        watchedDirectories: 0,
+        superseded: true,
+      };
+    }
     this.resetLocalState();
     const nextItems = Array.isArray(items) ? items : [];
     const sidecarItems = [];
@@ -464,6 +481,18 @@ export class MediaWatcher {
       return;
     }
 
+    if (status === "unchanged") {
+      watchedItems.forEach((item) => {
+        item.pending = false;
+      });
+      this.sendToRenderer("media-source-changed", {
+        originalPath,
+        queueItemIds: this.queueItemIdsForItems(watchedItems),
+        status: "unchanged",
+      });
+      return;
+    }
+
     if (status !== "ready") return;
     const facts = this.sidecarFacts(payload);
     for (const item of watchedItems) {
@@ -471,9 +500,23 @@ export class MediaWatcher {
       if (item.pinnedFileHash && facts.fileHash === item.pinnedFileHash) {
         if (Number.isFinite(facts.mtimeMs)) item.pinnedMtimeMs = facts.mtimeMs;
         if (Number.isFinite(facts.sizeBytes)) item.pinnedSizeBytes = facts.sizeBytes;
+        this.sendToRenderer("media-source-changed", {
+          originalPath,
+          queueItemId: item.queueItemId,
+          queueItemIds: item.queueItemId ? [item.queueItemId] : undefined,
+          status: "unchanged",
+          matchesPinned: true,
+        });
         continue;
       }
       if (!item.pinnedFileHash && pinnedMetadataMatches(item, facts)) {
+        this.sendToRenderer("media-source-changed", {
+          originalPath,
+          queueItemId: item.queueItemId,
+          queueItemIds: item.queueItemId ? [item.queueItemId] : undefined,
+          status: "unchanged",
+          matchesPinned: true,
+        });
         continue;
       }
       this.sendToRenderer("media-source-changed", {

@@ -3420,6 +3420,10 @@ function createPreferencesWindow(parentWindow) {
 }
 
 function normalizeThemeManagerContext(context = {}) {
+  const queueItemId =
+    typeof context?.queueItemId === "string" && context.queueItemId.trim()
+      ? context.queueItemId.trim()
+      : null;
   return {
     contentKind: ["song", "scripture", "text"].includes(context?.contentKind)
       ? context.contentKind
@@ -3428,6 +3432,7 @@ function normalizeThemeManagerContext(context = {}) {
       ? context.outputRole
       : "audience",
     scope: context?.scope === "item" ? "item" : "global",
+    queueItemId,
     queueIndex: Number.isInteger(context?.queueIndex) && context.queueIndex >= 0
       ? context.queueIndex
       : null,
@@ -3483,6 +3488,7 @@ function createThemeManagerWindow(parentWindow, requestedContext = {}) {
       contentKind: context.contentKind,
       outputRole: context.outputRole,
       scope: context.scope,
+      queueItemId: context.queueItemId || "",
       queueIndex: context.queueIndex === null ? "" : String(context.queueIndex),
     },
   });
@@ -7144,27 +7150,38 @@ function setIPC() {
   });
   ipcMain.handle("themes:applyToItem", async (event, id, rawContext, profile) => {
     const context = normalizeThemeManagerContext(rawContext);
-    if (context.scope !== "item" || context.queueIndex === null) {
+    if (context.scope !== "item" || (context.queueItemId === null && context.queueIndex === null)) {
       throw new Error("A scheduled item is required");
     }
     const theme = await resolveThemeRecordById(id);
     const owner = BrowserWindow.fromWebContents(event.sender)?.getParentWindow();
     if (!owner || owner.isDestroyed()) throw new Error("The project window is unavailable");
     owner.webContents.send("theme-applied-to-item", {
+      queueItemId: context.queueItemId,
       queueIndex: context.queueIndex,
       outputRole: context.outputRole,
       theme,
       profile: profile && typeof profile === "object" ? profile : undefined,
     });
-    return { theme, queueIndex: context.queueIndex, outputRole: context.outputRole };
+    return {
+      theme,
+      queueItemId: context.queueItemId,
+      queueIndex: context.queueIndex,
+      outputRole: context.outputRole,
+    };
   });
   ipcMain.handle("themes:clearItem", async (event, rawContext) => {
     const context = normalizeThemeManagerContext(rawContext);
-    if (context.scope !== "item" || context.queueIndex === null) throw new Error("A scheduled item is required");
+    if (context.scope !== "item" || (context.queueItemId === null && context.queueIndex === null)) {
+      throw new Error("A scheduled item is required");
+    }
     const owner = BrowserWindow.fromWebContents(event.sender)?.getParentWindow();
     if (!owner || owner.isDestroyed()) throw new Error("The project window is unavailable");
-    owner.webContents.send("theme-cleared-from-item", { queueIndex: context.queueIndex });
-    return { queueIndex: context.queueIndex };
+    owner.webContents.send("theme-cleared-from-item", {
+      queueItemId: context.queueItemId,
+      queueIndex: context.queueIndex,
+    });
+    return { queueItemId: context.queueItemId, queueIndex: context.queueIndex };
   });
   ipcMain.handle("themes:getActiveTheme", async () => {
     const activeThemeId = getActiveThemeId();

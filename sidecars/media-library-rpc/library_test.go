@@ -981,3 +981,138 @@ func TestRecentEvictionRemovesThumbnailRowsAndFiles(t *testing.T) {
 	}
 	assertThumbnailRemoved(t, service, victim.ItemID, thumb.Output)
 }
+
+func TestScanSourceReconcilesFilesCreatedAndDeletedDuringWalk(t *testing.T) {
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "source")
+	dirA := filepath.Join(sourceRoot, "a-first")
+	dirB := filepath.Join(sourceRoot, "b-second")
+	for _, dir := range []string{dirA, dirB} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deletedDuringWalk := filepath.Join(dirA, "deleted-during-walk.png")
+	createdDuringWalk := filepath.Join(dirA, "created-during-walk.png")
+	steadyFile := filepath.Join(dirB, "steady.png")
+	writePNG(t, deletedDuringWalk)
+	writePNG(t, steadyFile)
+
+	service := newLibraryService(nil)
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var mutated atomic.Bool
+	service.walkDir = func(walkRoot string, visit fs.WalkDirFunc) error {
+		return filepath.WalkDir(walkRoot, func(localPath string, entry fs.DirEntry, walkErr error) error {
+			if localPath == steadyFile && mutated.CompareAndSwap(false, true) {
+				// dirA has already been listed by WalkDir; mutate it before the scan commits.
+				if err := os.Remove(deletedDuringWalk); err != nil {
+					t.Errorf("remove during walk: %v", err)
+				}
+				writePNG(t, createdDuringWalk)
+			}
+			return visit(localPath, entry, walkErr)
+		})
+	}
+
+	source, err := service.AddSource(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanSource(source.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	available, err := service.Query(queryOptions{
+		SourceID:     source.ID,
+		Availability: "available",
+		Limit:        20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make(map[string]bool, len(available.Items))
+	for _, item := range available.Items {
+		names[item.FileName] = true
+	}
+	if !names["created-during-walk.png"] {
+		t.Fatalf("file created after its directory was listed is missing: %#v", available.Items)
+	}
+	if names["deleted-during-walk.png"] {
+		t.Fatalf("file deleted after being walked was committed as available: %#v", available.Items)
+	}
+}
+
+func TestNotificationsDoNotHoldServiceLock(t *testing.T) {
+	root := t.TempDir()
+	sourceRoot := filepath.Join(root, "source")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, filepath.Join(sourceRoot, "item.png"))
+
+	var blockNotify atomic.Bool
+	notifyEntered := make(chan struct{})
+	releaseNotify := make(chan struct{})
+	var notifyOnce sync.Once
+	service := newLibraryService(func(change changeRecord) {
+		if blockNotify.Load() && change.Kind == "source-scanned" {
+			notifyOnce.Do(func() {
+				close(notifyEntered)
+				<-releaseNotify
+			})
+		}
+	})
+	t.Cleanup(service.Close)
+	if _, err := service.Ready(readyOptions{
+		DatabasePath:       filepath.Join(root, "state", "library.sqlite"),
+		ThumbnailCachePath: filepath.Join(root, "state", "thumbs"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := service.AddSource(sourceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ScanSource(source.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	blockNotify.Store(true)
+	scanDone := make(chan error, 1)
+	go func() {
+		_, scanErr := service.ScanSource(source.ID)
+		scanDone <- scanErr
+	}()
+	<-notifyEntered
+
+	queryDone := make(chan error, 1)
+	go func() {
+		_, queryErr := service.Query(queryOptions{SourceID: source.ID, Limit: 10})
+		queryDone <- queryErr
+	}()
+
+	select {
+	case queryErr := <-queryDone:
+		if queryErr != nil {
+			close(releaseNotify)
+			<-scanDone
+			t.Fatal(queryErr)
+		}
+	case <-time.After(time.Second):
+		close(releaseNotify)
+		<-scanDone
+		t.Fatal("Query stalled while notifyChange was writing")
+	}
+
+	close(releaseNotify)
+	if scanErr := <-scanDone; scanErr != nil {
+		t.Fatal(scanErr)
+	}
+}

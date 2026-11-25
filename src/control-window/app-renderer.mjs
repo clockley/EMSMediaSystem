@@ -217,6 +217,7 @@ import {
   restoreScheduleQueueFromUndo,
 } from "../shared/schedule-clear-undo.mjs";
 import { audiencePlaybackCoordinator } from "../shared/playback-transition-coordinator.mjs";
+import { createMediaWatchIdentityRegistry } from "../shared/media-watch-identity.mjs";
 
 async function showRendererConfirm(message, options = {}) {
   const result = await invoke("show-renderer-message-box", {
@@ -670,6 +671,7 @@ import {
   advanceQueueAfterMediaWindowClosed,
   beginLiveMediaWindowEpoch,
   claimMediaWindowEnd,
+  releaseMediaWindowEnd,
   clearCueAfterTake,
   clearPreviewCue,
   clearVideoPreviewCueOverlay,
@@ -1386,6 +1388,8 @@ let consumedMediaWindowEndEpoch = -1;
 let userStopPresentationPending = false;
 let presentationStartInProgress = false;
 let queueSlipstreamTransitionInProgress = false;
+let activeQueueSlipstreamPromise = null;
+const scheduleItemThemeIdentity = createMediaWatchIdentityRegistry();
 /** When set, closing the media window switches to this queue index instead of advancing/stopping. */
 let pendingQueueSwitchIndex = null;
 let pendingQueueSwitchStartTime = 0;
@@ -3100,17 +3104,33 @@ async function restoreQueueClearUndoSnapshot() {
   return true;
 }
 
-async function openThemeManagerForQueueItem(index, outputRole = "audience") {
-  if (!queueIndexInRange(index)) return;
-  const item = mediaQueue[index];
+async function openThemeManagerForQueueItem(index, outputRole = "audience", expectedItem = mediaQueue[index]) {
+  const resolvedIndex = expectedItem ? mediaQueue.indexOf(expectedItem) : index;
+  if (!queueIndexInRange(resolvedIndex)) return;
+  const item = mediaQueue[resolvedIndex];
   const contentKind = isQueueItemBible(item) ? "scripture" : item.type === "song" || item.type === "deck" ? "song" : null;
   if (!contentKind) return;
+  const queueItemId = scheduleItemThemeIdentity.idFor(item);
   await invoke("open-theme-manager-window", {
     scope: "item",
-    queueIndex: index,
+    queueItemId,
+    queueIndex: resolvedIndex,
     contentKind,
     outputRole,
   });
+}
+
+function resolveThemedQueueItemIndex(payload) {
+  const targetId =
+    typeof payload?.queueItemId === "string" ? payload.queueItemId.trim() : "";
+  if (targetId) {
+    return mediaQueue.findIndex((item) =>
+      scheduleItemThemeIdentity.matches(item, targetId),
+    );
+  }
+  return Number.isInteger(payload?.queueIndex) && queueIndexInRange(payload.queueIndex)
+    ? payload.queueIndex
+    : -1;
 }
 
 function installCueButtonHandlers() {
@@ -3802,6 +3822,7 @@ function setSharedRendererState(patch) {
   if (Object.hasOwn(patch, "liveMediaWindowEpoch")) liveMediaWindowEpoch = patch.liveMediaWindowEpoch;
   if (Object.hasOwn(patch, "consumedMediaWindowEndEpoch")) consumedMediaWindowEndEpoch = patch.consumedMediaWindowEndEpoch;
   if (Object.hasOwn(patch, "queueSlipstreamTransitionInProgress")) queueSlipstreamTransitionInProgress = patch.queueSlipstreamTransitionInProgress;
+  if (Object.hasOwn(patch, "activeQueueSlipstreamPromise")) activeQueueSlipstreamPromise = patch.activeQueueSlipstreamPromise;
   if (Object.hasOwn(patch, "previewAudioCueIndex")) previewAudioCueIndex = patch.previewAudioCueIndex;
   if (Object.hasOwn(patch, "previewCueVideoIndex")) previewCueVideoIndex = patch.previewCueVideoIndex;
   if (Object.hasOwn(patch, "liveAudioQueueIndex")) liveAudioQueueIndex = patch.liveAudioQueueIndex;
@@ -4175,6 +4196,7 @@ export {
   advanceQueueAfterMediaWindowClosed,
   beginLiveMediaWindowEpoch,
   claimMediaWindowEnd,
+  releaseMediaWindowEnd,
   clearCueAfterTake,
   ensurePreviewCueVideoElement,
   getPreviewCueDisplayVolume,
@@ -4249,6 +4271,7 @@ export {
   queueItemMediaCacheBust,
   queueItemNeedsPendingUpdateApproval,
   queueSlipstreamTransitionInProgress,
+  activeQueueSlipstreamPromise,
   removeFilenameFromTitlebar,
   resetAudienceOutputHold,
   resetCountdownSync,
@@ -4517,6 +4540,7 @@ export {
   loadQueueItemIntoPreviewCue,
   nextPreviewLoadToken,
   openThemeManagerForQueueItem,
+  resolveThemedQueueItemIndex,
   scheduleAutosaveProjectState,
   shiftQueueIndexesForInsertion,
   updatePreviewCueUI,

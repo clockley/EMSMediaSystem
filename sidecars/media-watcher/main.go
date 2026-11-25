@@ -65,8 +65,11 @@ type rpcError struct {
 }
 
 type watchItem struct {
-	QueueItemID  string `json:"queueItemId,omitempty"`
-	OriginalPath string `json:"originalPath"`
+	QueueItemID     string `json:"queueItemId,omitempty"`
+	OriginalPath    string `json:"originalPath"`
+	PinnedFileHash  string `json:"pinnedFileHash,omitempty"`
+	PinnedSizeBytes *int64 `json:"pinnedSizeBytes,omitempty"`
+	PinnedMtimeMs   *int64 `json:"pinnedMtimeMs,omitempty"`
 }
 
 type watchOptionsPatch struct {
@@ -103,11 +106,16 @@ type hashFileParams struct {
 }
 
 type watchTarget struct {
-	OriginalPath string
-	Dir          string
-	DirKey       string
-	EventKey     string
-	QueueItemIDs []string
+	OriginalPath      string
+	Dir               string
+	DirKey            string
+	EventKey          string
+	QueueItemIDs      []string
+	Baseline          *fileSignature
+	PinnedFileHash    string
+	PinnedSizeBytes   *int64
+	HasBaseline       bool
+	BaselineConflicts bool
 }
 
 type watchDirError struct {
@@ -261,6 +269,64 @@ func uniqueStrings(values []string) []string {
 	return out
 }
 
+func normalizeDigest(raw string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(raw))
+	if len(trimmed) == 0 {
+		return ""
+	}
+	return trimmed
+}
+
+func int64PtrEqual(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func itemBaselineSignature(item watchItem) (*fileSignature, string, *int64) {
+	hash := normalizeDigest(item.PinnedFileHash)
+	var sizeCopy *int64
+	if item.PinnedSizeBytes != nil {
+		v := *item.PinnedSizeBytes
+		sizeCopy = &v
+	}
+	if item.PinnedSizeBytes == nil || item.PinnedMtimeMs == nil {
+		return nil, hash, sizeCopy
+	}
+	sig := fileSignature{
+		SizeBytes: *item.PinnedSizeBytes,
+		MtimeMs:   *item.PinnedMtimeMs,
+		FileHash:  hash,
+	}
+	if hash != "" {
+		sig.FileHashAlg = mediaFileHashAlg
+	}
+	return &sig, hash, sizeCopy
+}
+
+func mergeTargetBaseline(target *watchTarget, item watchItem) {
+	if target.BaselineConflicts {
+		return
+	}
+	sig, hash, sizeCopy := itemBaselineSignature(item)
+	if !target.HasBaseline {
+		target.HasBaseline = true
+		target.Baseline = sig
+		target.PinnedFileHash = hash
+		target.PinnedSizeBytes = sizeCopy
+		return
+	}
+	sameBaseline := (target.Baseline == nil && sig == nil) ||
+		(target.Baseline != nil && sig != nil && *target.Baseline == *sig)
+	if !sameBaseline || target.PinnedFileHash != hash || !int64PtrEqual(target.PinnedSizeBytes, sizeCopy) {
+		target.BaselineConflicts = true
+		target.Baseline = nil
+		target.PinnedFileHash = ""
+		target.PinnedSizeBytes = nil
+	}
+}
+
 func targetsFromItems(items []watchItem) (map[string]watchTarget, map[string]string) {
 	targets := make(map[string]watchTarget)
 	dirs := make(map[string]string)
@@ -286,6 +352,7 @@ func targetsFromItems(items []watchItem) (map[string]watchTarget, map[string]str
 			target.QueueItemIDs = append(target.QueueItemIDs, item.QueueItemID)
 		}
 		target.QueueItemIDs = uniqueStrings(target.QueueItemIDs)
+		mergeTargetBaseline(&target, item)
 		targets[eventKey] = target
 		dirs[dirKey] = dir
 	}
@@ -332,6 +399,37 @@ func (server *watchServer) restartPollingLocked(generation uint64) {
 	go server.runPolling(generation, interval, cancel)
 }
 
+func (server *watchServer) activeKeysForGenerationLocked(generation uint64) map[string]struct{} {
+	active := make(map[string]struct{})
+	for eventKey := range server.timers {
+		active[eventKey] = struct{}{}
+	}
+	for eventKey, inFlightGen := range server.checksInFlight {
+		if inFlightGen == generation {
+			active[eventKey] = struct{}{}
+		}
+	}
+	for eventKey, queued := range server.checksQueued {
+		if queued {
+			active[eventKey] = struct{}{}
+		}
+	}
+	return active
+}
+
+func (server *watchServer) hasPendingOrInFlightCheck(eventKey string, generation uint64) bool {
+	server.mu.RLock()
+	defer server.mu.RUnlock()
+	if server.generation != generation {
+		return false
+	}
+	if server.timers[eventKey] != nil || server.checksQueued[eventKey] {
+		return true
+	}
+	inFlightGen, inFlight := server.checksInFlight[eventKey]
+	return inFlight && inFlightGen == generation
+}
+
 func (server *watchServer) setWatches(items []watchItem, options watchOptions) watchSummary {
 	targets, nextDirs := targetsFromItems(items)
 	nextTargetsByDir := groupTargetsByDir(targets)
@@ -339,6 +437,7 @@ func (server *watchServer) setWatches(items []watchItem, options watchOptions) w
 
 	server.mu.Lock()
 	defer server.mu.Unlock()
+	prevActive := server.activeKeysForGenerationLocked(server.generation)
 	server.generation++
 	generation := server.generation
 	server.options = options
@@ -372,6 +471,30 @@ func (server *watchServer) setWatches(items []watchItem, options watchOptions) w
 		if _, keep := targets[eventKey]; !keep {
 			delete(server.observedByKey, eventKey)
 		}
+	}
+
+	debounce := time.Duration(server.options.DebounceMs) * time.Millisecond
+	for eventKey, target := range targets {
+		if existing, observed := server.observedByKey[eventKey]; !observed {
+			if target.Baseline != nil {
+				server.observedByKey[eventKey] = *target.Baseline
+			} else if target.BaselineConflicts {
+				prevActive[eventKey] = struct{}{}
+			}
+		} else if existing.FileHash == "" && target.Baseline != nil && metadataMatches(existing, *target.Baseline) && target.Baseline.FileHash != "" {
+			existing.FileHash = target.Baseline.FileHash
+			existing.FileHashAlg = target.Baseline.FileHashAlg
+			server.observedByKey[eventKey] = existing
+		}
+	}
+	for eventKey := range prevActive {
+		if _, keep := targets[eventKey]; !keep {
+			continue
+		}
+		key := eventKey
+		server.timers[key] = time.AfterFunc(debounce, func() {
+			server.runPathCheck(key, generation, "resumed")
+		})
 	}
 	server.restartPollingLocked(generation)
 	return watchSummary{
@@ -582,17 +705,38 @@ func (server *watchServer) setObservedSignatureForGeneration(eventKey string, ge
 	return true
 }
 
-func (server *watchServer) commitChangedForGeneration(eventKey string, generation uint64, signature fileSignature, target watchTarget, payload watchChanged) bool {
+func (server *watchServer) commitChangedForGeneration(eventKey string, generation uint64, signature fileSignature, _ watchTarget, payload watchChanged) bool {
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	if server.generation != generation {
 		return false
 	}
-	if _, ok := server.targetsByKey[eventKey]; !ok {
+	currentTarget, ok := server.targetsByKey[eventKey]
+	if !ok {
 		return false
 	}
 	server.observedByKey[eventKey] = signature
-	server.notifyChanged(target, payload)
+	currentTarget.QueueItemIDs = append([]string(nil), currentTarget.QueueItemIDs...)
+	server.notifyChanged(currentTarget, payload)
+	return true
+}
+
+func (server *watchServer) commitUnchangedForGeneration(eventKey string, generation uint64, signature fileSignature, detectedBy string) bool {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.generation != generation {
+		return false
+	}
+	currentTarget, ok := server.targetsByKey[eventKey]
+	if !ok {
+		return false
+	}
+	server.observedByKey[eventKey] = signature
+	currentTarget.QueueItemIDs = append([]string(nil), currentTarget.QueueItemIDs...)
+	server.notifyChanged(currentTarget, watchChanged{
+		Status:     "unchanged",
+		DetectedBy: detectedBy,
+	})
 	return true
 }
 
@@ -619,7 +763,7 @@ func metadataMatches(a, b fileSignature) bool {
 }
 
 func signatureMatches(a, b fileSignature) bool {
-	return metadataMatches(a, b) && (a.FileHash == "" || b.FileHash == "" || a.FileHash == b.FileHash)
+	return metadataMatches(a, b) && a.FileHash != "" && b.FileHash != "" && a.FileHash == b.FileHash
 }
 
 func (server *watchServer) runPathCheck(eventKey string, generation uint64, detectedBy string) {
@@ -643,7 +787,7 @@ func (server *watchServer) runPathCheck(eventKey string, generation uint64, dete
 	}
 
 	if previous, ok := server.observedSignature(eventKey); ok && signatureMatches(previous, signature) {
-		server.setObservedSignatureForGeneration(eventKey, generation, signature)
+		server.commitUnchangedForGeneration(eventKey, generation, signature, detectedBy)
 		return
 	}
 	server.commitChangedForGeneration(
@@ -817,11 +961,6 @@ func (server *watchServer) inspectStableFile(target watchTarget, generation uint
 		if status != "ready" {
 			return fileSignature{}, status, reason
 		}
-		if previous, ok := server.observedSignature(target.EventKey); ok && metadataMatches(previous, signature) {
-			signature.FileHash = previous.FileHash
-			signature.FileHashAlg = previous.FileHashAlg
-			return signature, "ready", ""
-		}
 
 		digest, err := hashLocalFileWithRetry(target.OriginalPath, options)
 		if err != nil {
@@ -883,10 +1022,13 @@ func (server *watchServer) pollOnce(generation uint64) {
 		return
 	}
 	for _, target := range targets {
+		if server.hasPendingOrInFlightCheck(target.EventKey, generation) {
+			continue
+		}
 		signature, err := statLocalFileWithRetry(target.OriginalPath, options)
 		if err != nil {
 			if os.IsNotExist(err) {
-				if _, observed := server.observedSignature(target.EventKey); observed {
+				if _, observed := server.observedSignature(target.EventKey); observed || target.Baseline != nil || target.PinnedFileHash != "" || target.PinnedSizeBytes != nil {
 					server.scheduleTargetCheck(target.EventKey, "poll", "", "")
 				}
 				continue
@@ -895,6 +1037,14 @@ func (server *watchServer) pollOnce(generation uint64) {
 		}
 		previous, observed := server.observedSignature(target.EventKey)
 		if !observed {
+			if target.PinnedSizeBytes != nil && *target.PinnedSizeBytes != signature.SizeBytes {
+				server.scheduleTargetCheck(target.EventKey, "poll", "", "")
+				continue
+			}
+			if target.PinnedFileHash != "" && (target.PinnedSizeBytes == nil || *target.PinnedSizeBytes == signature.SizeBytes) {
+				signature.FileHash = target.PinnedFileHash
+				signature.FileHashAlg = mediaFileHashAlg
+			}
 			server.setObservedSignatureForGeneration(target.EventKey, generation, signature)
 			continue
 		}
@@ -1029,6 +1179,10 @@ func handleRequest(server *watchServer, req rpcRequest) (any, *rpcError) {
 }
 
 func serveRPC(input io.Reader, server *watchServer) error {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	hashSem := make(chan struct{}, 4)
+
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	for scanner.Scan() {
@@ -1039,6 +1193,17 @@ func serveRPC(input io.Reader, server *watchServer) error {
 		var req rpcRequest
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
 			server.notify("watch.error", watchError{Error: fmt.Sprintf("invalid json-rpc request: %v", err)})
+			continue
+		}
+		if req.Method == "hash.file" {
+			wg.Add(1)
+			go func(r rpcRequest) {
+				defer wg.Done()
+				hashSem <- struct{}{}
+				defer func() { <-hashSem }()
+				result, rpcErr := handleRequest(server, r)
+				server.respond(r.ID, result, rpcErr)
+			}(req)
 			continue
 		}
 		result, rpcErr := handleRequest(server, req)
